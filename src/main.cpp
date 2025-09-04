@@ -25,8 +25,8 @@ const char* fragmentSrc = R"(
   in vec3 vPos;
 
   void main() {
-  float dist = distance(vPos, vec3(1.,1.,1.));
-  FragColor = vec4(0.8, 0.3, 0.2, 1)*dist; 
+  float light = 1-distance(vPos, vec3(0.,0.,0.));
+  FragColor = vec4(0.8, 0.3, 0.2, 1)*pow(light*4.,3.); 
   //FragColor = vPos;
   }
 )";
@@ -60,8 +60,8 @@ int main() {
 
   renderedObject sun;
   renderedObject earth;
-  sun.GenerateMesh(.05f, 16, 16);
-  earth.GenerateMesh(.02f, 8, 8);
+  sun.GenerateMesh(.03f, 16, 16);
+  earth.GenerateMesh(.015f, 8, 8);
 
 
   GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -87,7 +87,7 @@ int main() {
     glfwPollEvents();
 
     sun.rotateMesh(2);
-    earth.rotateMesh(2);
+    earth.rotateMesh(1);
 
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
       glfwSetWindowShouldClose(window, 1);
