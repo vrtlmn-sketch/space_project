@@ -4,8 +4,37 @@
 
 renderedObject::renderedObject() = default;
 
+
+void renderedObject::translateMesh(vec3 v)
+{
+
+  for(int i=0;i<bufferSize*3;i+=3)
+  {
+    vec3 before = (vec3){UVSphereMeshBuffer[i],UVSphereMeshBuffer[i+1],UVSphereMeshBuffer[i+2]};
+    translate(before, v);
+
+    UVSphereMeshBuffer[i+0]=before.x;
+    UVSphereMeshBuffer[i+1]=before.y;
+    UVSphereMeshBuffer[i+2]=before.z;
+
+  }
+}
+void renderedObject::rotateMesh(int degrees)
+{
+  for(int i=0;i<bufferSize*3;i+=3)
+  {
+    vec3 before = (vec3){UVSphereMeshBuffer[i],UVSphereMeshBuffer[i+1],UVSphereMeshBuffer[i+2]};
+    rotate(before, 5);
+
+    UVSphereMeshBuffer[i+0]=before.x;
+    UVSphereMeshBuffer[i+1]=before.y;
+    UVSphereMeshBuffer[i+2]=before.z;
+
+  }
+}
 void renderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int verticalSubdivisions)
 {
+  this->coordinates=(vec3){0.0f,0.0f,0.0f};
   this->horizontalSubdivisions = horizontalSubdivisions;
   this->verticalSubdivisions   = verticalSubdivisions;
   this->radius = radius;
