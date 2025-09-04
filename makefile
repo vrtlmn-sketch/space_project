@@ -10,7 +10,7 @@ OUT      := $(BIN_DIR)/$(APP)
 VENDOR_LIB_DIR := vendor/lib
 # Static libs first, then system libs GLFW typically needs on X11
 LDLIBS := $(VENDOR_LIB_DIR)/libglfw3.a $(VENDOR_LIB_DIR)/libglad.a \
-          -ldl -lpthread -lX11 -lXrandr -lXi
+          -ldl -lpthread -lX11 -lXrandr 
 
 .PHONY: all build run clean
 
