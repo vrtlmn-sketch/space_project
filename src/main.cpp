@@ -26,7 +26,7 @@ const char* fragmentSrc = R"(
 
   void main() {
   float dist = distance(vPos, vec3(1.,1.,1.));
-  FragColor = vec4(0.8, 0.3, 0.2, 1)*pow(dist,2); 
+  FragColor = vec4(0.8, 0.3, 0.2, 1)*dist; 
   //FragColor = vPos;
   }
 )";
@@ -57,25 +57,13 @@ int main() {
   glfwGetFramebufferSize(window, &fbw, &fbh);
   glViewport(0, 0, fbw, fbh);
 
-  //we generate the vao here 
-  unsigned int vao;
-  glGenVertexArrays(1,&vao);
-  glBindVertexArray(vao);
 
   renderedObject sun;
-  sun.GenerateMesh(.3f, 16, 16);
+  renderedObject earth;
+  sun.GenerateMesh(.05f, 16, 16);
+  earth.GenerateMesh(.02f, 8, 8);
 
 
-  unsigned int vbo;
-
-  glGenBuffers(1, &vbo);
-  glBindBuffer(GL_ARRAY_BUFFER,vbo);
-  glBufferData(GL_ARRAY_BUFFER,sun.UVSphereMeshBuffer.size()*sizeof(float),&sun.UVSphereMeshBuffer[0],GL_STATIC_DRAW);
-
-  glVertexAttribPointer(0,3, GL_FLOAT, GL_FALSE,3*sizeof(float),(void*)0);
-  glEnableVertexAttribArray(0);
-  //------------------------------------------------------------------------------------
-  //shader stuff
   GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
   glShaderSource(vertexShader, 1, &vertexSrc, nullptr);
   glCompileShader(vertexShader);
@@ -93,24 +81,22 @@ int main() {
 
 
   glEnable(GL_DEPTH_TEST);
-  float time = -4000;
 
+  earth.translateMesh((vec3){0.5f,0.0f,0.5f});
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
-    time++;
     sun.rotateMesh(2);
-
-    glBufferData(GL_ARRAY_BUFFER,sun.UVSphereMeshBuffer.size()*sizeof(float),&sun.UVSphereMeshBuffer[0],GL_STATIC_DRAW);
+    earth.rotateMesh(2);
 
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
       glfwSetWindowShouldClose(window, 1);
 
     glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    sun.renderMesh();
+    earth.renderMesh();
     glUseProgram(program);
-    glBindVertexArray(vao);
-    glDrawArrays(GL_TRIANGLES, 0 ,sun.bufferSize);
 
 
     glfwSwapBuffers(window);

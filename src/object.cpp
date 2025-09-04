@@ -11,7 +11,7 @@ void renderedObject::translateMesh(vec3 v)
   for(int i=0;i<bufferSize*3;i+=3)
   {
     vec3 before = (vec3){UVSphereMeshBuffer[i],UVSphereMeshBuffer[i+1],UVSphereMeshBuffer[i+2]};
-    translate(before, v);
+    before = translate(before, v);
 
     UVSphereMeshBuffer[i+0]=before.x;
     UVSphereMeshBuffer[i+1]=before.y;
@@ -85,3 +85,19 @@ void renderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int 
     UVSphereMeshBuffer[i*3 + 2] = UVSphereMesh[i].z;
   }
 }
+
+void renderedObject::renderMesh()
+{
+  glGenVertexArrays(1,&vao);
+  glBindVertexArray(vao);
+
+  glGenBuffers(1, &vbo);
+  glBindBuffer(GL_ARRAY_BUFFER,vbo);
+  glBufferData(GL_ARRAY_BUFFER,UVSphereMeshBuffer.size()*sizeof(float),&UVSphereMeshBuffer[0],GL_STATIC_DRAW);
+
+  glVertexAttribPointer(0,3, GL_FLOAT, GL_FALSE,3*sizeof(float),(void*)0);
+  glEnableVertexAttribArray(0);
+
+  glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
+}
+
