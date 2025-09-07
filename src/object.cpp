@@ -24,7 +24,7 @@ void renderedObject::rotateMesh(int degrees)
   for(int i=0;i<bufferSize*3;i+=3)
   {
     vec3 before = (vec3){UVSphereMeshBuffer[i],UVSphereMeshBuffer[i+1],UVSphereMeshBuffer[i+2]};
-    rotate(before, 5);
+    rotate(before, degrees);
 
     UVSphereMeshBuffer[i+0]=before.x;
     UVSphereMeshBuffer[i+1]=before.y;
@@ -38,6 +38,7 @@ void renderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int 
   this->horizontalSubdivisions = horizontalSubdivisions;
   this->verticalSubdivisions   = verticalSubdivisions;
   this->radius = radius;
+  this->hasBeenRendered=false;
 
   diameter     = radius * 2.0f;
   verticalStep = diameter / verticalSubdivisions;
@@ -88,16 +89,63 @@ void renderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int 
 
 void renderedObject::renderMesh()
 {
+  if(!hasBeenRendered)
+  {
+    setupRender();
+  }
+  glBindVertexArray(vao);
+  glBindBuffer(GL_ARRAY_BUFFER,vbo);
+
+  glBufferData(GL_ARRAY_BUFFER,UVSphereMeshBuffer.size()*sizeof(float),&UVSphereMeshBuffer[0],GL_STATIC_DRAW);
+
+  glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
+}
+void renderedObject::setupRender()
+{
+
   glGenVertexArrays(1,&vao);
   glBindVertexArray(vao);
 
   glGenBuffers(1, &vbo);
   glBindBuffer(GL_ARRAY_BUFFER,vbo);
-  glBufferData(GL_ARRAY_BUFFER,UVSphereMeshBuffer.size()*sizeof(float),&UVSphereMeshBuffer[0],GL_STATIC_DRAW);
 
   glVertexAttribPointer(0,3, GL_FLOAT, GL_FALSE,3*sizeof(float),(void*)0);
   glEnableVertexAttribArray(0);
 
-  glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
 }
 
+void renderedObject::transformPerspectiveMesh(GLuint program)
+{
+  //we bind the uniforms
+  GLuint projectionMatrixBuffer = glGetUniformLocation(program, "uProj");
+  GLuint worldMatrixBuffer = glGetUniformLocation(program, "uWorld");
+  float proj[16];
+  float aspect = 800.0f / 600.0f;
+  float fovy   = 45.0f * M_PI / 180.0f; // 45 degrees in radians
+  perspective(fovy, aspect, 0.1f, 100.0f, proj);
+  //we fill perspective uniform
+  glUniformMatrix4fv(projectionMatrixBuffer, 1, GL_FALSE, proj);
+
+  float worldEarth[16] = {
+    1,0,0,0,
+    0,1,0,0,
+    0,0,1,0,
+    0.0f,0.0f,-3.0f,1   
+
+  };
+
+  //we fill the world transform uniform
+  glUniformMatrix4fv(worldMatrixBuffer, 1, GL_FALSE, worldEarth);
+}
+
+void renderedObject::perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]) {
+  float f = 1.0f / std::tan(fovyRadians * 0.5f);
+
+  for (int i=0; i<16; i++) out[i] = 0.0f;
+
+  out[0]  = f / aspect;
+  out[5]  = f;
+  out[10] = (zFar + zNear) / (zNear - zFar);
+  out[11] = -1.0f;
+  out[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+}

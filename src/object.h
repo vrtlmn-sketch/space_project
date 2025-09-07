@@ -12,6 +12,7 @@ public:
   float verticalStep;
   int bufferSize;
   vec3 coordinates;
+  bool hasBeenRendered;
 
   //rendering stuff
   unsigned int vao;
@@ -22,10 +23,15 @@ public:
   std::vector<std::vector<vec3>> UVSphereMeshPoints;
 
   renderedObject();
+  void setupRender();
 
   void rotateMesh(int degrees);
   void translateMesh(vec3 v);
+  void transformPerspectiveMesh(GLuint program);
   void renderMesh();
 
   void GenerateMesh(float radius, int horizontalSubdivisions, int verticalSubdivisions);
+
+void perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]);
 };
+

@@ -11,9 +11,11 @@ const char* vertexSrc = R"(
   #version 460 core
   layout (location = 0) in vec3 aPos;
   out vec3 vPos;
+  uniform mat4 uProj;
+  uniform mat4 uWorld;
 
   void main() {
-  gl_Position = vec4(aPos, 1.0);
+  gl_Position =  uProj *uWorld* vec4(aPos, 1.0);
   //aPos.x=aPos.x+glPosition.x;
   vPos = aPos;
   }
@@ -26,7 +28,7 @@ const char* fragmentSrc = R"(
 
   void main() {
   float light = 1-distance(vPos, vec3(0.,0.,0.));
-  FragColor = vec4(0.8, 0.3, 0.2, 1)*pow(light*4.,3.); 
+  FragColor = vec4(0.8, 0.3, 0.2, 1)*pow(light*2.5,2.f); 
   //FragColor = vPos;
   }
 )";
@@ -60,8 +62,8 @@ int main() {
 
   renderedObject sun;
   renderedObject earth;
-  sun.GenerateMesh(.03f, 16, 16);
-  earth.GenerateMesh(.015f, 8, 8);
+  sun.GenerateMesh(.07f, 16, 16);
+  earth.GenerateMesh(.05f, 8, 8);
 
 
   GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -82,12 +84,15 @@ int main() {
 
   glEnable(GL_DEPTH_TEST);
 
+  glUseProgram(program);
+  earth.transformPerspectiveMesh(program);
+  sun.transformPerspectiveMesh(program);
   earth.translateMesh((vec3){0.5f,0.0f,0.5f});
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
-    sun.rotateMesh(2);
-    earth.rotateMesh(1);
+    sun.rotateMesh(1);
+    earth.rotateMesh(2);
 
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
       glfwSetWindowShouldClose(window, 1);
@@ -96,7 +101,6 @@ int main() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     sun.renderMesh();
     earth.renderMesh();
-    glUseProgram(program);
 
 
     glfwSwapBuffers(window);

@@ -14,7 +14,7 @@ struct vec3{
 void rotate(vec3& v, float DegY)
 {
 
-  const double rad = DegY * 3.14 / 180.0; 
+  const double rad = DegY * M_PI / 180.0; 
   const float c = std::cos(rad);
   const float s = std::sin(rad);
 
@@ -36,5 +36,19 @@ void rotate(vec3& v, float DegY)
 vec3 translate(vec3 v, vec3 d)
 {
   return (vec3){v.x+d.x, v.y+d.y, v.z+d.z};
+}
+
+void perspectiveTransform(vec3& v, float angle)
+{
+  float tempx = v.x;
+  float tempy = v.y;
+  float tempz = v.z;
+  const double rad = angle * M_PI / 180.0; 
+
+  v.x=tempx/(tempz*90.f);
+  v.y=tempy/(tempz*90.f);
+  std::cout<<"x before: "<<tempx;
+  std::cout<<", x after: "<<v.x<<"\n";
+
 }
 

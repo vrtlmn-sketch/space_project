@@ -16,3 +16,4 @@ void rotate(vec3& v, float DegY);
 
 vec3 translate(vec3 v, vec3 d);
 
+void perspectiveTransform(vec3& v, float angle);
