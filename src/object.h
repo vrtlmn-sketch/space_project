@@ -2,7 +2,7 @@
 #include <vector>
 #include "mathStructs.h"
 
-class renderedObject {
+class RenderedObject {
 public:
   int horizontalSubdivisions;
   int verticalSubdivisions;
@@ -22,7 +22,7 @@ public:
   std::vector<vec3>  UVSphereMesh;
   std::vector<std::vector<vec3>> UVSphereMeshPoints;
 
-  renderedObject();
+  RenderedObject();
   void setupRender();
 
   void rotateMesh(int degrees);

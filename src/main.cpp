@@ -3,6 +3,7 @@
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
+
 #include "mathStructs.h"
 #include "object.h"
 
@@ -13,9 +14,10 @@ const char* vertexSrc = R"(
   out vec3 vPos;
   uniform mat4 uProj;
   uniform mat4 uWorld;
+  uniform vec3 uCamera;
 
   void main() {
-  gl_Position =  uProj *uWorld* vec4(aPos, 1.0);
+  gl_Position =  uProj *uWorld* vec4(aPos+uCamera, 1.0);
   //aPos.x=aPos.x+glPosition.x;
   vPos = aPos;
   }
@@ -37,7 +39,6 @@ int main() {
   if (!glfwInit()) {
     return 1;
   }
-
   //we set the versions
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
@@ -60,8 +61,8 @@ int main() {
   glViewport(0, 0, fbw, fbh);
 
 
-  renderedObject sun;
-  renderedObject earth;
+  RenderedObject sun;
+  RenderedObject earth;
   sun.GenerateMesh(.07f, 16, 16);
   earth.GenerateMesh(.05f, 8, 8);
 
@@ -81,6 +82,7 @@ int main() {
 
   glDeleteShader(vertexShader);          glDeleteShader(fragmentShader);
 
+  int cameraX, cameraY;
 
   glEnable(GL_DEPTH_TEST);
 
@@ -88,6 +90,11 @@ int main() {
   earth.transformPerspectiveMesh(program);
   sun.transformPerspectiveMesh(program);
   earth.translateMesh((vec3){0.5f,0.0f,0.5f});
+  float time {-4000};
+  unsigned int cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
+  float cameraTranslate[3] = { 0,0,0 };
+
+  constexpr float cameraSpeed{.03f};
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
@@ -102,6 +109,13 @@ int main() {
     sun.renderMesh();
     earth.renderMesh();
 
+    if(glfwGetKey(window,GLFW_KEY_SPACE) == GLFW_PRESS){ cameraTranslate[1]-=cameraSpeed; }
+    if(glfwGetKey(window,GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS){ cameraTranslate[1]+=cameraSpeed; }
+    if(glfwGetKey(window,GLFW_KEY_W) == GLFW_PRESS){ cameraTranslate[2]+=cameraSpeed; }
+    if(glfwGetKey(window,GLFW_KEY_S) == GLFW_PRESS){ cameraTranslate[2]-=cameraSpeed; }
+    if(glfwGetKey(window,GLFW_KEY_A) == GLFW_PRESS){ cameraTranslate[0]+=cameraSpeed; }
+    if(glfwGetKey(window,GLFW_KEY_D) == GLFW_PRESS){ cameraTranslate[0]-=cameraSpeed; }
+    glUniform3fv(cameraTranslateUniform, 1, cameraTranslate);
 
     glfwSwapBuffers(window);
   }

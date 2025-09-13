@@ -2,10 +2,10 @@
 #include "object.h"
 #include <cmath>
 
-renderedObject::renderedObject() = default;
+RenderedObject::RenderedObject() = default;
 
 
-void renderedObject::translateMesh(vec3 v)
+void RenderedObject::translateMesh(vec3 v)
 {
 
   for(int i=0;i<bufferSize*3;i+=3)
@@ -19,7 +19,7 @@ void renderedObject::translateMesh(vec3 v)
 
   }
 }
-void renderedObject::rotateMesh(int degrees)
+void RenderedObject::rotateMesh(int degrees)
 {
   for(int i=0;i<bufferSize*3;i+=3)
   {
@@ -29,10 +29,9 @@ void renderedObject::rotateMesh(int degrees)
     UVSphereMeshBuffer[i+0]=before.x;
     UVSphereMeshBuffer[i+1]=before.y;
     UVSphereMeshBuffer[i+2]=before.z;
-
   }
 }
-void renderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int verticalSubdivisions)
+void RenderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int verticalSubdivisions)
 {
   this->coordinates=(vec3){0.0f,0.0f,0.0f};
   this->horizontalSubdivisions = horizontalSubdivisions;
@@ -87,7 +86,7 @@ void renderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int 
   }
 }
 
-void renderedObject::renderMesh()
+void RenderedObject::renderMesh()
 {
   if(!hasBeenRendered)
   {
@@ -100,7 +99,7 @@ void renderedObject::renderMesh()
 
   glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
 }
-void renderedObject::setupRender()
+void RenderedObject::setupRender()
 {
 
   glGenVertexArrays(1,&vao);
@@ -114,7 +113,7 @@ void renderedObject::setupRender()
 
 }
 
-void renderedObject::transformPerspectiveMesh(GLuint program)
+void RenderedObject::transformPerspectiveMesh(GLuint program)
 {
   //we bind the uniforms
   GLuint projectionMatrixBuffer = glGetUniformLocation(program, "uProj");
@@ -138,7 +137,7 @@ void renderedObject::transformPerspectiveMesh(GLuint program)
   glUniformMatrix4fv(worldMatrixBuffer, 1, GL_FALSE, worldEarth);
 }
 
-void renderedObject::perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]) {
+void RenderedObject::perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]) {
   float f = 1.0f / std::tan(fovyRadians * 0.5f);
 
   for (int i=0; i<16; i++) out[i] = 0.0f;
