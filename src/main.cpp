@@ -6,7 +6,7 @@
 
 #include "mathStructs.h"
 #include "object.h"
-
+#include "physicsObject.h"
 
 const char* vertexSrc = R"(
   #version 460 core
@@ -93,6 +93,7 @@ int main() {
   float time {-4000};
   unsigned int cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
   float cameraTranslate[3] = { 0,0,0 };
+  std::vector<PhysicsObject> physicsObjects;
 
   constexpr float cameraSpeed{.03f};
   while (!glfwWindowShouldClose(window)) {
@@ -115,6 +116,7 @@ int main() {
     if(glfwGetKey(window,GLFW_KEY_S) == GLFW_PRESS){ cameraTranslate[2]-=cameraSpeed; }
     if(glfwGetKey(window,GLFW_KEY_A) == GLFW_PRESS){ cameraTranslate[0]+=cameraSpeed; }
     if(glfwGetKey(window,GLFW_KEY_D) == GLFW_PRESS){ cameraTranslate[0]-=cameraSpeed; }
+
     glUniform3fv(cameraTranslateUniform, 1, cameraTranslate);
 
     glfwSwapBuffers(window);

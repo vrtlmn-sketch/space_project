@@ -9,19 +9,23 @@ struct vec3{
   float x;
   float y;
   float z;
-  vec3 operator+(vec3 other);
-  vec3 operator-(vec3 other);
+  vec3 operator+(const vec3& other) const;
+  vec3& operator+=(const vec3& other);
+  vec3 operator-(const vec3& other) const;
+  vec3& operator-=(const vec3& other);
+  vec3 operator*(float other) const;
+  vec3& operator*=(float other);
 };
 
 
 void rotate(vec3& v, float DegY);
 
-vec3 translate(vec3 v, vec3 d);
+vec3 translate(const vec3& v, const vec3& d);
 
 void perspectiveTransform(vec3& v, float angle);
 
-float distance(vec3 v1, vec3 v2);
+float distance(const vec3& v1, const vec3& v2);
 
-float getLength(vec3 v);
+float getLength(const vec3& v);
 
-vec3 normalize(vec3 v);
+vec3 normalize(const vec3& v);

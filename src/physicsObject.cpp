@@ -18,6 +18,7 @@ PhysicsObject::PhysicsObject(vec3 velocity, vec3 position,float mass)
   this->velocity=velocity;
   this->position=position;
   this->mass=mass;
+  renderedObject.GenerateMesh(.07f, 16, 16);
 }
 
 void PhysicsObject::PhysicsUpdate(std::vector<PhysicsObject> physicsObjetcs)
@@ -31,5 +32,6 @@ void PhysicsObject::PhysicsUpdate(std::vector<PhysicsObject> physicsObjetcs)
     float gravitationPull = 
       std::pow(getLength(physicsObjetcs[i].position),2)
     *physicsObjetcs[i].mass*G;
+      velocity += normalize(this->position-physicsObjetcs[i].position)*gravitationPull;
   }
 }
