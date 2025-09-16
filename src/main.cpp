@@ -60,13 +60,6 @@ int main() {
   glfwGetFramebufferSize(window, &fbw, &fbh);
   glViewport(0, 0, fbw, fbh);
 
-
-  RenderedObject sun;
-  RenderedObject earth;
-  sun.GenerateMesh(.07f, 16, 16);
-  earth.GenerateMesh(.05f, 8, 8);
-
-
   GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
   glShaderSource(vertexShader, 1, &vertexSrc, nullptr);
   glCompileShader(vertexShader);
@@ -87,28 +80,51 @@ int main() {
   glEnable(GL_DEPTH_TEST);
 
   glUseProgram(program);
-  earth.transformPerspectiveMesh(program);
-  sun.transformPerspectiveMesh(program);
-  earth.translateMesh((vec3){0.5f,0.0f,0.5f});
   float time {-4000};
   unsigned int cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
   float cameraTranslate[3] = { 0,0,0 };
   std::vector<PhysicsObject> physicsObjects;
 
+  //earth
+  physicsObjects.push_back(PhysicsObject{
+    vec3{-.11f,.11f,0}, vec3{1.0f,0,0},8});
+  //sun
+  physicsObjects.push_back(PhysicsObject{
+    vec3{0,.00,.00f}, vec3{0.0f,0,0},400});
+  //mars??
+  physicsObjects.push_back(PhysicsObject{
+    vec3{.10f,-.10f}, vec3{0.0f,0,1.1f},2});
+
+  //asteroids
+  //for(int i =0;i<50;i++)
+  //{
+  //  physicsObjects.push_back(PhysicsObject{
+  //    vec3{.04f,-.04f}, vec3{i/10.f,0,1.1f},1});
+  //}
+
   constexpr float cameraSpeed{.03f};
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
-
-    sun.rotateMesh(1);
-    earth.rotateMesh(2);
 
     if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
       glfwSetWindowShouldClose(window, 1);
 
     glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    sun.renderMesh();
-    earth.renderMesh();
+
+    for(PhysicsObject& object : physicsObjects){
+      object.PhysicsUpdate(physicsObjects,program);
+    }
+    std::cout<<"earths position: "
+      <<physicsObjects[0].position.x<<" "
+      <<physicsObjects[0].position.y<<" "
+      <<physicsObjects[0].position.z<<" "
+      <<"\n";
+    std::cout<<"suns position: "
+      <<physicsObjects[1].position.x<<" "
+      <<physicsObjects[1].position.y<<" "
+      <<physicsObjects[1].position.z<<" "
+      <<"\n";
 
     if(glfwGetKey(window,GLFW_KEY_SPACE) == GLFW_PRESS){ cameraTranslate[1]-=cameraSpeed; }
     if(glfwGetKey(window,GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS){ cameraTranslate[1]+=cameraSpeed; }
@@ -116,6 +132,7 @@ int main() {
     if(glfwGetKey(window,GLFW_KEY_S) == GLFW_PRESS){ cameraTranslate[2]-=cameraSpeed; }
     if(glfwGetKey(window,GLFW_KEY_A) == GLFW_PRESS){ cameraTranslate[0]+=cameraSpeed; }
     if(glfwGetKey(window,GLFW_KEY_D) == GLFW_PRESS){ cameraTranslate[0]-=cameraSpeed; }
+
 
     glUniform3fv(cameraTranslateUniform, 1, cameraTranslate);
 

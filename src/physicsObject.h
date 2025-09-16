@@ -11,6 +11,6 @@ vec3 velocity;
 vec3 position;
 float mass;
 void SetVelocity(vec3 velocity);
-void PhysicsUpdate(std::vector<PhysicsObject> physicsObjetcs);
+void PhysicsUpdate(const std::vector<PhysicsObject>& physicsObjetcs,unsigned int program);
 PhysicsObject(vec3 velocity, vec3 position,float mass);
 };

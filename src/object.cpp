@@ -129,7 +129,7 @@ void RenderedObject::transformPerspectiveMesh(GLuint program)
     1,0,0,0,
     0,1,0,0,
     0,0,1,0,
-    0.0f,0.0f,-3.0f,1   
+    coordinates.x, coordinates.y, coordinates.z - 3.0f, 1
 
   };
 

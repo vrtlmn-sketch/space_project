@@ -4,10 +4,6 @@
 #include "mathStructs.h"
 #include "physicsObject.h"
 
-RenderedObject renderedObject;
-vec3 velocity;
-vec3 position;
-float mass;
 void PhysicsObject::SetVelocity(vec3 velocity)
 {
   this->velocity=velocity;
@@ -18,20 +14,25 @@ PhysicsObject::PhysicsObject(vec3 velocity, vec3 position,float mass)
   this->velocity=velocity;
   this->position=position;
   this->mass=mass;
-  renderedObject.GenerateMesh(.07f, 16, 16);
+  renderedObject.GenerateMesh(.05f, 16, 16);
 }
 
-void PhysicsObject::PhysicsUpdate(std::vector<PhysicsObject> physicsObjetcs)
+void PhysicsObject::PhysicsUpdate(const std::vector<PhysicsObject>& physicsObjetcs, unsigned int program)
 {
-  float G = 1;
-  position.x+=velocity.x;
-  position.y+=velocity.y;
-  position.z+=velocity.z;
-  for(int i = 0;i<=physicsObjetcs.size();i++ )
-  {
-    float gravitationPull = 
-      std::pow(getLength(physicsObjetcs[i].position),2)
-    *physicsObjetcs[i].mass*G;
-      velocity += normalize(this->position-physicsObjetcs[i].position)*gravitationPull;
+  float G = 0.0001f;
+  float dt{1/10.f};
+  for (size_t i = 0; i < physicsObjetcs.size(); ++i) {
+    const auto& other = physicsObjetcs[i];
+    if (&other == this) continue;           
+    vec3 r = other.position - this->position;
+    float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
+    if (d2 == 0) continue;                 
+    vec3 dir = normalize(r);
+    float accel = G * other.mass / d2;    
+    velocity += dir * accel * dt;        
   }
+  position += velocity * dt;
+  renderedObject.coordinates=position;
+  renderedObject.transformPerspectiveMesh(program);
+  renderedObject.renderMesh();
 }
