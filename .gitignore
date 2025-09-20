@@ -1,0 +1,16 @@
+*.o
+
+*.out
+*.exe
+a.out
+
+/build/
+bin/
+obj/
+
+*.log
+*.prof
+*.stackdump
+
+.DS_Store
+Thumbs.db
