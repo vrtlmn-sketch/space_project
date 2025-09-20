@@ -1,6 +1,8 @@
 // object.cpp
-#include "object.h"
+#include "physicsObject.h"
+#include "renderer.h"
 #include <cmath>
+
 
 RenderedObject::RenderedObject() = default;
 
@@ -31,7 +33,8 @@ void RenderedObject::rotateMesh(int degrees)
     UVSphereMeshBuffer[i+2]=before.z;
   }
 }
-void RenderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int verticalSubdivisions)
+void RenderedObject::GenerateMesh(float radius,
+                                  int horizontalSubdivisions, int verticalSubdivisions)
 {
   this->coordinates=(vec3){0.0f,0.0f,0.0f};
   this->horizontalSubdivisions = horizontalSubdivisions;
@@ -84,6 +87,7 @@ void RenderedObject::GenerateMesh(float radius, int horizontalSubdivisions, int 
     UVSphereMeshBuffer[i*3 + 1] = UVSphereMesh[i].y;
     UVSphereMeshBuffer[i*3 + 2] = UVSphereMesh[i].z;
   }
+
 }
 
 void RenderedObject::renderMesh()
@@ -98,6 +102,7 @@ void RenderedObject::renderMesh()
   glBufferData(GL_ARRAY_BUFFER,UVSphereMeshBuffer.size()*sizeof(float),&UVSphereMeshBuffer[0],GL_STATIC_DRAW);
 
   glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
+  hasBeenRendered=true;
 }
 void RenderedObject::setupRender()
 {

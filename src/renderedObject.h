@@ -30,7 +30,8 @@ public:
   void transformPerspectiveMesh(GLuint program);
   void renderMesh();
 
-  void GenerateMesh(float radius, int horizontalSubdivisions, int verticalSubdivisions);
+  void GenerateMesh(float radius,
+                    int horizontalSubdivisions, int verticalSubdivisions);
 
 void perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]);
 };
