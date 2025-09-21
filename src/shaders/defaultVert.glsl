@@ -9,5 +9,5 @@ uniform vec3 uCamera;
 void main() {
   gl_Position =  uProj *uWorld* vec4(aPos+uCamera, 1.0);
   uCameraPos=uCamera;
-  vPos = aPos;
+  vPos = vec3((uProj*uWorld*vec4(vPos,1)).xyz);
 }

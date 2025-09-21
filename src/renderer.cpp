@@ -33,7 +33,6 @@ bool Renderer::InitWindow(
   return true;
 }
 
-
 bool Renderer::BeginFrame() {
   glfwPollEvents();
   int fbw=0, fbh=0;
@@ -43,7 +42,7 @@ bool Renderer::BeginFrame() {
   }
   glViewport(0, 0, fbw, fbh);
 
-  glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
+  glClearColor(0.00f, 0.00f, 0.00f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   fbWidth = fbw; fbHeight = fbh;
@@ -54,7 +53,13 @@ void Renderer::EndFrame() { glfwSwapBuffers(window); }
 
 void Renderer::Draw(RenderedObject& ro) {
 
-  ro.renderMesh(cameraTranslate);                     
+  if(!rayTracerView)
+  {
+    ro.renderMesh(cameraTranslate);                     
+  }
+  else{
+    ro.renderMeshRaytraced(cameraTranslate);                     
+  }
 }
 
 bool Renderer::UpdateInputs(){
@@ -68,6 +73,29 @@ bool Renderer::UpdateInputs(){
   if(glfwGetKey(window,GLFW_KEY_S) == GLFW_PRESS){ cameraTranslate[2]-=cameraSpeed; }
   if(glfwGetKey(window,GLFW_KEY_A) == GLFW_PRESS){ cameraTranslate[0]+=cameraSpeed; }
   if(glfwGetKey(window,GLFW_KEY_D) == GLFW_PRESS){ cameraTranslate[0]-=cameraSpeed; }
+  //toggling raytracer
+  if(glfwGetKey(window,GLFW_KEY_R) == GLFW_PRESS)
+  {
+    rayTracerViewButtonPressed = true;
+  }
+  else{
+    if(rayTracerViewButtonPressed)
+    {
+      //toggles raytracer
+      rayTracerView=!rayTracerView;
+    }
+    rayTracerViewButtonPressed = false;
+  }
+  if(glfwGetKey(window,GLFW_KEY_Q) == GLFW_PRESS)
+  {
+    quitButtonPressed = true;
+  }
+  else{
+    if(quitButtonPressed)
+    {
+      return false;
+    }
+  }
   return true;
 }
 

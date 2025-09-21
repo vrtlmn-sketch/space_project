@@ -9,34 +9,47 @@
 #include "renderedObject.h"
 #include "physicsObject.h"
 #include "renderer.h"
+#include "planeObject.h"
 
 
 int main() {
 
   Renderer renderer;
   renderer.InitWindow("BlackholeSim", 600, 800);
-
   std::vector<PhysicsObject> physicsObjects;
 
-  //earth
-  physicsObjects.push_back(PhysicsObject{
-    vec3{.00f,-.004f,0.18}, vec3{0.9f,0,0},5});
   //sun
   physicsObjects.push_back(PhysicsObject{
     vec3{0,.01,.00f}, vec3{0.0f,0,0},300});
-  //random
+  //earth
   physicsObjects.push_back(PhysicsObject{
-    vec3{-.18,.002,-.10}, vec3{-0.7,.0,0.7},10});
+    vec3{-.00f,-.004f,-0.18}, vec3{0.9f,0,0},5});
   //mars
   physicsObjects.push_back(PhysicsObject{
-    vec3{.10f,.004f, 0.f}, vec3{0.7f,0,.9f},2});
+    vec3{-.18,.002,-.10}, vec3{-0.7,.0,0.7},10});
+  //random
+  physicsObjects.push_back(PhysicsObject{
+    vec3{-.13f,.004f, -0.00f}, vec3{0.7f,0,.7f},2});
+  physicsObjects.push_back(PhysicsObject{
+    vec3{-.18,.002,.20}, vec3{-1.1,.0,-1.1},20});
+
+  PlaneObject background{
+    vec3{0,0,-10},20,20
+  };
+  background.SetShaders("src/shaders/defaultVert.glsl",
+                        "src/shaders/spaceBackgroundFrag.glsl");
 
   while (true) {
     if(!renderer.BeginFrame())continue;
     for(PhysicsObject& object : physicsObjects){
-      object.PhysicsUpdate(physicsObjects,renderer);
+      object.Update(physicsObjects,renderer);
     }
-    renderer.UpdateInputs();
+    background.Update(renderer);
+    //Update Inputs returns false if "q" is pressed
+    if(!renderer.UpdateInputs()){
+      std::cout<<"exiting due keyboard request\n";
+      return 0;
+    }
     renderer.EndFrame();
   }
 

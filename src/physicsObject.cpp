@@ -3,17 +3,17 @@
 #include "mathStructs.h"
 #include "physicsObject.h"
 
-void PhysicsObject::SetVelocity(vec3 velocity)
+void PhysicsObject::SetVelocity(const vec3& velocity)
 {
   this->velocity=velocity;
 }
 
-PhysicsObject::PhysicsObject(vec3 velocity, vec3 position,float mass)
+PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position,float mass)
 {
   this->velocity=velocity;
   this->position=position;
   this->mass=mass;
-  renderedObject.GenerateMesh(.014f*std::pow(mass, 0.3f), 32, 32);
+  renderedObject.GenerateMeshSphere(.014f*std::pow(mass, 0.3f), 32, 32);
   if(mass<11)
   {
     renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/defaultFrag.glsl");
@@ -24,7 +24,7 @@ PhysicsObject::PhysicsObject(vec3 velocity, vec3 position,float mass)
 
 }
 
-void PhysicsObject::PhysicsUpdate(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer)
+void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer)
 {
   float G = 0.0001f;
   float dt{1/10.f};

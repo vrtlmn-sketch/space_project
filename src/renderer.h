@@ -6,7 +6,6 @@
 #include <iostream>
 #include <vector>
 #include <fstream>
-#include <map>
 
 #include "renderedObject.h"
 #include "mathStructs.h"
@@ -18,8 +17,12 @@ private:
   float cameraSpeed{.03f};
   GLFWwindow* window;
   bool initialised{false};
+  bool rayTracerView{false};
+  bool rayTracerViewButtonPressed{false};
+  bool quitButtonPressed{false};
   int fbWidth, fbHeight; 
   float cameraTranslate[3] = { 0,0,0 };
+
 
 public:
   bool InitWindow(const char* wName, int wheight, int wwidth);
