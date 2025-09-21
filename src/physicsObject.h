@@ -14,5 +14,5 @@ public:
   float mass;
   void SetVelocity(vec3 velocity);
   void PhysicsUpdate(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);
-  PhysicsObject(vec3 velocity, vec3 position,float mass, Renderer& renderer);
+  PhysicsObject(vec3 velocity, vec3 position,float mass);
 };

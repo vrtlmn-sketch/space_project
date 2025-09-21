@@ -1,26 +1,8 @@
 #include "renderer.h"
 
-bool Renderer::InitWindow(const char* wName,
-                          int wheight, int wwidth)
+bool Renderer::InitWindow(
+  const char* wName, int wheight, int wwidth)
 {
-  std::string defaultFragPath = "src/shaders/defaultFrag.glsl";
-  std::string defaultVertPath = "src/shaders/defaultVert.glsl";
-
-  std::ifstream defaultFragFile(defaultFragPath);
-  std::ifstream defaultVertFile(defaultVertPath);
-
-  std::string vertShader{};
-  std::string fragShader{};
-  std::string temp;
-  while(std::getline(defaultFragFile, temp))
-  {
-    fragShader.append(temp +"\n");
-  }
-  while(std::getline(defaultVertFile, temp))
-  {
-    vertShader.append(temp+"\n");
-  }
-
   if (!glfwInit()) {
     return false;
   }
@@ -45,27 +27,7 @@ bool Renderer::InitWindow(const char* wName,
   glfwGetFramebufferSize(window, &fbw, &fbh);
   glViewport(0, 0, fbw, fbh);
 
-  vertexShader = glCreateShader(GL_VERTEX_SHADER);
-  const char* vertShaderCharBuffer = vertShader.c_str();
-  glShaderSource(vertexShader, 1, &vertShaderCharBuffer, nullptr);
-  glCompileShader(vertexShader);
-
-  const char* fragShaderCharBuffer = fragShader.c_str();
-
-  fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-  glShaderSource(fragmentShader, 1, &fragShaderCharBuffer, nullptr);
-  glCompileShader(fragmentShader);
-
-  program = glCreateProgram();
-  glAttachShader(program, vertexShader);
-  glAttachShader(program, fragmentShader);
-  glLinkProgram(program);
-  glDeleteShader(vertexShader);
-  glDeleteShader(fragmentShader);
   glEnable(GL_DEPTH_TEST);
-  glUseProgram(program);
-
-  cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
 
   initialised = true;
   return true;
@@ -81,7 +43,6 @@ bool Renderer::BeginFrame() {
   }
   glViewport(0, 0, fbw, fbh);
 
-  glUseProgram(program);
   glClearColor(0.05f, 0.07f, 0.10f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -92,9 +53,8 @@ bool Renderer::BeginFrame() {
 void Renderer::EndFrame() { glfwSwapBuffers(window); }
 
 void Renderer::Draw(RenderedObject& ro) {
-  glUniform3fv(cameraTranslateUniform, 1, cameraTranslate);
-  ro.transformPerspectiveMesh(program); 
-  ro.renderMesh();                     
+
+  ro.renderMesh(cameraTranslate);                     
 }
 
 bool Renderer::UpdateInputs(){

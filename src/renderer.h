@@ -15,10 +15,6 @@
 class Renderer{
 
 private:
-  GLuint vertexShader;
-  GLuint fragmentShader;
-  GLuint program;
-  unsigned int cameraTranslateUniform;
   float cameraSpeed{.03f};
   GLFWwindow* window;
   bool initialised{false};

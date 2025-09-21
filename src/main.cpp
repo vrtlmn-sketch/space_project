@@ -18,15 +18,20 @@ int main() {
 
   std::vector<PhysicsObject> physicsObjects;
 
+  //earth
   physicsObjects.push_back(PhysicsObject{
-    vec3{-.11f,.11f,0}, vec3{1.0f,0,0},5, renderer});
+    vec3{.00f,-.004f,0.18}, vec3{0.9f,0,0},5});
+  //sun
   physicsObjects.push_back(PhysicsObject{
-    vec3{0,.00,.00f}, vec3{0.0f,0,0},400, renderer});
+    vec3{0,.01,.00f}, vec3{0.0f,0,0},300});
+  //random
   physicsObjects.push_back(PhysicsObject{
-    vec3{.10f,-.10f, 0.f}, vec3{0.0f,0,1.1f},2, renderer});
+    vec3{-.18,.002,-.10}, vec3{-0.7,.0,0.7},10});
+  //mars
+  physicsObjects.push_back(PhysicsObject{
+    vec3{.10f,.004f, 0.f}, vec3{0.7f,0,.9f},2});
 
   while (true) {
-
     if(!renderer.BeginFrame())continue;
     for(PhysicsObject& object : physicsObjects){
       object.PhysicsUpdate(physicsObjects,renderer);

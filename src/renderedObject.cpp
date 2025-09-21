@@ -1,11 +1,9 @@
 // object.cpp
 #include "physicsObject.h"
-#include "renderer.h"
 #include <cmath>
 
 
 RenderedObject::RenderedObject() = default;
-
 
 void RenderedObject::translateMesh(vec3 v)
 {
@@ -90,7 +88,7 @@ void RenderedObject::GenerateMesh(float radius,
 
 }
 
-void RenderedObject::renderMesh()
+void RenderedObject::renderMesh(float cameraTranslate[3])
 {
   if(!hasBeenRendered)
   {
@@ -101,12 +99,15 @@ void RenderedObject::renderMesh()
 
   glBufferData(GL_ARRAY_BUFFER,UVSphereMeshBuffer.size()*sizeof(float),&UVSphereMeshBuffer[0],GL_STATIC_DRAW);
 
+
+  transformPerspectiveMesh(program, cameraTranslate);
   glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
+  glUseProgram(program);
+
   hasBeenRendered=true;
 }
 void RenderedObject::setupRender()
 {
-
   glGenVertexArrays(1,&vao);
   glBindVertexArray(vao);
 
@@ -116,9 +117,45 @@ void RenderedObject::setupRender()
   glVertexAttribPointer(0,3, GL_FLOAT, GL_FALSE,3*sizeof(float),(void*)0);
   glEnableVertexAttribArray(0);
 
+  cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
 }
 
-void RenderedObject::transformPerspectiveMesh(GLuint program)
+  void RenderedObject::setupShaders(std::string vertPath, std::string fragPath){
+
+  std::ifstream defaultFragFile(fragPath);
+  std::ifstream defaultVertFile(vertPath);
+
+  std::string temp;
+  //reading shaders from file
+  while(std::getline(defaultFragFile, temp))
+  {
+    fragShader.append(temp +"\n");
+  }
+  while(std::getline(defaultVertFile, temp))
+  {
+    vertShader.append(temp+"\n");
+  }
+
+  program = glCreateProgram();
+  vertexShader = glCreateShader(GL_VERTEX_SHADER);
+  const char* vertShaderCharBuffer = vertShader.c_str();
+  glShaderSource(vertexShader, 1, &vertShaderCharBuffer, nullptr);
+  glCompileShader(vertexShader);
+
+  const char* fragShaderCharBuffer = fragShader.c_str();
+
+  fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(fragmentShader, 1, &fragShaderCharBuffer, nullptr);
+  glCompileShader(fragmentShader);
+
+  glAttachShader(program, vertexShader);
+  glAttachShader(program, fragmentShader);
+  glLinkProgram(program);
+  glDeleteShader(vertexShader);
+  glDeleteShader(fragmentShader);
+}
+
+void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTranslate[3])
 {
   //we bind the uniforms
   GLuint projectionMatrixBuffer = glGetUniformLocation(program, "uProj");
@@ -140,6 +177,7 @@ void RenderedObject::transformPerspectiveMesh(GLuint program)
 
   //we fill the world transform uniform
   glUniformMatrix4fv(worldMatrixBuffer, 1, GL_FALSE, worldEarth);
+  glUniform3fv(cameraTranslateUniform, 1, cameraTranslate);
 }
 
 void RenderedObject::perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]) {

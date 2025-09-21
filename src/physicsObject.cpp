@@ -1,4 +1,3 @@
-#pragma once
 #include <vector>
 #include "renderedObject.h"
 #include "mathStructs.h"
@@ -9,13 +8,20 @@ void PhysicsObject::SetVelocity(vec3 velocity)
   this->velocity=velocity;
 }
 
-PhysicsObject::PhysicsObject(vec3 velocity, vec3 position,float mass, Renderer& renderer)
+PhysicsObject::PhysicsObject(vec3 velocity, vec3 position,float mass)
 {
   this->velocity=velocity;
   this->position=position;
   this->mass=mass;
-  renderedObject.GenerateMesh(.05f, 16, 16);
-  
+  renderedObject.GenerateMesh(.014f*std::pow(mass, 0.3f), 32, 32);
+  if(mass<11)
+  {
+    renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/defaultFrag.glsl");
+  }
+  else{
+    renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/brightStartFragShader.glsl");
+  }
+
 }
 
 void PhysicsObject::PhysicsUpdate(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer)
