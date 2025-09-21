@@ -102,6 +102,7 @@ void RenderedObject::renderMeshRaytraced(float cameraTranslate[3])
 {
   std::cerr<<"raytracer not implemented yet\n";
 }
+
 void RenderedObject::renderMesh(float cameraTranslate[3])
 {
   if(!hasBeenRendered)
@@ -132,7 +133,19 @@ void RenderedObject::setupRender()
   glVertexAttribPointer(0,3, GL_FLOAT, GL_FALSE,3*sizeof(float),(void*)0);
   glEnableVertexAttribArray(0);
 
+  glGenBuffers(1, &ssboParticles);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0, ssboParticles);
+
   cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
+  pointCountUniform = glGetUniformLocation(program,"uPointCount");
+}
+
+void RenderedObject::UploadSSBOParticles(std::vector<vec4> points){
+  glUseProgram(program);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, points.size()*sizeof(vec4), &points[0], GL_STATIC_DRAW);
+  glUniform1i(pointCountUniform,points.size());
 }
 
 void RenderedObject::setupShaders(const std::string& vertPath, const std::string& fragPath){

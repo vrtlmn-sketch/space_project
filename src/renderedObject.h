@@ -2,6 +2,11 @@
 #include <vector>
 #include "mathStructs.h"
 
+struct RayTracerObject{
+  vec3 coordinates;
+  float mass;
+  float radius;
+};
 class RenderedObject {
 private:
   int horizontalSubdivisions;
@@ -18,10 +23,12 @@ private:
   std::string fragShader;
   GLuint program;//shader program
   unsigned int cameraTranslateUniform;
+  unsigned int pointCountUniform;
 
   //rendering stuff
   unsigned int vao;
   unsigned int vbo;
+  unsigned int ssboParticles;
 
   std::vector<float> UVObjectMeshBuffer;
   std::vector<vec3>  UVObjectMesh;
@@ -44,5 +51,7 @@ public:
   void GenerateMeshPlane(float width, float height);
 
 void perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]);
-};
 
+void UploadSSBOParticles(std::vector<vec4> points);
+
+};

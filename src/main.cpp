@@ -19,22 +19,22 @@ int main() {
   std::vector<PhysicsObject> physicsObjects;
 
   //sun
-  physicsObjects.push_back(PhysicsObject{
+  physicsObjects.emplace_back(PhysicsObject{
     vec3{0,.01,.00f}, vec3{0.0f,0,0},300});
   //earth
-  physicsObjects.push_back(PhysicsObject{
+  physicsObjects.emplace_back(PhysicsObject{
     vec3{-.00f,-.004f,-0.18}, vec3{0.9f,0,0},5});
   //mars
-  physicsObjects.push_back(PhysicsObject{
+  physicsObjects.emplace_back(PhysicsObject{
     vec3{-.18,.002,-.10}, vec3{-0.7,.0,0.7},10});
   //random
-  physicsObjects.push_back(PhysicsObject{
+  physicsObjects.emplace_back(PhysicsObject{
     vec3{-.13f,.004f, -0.00f}, vec3{0.7f,0,.7f},2});
-  physicsObjects.push_back(PhysicsObject{
+  physicsObjects.emplace_back(PhysicsObject{
     vec3{-.18,.002,.20}, vec3{-1.1,.0,-1.1},20});
 
   PlaneObject background{
-    vec3{0,0,-10},20,20
+    vec3{0,0,-20},20,20
   };
   background.SetShaders("src/shaders/defaultVert.glsl",
                         "src/shaders/spaceBackgroundFrag.glsl");

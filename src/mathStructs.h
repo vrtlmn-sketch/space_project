@@ -17,6 +17,13 @@ struct vec3{
   vec3& operator*=(float other);
 };
 
+struct vec4{
+  float x;
+  float y;
+  float z;
+  float w;
+};
+
 
 void rotate(vec3& v, float DegY);
 
