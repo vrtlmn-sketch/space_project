@@ -11,6 +11,9 @@ void main() {
   vec3 norm = normalize(uPointCoordinates - vPos);
   light = dot(norm,lightDirection);
 
-  vec3 color = {.8,.8,.8};
-  FragColor = vec4(color, light)*light; 
+  //light = light - distance(vPos, uCameraPos);
+  vec3 color = {.8,.1,.1};
+  FragColor = vec4(color, 1)*light; 
+  //color = 
+  //FragColor = vec4(vPos*8, 1);
 }

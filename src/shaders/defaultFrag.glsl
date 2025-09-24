@@ -2,11 +2,15 @@
 out vec4 FragColor;
 in vec3 vPos;
 in vec3 uCameraPos;
+uniform vec3 uPointCoordinates;
 
 void main() {
   float light = distance(vPos, vec3(1.,1.,1.));
-  //light = light - distance(vPos, uCameraPos);
+  vec3 lightDirection =normalize(vPos - vec3(0,0,-3));
+
+  vec3 norm = normalize(uPointCoordinates - vPos);
+  light = dot(norm,lightDirection);
+
   vec3 color = {.8,.1,.1};
   FragColor = vec4(color, 1)*light; 
-  //FragColor = vec4(vPos*8, 1);
 }

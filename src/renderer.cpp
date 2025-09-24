@@ -46,19 +46,42 @@ bool Renderer::BeginFrame() {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   fbWidth = fbw; fbHeight = fbh;
+  rayTracedObjects.clear();
   return true;
 }
 
-void Renderer::EndFrame() { glfwSwapBuffers(window); }
+void Renderer::EndFrame() {
+  glfwSwapBuffers(window); 
+  /*
+  for(auto object : rayTracedObjects){
+    std::cout<<object.coordinates.x<<" "
+      <<object.coordinates.y<<" "
+      <<object.coordinates.z<<"\n";
+  } 
+  */
+}
 
 void Renderer::Draw(RenderedObject& ro) {
 
   if(!rayTracerView)
   {
-    ro.renderMesh(cameraTranslate);                     
+    if(ro.meshType == MeshType::sphere)
+    {
+      ro.renderMesh(cameraTranslate);                     
+      std::cerr<<"rendering normal sphere \n";
+    }
   }
-  else{
-    ro.renderMeshRaytraced(cameraTranslate);                     
+  if(rayTracerView)
+  {
+    if(ro.meshType == MeshType::plane){
+      ro.renderPlane(cameraTranslate, rayTracedObjects);                     
+      std::cerr<<"rendering plane\n";
+    }
+    else if (ro.meshType == MeshType::sphere){
+      //this uploads the mesh to the raytracers buffer object
+      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);                     
+      std::cerr<<"rendering raytraced sphere \n";
+    }
   }
 }
 

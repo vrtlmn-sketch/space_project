@@ -9,6 +9,9 @@
 
 class rayTracerWindow
 {
-  private float vertices[];
+  /*
+private:
+  float* vertices;
+  */
 
 };

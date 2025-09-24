@@ -2,6 +2,11 @@
 
 void PlaneObject::Update(Renderer& renderer){
   renderedObject.coordinates=position;
+  if(!renderer.rayTracerView)
+  {
+    return;
+  }
+
   renderedObject.UploadSSBOParticles({
     vec4{1, 10,1,0},
     vec4{10, -10,1,0},
@@ -24,12 +29,17 @@ void PlaneObject::Update(Renderer& renderer){
     vec4{100, -40,1,0},
     vec4{-90, -50,1,0},
   }); 
+  /*
+  std::cout<<renderer.rayTracedObjects[0].coordinates.x<< "\n ";
+  std::cout<<renderer.rayTracedObjects[0].coordinates.y<< "\n ";
+  std::cout<<renderer.rayTracedObjects[0].coordinates.z<< "\n ";
+  */
+  renderedObject.UploadSSBOObjects(renderer.rayTracedObjects);
   renderer.Draw(renderedObject);
 }
 
 PlaneObject::PlaneObject(const vec3& position,float height, float width){
   renderedObject.GenerateMeshPlane(height,width);
-  renderedObject.is2D=true;
   std::cout<<"created 2D objetc\n";
   this->position=position;
 }

@@ -31,6 +31,8 @@ void RenderedObject::GenerateMeshPlane(float width, float height)
 {
   this->coordinates=(vec3){0.0f,0.0f,0.0f};
   this->hasBeenRendered=false;
+  meshType=MeshType::plane;
+  bufferSize = 24;
   UVObjectMeshBuffer ={
     -1*width, -1*height, 0,
     1*width, -1*height, 0,
@@ -98,12 +100,14 @@ void RenderedObject::GenerateMeshSphere(float radius,
 
 }
 
-void RenderedObject::renderMeshRaytraced(float cameraTranslate[3])
+void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
-  std::cerr<<"raytracer not implemented yet\n";
+  raytracerObjectList.push_back(RayTracerObject{
+vec4{coordinates.x, coordinates.y, coordinates.z, 0}
+    ,radius, radius});
 }
 
-void RenderedObject::renderMesh(float cameraTranslate[3])
+void RenderedObject::renderMesh(float cameraTranslate[2])
 {
   if(!hasBeenRendered)
   {
@@ -119,9 +123,31 @@ void RenderedObject::renderMesh(float cameraTranslate[3])
   transformPerspectiveMesh(program, cameraTranslate);
   glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
 
-
   hasBeenRendered=true;
 }
+
+//Plane is also a raytracer screen
+void RenderedObject::renderPlane(float cameraTranslate[3],
+                                 const std::vector<RayTracerObject>& rayTracedObjectList)
+{
+  if(!hasBeenRendered)
+  {
+    setupRender();
+  }
+  glBindVertexArray(vao);
+  glBindBuffer(GL_ARRAY_BUFFER,vbo);
+
+  glBufferData(GL_ARRAY_BUFFER,UVObjectMeshBuffer.size()*sizeof(float),&UVObjectMeshBuffer[0],GL_STATIC_DRAW);
+
+  glUseProgram(program);
+
+  transformPerspectiveMesh(program, cameraTranslate);
+  glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
+
+  hasBeenRendered=true;
+  std::cout<<coordinates.z<<"everything has been rendered\n";
+}
+
 void RenderedObject::setupRender()
 {
   glGenVertexArrays(1,&vao);
@@ -137,8 +163,15 @@ void RenderedObject::setupRender()
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0, ssboParticles);
 
+  
+  glGenBuffers(1, &ssboObjects);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboObjects);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1, ssboObjects);
+
   cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
   pointCountUniform = glGetUniformLocation(program,"uPointCount");
+    objectCoordinateUniform = glGetUniformLocation(program,"uPointCoordinates");
+    objectCountUniform = glGetUniformLocation(program,"uObjectCount");
 }
 
 void RenderedObject::UploadSSBOParticles(std::vector<vec4> points){
@@ -146,6 +179,18 @@ void RenderedObject::UploadSSBOParticles(std::vector<vec4> points){
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
   glBufferData(GL_SHADER_STORAGE_BUFFER, points.size()*sizeof(vec4), &points[0], GL_STATIC_DRAW);
   glUniform1i(pointCountUniform,points.size());
+}
+
+void RenderedObject::UploadSSBOObjects(std::vector<RayTracerObject> objects){
+  glUseProgram(program);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboObjects);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, objects.size()*sizeof(RayTracerObject), &objects[0], GL_STATIC_DRAW);
+  glUniform1i(objectCountUniform,objects.size());
+  /*
+  std::cout<<objects[0].coordinates.x<<objects[0].coordinates.y;
+  std::cout<<objects[1].coordinates.x<<objects[1].coordinates.y;
+  std::cout<<objects[2].coordinates.x<<objects[2].coordinates.y;
+  */
 }
 
 void RenderedObject::setupShaders(const std::string& vertPath, const std::string& fragPath){
@@ -175,6 +220,9 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
   glShaderSource(fragmentShader, 1, &fragShaderCharBuffer, nullptr);
   glCompileShader(fragmentShader);
+  GLint success;
+  glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+  if(!success)std::cerr<<"shader failed to compile!\n";
 
   glAttachShader(program, vertexShader);
   glAttachShader(program, fragmentShader);
@@ -205,7 +253,17 @@ void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTransl
 
   //we fill the world transform uniform
   glUniformMatrix4fv(worldMatrixBuffer, 1, GL_FALSE, worldEarth);
+
   glUniform3fv(cameraTranslateUniform, 1, cameraTranslate);
+
+  float tempCoords[3] = {
+    coordinates.x,
+    coordinates.y,
+    coordinates.z - 3.0f
+  };
+
+  glUniform3fv(objectCoordinateUniform, 1, tempCoords);
+
 }
 
 void RenderedObject::perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]) {

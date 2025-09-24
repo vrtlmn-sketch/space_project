@@ -1,6 +1,6 @@
 APP      := blackholesim
 CXX      := g++
-CXXFLAGS := -std=c++20 -O2 -Wall -Wextra -I./vendor/include
+CXXFLAGS := -std=c++20 -Wall -Wextra -I./vendor/include
 SRC_DIR  := src
 SRCS     := $(wildcard $(SRC_DIR)/*.cpp)
 OBJS     := $(SRCS:.cpp=.o)
@@ -12,11 +12,17 @@ VENDOR_LIB_DIR := vendor/lib
 LDLIBS := $(VENDOR_LIB_DIR)/libglfw3.a $(VENDOR_LIB_DIR)/libglad.a \
           -ldl -lpthread -lX11 -lXrandr 
 
-.PHONY: all build run clean
+.PHONY: all build debug run clean
 
 all: build
 
+# Normal (optimized) build
+build: CXXFLAGS += -O2
 build: $(OUT)
+
+# Debug build (symbols + no optimizations)
+debug: CXXFLAGS += -g -O0
+debug: $(OUT)
 
 $(OUT): $(OBJS)
 	@mkdir -p $(BIN_DIR)
