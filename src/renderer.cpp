@@ -67,36 +67,36 @@ void Renderer::Draw(RenderedObject& ro) {
   {
     if(ro.meshType == MeshType::sphere)
     {
-      ro.renderMesh(cameraTranslate);                     
-      std::cerr<<"rendering normal sphere \n";
+      ro.renderMesh(cameraTranslate,rotation);                     
     }
   }
   if(rayTracerView)
   {
     if(ro.meshType == MeshType::plane){
-      ro.renderPlane(cameraTranslate, rayTracedObjects);                     
-      std::cerr<<"rendering plane\n";
+      ro.renderPlane(cameraTranslate, rayTracedObjects, rotation);                     
     }
     else if (ro.meshType == MeshType::sphere){
       //this uploads the mesh to the raytracers buffer object
+      
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);                     
-      std::cerr<<"rendering raytraced sphere \n";
     }
   }
 }
 
 bool Renderer::UpdateInputs(){
 
+  std::cerr<<"rotation is: "<<rotation<<"\n";
   if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
     glfwSetWindowShouldClose(window, 1);
 
-  if(glfwGetKey(window,GLFW_KEY_SPACE) == GLFW_PRESS){ cameraTranslate[1]-=cameraSpeed; }
-  if(glfwGetKey(window,GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS){ cameraTranslate[1]+=cameraSpeed; }
-  if(glfwGetKey(window,GLFW_KEY_W) == GLFW_PRESS){ cameraTranslate[2]+=cameraSpeed; }
-  if(glfwGetKey(window,GLFW_KEY_S) == GLFW_PRESS){ cameraTranslate[2]-=cameraSpeed; }
-  if(glfwGetKey(window,GLFW_KEY_A) == GLFW_PRESS){ cameraTranslate[0]+=cameraSpeed; }
-  if(glfwGetKey(window,GLFW_KEY_D) == GLFW_PRESS){ cameraTranslate[0]-=cameraSpeed; }
-  //toggling raytracer
+  if(glfwGetKey(window,GLFW_KEY_SPACE) == GLFW_PRESS){move(vec3{0,-cameraSpeed,0});}
+  if(glfwGetKey(window,GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS){move(vec3{0,cameraSpeed,0});}
+  if(glfwGetKey(window,GLFW_KEY_W) == GLFW_PRESS){move(vec3{0, 0,cameraSpeed});}
+  if(glfwGetKey(window,GLFW_KEY_S) == GLFW_PRESS){move(vec3{0, 0,-cameraSpeed});}
+  if(glfwGetKey(window,GLFW_KEY_A) == GLFW_PRESS){move(vec3{cameraSpeed,0,0});}
+  if(glfwGetKey(window,GLFW_KEY_D) == GLFW_PRESS){move(vec3{-cameraSpeed,0,0});}
+  if(glfwGetKey(window,GLFW_KEY_Q) == GLFW_PRESS){rotation-=cameraRotationSpeed; }
+  if(glfwGetKey(window,GLFW_KEY_E) == GLFW_PRESS){rotation+=cameraRotationSpeed; }
   if(glfwGetKey(window,GLFW_KEY_R) == GLFW_PRESS)
   {
     rayTracerViewButtonPressed = true;
@@ -109,7 +109,7 @@ bool Renderer::UpdateInputs(){
     }
     rayTracerViewButtonPressed = false;
   }
-  if(glfwGetKey(window,GLFW_KEY_Q) == GLFW_PRESS)
+  if(glfwGetKey(window,GLFW_KEY_C) == GLFW_PRESS)
   {
     quitButtonPressed = true;
   }
@@ -121,6 +121,24 @@ bool Renderer::UpdateInputs(){
   }
   return true;
 }
+void Renderer::move(vec3&& moveVector)
+{
+      float x = moveVector.x;
+      float y = moveVector.y;
+      float z = moveVector.z;
+
+      //moving 
+      cameraTranslate[0] +=
+        x *cos(rotation)
+        - z*sin(rotation);
+
+      cameraTranslate[2] +=
+        x *sin(rotation)
+        + z*cos(rotation);
+
+    cameraTranslate[1]+=y;
+}
+
 
 Renderer::~Renderer()
 {

@@ -15,18 +15,7 @@ void RenderedObject::translateMesh(vec3 v)
     UVObjectMeshBuffer[i+2]=before.z;
   }
 }
-void RenderedObject::rotateMesh(int degrees)
-{
-  for(int i=0;i<bufferSize*3;i+=3)
-  {
-    vec3 before = (vec3){UVObjectMeshBuffer[i],UVObjectMeshBuffer[i+1],UVObjectMeshBuffer[i+2]};
-    rotate(before, degrees);
 
-    UVObjectMeshBuffer[i+0]=before.x;
-    UVObjectMeshBuffer[i+1]=before.y;
-    UVObjectMeshBuffer[i+2]=before.z;
-  }
-}
 void RenderedObject::GenerateMeshPlane(float width, float height)
 {
   this->coordinates=(vec3){0.0f,0.0f,0.0f};
@@ -107,7 +96,7 @@ vec4{coordinates.x, coordinates.y, coordinates.z, 0}
     ,radius, radius});
 }
 
-void RenderedObject::renderMesh(float cameraTranslate[2])
+void RenderedObject::renderMesh(float cameraTranslate[3],float rotation)
 {
   if(!hasBeenRendered)
   {
@@ -120,7 +109,7 @@ void RenderedObject::renderMesh(float cameraTranslate[2])
 
   glUseProgram(program);
 
-  transformPerspectiveMesh(program, cameraTranslate);
+  transformPerspectiveMesh(program, cameraTranslate, rotation);
   glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
 
   hasBeenRendered=true;
@@ -128,7 +117,7 @@ void RenderedObject::renderMesh(float cameraTranslate[2])
 
 //Plane is also a raytracer screen
 void RenderedObject::renderPlane(float cameraTranslate[3],
-                                 const std::vector<RayTracerObject>& rayTracedObjectList)
+                                 const std::vector<RayTracerObject>& rayTracedObjectList,float rotation)
 {
   if(!hasBeenRendered)
   {
@@ -141,11 +130,10 @@ void RenderedObject::renderPlane(float cameraTranslate[3],
 
   glUseProgram(program);
 
-  transformPerspectiveMesh(program, cameraTranslate);
+  transformPerspectiveMesh(program, cameraTranslate, rotation);
   glDrawArrays(GL_TRIANGLES, 0 ,bufferSize);
 
   hasBeenRendered=true;
-  std::cout<<coordinates.z<<"everything has been rendered\n";
 }
 
 void RenderedObject::setupRender()
@@ -169,6 +157,8 @@ void RenderedObject::setupRender()
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1, ssboObjects);
 
   cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
+    rotationUniform = glGetUniformLocation(program,"uRotation");
+
   pointCountUniform = glGetUniformLocation(program,"uPointCount");
     objectCoordinateUniform = glGetUniformLocation(program,"uPointCoordinates");
     objectCountUniform = glGetUniformLocation(program,"uObjectCount");
@@ -231,7 +221,7 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   glDeleteShader(fragmentShader);
 }
 
-void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTranslate[3])
+void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTranslate[3], float rotation)
 {
   //we bind the uniforms
   GLuint projectionMatrixBuffer = glGetUniformLocation(program, "uProj");
@@ -263,6 +253,11 @@ void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTransl
   };
 
   glUniform3fv(objectCoordinateUniform, 1, tempCoords);
+  glUniform1f(rotationUniform,rotation);
+  unsigned int rotLoc = glad_glGetUniformLocation(program,"uRotation");
+
+  //std::cerr<<"uploaded rotation is: " <<rotation
+   // <<"at "<<rotLoc<<"\n";
 
 }
 

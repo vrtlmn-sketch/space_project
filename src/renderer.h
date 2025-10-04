@@ -15,12 +15,14 @@ class Renderer{
 
 private:
   float cameraSpeed{.03f};
+  float cameraRotationSpeed{.02f};
   GLFWwindow* window;
   bool initialised{false};
   bool rayTracerViewButtonPressed{false};
   bool quitButtonPressed{false};
   int fbWidth{}, fbHeight{}; 
   float cameraTranslate[3] = { 0,0,0 };
+  void move(vec3&& moveVector);
 
 
 public:
@@ -31,6 +33,7 @@ public:
   bool BeginFrame() ;
   void Draw(RenderedObject& ro);
   void EndFrame() ;
+  float rotation{};
 
   bool UpdateInputs();
   ~Renderer();

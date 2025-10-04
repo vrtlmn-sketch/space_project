@@ -10,6 +10,7 @@
 #include "physicsObject.h"
 #include "renderer.h"
 #include "planeObject.h"
+#include <memory>
 
 
 int main() {
@@ -45,7 +46,7 @@ int main() {
       object.Update(physicsObjects,renderer);
     }
     background.Update(renderer);
-    //Update Inputs returns false if "q" is pressed
+    //Update Inputs returns false if "c" is pressed
     if(!renderer.UpdateInputs()){
       std::cout<<"exiting due keyboard request\n";
       return 0;

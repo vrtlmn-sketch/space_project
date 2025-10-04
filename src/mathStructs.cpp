@@ -90,8 +90,6 @@ void perspectiveTransform(vec3& v, float angle)
 
   v.x=tempx/(tempz*90.f);
   v.y=tempy/(tempz*90.f);
-  std::cout<<"x before: "<<tempx;
-  std::cout<<", x after: "<<v.x<<"\n";
 
 }
 

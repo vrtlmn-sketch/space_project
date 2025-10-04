@@ -27,6 +27,7 @@ private:
   unsigned int pointCountUniform{};
   unsigned int objectCoordinateUniform{};
   unsigned int objectCountUniform{};
+  unsigned int rotationUniform{};
 
   //rendering stuff
   unsigned int vao{};
@@ -45,11 +46,11 @@ public:
 
   void rotateMesh(int degrees);
   void translateMesh(vec3 v);
-  void transformPerspectiveMesh(GLuint program, float cameraTranslate[3] );
-  void renderMesh(float cameraTranslate[3]);
+  void transformPerspectiveMesh(GLuint program, float cameraTranslate[3] , float rotation);
+  void renderMesh(float cameraTranslate[3],float rotation);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
 
-void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList);
+void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,float rotation);
 
   void setupShaders(const std::string& vertPath, const std::string& fragPath);
 
