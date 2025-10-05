@@ -21,7 +21,7 @@ void RenderedObject::GenerateMeshPlane(float width, float height)
   this->coordinates=(vec3){0.0f,0.0f,0.0f};
   this->hasBeenRendered=false;
   meshType=MeshType::plane;
-  bufferSize = 24;
+  bufferSize = 18;
   UVObjectMeshBuffer ={
     -1*width, -1*height, 0,
     1*width, -1*height, 0,
@@ -176,11 +176,6 @@ void RenderedObject::UploadSSBOObjects(std::vector<RayTracerObject> objects){
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboObjects);
   glBufferData(GL_SHADER_STORAGE_BUFFER, objects.size()*sizeof(RayTracerObject), &objects[0], GL_STATIC_DRAW);
   glUniform1i(objectCountUniform,objects.size());
-  /*
-  std::cout<<objects[0].coordinates.x<<objects[0].coordinates.y;
-  std::cout<<objects[1].coordinates.x<<objects[1].coordinates.y;
-  std::cout<<objects[2].coordinates.x<<objects[2].coordinates.y;
-  */
 }
 
 void RenderedObject::setupShaders(const std::string& vertPath, const std::string& fragPath){
@@ -237,7 +232,7 @@ void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTransl
     1,0,0,0,
     0,1,0,0,
     0,0,1,0,
-    coordinates.x, coordinates.y, coordinates.z - 3.0f, 1
+    coordinates.x, coordinates.y, coordinates.z , 1
 
   };
 
@@ -249,7 +244,7 @@ void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTransl
   float tempCoords[3] = {
     coordinates.x,
     coordinates.y,
-    coordinates.z - 3.0f
+    coordinates.z 
   };
 
   glUniform3fv(objectCoordinateUniform, 1, tempCoords);

@@ -44,7 +44,6 @@ public:
 
   void setupRender();
 
-  void rotateMesh(int degrees);
   void translateMesh(vec3 v);
   void transformPerspectiveMesh(GLuint program, float cameraTranslate[3] , float rotation);
   void renderMesh(float cameraTranslate[3],float rotation);

@@ -61,11 +61,6 @@ void rotate(vec3& v, float DegY)
   const float c = std::cos(rad);
   const float s = std::sin(rad);
 
-  // Rotation matrix about Y:
-  // [  c  0  s ]
-  // [  0  1  0 ]
-  // [ -s  0  c ]
-
   const float x = v.x;
   const float y = v.y;
   const float z = v.z;

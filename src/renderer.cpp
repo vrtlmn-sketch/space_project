@@ -42,7 +42,7 @@ bool Renderer::BeginFrame() {
   }
   glViewport(0, 0, fbw, fbh);
 
-  glClearColor(0.00f, 0.00f, 0.00f, 1.0f);
+  glClearColor(0.05f, 0.05f, 0.10f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   fbWidth = fbw; fbHeight = fbh;
@@ -85,7 +85,6 @@ void Renderer::Draw(RenderedObject& ro) {
 
 bool Renderer::UpdateInputs(){
 
-  std::cerr<<"rotation is: "<<rotation<<"\n";
   if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
     glfwSetWindowShouldClose(window, 1);
 

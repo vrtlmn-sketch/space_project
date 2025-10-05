@@ -21,24 +21,23 @@ int main() {
 
   //sun
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{0,.01,.00f}, vec3{0.0f,0,0},300});
+    vec3{0,.01,.00f}, vec3{0.0f,0,-3},300});
   //earth
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{-.00f,-.004f,-0.18}, vec3{0.9f,0,0},5});
+    vec3{-.00f,-.004f,-0.18}, vec3{0.9f,0,-3},5});
   //mars
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{-.18,.002,-.10}, vec3{-0.7,.0,0.7},10});
+    vec3{-.18,.002,-.10}, vec3{-0.7,.0,-3.7},10});
   //random
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{-.13f,.004f, -0.00f}, vec3{0.7f,0,.7f},2});
+    vec3{-.13f,.004f, -0.00f}, vec3{0.7f,0,-3.7f},2});
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{-.18,.002,.20}, vec3{-1.1,.0,-1.1},20});
+    vec3{-.18,.002,.20}, vec3{-1.1,.0,2.1},20});
 
   PlaneObject background{
-    vec3{0,0,-20},20,20
+    vec3{0,0,-3},1,1
   };
-  background.SetShaders("src/shaders/defaultVert.glsl",
-                        "src/shaders/spaceBackgroundFrag.glsl");
+  background.SetShaders("src/shaders/raytracerVertex.glsl", "src/shaders/spaceBackgroundFrag.glsl");
 
   while (true) {
     if(!renderer.BeginFrame())continue;
