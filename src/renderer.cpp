@@ -108,6 +108,18 @@ bool Renderer::UpdateInputs(){
     }
     rayTracerViewButtonPressed = false;
   }
+  if(glfwGetKey(window,GLFW_KEY_P) == GLFW_PRESS)
+  {
+    pauseButtonPressed = true;
+  }
+  else{
+    if(pauseButtonPressed)
+    {
+      //toggles raytracer
+      paused=!paused;
+    }
+    pauseButtonPressed = false;
+  }
   if(glfwGetKey(window,GLFW_KEY_C) == GLFW_PRESS)
   {
     quitButtonPressed = true;

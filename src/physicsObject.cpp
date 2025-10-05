@@ -26,20 +26,23 @@ PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position,float ma
 
 void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer)
 {
-  float G = 0.0001f;
-  float dt{1/10.f};
-  for (size_t i = 0; i < physicsObjetcs.size(); ++i) {
-    const auto& other = physicsObjetcs[i];
-    if (&other == this) continue;           
-    vec3 r = other.position - this->position;
-    float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
-    if (d2 == 0) continue;                 
-    vec3 dir = normalize(r);
-    float accel = G * other.mass / d2;    
-    velocity += dir * accel * dt;        
+  if(!renderer.paused)
+  {
+    float G = 0.0001f;
+    float dt{1/10.f};
+    for (size_t i = 0; i < physicsObjetcs.size(); ++i) {
+      const auto& other = physicsObjetcs[i];
+      if (&other == this) continue;           
+      vec3 r = other.position - this->position;
+      float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
+      if (d2 == 0) continue;                 
+      vec3 dir = normalize(r);
+      float accel = G * other.mass / d2;    
+      velocity += dir * accel * dt;        
+    }
+    position += velocity * dt;
+    renderedObject.coordinates=position;
   }
-  position += velocity * dt;
-  renderedObject.coordinates=position;
-  renderer.Draw(renderedObject);
 
+  renderer.Draw(renderedObject);
 }
