@@ -24,15 +24,15 @@ int main() {
     vec3{0,.01,.00f}, vec3{0.0f,0,-3},300});
   //earth
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{-.00f,-.004f,-0.18}, vec3{0.9f,0,-3},5});
+    vec3{-.00f,-.004f,-0.18}, vec3{0.9f,0,-3.f},5});
   //mars
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{-.18,.002,-.10}, vec3{-0.7,.0,-3.7},10});
+    vec3{-.18,.002,-.10}, vec3{-0.7,.0,-3.7f},10});
   //random
   physicsObjects.emplace_back(PhysicsObject{
     vec3{-.13f,.004f, -0.00f}, vec3{0.7f,0,-3.7f},2});
   physicsObjects.emplace_back(PhysicsObject{
-    vec3{-.18,.002,.20}, vec3{-1.1,.0,2.1},20});
+    vec3{.18,.022,-.10}, vec3{-0.6,-0.6,-3.1f},40});
 
   PlaneObject background{
     vec3{0,0,-3},1,1

@@ -108,6 +108,18 @@ bool Renderer::UpdateInputs(){
     }
     rayTracerViewButtonPressed = false;
   }
+  if(glfwGetKey(window,GLFW_KEY_L) == GLFW_PRESS)
+  {
+    reverseButtonPressed = true;
+  }
+  else{
+    if(reverseButtonPressed)
+    {
+      playingForward = !playingForward;
+    }
+    reverseButtonPressed=false;
+  }
+
   if(glfwGetKey(window,GLFW_KEY_P) == GLFW_PRESS)
   {
     pauseButtonPressed = true;

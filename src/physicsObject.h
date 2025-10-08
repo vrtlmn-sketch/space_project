@@ -6,6 +6,10 @@
 
 class PhysicsObject
 {
+private:
+  const unsigned int defaultRecordedBufferSize{6000};
+  std::vector<vec3> recorderBuffer;
+  unsigned int timeframe{};
 public:
   RenderedObject renderedObject;
   vec3 velocity;

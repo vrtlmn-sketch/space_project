@@ -11,6 +11,8 @@
 #include "mathStructs.h"
 #include "rayTracerObject.h"
 
+
+
 class Renderer{
 
 private:
@@ -21,6 +23,7 @@ private:
   bool rayTracerViewButtonPressed{false};
   bool quitButtonPressed{false};
   bool pauseButtonPressed{false};
+  bool reverseButtonPressed{false};
   int fbWidth{}, fbHeight{}; 
   float cameraTranslate[3] = { 0,0,0 };
   void move(vec3&& moveVector);
@@ -31,6 +34,8 @@ public:
   bool rayTracerView{false};
   bool InitWindow(const char* wName, int wheight, int wwidth);
   bool paused{false};
+  bool playingForward{true};
+
 
   bool BeginFrame() ;
   void Draw(RenderedObject& ro);
