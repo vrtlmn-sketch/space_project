@@ -249,10 +249,6 @@ void RenderedObject::transformPerspectiveMesh(GLuint program ,float cameraTransl
 
   glUniform3fv(objectCoordinateUniform, 1, tempCoords);
   glUniform1f(rotationUniform,rotation);
-  unsigned int rotLoc = glad_glGetUniformLocation(program,"uRotation");
-
-  //std::cerr<<"uploaded rotation is: " <<rotation
-   // <<"at "<<rotLoc<<"\n";
 
 }
 
@@ -266,4 +262,42 @@ void RenderedObject::perspective(float fovyRadians, float aspect, float zNear, f
   out[10] = (zFar + zNear) / (zNear - zFar);
   out[11] = -1.0f;
   out[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+}
+
+void RenderedObject::GenerateMeshLine(vec3&& origin){
+  this->coordinates=(vec3){0.0f,0.0f,0.0f};
+  this->hasBeenRendered=false;
+  meshType=MeshType::line;
+  linePoints.reserve(500);
+  linePoints.emplace_back(origin);
+  bufferSize = 3;
+}
+
+void RenderedObject::AddPointToLine(const vec3& point){
+  this->hasBeenRendered=false;
+  linePoints.emplace_back(point);
+  bufferSize = linePoints.size();
+}
+
+
+void RenderedObject::renderLine(float cameraTranslate[3],float rotation){
+  {
+    if(!hasBeenRendered)
+    {
+      setupRender();
+    }
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER,vbo);
+
+    
+    glBufferData(GL_ARRAY_BUFFER,linePoints.size()*sizeof(vec3),&linePoints[0],GL_STATIC_DRAW);
+
+    
+    glUseProgram(program);
+
+    transformPerspectiveMesh(program, cameraTranslate, rotation);
+    glDrawArrays(GL_LINE_STRIP, 0 ,bufferSize);
+
+    hasBeenRendered=true;
+  }
 }

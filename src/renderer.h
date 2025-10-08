@@ -33,7 +33,7 @@ public:
   std::vector<RayTracerObject> rayTracedObjects{};
   bool rayTracerView{false};
   bool InitWindow(const char* wName, int wheight, int wwidth);
-  bool paused{false};
+  bool paused{true};
   bool playingForward{true};
 
 

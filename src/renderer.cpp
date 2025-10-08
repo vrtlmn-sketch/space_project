@@ -69,6 +69,10 @@ void Renderer::Draw(RenderedObject& ro) {
     {
       ro.renderMesh(cameraTranslate,rotation);                     
     }
+    if(ro.meshType == MeshType::line)
+    {
+      ro.renderLine(cameraTranslate,rotation);
+    }
   }
   if(rayTracerView)
   {

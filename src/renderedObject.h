@@ -5,7 +5,8 @@
 
 enum class MeshType{
   sphere,
-  plane
+  plane,
+  line
 };
 
 class RenderedObject {
@@ -37,6 +38,7 @@ private:
 
   std::vector<float> UVObjectMeshBuffer{};
   std::vector<vec3>  UVObjectMesh{};
+  std::vector<vec3>  linePoints{};
   std::vector<std::vector<vec3>> UVObjectMeshPoints{};
 public:
   MeshType meshType{MeshType::sphere};
@@ -47,6 +49,7 @@ public:
   void translateMesh(vec3 v);
   void transformPerspectiveMesh(GLuint program, float cameraTranslate[3] , float rotation);
   void renderMesh(float cameraTranslate[3],float rotation);
+  void renderLine(float cameraTranslate[3],float rotation);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
 
 void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,float rotation);
@@ -56,6 +59,8 @@ void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& r
   void GenerateMeshSphere(float radius,
                     int horizontalSubdivisions, int verticalSubdivisions);
   void GenerateMeshPlane(float width, float height);
+  void GenerateMeshLine(vec3&& origin);
+  void AddPointToLine(const vec3& point);
 
 void perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]);
 
