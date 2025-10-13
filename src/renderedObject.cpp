@@ -92,8 +92,8 @@ void RenderedObject::GenerateMeshSphere(float radius,
 void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
   raytracerObjectList.push_back(RayTracerObject{
-vec4{coordinates.x, coordinates.y, coordinates.z, 0}
-    ,radius, radius});
+vec4{coordinates.x, coordinates.y, coordinates.z,0}
+    ,radius, radius, {0 ,0}});
 }
 
 void RenderedObject::renderMesh(float cameraTranslate[3],float rotation)
@@ -125,6 +125,7 @@ void RenderedObject::renderPlane(float cameraTranslate[3],
   }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER,vbo);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1, ssboObjects);
 
   glBufferData(GL_ARRAY_BUFFER,UVObjectMeshBuffer.size()*sizeof(float),&UVObjectMeshBuffer[0],GL_STATIC_DRAW);
 
@@ -164,17 +165,18 @@ void RenderedObject::setupRender()
     objectCountUniform = glGetUniformLocation(program,"uObjectCount");
 }
 
-void RenderedObject::UploadSSBOParticles(std::vector<vec4> points){
+void RenderedObject::UploadSSBOParticles(const std::vector<vec4>& points){
   glUseProgram(program);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, points.size()*sizeof(vec4), &points[0], GL_STATIC_DRAW);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, points.size()*sizeof(vec4), points.data(), GL_STATIC_DRAW);
   glUniform1i(pointCountUniform,points.size());
 }
 
-void RenderedObject::UploadSSBOObjects(std::vector<RayTracerObject> objects){
+void RenderedObject::UploadSSBOObjects(const std::vector<RayTracerObject>& objects){
   glUseProgram(program);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboObjects);
-  glBufferData(GL_SHADER_STORAGE_BUFFER, objects.size()*sizeof(RayTracerObject), &objects[0], GL_STATIC_DRAW);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, objects.size()*sizeof(RayTracerObject), objects.data(), GL_STATIC_DRAW);
+
   glUniform1i(objectCountUniform,objects.size());
 }
 
@@ -207,7 +209,10 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   glCompileShader(fragmentShader);
   GLint success;
   glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-  if(!success)std::cerr<<"shader failed to compile!\n";
+  if(!success)
+  {
+    std::cerr<<"shader failed to compile!\n";
+  }
 
   glAttachShader(program, vertexShader);
   glAttachShader(program, fragmentShader);

@@ -11,8 +11,6 @@
 #include "mathStructs.h"
 #include "rayTracerObject.h"
 
-
-
 class Renderer{
 
 private:
@@ -33,7 +31,7 @@ public:
   std::vector<RayTracerObject> rayTracedObjects{};
   bool rayTracerView{false};
   bool InitWindow(const char* wName, int wheight, int wwidth);
-  bool paused{true};
+  bool paused{false};
   bool playingForward{true};
 
 

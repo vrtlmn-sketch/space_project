@@ -15,9 +15,11 @@ uniform float uRotation;
 
 struct spaceObject
 {
-  vec3 position;
+  vec4 position;
   float mass;
   float radius;
+  float padding1;
+  float padding2;
 };
 
 layout(std430, binding = 0) buffer Points {
@@ -31,6 +33,7 @@ layout(std430, binding = 1) buffer Objects {
 vec3 rotateAroundCamera(vec3 pos)
 {
 
+  pos = pos+uCamera;
   float x = pos.x;
   float z = pos.z;
   pos.x=
@@ -41,68 +44,31 @@ vec3 rotateAroundCamera(vec3 pos)
     x*-sin(uRotation)
     +z*cos(uRotation);
 
+  pos=pos-uCamera;
   return pos;
 }
 
-void main() {
+void main(){
+  float light = 0;
+  vec3 color = vec3(.0,.0,.0);
 
-  float cameraAngle = 0.1f;
-  //light direction
-  vec3 lightDirection =normalize(uCamera - vec3(0,0,-3));
+  vec3 colorRed = vec3(.2,.1,.1);
+  vec3 colorBlue = vec3(.1,.1,.2);
+  for(int i=0;i<uObjectCount;i++)
+  {
+    vec3 collisionPoint = objects[i].position.xyz;
+    collisionPoint = rotateAroundCamera(collisionPoint);
 
-  //we take a vector that goes forward and a little bit to the left-right/ top bottom for perspective, based on interpolated vertex position
-  vec3 direction = normalize(vec3(vPosOriginal.x*cameraAngle,vPosOriginal.y*cameraAngle,1.f));
+      light = light + ((1/distance(collisionPoint.xy/2.,vPosOriginal.xy-uCamera.xy/2.)) / (max(-uCamera.z-collisionPoint.z,0.f)))*objects[i].radius*64.;
 
-  //we rotate it so matches camera rotation
-  //we rotate around the origin. That shouldn't be a problem since direction is an unmoved vector
-  direction = rotateAroundCamera(direction);
+      if(objects[i].mass<.044f)
+      color=color+colorRed*objects[i].radius *(1/distance(collisionPoint.xy/2.,vPosOriginal.xy-uCamera.xy/2.));
+      else
+      color=color+colorBlue*objects[i].radius *(1/distance(collisionPoint.xy/2.,vPosOriginal.xy-uCamera.xy/2.));
 
-  //this is where we start the ray
-  //it's camera position
-  //we move it the world world coordinates
-  //uWorld is a simple move function for the camera
-  //which the rasterized also uses
-  //vec3 rayCoords=vec4(uWorld*vec4(uCamera,1.f)).xyz;
-  vec3 rayCoords=-uCamera;
-
-  //when ray is this close to the object we render 
-  //the pixel
-  float collTresh = 0.01f;
-  bool collided = false;
-
-  //we send the rays
-  for(float i=0.f;i<4.f;i+=0.01f){
-
-    //we move the ray;
-    rayCoords=rayCoords+direction;
-
-    //we go through all the objects
-    for(int j=0;j<uObjectCount;j++)
-    {
-      //these are true object coordinates
-      //these should not be moved since both camera and object coordinates are in the same space
-      //vec3 objectPosition = vec4(uworld*vec4(objects[j].position.xyz,1.f)).xyz;
-      vec3 objectPosition = objects[j].position;
-      float objectRadius = objects[j].radius/10.f;
-
-      //this is the distance to the object from the ray
-      float distTillObject = distance(rayCoords,objectPosition);
-      //if it's close enough, we render it
-      if(distTillObject<objectRadius)
-      {
-        //we take the normal vector by look at the normalized vector from the collision point to the center
-        vec3 normVec = 
-          normalize(objectPosition-rayCoords);
-        //we calculate the light
-        float light = dot(normVec,lightDirection);
-
-        FragColor = vec4(.9,.9,.9,1.f)*light;
-        collided = true;
-        break;
-      }
-    }
   }
 
-  if(!collided)
-    FragColor = vec4(0.05,0.05,.1,.1);
-}
+  vec4 background = vec4(.0,.0,.05, 1.);
+  FragColor = background+ vec4(color, 1)*light/32.; 
+  //FragColor = vec4(pts[0].xyz * 0.5 + 0.5, 1.0);}} 
+  }

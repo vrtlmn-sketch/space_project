@@ -64,7 +64,7 @@ void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& r
 
 void perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]);
 
-void UploadSSBOParticles(std::vector<vec4> points);
-void UploadSSBOObjects(std::vector<RayTracerObject> objects);
+void UploadSSBOParticles(const std::vector<vec4>& points);
+void UploadSSBOObjects(const std::vector<RayTracerObject>& objects);
 
 };

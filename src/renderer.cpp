@@ -46,19 +46,20 @@ bool Renderer::BeginFrame() {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   fbWidth = fbw; fbHeight = fbh;
-  rayTracedObjects.clear();
   return true;
 }
 
 void Renderer::EndFrame() {
   glfwSwapBuffers(window); 
-  /*
+  rayTracedObjects.clear();
+  rayTracedObjects.reserve(20);
+  
   for(auto object : rayTracedObjects){
     std::cout<<object.coordinates.x<<" "
       <<object.coordinates.y<<" "
       <<object.coordinates.z<<"\n";
   } 
-  */
+
 }
 
 void Renderer::Draw(RenderedObject& ro) {
