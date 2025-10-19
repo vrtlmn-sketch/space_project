@@ -8,6 +8,7 @@ void PlaneObject::Update(Renderer& renderer){
   }
 
   renderedObject.UploadSSBOObjects(renderer.rayTracedObjects);
+  //renderedObject.UploadSSBOParticles(renderer.rayTracedObjects);
   renderer.Draw(renderedObject);
 }
 

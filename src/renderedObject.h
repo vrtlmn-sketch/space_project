@@ -3,10 +3,12 @@
 #include "mathStructs.h"
 #include "rayTracerObject.h"
 
+
 enum class MeshType{
   sphere,
   plane,
-  line
+  line,
+  cloud
 };
 
 class RenderedObject {
@@ -39,6 +41,7 @@ private:
   std::vector<float> UVObjectMeshBuffer{};
   std::vector<vec3>  UVObjectMesh{};
   std::vector<vec3>  linePoints{};
+  std::vector<RayTracerObject> cloudParticles;
   std::vector<std::vector<vec3>> UVObjectMeshPoints{};
 public:
   MeshType meshType{MeshType::sphere};
@@ -50,15 +53,21 @@ public:
   void transformPerspectiveMesh(GLuint program, float cameraTranslate[3] , float rotation);
   void renderMesh(float cameraTranslate[3],float rotation);
   void renderLine(float cameraTranslate[3],float rotation);
+  void renderCloud(float cameraTranslate[3],float rotation);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
 
 void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,float rotation);
+void UpdateCloudPhysics(std::vector<RayTracerObject> raytracerObjectList);
+
 
   void setupShaders(const std::string& vertPath, const std::string& fragPath);
 
   void GenerateMeshSphere(float radius,
                     int horizontalSubdivisions, int verticalSubdivisions);
   void GenerateMeshPlane(float width, float height);
+void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size);
+
+  void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);
 

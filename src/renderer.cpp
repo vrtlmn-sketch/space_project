@@ -54,11 +54,13 @@ void Renderer::EndFrame() {
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
   
+  /*
   for(auto object : rayTracedObjects){
     std::cout<<object.coordinates.x<<" "
       <<object.coordinates.y<<" "
       <<object.coordinates.z<<"\n";
   } 
+  */
 
 }
 
@@ -74,6 +76,10 @@ void Renderer::Draw(RenderedObject& ro) {
     {
       ro.renderLine(cameraTranslate,rotation);
     }
+    if(ro.meshType == MeshType::cloud)
+    {
+      ro.renderCloud(cameraTranslate,rotation);
+    }
   }
   if(rayTracerView)
   {
@@ -81,9 +87,14 @@ void Renderer::Draw(RenderedObject& ro) {
       ro.renderPlane(cameraTranslate, rayTracedObjects, rotation);                     
     }
     else if (ro.meshType == MeshType::sphere){
-      //this uploads the mesh to the raytracers buffer object
+      //this uploadsrcthe mesh to the raytracers buffer object
       
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);                     
+    }
+    else if (ro.meshType == MeshType::cloud){
+      //this uploadsrcthe mesh to the raytracers buffer object
+      
+      ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);                     
     }
   }
 }

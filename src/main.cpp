@@ -11,8 +11,8 @@
 #include "renderer.h"
 #include "planeObject.h"
 #include "lineObject.h"
+#include "cloudObject.h"
 #include <memory>
-
 
 int main() {
 
@@ -39,6 +39,11 @@ int main() {
   PlaneObject background{
     vec3{0,0,-3},1,1
   };
+  CloudObject nebula{
+    vec3{0,0,-3}, 120 ,randomDistribution, vec3{2,2,2}
+  };
+  
+
   for(auto object : physicsObjects)
   {
     lineObjects.emplace_back(vec3{object.position});
@@ -52,6 +57,7 @@ int main() {
       lineObjects[i].Update(renderer);
       lineObjects[i].AddPoint(physicsObjects[i].position);
     }
+    nebula.Update(renderer);
     background.Update(renderer);
     //Update Inputs returns false if "c" is pressed
     if(!renderer.UpdateInputs()){

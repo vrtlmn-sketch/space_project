@@ -29,6 +29,16 @@ vec3 vec3::operator-(const vec3& other) const
     this->z-other.z
   };
 }
+
+vec3 vec3::operator-(const vec4& other) const
+{
+  return vec3{
+    this->x-other.x,
+    this->y-other.y,
+    this->z-other.z
+  };
+}
+
 vec3& vec3::operator-=(const vec3& other)
 {
   this->x-=other.x;
@@ -44,6 +54,27 @@ vec3 vec3::operator*(float other) const
     this->z*other
   };
 }
+vec3 vec3::operator/(float other) const
+{
+  return vec3{
+    this->x/other,
+    this->y/other,
+    this->z/other
+  };
+}
+
+bool vec3::operator==(const vec3& other){
+  return other.x==this->x
+    && other.y==this->y
+    && other.z==this->z;
+}
+
+bool vec3::operator==(const vec4& other){
+  return other.x==this->x
+    && other.y==this->y
+    && other.z==this->z;
+}
+
 vec3& vec3::operator*=(float other )
 {
   this->x*=other;
@@ -111,3 +142,11 @@ vec3 normalize(const vec3& v){
     v.z/length
   };
 }
+float randomDistribution(float x, float y, float z){
+  x+=sin(x*4.f);
+  y+=cos(y*4.f);
+  z+=sin(z*4.f);
+
+  return 1-distance(vec3{0,0,0},vec3{x,y,z});
+};
+

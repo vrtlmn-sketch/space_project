@@ -5,18 +5,6 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 
-struct vec3{
-  float x;
-  float y;
-  float z;
-  vec3 operator+(const vec3& other) const;
-  vec3& operator+=(const vec3& other);
-  vec3 operator-(const vec3& other) const;
-  vec3& operator-=(const vec3& other);
-  vec3 operator*(float other) const;
-  vec3& operator*=(float other);
-};
-
 struct vec4{
   float x;
   float y;
@@ -24,6 +12,24 @@ struct vec4{
   float w;
 };
 
+struct vec3{
+  float x;
+  float y;
+  float z;
+  vec3 operator+(const vec3& other) const;
+  vec3& operator+=(const vec3& other);
+  vec3 operator-(const vec3& other) const;
+  vec3 operator-(const vec4& other) const;
+  vec3& operator-=(const vec3& other);
+  bool operator==(const vec3& other);
+  bool operator==(const vec4& other);
+  vec3 operator*(float other) const;
+  vec3 operator/(float other) const;
+  vec3& operator*=(float other);
+};
+
+
+float randomDistribution(float x, float y, float z);
 
 void rotate(vec3& v, float DegY);
 
