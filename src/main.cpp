@@ -40,13 +40,13 @@ int main() {
     vec3{0,0,-3},1,1
   };
   CloudObject nebula{
-    vec3{0,0,-3}, 120 ,randomDistribution, vec3{2,2,2}
+    vec3{0,0,-3}, 2000 ,randomDistribution, vec3{3,3,3}
   };
   
 
   for(auto object : physicsObjects)
   {
-    lineObjects.emplace_back(vec3{object.position});
+    lineObjects.emplace_back(vec3{object.data.position});
   }
   background.SetShaders("src/shaders/raytracerVertex.glsl", "src/shaders/spaceBackgroundFrag.glsl");
 
@@ -55,9 +55,18 @@ int main() {
     for(int i=0;i<physicsObjects.size();i++){
       physicsObjects[i].Update(physicsObjects,renderer);
       lineObjects[i].Update(renderer);
-      lineObjects[i].AddPoint(physicsObjects[i].position);
+      lineObjects[i].AddPoint(physicsObjects[i].data.position);
     }
-    nebula.Update(renderer);
+    std::vector<PhysicsObjectStructure> physicalObjects;
+    physicalObjects.reserve(physicsObjects.size());
+    //std::cerr<<physicsObjects.size()<<" <- how many objects\n";
+    for(auto object:physicsObjects)
+    {
+      //std::cerr<<"objectPushed\n";
+      physicalObjects.emplace_back(object.data);
+    }
+
+    nebula.Update(renderer,physicalObjects);
     background.Update(renderer);
     //Update Inputs returns false if "c" is pressed
     if(!renderer.UpdateInputs()){

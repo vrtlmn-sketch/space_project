@@ -2,6 +2,7 @@
 #include <vector>
 #include "mathStructs.h"
 #include "rayTracerObject.h"
+#include "physicsObjectStructure.h"
 
 
 enum class MeshType{
@@ -41,7 +42,7 @@ private:
   std::vector<float> UVObjectMeshBuffer{};
   std::vector<vec3>  UVObjectMesh{};
   std::vector<vec3>  linePoints{};
-  std::vector<RayTracerObject> cloudParticles;
+  std::vector<PhysicsObjectStructure> cloudParticles;
   std::vector<std::vector<vec3>> UVObjectMeshPoints{};
 public:
   MeshType meshType{MeshType::sphere};
@@ -57,7 +58,7 @@ public:
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
 
 void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,float rotation);
-void UpdateCloudPhysics(std::vector<RayTracerObject> raytracerObjectList);
+void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 
 
   void setupShaders(const std::string& vertPath, const std::string& fragPath);

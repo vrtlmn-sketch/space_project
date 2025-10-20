@@ -31,7 +31,6 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
     for(float j=0;j<dimensions.y;j+=size.y/dimensions.y)
       for(float k=0;k<dimensions.z;k+=size.z/dimensions.z)
       {
-        bool flag = false;
         vec3 point{
           (float)i/dimensions.x*size.x-size.x/2.f,
           (float)j/dimensions.y*size.y-size.y/2.f,
@@ -42,7 +41,8 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
           UVObjectMeshBuffer.emplace_back(point.x);
           UVObjectMeshBuffer.emplace_back(point.y);
           UVObjectMeshBuffer.emplace_back(point.z);
-          flag = true;
+          cloudParticles.push_back(PhysicsObjectStructure{vec3{0,0,0},vec3{point.x,point.y,point.z},0.02});
+          
         }
           //std::cout<<(flag?"spawnedPoint":"didn't spawn pont")<<" at "<<point.x<<" "<<point.y<<" "<<point.z<<"\n";
       }
@@ -381,28 +381,35 @@ void RenderedObject::renderCloud(float cameraTranslate[3],float rotation){
   }
 }
 
-void RenderedObject::UpdateCloudPhysics(std::vector<RayTracerObject> raytracerObjectList)
+//this is really bad. Needs to be refactored. Also must write a compute shader for this 
+void RenderedObject::UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies)
 {
-
   float G = 0.0001f;
   float dt{1/10.f};
-  vec3 velocity {0,0,0};
-  for(auto other:raytracerObjectList)
+  std::cerr<<cloudParticles.size()<<" size\n";
+  for(int i=0;i <cloudParticles.size();i++)
   {
+    auto& first=cloudParticles[i];
+    for(auto other:bigBodies)
+    {
+      if(&other == &first) continue;           
+      vec3 realPosition = first.position+this->coordinates;
+      vec3 r = vec3{other.position.x,other.position.y,other.position.z}
+        - realPosition;
+      float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
+      //std::cout<<d2<<"\n";
+      if (d2 == 0) continue;                 
+      vec3 dir = normalize(r);
+      float accel = G * other.mass*first.mass/ d2;    
+      first.velocity += dir * accel * dt;        
+    }
+    first.position+=first.velocity;
 
-    if(other.coordinates == this->coordinates) continue;           
-    vec3 r = vec3{other.coordinates.x,other.coordinates.y,other.coordinates.z}
-      - this->coordinates;
-    float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
-    if (d2 == 0) continue;                 
-    vec3 dir = normalize(r);
-    float accel = G * other.mass/ d2;    
-    velocity += dir * accel * dt;        
-  //std::cerr<<i/3<<" ";
+    UVObjectMeshBuffer[i*3] = first.position.x;
+    UVObjectMeshBuffer[i*3+1] = first.position.y;
+    UVObjectMeshBuffer[i*3+2] = first.position.z;
+      //std::cout<<UVObjectMeshBuffer[i]<<" "<<UVObjectMeshBuffer[i+1]<<" "<<UVObjectMeshBuffer[i+2]<<"\n";
+
+    //std::cerr<<"updated physics\n";
   }
-  std::cerr<<"damn\n";
-  vec3 velocityChange = velocity*dt;
-  UVObjectMeshBuffer[0] += velocityChange.x;
-  UVObjectMeshBuffer[0+1] += velocityChange.y;
-  UVObjectMeshBuffer[0+2] += velocityChange.z;
 }

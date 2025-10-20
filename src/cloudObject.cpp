@@ -1,8 +1,8 @@
 #include "cloudObject.h"
 
-void CloudObject::Update(Renderer& renderer){
+void CloudObject::Update(Renderer& renderer, std::vector<PhysicsObjectStructure> physicsObjects){
   renderedObject.coordinates=position;
-  //renderedObject.UpdateCloudPhysics(renderer.rayTracedObjects);
+  renderedObject.UpdateCloudPhysics(physicsObjects);
   
   renderer.Draw(renderedObject);
 }
