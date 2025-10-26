@@ -42,7 +42,7 @@ bool Renderer::BeginFrame() {
   }
   glViewport(0, 0, fbw, fbh);
 
-  glClearColor(0.05f, 0.05f, 0.10f, 1.0f);
+  glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   fbWidth = fbw; fbHeight = fbh;
@@ -79,6 +79,10 @@ void Renderer::Draw(RenderedObject& ro) {
     if(ro.meshType == MeshType::cloud)
     {
       ro.renderCloud(cameraTranslate,rotation);
+    }
+    if(ro.meshType == MeshType::grid)
+    {
+      ro.renderGrid(cameraTranslate,rotation);
     }
   }
   if(rayTracerView)

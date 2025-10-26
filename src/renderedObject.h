@@ -9,7 +9,8 @@ enum class MeshType{
   sphere,
   plane,
   line,
-  cloud
+  cloud,
+  grid
 };
 
 class RenderedObject {
@@ -43,6 +44,7 @@ private:
   std::vector<vec3>  UVObjectMesh{};
   std::vector<vec3>  linePoints{};
   std::vector<PhysicsObjectStructure> cloudParticles;
+  std::vector<PhysicsObjectStructure> gridPoints;
   std::vector<std::vector<vec3>> UVObjectMeshPoints{};
 public:
   MeshType meshType{MeshType::sphere};
@@ -55,10 +57,12 @@ public:
   void renderMesh(float cameraTranslate[3],float rotation);
   void renderLine(float cameraTranslate[3],float rotation);
   void renderCloud(float cameraTranslate[3],float rotation);
+  void renderGrid(float cameraTranslate[3],float rotation);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
 
 void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,float rotation);
 void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
+void UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 
 
   void setupShaders(const std::string& vertPath, const std::string& fragPath);
@@ -67,6 +71,7 @@ void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
                     int horizontalSubdivisions, int verticalSubdivisions);
   void GenerateMeshPlane(float width, float height);
 void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size);
+void GenerateMeshGrid(const vec3& size, int subdivisions);
 
   void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
   void GenerateMeshLine(vec3&& origin);

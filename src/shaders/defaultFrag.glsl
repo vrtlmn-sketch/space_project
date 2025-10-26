@@ -13,10 +13,12 @@ void main() {
 
   vec3 norm = normalize(uPointCoordinates - vPos);
   light = dot(norm,lightDirection);
+
   float shine 
     = pow(dot(normalize( reflect(vec3(vPos-lightDirection),norm)),-normalize(vPos-cameraPosition))*.4f,2.f);
 
   vec3 color = {.8,.1,.1};
+  color = color/distance(-uCamera,vPos)*2.f;
   FragColor = vec4(color, 1.f)*light+
-    vec4(color,1.f)+shine; 
+    vec4(color,1.f)*shine; 
 }

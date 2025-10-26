@@ -16,7 +16,139 @@ void RenderedObject::translateMesh(vec3 v)
   }
 }
 
+void RenderedObject::GenerateMeshGrid(const vec3& size, int subdivisions){
+  meshType=MeshType::grid;
+  this->hasBeenRendered=false;
 
+  gridPoints.reserve(size.x*size.y*size.z*subdivisions);
+  float x{};
+  float y{};
+  float z{};
+  while(z<subdivisions){
+    for(int i=0;i<=subdivisions;i++)
+    {
+      x=i;
+      gridPoints.emplace_back(
+        PhysicsObjectStructure{
+          vec3{0,0,0},
+          vec3{
+            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
+            ((float)y*(float)size.y)*(1.f/subdivisions),
+            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
+          0.f});
+    }
+    z++;
+    for(int i=subdivisions;i>=0;i--)
+    {
+      x=i;
+      gridPoints.emplace_back(
+        PhysicsObjectStructure{
+          vec3{0,0,0},
+          vec3{
+            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
+            ((float)y*(float)size.y)*(1.f/subdivisions),
+            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
+          0.f});
+    }
+    z++;
+  }
+  x=0;
+  y=0;
+  z=0;
+  while(x<subdivisions){
+    for(int i=0;i<=subdivisions;i++)
+    {
+      z=i;
+      gridPoints.emplace_back(
+        PhysicsObjectStructure{
+          vec3{0,0,0},
+          vec3{
+            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
+            ((float)y*(float)size.y)*(1.f/subdivisions),
+            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
+          0.f});
+    }
+    x++;
+    for(int i=subdivisions;i>=0;i--)
+    {
+      z=i;
+      gridPoints.emplace_back(
+        PhysicsObjectStructure{
+          vec3{0,0,0},
+          vec3{
+            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
+            ((float)y*(float)size.y)*(1.f/subdivisions),
+            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
+          0.f});
+    }
+    x++;
+  }
+  //UVObjectMeshBuffer.reserve(gridPoints.size()*3);
+  UVObjectMeshBuffer.reserve(UVObjectMeshBuffer.size()*3);
+  for(auto& p : gridPoints)
+  {
+    UVObjectMeshBuffer.emplace_back(p.position.x);
+    UVObjectMeshBuffer.emplace_back(p.position.y);
+    UVObjectMeshBuffer.emplace_back(p.position.z);
+  }
+  bufferSize=gridPoints.size();
+
+}
+
+void RenderedObject::renderGrid(float cameraTranslate[3],float rotation){
+  if(!hasBeenRendered)
+  {
+    setupRender();
+  }
+  glBindVertexArray(vao);
+  glBindBuffer(GL_ARRAY_BUFFER,vbo);
+
+
+  glBufferData(GL_ARRAY_BUFFER,UVObjectMeshBuffer.size()*sizeof(vec3),&UVObjectMeshBuffer[0],GL_STATIC_DRAW);
+
+
+  glUseProgram(program);
+
+  transformPerspectiveMesh(program, cameraTranslate, rotation);
+  glDrawArrays(GL_LINE_STRIP, 0 ,bufferSize);
+  //for(auto& f : UVObjectMeshBuffer)
+  //std::cerr<<f<<"\n";
+
+  hasBeenRendered=true;
+}
+
+void RenderedObject::UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies){
+  float G = 0.0001f;
+  float dt{1/10.f};
+  for(int i=0;i <gridPoints.size();i++)
+  {
+    auto& first=gridPoints[i];
+    first.velocity=vec3{0,0,0};
+    for(auto& other:bigBodies)
+    {
+      if(&other == &first) continue;           
+      vec3 realPosition = first.position+this->coordinates;
+      vec3 r = vec3{other.position.x,other.position.y,other.position.z}
+        - realPosition;
+      float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
+      if (d2 == 0) continue;                 
+      vec3 dir = normalize(r);
+      float accel = G * other.mass / d2;    
+      //calculating the pull
+      first.velocity += dir * accel;        
+      //std::cout<<"velocity changed in "<<accel<<"\n";
+    }
+    first.velocity = normalize(first.velocity);
+    first.velocity*=0.2;
+    //first.position+=first.velocity;
+
+    UVObjectMeshBuffer[i*3] = first.position.x+first.velocity.x;
+    UVObjectMeshBuffer[i*3+1] = first.position.y+first.velocity.y;
+    UVObjectMeshBuffer[i*3+2] = first.position.z+first.velocity.z;
+  }
+  //std::cerr<<"Mesh size is "<<UVObjectMeshBuffer.size()<<"\n";
+
+}
 void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size)
 {
   UVObjectMeshBuffer.reserve(objectCount*3);
@@ -41,10 +173,10 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
           UVObjectMeshBuffer.emplace_back(point.x);
           UVObjectMeshBuffer.emplace_back(point.y);
           UVObjectMeshBuffer.emplace_back(point.z);
-          cloudParticles.push_back(PhysicsObjectStructure{vec3{0,0,0},vec3{point.x,point.y,point.z},0.02});
-          
+          cloudParticles.emplace_back(PhysicsObjectStructure{vec3{0,0,0},vec3{point.x,point.y,point.z},0.02});
+
         }
-          //std::cout<<(flag?"spawnedPoint":"didn't spawn pont")<<" at "<<point.x<<" "<<point.y<<" "<<point.z<<"\n";
+        //std::cout<<(flag?"spawnedPoint":"didn't spawn pont")<<" at "<<point.x<<" "<<point.y<<" "<<point.z<<"\n";
       }
   bufferSize = UVObjectMeshBuffer.size();
 }
@@ -125,20 +257,20 @@ void RenderedObject::GenerateMeshSphere(float radius,
 void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
   raytracerObjectList.push_back(RayTracerObject{
-vec4{coordinates.x, coordinates.y, coordinates.z,0}
+    vec4{coordinates.x, coordinates.y, coordinates.z,0}
     ,radius, radius, {0 ,0}});
 }
 void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
   for(int i=0;i<bufferSize;i+=3) 
   {
-  raytracerObjectList.push_back(RayTracerObject{
+    raytracerObjectList.push_back(RayTracerObject{
       vec4{
         UVObjectMeshBuffer[i]+coordinates.x,
         UVObjectMeshBuffer[i+1]+coordinates.y,
         UVObjectMeshBuffer[i+2]+coordinates.z,
         0}
-    ,0.002f, 0.002f, {0 ,0}});
+      ,0.002f, 0.002f, {0 ,0}});
   }
 }
 
@@ -198,17 +330,17 @@ void RenderedObject::setupRender()
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0, ssboParticles);
 
-  
+
   glGenBuffers(1, &ssboObjects);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboObjects);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1, ssboObjects);
 
   cameraTranslateUniform = glGetUniformLocation(program, "uCamera");
-    rotationUniform = glGetUniformLocation(program,"uRotation");
+  rotationUniform = glGetUniformLocation(program,"uRotation");
 
   pointCountUniform = glGetUniformLocation(program,"uPointCount");
-    objectCoordinateUniform = glGetUniformLocation(program,"uPointCoordinates");
-    objectCountUniform = glGetUniformLocation(program,"uObjectCount");
+  objectCoordinateUniform = glGetUniformLocation(program,"uPointCoordinates");
+  objectCountUniform = glGetUniformLocation(program,"uObjectCount");
 }
 
 void RenderedObject::UploadSSBOParticles(const std::vector<vec4>& points){
@@ -340,10 +472,10 @@ void RenderedObject::renderLine(float cameraTranslate[3],float rotation){
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER,vbo);
 
-    
+
     glBufferData(GL_ARRAY_BUFFER,linePoints.size()*sizeof(vec3),&linePoints[0],GL_STATIC_DRAW);
 
-    
+
     glUseProgram(program);
 
     transformPerspectiveMesh(program, cameraTranslate, rotation);
@@ -362,10 +494,10 @@ void RenderedObject::renderCloud(float cameraTranslate[3],float rotation){
     glBindVertexArray(vao);
     glBindBuffer(GL_ARRAY_BUFFER,vbo);
 
-    
-  glBufferData(GL_ARRAY_BUFFER,UVObjectMeshBuffer.size()*sizeof(float),&UVObjectMeshBuffer[0],GL_STATIC_DRAW);
 
-    
+    glBufferData(GL_ARRAY_BUFFER,UVObjectMeshBuffer.size()*sizeof(float),&UVObjectMeshBuffer[0],GL_STATIC_DRAW);
+
+
     glUseProgram(program);
 
     transformPerspectiveMesh(program, cameraTranslate, rotation);
@@ -386,11 +518,11 @@ void RenderedObject::UpdateCloudPhysics(const std::vector<PhysicsObjectStructure
 {
   float G = 0.0001f;
   float dt{1/10.f};
-  std::cerr<<cloudParticles.size()<<" size\n";
+  //std::cerr<<cloudParticles.size()<<" size\n";
   for(int i=0;i <cloudParticles.size();i++)
   {
     auto& first=cloudParticles[i];
-    for(auto other:bigBodies)
+    for(auto& other:bigBodies)
     {
       if(&other == &first) continue;           
       vec3 realPosition = first.position+this->coordinates;
@@ -408,7 +540,7 @@ void RenderedObject::UpdateCloudPhysics(const std::vector<PhysicsObjectStructure
     UVObjectMeshBuffer[i*3] = first.position.x;
     UVObjectMeshBuffer[i*3+1] = first.position.y;
     UVObjectMeshBuffer[i*3+2] = first.position.z;
-      //std::cout<<UVObjectMeshBuffer[i]<<" "<<UVObjectMeshBuffer[i+1]<<" "<<UVObjectMeshBuffer[i+2]<<"\n";
+    //std::cout<<UVObjectMeshBuffer[i]<<" "<<UVObjectMeshBuffer[i+1]<<" "<<UVObjectMeshBuffer[i+2]<<"\n";
 
     //std::cerr<<"updated physics\n";
   }

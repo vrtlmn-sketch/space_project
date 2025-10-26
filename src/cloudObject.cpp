@@ -1,6 +1,6 @@
 #include "cloudObject.h"
 
-void CloudObject::Update(Renderer& renderer, std::vector<PhysicsObjectStructure> physicsObjects){
+void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects){
   renderedObject.coordinates=position;
   renderedObject.UpdateCloudPhysics(physicsObjects);
   

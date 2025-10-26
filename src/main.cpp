@@ -12,6 +12,7 @@
 #include "planeObject.h"
 #include "lineObject.h"
 #include "cloudObject.h"
+#include "gridObject.h"
 #include <memory>
 
 int main() {
@@ -40,9 +41,17 @@ int main() {
     vec3{0,0,-3},1,1
   };
   CloudObject nebula{
-    vec3{0,0,-3}, 2000 ,randomDistribution, vec3{3,3,3}
+    vec3{0,0,-3}, 200 ,randomDistribution, vec3{3,3,3}
   };
-  
+  constexpr int gridCount = 4;
+  std::vector<GridObject> grids;
+  grids.reserve(gridCount);
+  for(int i=-gridCount/2;i<gridCount/2;i++)
+    grids.emplace_back(
+      GridObject{
+        vec3{0,(float)i*2,-3},vec3{10,10,10}, 30
+      }
+    );
 
   for(auto object : physicsObjects)
   {
@@ -59,14 +68,14 @@ int main() {
     }
     std::vector<PhysicsObjectStructure> physicalObjects;
     physicalObjects.reserve(physicsObjects.size());
-    //std::cerr<<physicsObjects.size()<<" <- how many objects\n";
     for(auto object:physicsObjects)
     {
-      //std::cerr<<"objectPushed\n";
       physicalObjects.emplace_back(object.data);
     }
 
     nebula.Update(renderer,physicalObjects);
+    for(auto& g :grids)
+    g.Update(renderer,physicalObjects);
     background.Update(renderer);
     //Update Inputs returns false if "c" is pressed
     if(!renderer.UpdateInputs()){

@@ -1,6 +1,7 @@
 #version 460 core
 layout (location = 0) in vec3 aPos;
 out vec3 vPos;
+out vec3 vPosOriginal;
 out vec3 uCameraPos;
 uniform mat4 uProj;
 uniform mat4 uWorld;
@@ -23,5 +24,6 @@ void main(){
   gl_Position =  uProj *aPosRot;
   uCameraPos=uCamera;
   vec4 w = uWorld * vec4(aPos, 1.0);
+  vPosOriginal=aPos;
   vPos = w.xyz;
 }
