@@ -1,9 +1,24 @@
 APP      := blackholesim
 CXX      := g++
-CXXFLAGS := -std=c++20 -Wall -Wextra -I./vendor/include
+CXXFLAGS := -std=c++20 -Wall -Wextra \
+            -I./vendor/include \
+            -I./vendor/include/imgui \
+            -I./vendor/include/nlohmann
 SRC_DIR  := src
 SRCS     := $(wildcard $(SRC_DIR)/*.cpp)
-OBJS     := $(SRCS:.cpp=.o)
+
+# ImGui sources (explicit list to avoid picking up imgui_demo)
+IMGUI_SRC_DIR := vendor/src/imgui
+IMGUI_SRCS := \
+  $(IMGUI_SRC_DIR)/imgui.cpp \
+  $(IMGUI_SRC_DIR)/imgui_draw.cpp \
+  $(IMGUI_SRC_DIR)/imgui_tables.cpp \
+  $(IMGUI_SRC_DIR)/imgui_widgets.cpp \
+  $(IMGUI_SRC_DIR)/imgui_impl_glfw.cpp \
+  $(IMGUI_SRC_DIR)/imgui_impl_opengl3.cpp
+
+ALL_SRCS := $(SRCS) $(IMGUI_SRCS)
+OBJS     := $(ALL_SRCS:.cpp=.o)
 BIN_DIR  := bin
 OUT      := $(BIN_DIR)/$(APP)
 
@@ -35,4 +50,4 @@ run: build
 	./$(OUT)
 
 clean:
-	rm -rf $(BIN_DIR) $(OBJS)
+	rm -rf $(BIN_DIR) $(OBJS) $(IMGUI_SRC_DIR)/*.o

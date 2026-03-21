@@ -1,190 +1,660 @@
 #include "renderer.h"
+#include "physicsObject.h"
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InitWindow
+// ─────────────────────────────────────────────────────────────────────────────
 bool Renderer::InitWindow(
   const char* wName, int wheight, int wwidth)
 {
-  if (!glfwInit()) {
-    return false;
-  }
+  if (!glfwInit()) return false;
 
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-  glfwWindowHint(GLFW_DEPTH_BITS,24);
+  glfwWindowHint(GLFW_DEPTH_BITS, 24);
 
   window = glfwCreateWindow(wheight, wwidth, wName, nullptr, nullptr);
-  if (!window) {
-    glfwTerminate();
-    return false;
-  }
-  glfwMakeContextCurrent(window);
+  if (!window) { glfwTerminate(); return false; }
 
-  glfwSwapInterval(1); // vsync
-  gladLoadGL(glfwGetProcAddress);//loading
+  glfwMakeContextCurrent(window);
+  glfwSwapInterval(1);
+  gladLoadGL(glfwGetProcAddress);
 
   int fbw, fbh;
   glfwGetFramebufferSize(window, &fbw, &fbh);
   glViewport(0, 0, fbw, fbh);
-
   glEnable(GL_DEPTH_TEST);
+
+  // ── ImGui setup ──
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  ImGuiIO& io = ImGui::GetIO();
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+
+  // Dark style with slight tweaks for a space sim feel
+  ImGui::StyleColorsDark();
+  ImGuiStyle& style = ImGui::GetStyle();
+  style.WindowRounding    = 6.0f;
+  style.FrameRounding     = 4.0f;
+  style.GrabRounding      = 4.0f;
+  style.WindowBorderSize  = 1.0f;
+  style.Alpha             = 0.92f;
+  // Accent colour: cyan-ish blue
+  style.Colors[ImGuiCol_TitleBgActive]   = ImVec4(0.10f, 0.25f, 0.45f, 1.00f);
+  style.Colors[ImGuiCol_SliderGrab]      = ImVec4(0.20f, 0.55f, 0.85f, 1.00f);
+  style.Colors[ImGuiCol_SliderGrabActive]= ImVec4(0.30f, 0.70f, 1.00f, 1.00f);
+  style.Colors[ImGuiCol_Button]          = ImVec4(0.12f, 0.28f, 0.50f, 1.00f);
+  style.Colors[ImGuiCol_ButtonHovered]   = ImVec4(0.20f, 0.45f, 0.75f, 1.00f);
+  style.Colors[ImGuiCol_ButtonActive]    = ImVec4(0.30f, 0.60f, 0.90f, 1.00f);
+  style.Colors[ImGuiCol_FrameBg]         = ImVec4(0.08f, 0.10f, 0.15f, 1.00f);
+  style.Colors[ImGuiCol_Header]          = ImVec4(0.15f, 0.30f, 0.50f, 1.00f);
+  style.Colors[ImGuiCol_HeaderHovered]   = ImVec4(0.25f, 0.45f, 0.70f, 1.00f);
+
+  ImGui_ImplGlfw_InitForOpenGL(window, true);
+  ImGui_ImplOpenGL3_Init("#version 460");
 
   initialised = true;
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BeginFrame
+// ─────────────────────────────────────────────────────────────────────────────
 bool Renderer::BeginFrame() {
   glfwPollEvents();
-  int fbw=0, fbh=0;
+  int fbw = 0, fbh = 0;
   glfwGetFramebufferSize(window, &fbw, &fbh);
-  if (fbw <= 0 || fbh <= 0) {
-    return false; 
-  }
-  glViewport(0, 0, fbw, fbh);
+  if (fbw <= 0 || fbh <= 0) return false;
 
+  glViewport(0, 0, fbw, fbh);
   glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   fbWidth = fbw; fbHeight = fbh;
+
+  // Start ImGui frame
+  ImGui_ImplOpenGL3_NewFrame();
+  ImGui_ImplGlfw_NewFrame();
+  ImGui::NewFrame();
+
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EndFrame
+// ─────────────────────────────────────────────────────────────────────────────
 void Renderer::EndFrame() {
-  glfwSwapBuffers(window); 
+  // Render ImGui on top
+  ImGui::Render();
+  ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+  glfwSwapBuffers(window);
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
-  
-  /*
-  for(auto object : rayTracedObjects){
-    std::cout<<object.coordinates.x<<" "
-      <<object.coordinates.y<<" "
-      <<object.coordinates.z<<"\n";
-  } 
-  */
-
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Draw  (unchanged scene dispatch)
+// ─────────────────────────────────────────────────────────────────────────────
 void Renderer::Draw(RenderedObject& ro) {
-
-  if(!rayTracerView)
-  {
-    if(ro.meshType == MeshType::sphere)
-    {
-      ro.renderMesh(cameraTranslate,rotation);                     
-    }
-    if(ro.meshType == MeshType::line)
-    {
-      ro.renderLine(cameraTranslate,rotation);
-    }
-    if(ro.meshType == MeshType::cloud)
-    {
-      ro.renderCloud(cameraTranslate,rotation);
-    }
-    if(ro.meshType == MeshType::grid)
-    {
-      ro.renderGrid(cameraTranslate,rotation);
-    }
+  if (!rayTracerView) {
+    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, rotation);
+    if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, rotation);
+    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, rotation);
+    if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation);
   }
-  if(rayTracerView)
-  {
-    if(ro.meshType == MeshType::plane){
-      ro.renderPlane(cameraTranslate, rayTracedObjects, rotation);                     
-    }
-    else if (ro.meshType == MeshType::sphere){
-      //this uploadsrcthe mesh to the raytracers buffer object
-      
-      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);                     
-    }
-    else if (ro.meshType == MeshType::cloud){
-      //this uploadsrcthe mesh to the raytracers buffer object
-      
-      ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);                     
-    }
+  if (rayTracerView) {
+    if      (ro.meshType == MeshType::plane)  ro.renderPlane(cameraTranslate, rayTracedObjects, rotation);
+    else if (ro.meshType == MeshType::sphere) ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);
+    else if (ro.meshType == MeshType::cloud)  ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
   }
 }
 
-bool Renderer::UpdateInputs(){
+// ─────────────────────────────────────────────────────────────────────────────
+// UpdateInputs  (keyboard — all shortcuts kept)
+// ─────────────────────────────────────────────────────────────────────────────
+bool Renderer::UpdateInputs() {
+  // If ImGui wants the keyboard, skip game keys
+  ImGuiIO& io = ImGui::GetIO();
 
   if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
     glfwSetWindowShouldClose(window, 1);
 
-  if(glfwGetKey(window,GLFW_KEY_SPACE) == GLFW_PRESS){move(vec3{0,-cameraSpeed,0});}
-  if(glfwGetKey(window,GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS){move(vec3{0,cameraSpeed,0});}
-  if(glfwGetKey(window,GLFW_KEY_W) == GLFW_PRESS){move(vec3{0, 0,cameraSpeed});}
-  if(glfwGetKey(window,GLFW_KEY_S) == GLFW_PRESS){move(vec3{0, 0,-cameraSpeed});}
-  if(glfwGetKey(window,GLFW_KEY_A) == GLFW_PRESS){move(vec3{cameraSpeed,0,0});}
-  if(glfwGetKey(window,GLFW_KEY_D) == GLFW_PRESS){move(vec3{-cameraSpeed,0,0});}
-  if(glfwGetKey(window,GLFW_KEY_Q) == GLFW_PRESS){rotation-=cameraRotationSpeed; }
-  if(glfwGetKey(window,GLFW_KEY_E) == GLFW_PRESS){rotation+=cameraRotationSpeed; }
-  if(glfwGetKey(window,GLFW_KEY_R) == GLFW_PRESS)
-  {
-    rayTracerViewButtonPressed = true;
-  }
-  else{
-    if(rayTracerViewButtonPressed)
-    {
-      //toggles raytracer
-      rayTracerView=!rayTracerView;
-    }
-    rayTracerViewButtonPressed = false;
-  }
-  if(glfwGetKey(window,GLFW_KEY_L) == GLFW_PRESS)
-  {
-    reverseButtonPressed = true;
-  }
-  else{
-    if(reverseButtonPressed)
-    {
-      playingForward = !playingForward;
-    }
-    reverseButtonPressed=false;
+  if (!io.WantCaptureKeyboard) {
+    if (glfwGetKey(window, GLFW_KEY_SPACE)      == GLFW_PRESS) move(vec3{0, -cameraSpeed, 0});
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) move(vec3{0,  cameraSpeed, 0});
+    if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  cameraSpeed});
+    if (glfwGetKey(window, GLFW_KEY_S)          == GLFW_PRESS) move(vec3{0,  0, -cameraSpeed});
+    if (glfwGetKey(window, GLFW_KEY_A)          == GLFW_PRESS) move(vec3{ cameraSpeed, 0, 0});
+    if (glfwGetKey(window, GLFW_KEY_D)          == GLFW_PRESS) move(vec3{-cameraSpeed, 0, 0});
+    if (glfwGetKey(window, GLFW_KEY_Q)          == GLFW_PRESS) rotation -= cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_E)          == GLFW_PRESS) rotation += cameraRotationSpeed;
+
+    // Toggle keys (fire on release)
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)  rayTracerViewButtonPressed = true;
+    else { if (rayTracerViewButtonPressed) rayTracerView = !rayTracerView; rayTracerViewButtonPressed = false; }
+
+    if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS)  reverseButtonPressed = true;
+    else { if (reverseButtonPressed) playingForward = !playingForward; reverseButtonPressed = false; }
+
+    if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS)  pauseButtonPressed = true;
+    else { if (pauseButtonPressed) paused = !paused; pauseButtonPressed = false; }
+
+    // N = toggle spawn panel
+    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS)  spawnPanelKeyPressed = true;
+    else { if (spawnPanelKeyPressed) showSpawnPanel = !showSpawnPanel; spawnPanelKeyPressed = false; }
+
+    // H = toggle scene panel
+    if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS)  scenePanelKeyPressed = true;
+    else { if (scenePanelKeyPressed) showScenePanel = !showScenePanel; scenePanelKeyPressed = false; }
   }
 
-  if(glfwGetKey(window,GLFW_KEY_P) == GLFW_PRESS)
-  {
-    pauseButtonPressed = true;
-  }
-  else{
-    if(pauseButtonPressed)
-    {
-      //toggles raytracer
-      paused=!paused;
-    }
-    pauseButtonPressed = false;
-  }
-  if(glfwGetKey(window,GLFW_KEY_C) == GLFW_PRESS)
-  {
-    quitButtonPressed = true;
-  }
-  else{
-    if(quitButtonPressed)
-    {
-      return false;
-    }
-  }
+  if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS)  quitButtonPressed = true;
+  else { if (quitButtonPressed) return false; }
+
+  if (glfwWindowShouldClose(window)) return false;
   return true;
 }
-void Renderer::move(vec3&& moveVector)
-{
-      float x = moveVector.x;
-      float y = moveVector.y;
-      float z = moveVector.z;
 
-      //moving 
-      cameraTranslate[0] +=
-        x *cos(rotation)
-        - z*sin(rotation);
-
-      cameraTranslate[2] +=
-        x *sin(rotation)
-        + z*cos(rotation);
-
-    cameraTranslate[1]+=y;
+// ─────────────────────────────────────────────────────────────────────────────
+// move (camera — rotation-aware)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::move(vec3&& mv) {
+  float x = mv.x, y = mv.y, z = mv.z;
+  cameraTranslate[0] +=  x * std::cos(rotation) - z * std::sin(rotation);
+  cameraTranslate[2] +=  x * std::sin(rotation) + z * std::cos(rotation);
+  cameraTranslate[1] += y;
 }
 
+void Renderer::movePublic(float dx, float dy, float dz) {
+  move(vec3{dx, dy, dz});
+}
 
-Renderer::~Renderer()
-{
+void Renderer::resetCamera() {
+  cameraTranslate[0] = cameraTranslate[1] = cameraTranslate[2] = 0.0f;
+  rotation = 0.0f;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawStartupModal
+// ─────────────────────────────────────────────────────────────────────────────
+bool Renderer::DrawStartupModal() {
+  if (!showStartupModal) return false;
+
+  ImGuiIO& io = ImGui::GetIO();
+  ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+  ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(480, 320), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.97f);
+
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
+                         | ImGuiWindowFlags_NoCollapse;
+  ImGui::Begin("##startup", nullptr, flags);
+
+  // Title
+  ImGui::SetCursorPosX((480 - ImGui::CalcTextSize("BlackholeSim").x) * 0.5f);
+  ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "BlackholeSim");
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  ImGui::TextWrapped("Choose how to start your simulation:");
+  ImGui::Spacing();
+
+  float bw = 430.f;
+  // ── Template ──
+  if (ImGui::Button("Start with Solar System Template", ImVec2(bw, 48))) {
+    startupChoice  = StartupChoice::Template;
+    showStartupModal = false;
+  }
+  ImGui::TextDisabled("  Sun + 4 orbiting bodies — the classic setup");
+  ImGui::Spacing();
+
+  // ── Empty ──
+  if (ImGui::Button("New Empty Project", ImVec2(bw, 48))) {
+    startupChoice  = StartupChoice::Empty;
+    showStartupModal = false;
+  }
+  ImGui::TextDisabled("  Start with a blank canvas and spawn your own objects");
+  ImGui::Spacing();
+
+  // ── Load ──
+  ImGui::Separator();
+  ImGui::Spacing();
+  ImGui::Text("Load from file:");
+  ImGui::SetNextItemWidth(bw - 100.f);
+  ImGui::InputText("##loadpath", startupLoadPath, sizeof(startupLoadPath));
+  ImGui::SameLine();
+  if (ImGui::Button("Load", ImVec2(90, 0))) {
+    startupChoice  = StartupChoice::Load;
+    showStartupModal = false;
+  }
+
+  ImGui::End();
+  return true; // modal still open
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawUI  — master call, drives all sub-panels
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, const SceneCallbacks& cb) {
+  DrawControlsPanel();
+  DrawTimeline(physicsObjects);
+  if (showSpawnPanel)  DrawSpawnPanel(cb);
+  if (showScenePanel)  DrawScenePanel(physicsObjects, cb);
+  if (ghostDragActive) DrawGhostObject();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawControlsPanel  (top-centre)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawControlsPanel() {
+  const float panelW = 780.f;
+  const float panelH = 130.f;
+  ImGuiIO& io = ImGui::GetIO();
+
+  ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - panelW) * 0.5f, 8.f), ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(panelW, panelH), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.80f);
+
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
+                         | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar
+                        ;
+  ImGui::Begin("##controls", nullptr, flags);
+
+  // ── Row 1: Simulation controls ──
+  ImGui::BeginGroup();
+
+  // Pause / Play
+  if (paused) {
+    if (ImGui::Button("▶ Play  [P]", ImVec2(110, 32))) paused = false;
+  } else {
+    if (ImGui::Button("⏸ Pause [P]", ImVec2(110, 32))) paused = true;
+  }
+  ImGui::SameLine();
+
+  // Direction
+  if (playingForward) {
+    if (ImGui::Button("◀ Reverse [L]", ImVec2(120, 32))) playingForward = false;
+  } else {
+    if (ImGui::Button("▶ Forward [L]", ImVec2(120, 32))) playingForward = true;
+  }
+  ImGui::SameLine();
+
+  // Raytrace toggle
+  if (rayTracerView) {
+    if (ImGui::Button("Raytrace ON  [R]", ImVec2(130, 32))) rayTracerView = false;
+  } else {
+    if (ImGui::Button("Raytrace OFF [R]", ImVec2(130, 32))) rayTracerView = true;
+  }
+  ImGui::SameLine();
+
+  // Spawn / Scene panels
+  if (ImGui::Button(showSpawnPanel ? "Spawn [N] *" : "Spawn [N]", ImVec2(100, 32)))
+    showSpawnPanel = !showSpawnPanel;
+  ImGui::SameLine();
+  if (ImGui::Button(showScenePanel ? "Scene [H] *" : "Scene [H]", ImVec2(100, 32)))
+    showScenePanel = !showScenePanel;
+
+  ImGui::EndGroup();
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // ── Row 2: Camera ──
+  ImGui::BeginGroup();
+  ImGui::Text("Cam:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(80);
+  ImGui::DragFloat("X##cam", &cameraTranslate[0], 0.02f, -100.f, 100.f, "%.2f");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(80);
+  ImGui::DragFloat("Y##cam", &cameraTranslate[1], 0.02f, -100.f, 100.f, "%.2f");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(80);
+  ImGui::DragFloat("Z##cam", &cameraTranslate[2], 0.02f, -100.f, 100.f, "%.2f");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(80);
+  ImGui::DragFloat("Rot [Q/E]", &rotation, 0.01f, -6.28f, 6.28f, "%.2f");
+  ImGui::SameLine();
+  if (ImGui::Button("Reset Camera", ImVec2(110, 0))) resetCamera();
+  ImGui::EndGroup();
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawTimeline  (bottom, full width)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects) {
+  const float panelH = 70.f;
+  ImGuiIO& io = ImGui::GetIO();
+
+  ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y - panelH), ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, panelH), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.85f);
+
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
+                         | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar
+                         | ImGuiWindowFlags_NoScrollbar;
+  ImGui::Begin("##timeline", nullptr, flags);
+
+  // Compute current / max frame across all objects
+  unsigned int maxBuf   = 0;
+  unsigned int curFrame = 0;
+  for (auto& obj : physicsObjects) {
+    if (obj.getBufferSize() > maxBuf) maxBuf = obj.getBufferSize();
+    curFrame = obj.getTimeframe();
+  }
+
+  if (maxBuf == 0) {
+    ImGui::Text("No recorded frames yet — run the simulation to build the timeline.");
+    ImGui::End();
+    return;
+  }
+
+  // Draw keypoint markers above the slider using DrawList
+  ImVec2 sliderPos  = ImGui::GetCursorScreenPos();
+  float  sliderW    = io.DisplaySize.x - 220.f; // leave room for label on right
+  ImDrawList* dl    = ImGui::GetWindowDrawList();
+
+  for (auto& kp : keypoints) {
+    float t    = (float)kp.frame / (float)(maxBuf - 1);
+    float xPos = sliderPos.x + t * sliderW;
+    // Small triangle marker
+    dl->AddTriangleFilled(
+      ImVec2(xPos - 5, sliderPos.y - 2),
+      ImVec2(xPos + 5, sliderPos.y - 2),
+      ImVec2(xPos,     sliderPos.y + 8),
+      IM_COL32(255, 220, 50, 220)
+    );
+    // Tooltip on hover
+    if (std::abs(ImGui::GetMousePos().x - xPos) < 8 &&
+        std::abs(ImGui::GetMousePos().y - (sliderPos.y + 3)) < 12) {
+      ImGui::BeginTooltip();
+      ImGui::Text("%s (frame %u)", kp.label.c_str(), kp.frame);
+      ImGui::EndTooltip();
+      // Left-click keypoint → jump to it
+      if (ImGui::IsMouseClicked(0)) {
+        paused = true;
+        for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(kp.frame);
+      }
+    }
+  }
+
+  // Slider
+  int frameInt = (int)curFrame;
+  ImGui::SetNextItemWidth(sliderW);
+  if (ImGui::SliderInt("##timeline", &frameInt, 0, (int)(maxBuf - 1))) {
+    paused = true;
+    for (auto& obj : physicsObjects)
+      obj.setTimeframeAndRestore((unsigned int)frameInt);
+  }
+  ImGui::SameLine();
+  ImGui::Text("Frame %d / %u", frameInt, maxBuf - 1);
+
+  // Right-click on slider → add keypoint
+  if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
+    ImGui::OpenPopup("AddKeypoint");
+    keypointLabelBuf[0] = '\0';
+  }
+  if (ImGui::BeginPopup("AddKeypoint")) {
+    ImGui::Text("Add keypoint at frame %d", frameInt);
+    ImGui::SetNextItemWidth(150);
+    ImGui::InputText("Label##kp", keypointLabelBuf, sizeof(keypointLabelBuf));
+    if (ImGui::Button("Add")) {
+      std::string lbl = keypointLabelBuf[0] ? keypointLabelBuf : ("Key " + std::to_string(frameInt));
+      keypoints.push_back(Keypoint{(unsigned int)frameInt, lbl});
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+  }
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawSpawnPanel  (floating)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
+  ImGui::SetNextWindowSize(ImVec2(380, 420), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(ImVec2(20, 160),   ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowBgAlpha(0.90f);
+
+  bool open = true;
+  ImGui::Begin("Spawn Object [N]", &open, ImGuiWindowFlags_None);
+  if (!open) { showSpawnPanel = false; ImGui::End(); return; }
+
+  if (ImGui::BeginTabBar("SpawnTabs")) {
+
+    // ── Physics Object tab ──
+    if (ImGui::BeginTabItem("Physics Object")) {
+      ImGui::InputText("Name##spawn", spawnForm.name, sizeof(spawnForm.name));
+      ImGui::SliderFloat("Mass", &spawnForm.mass, 0.1f, 500.f, "%.1f");
+      ImGui::Spacing();
+      ImGui::Text("Position:");
+      ImGui::SetNextItemWidth(100); ImGui::InputFloat("X##pos", &spawnForm.posX, 0.1f); ImGui::SameLine();
+      ImGui::SetNextItemWidth(100); ImGui::InputFloat("Y##pos", &spawnForm.posY, 0.1f); ImGui::SameLine();
+      ImGui::SetNextItemWidth(100); ImGui::InputFloat("Z##pos", &spawnForm.posZ, 0.1f);
+      ImGui::Text("Velocity:");
+      ImGui::SetNextItemWidth(100); ImGui::InputFloat("X##vel", &spawnForm.velX, 0.01f); ImGui::SameLine();
+      ImGui::SetNextItemWidth(100); ImGui::InputFloat("Y##vel", &spawnForm.velY, 0.01f); ImGui::SameLine();
+      ImGui::SetNextItemWidth(100); ImGui::InputFloat("Z##vel", &spawnForm.velZ, 0.01f);
+      ImGui::Spacing();
+      ImGui::Text("Appearance:");
+      const char* shaderItems[] = { "Planet  (red, Phong)",
+                                    "Star    (blue-white, Phong)" };
+      ImGui::Combo("Shader", &spawnForm.shaderType, shaderItems, 2);
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+      if (ImGui::Button("Spawn at Position", ImVec2(170, 36))) {
+        if (cb.spawnPhysicsObject) cb.spawnPhysicsObject(spawnForm);
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(ghostDragActive ? "Cancel Drag" : "Place in Scene (Drag)", ImVec2(190, 36))) {
+        ghostDragActive = !ghostDragActive;
+        if (ghostDragActive) {
+          ghostX = spawnForm.posX;
+          ghostY = spawnForm.posY;
+          ghostZ = spawnForm.posZ;
+        }
+      }
+      if (ghostDragActive) {
+        ImGui::TextColored(ImVec4(0.4f,0.9f,0.4f,1), "Click in viewport to place object");
+      }
+      ImGui::EndTabItem();
+    }
+
+    // ── Grid tab ──
+    if (ImGui::BeginTabItem("Grid")) {
+      ImGui::SliderInt("Grid Layers",  &gridForm.count,       1, 10);
+      ImGui::SliderFloat("Size X",     &gridForm.sizeX,       1.f, 30.f);
+      ImGui::SliderFloat("Size Z",     &gridForm.sizeZ,       1.f, 30.f);
+      ImGui::SliderInt("Subdivisions", &gridForm.subdivisions, 5, 60);
+      ImGui::SliderFloat("Y Spacing",  &gridForm.ySpacing,    0.5f, 5.f);
+      ImGui::Spacing();
+      if (ImGui::Button("Apply Grid", ImVec2(160, 36))) {
+        if (cb.applyGrid) cb.applyGrid(gridForm);
+      }
+      ImGui::EndTabItem();
+    }
+
+    // ── Particle Cloud tab ──
+    if (ImGui::BeginTabItem("Particle Cloud")) {
+      ImGui::Checkbox("Enable Cloud", &cloudForm.enabled);
+      ImGui::SliderInt("Particle Count", &cloudForm.count, 100, 5000);
+      ImGui::Text("Size:");
+      ImGui::SetNextItemWidth(90); ImGui::SliderFloat("X##cs", &cloudForm.sizeX, 0.5f, 10.f); ImGui::SameLine();
+      ImGui::SetNextItemWidth(90); ImGui::SliderFloat("Y##cs", &cloudForm.sizeY, 0.5f, 10.f); ImGui::SameLine();
+      ImGui::SetNextItemWidth(90); ImGui::SliderFloat("Z##cs", &cloudForm.sizeZ, 0.5f, 10.f);
+      ImGui::Spacing();
+      const char* distItems[] = { "Sinusoidal (default)" };
+      int distIdx = 0;
+      ImGui::Combo("Distribution", &distIdx, distItems, 1);
+      ImGui::Spacing();
+      if (ImGui::Button("Apply Cloud", ImVec2(160, 36))) {
+        if (cb.applyCloud) cb.applyCloud(cloudForm);
+      }
+      ImGui::EndTabItem();
+    }
+
+    ImGui::EndTabBar();
+  }
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawScenePanel  (floating hierarchy / inspector)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, const SceneCallbacks& cb) {
+  ImGui::SetNextWindowSize(ImVec2(320, 400), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(ImVec2(20, 600),   ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowBgAlpha(0.90f);
+
+  bool open = true;
+  ImGui::Begin("Scene [H]", &open, ImGuiWindowFlags_None);
+  if (!open) { showScenePanel = false; ImGui::End(); return; }
+
+  // Save / Load row
+  if (ImGui::Button("Save Project")) showSaveDialog = !showSaveDialog;
+  ImGui::SameLine();
+  if (ImGui::Button("Load Project")) showLoadDialog = !showLoadDialog;
+
+  if (showSaveDialog) {
+    ImGui::SetNextItemWidth(200);
+    ImGui::InputText("##savepath", savePathBuf, sizeof(savePathBuf));
+    ImGui::SameLine();
+    if (ImGui::Button("Save##do")) {
+      if (cb.saveProject) cb.saveProject();
+      showSaveDialog = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel##svcancel")) showSaveDialog = false;
+  }
+  if (showLoadDialog) {
+    ImGui::SetNextItemWidth(200);
+    ImGui::InputText("##loadpath2", loadPathBuf, sizeof(loadPathBuf));
+    ImGui::SameLine();
+    if (ImGui::Button("Load##do")) {
+      if (cb.loadProject) cb.loadProject(std::string(loadPathBuf));
+      showLoadDialog = false;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel##ldcancel")) showLoadDialog = false;
+  }
+
+  ImGui::Separator();
+  ImGui::Text("Physics Objects (%zu)", physicsObjects.size());
+  ImGui::Separator();
+
+  static int selectedIdx = -1;
+  for (int i = 0; i < (int)physicsObjects.size(); i++) {
+    auto& obj = physicsObjects[i];
+    char label[96];
+    snprintf(label, sizeof(label), "[%d] %s  (m=%.1f)##obj%d",
+             i, obj.name.c_str(), obj.data.mass, i);
+    bool sel = (selectedIdx == i);
+    if (ImGui::Selectable(label, sel)) selectedIdx = i;
+  }
+
+  // Inspector for selected object
+  if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
+    ImGui::Separator();
+    auto& obj = physicsObjects[selectedIdx];
+    ImGui::Text("Inspector: %s", obj.name.c_str());
+    ImGui::InputText("Name##ins", obj.name.data(), obj.name.capacity() + 1,
+                     ImGuiInputTextFlags_None);
+    ImGui::Text("Position:  %.3f  %.3f  %.3f",
+                obj.data.position.x, obj.data.position.y, obj.data.position.z);
+    ImGui::Text("Velocity:  %.3f  %.3f  %.3f",
+                obj.data.velocity.x, obj.data.velocity.y, obj.data.velocity.z);
+    ImGui::Text("Mass:      %.1f", obj.data.mass);
+    ImGui::Text("Frame:     %u / %u", obj.getTimeframe(), obj.getBufferSize());
+    ImGui::Spacing();
+    if (ImGui::Button("Delete Object", ImVec2(150, 32))) {
+      if (cb.deleteObject) cb.deleteObject(selectedIdx);
+      selectedIdx = -1;
+    }
+  }
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawGhostObject — overlaid text hint while in drag-place mode
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawGhostObject() {
+  ImGuiIO& io = ImGui::GetIO();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+
+  // Draw a circle at mouse position as visual ghost indicator
+  ImVec2 mp = io.MousePos;
+  dl->AddCircle(mp, 18.f, IM_COL32(100, 200, 255, 200), 32, 2.0f);
+  dl->AddCircleFilled(mp, 6.f, IM_COL32(100, 200, 255, 120));
+
+  // Label
+  dl->AddText(ImVec2(mp.x + 22, mp.y - 8),
+              IM_COL32(200, 240, 255, 220),
+              spawnForm.name);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UpdateGhostDrag — returns true when object is placed (left-click in viewport)
+// ─────────────────────────────────────────────────────────────────────────────
+bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
+  if (!ghostDragActive) return false;
+
+  ImGuiIO& io = ImGui::GetIO();
+
+  // Cancel with Escape
+  if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+    ghostDragActive = false;
+    return false;
+  }
+
+  // Map screen mouse pos → approximate world XY on a fixed Z plane (Z = -3)
+  // NDC: [-1,1] range
+  float ndcX = (io.MousePos.x / io.DisplaySize.x) * 2.f - 1.f;
+  float ndcY = 1.f - (io.MousePos.y / io.DisplaySize.y) * 2.f;
+
+  // Rough inverse: scale by frustum half-size at z=-3 (FOV 45°, ratio ~1.3)
+  // tan(22.5°) ≈ 0.4142
+  float zPlane    = -cameraTranslate[2] + (-3.f);
+  float halfH     = std::tan(0.3927f) * std::abs(zPlane);
+  float aspect    = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : 1.f;
+
+  ghostX = -cameraTranslate[0] + ndcX * halfH * aspect;
+  ghostY = -cameraTranslate[1] + ndcY * halfH;
+  ghostZ = -3.f;  // fixed depth plane
+
+  // Place on left click (only when ImGui is not capturing mouse)
+  if (!io.WantCaptureMouse && ImGui::IsMouseClicked(0)) {
+    form.posX = ghostX;
+    form.posY = ghostY;
+    form.posZ = ghostZ;
+    ghostDragActive = false;
+    return true; // signal: spawn the object
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Destructor
+// ─────────────────────────────────────────────────────────────────────────────
+Renderer::~Renderer() {
+  if (initialised) {
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+  }
   glfwDestroyWindow(window);
   glfwTerminate();
 }

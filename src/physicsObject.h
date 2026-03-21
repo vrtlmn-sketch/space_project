@@ -1,20 +1,36 @@
 #pragma once
 #include <vector>
+#include <string>
 #include "renderedObject.h"
 #include "mathStructs.h"
 #include "renderer.h"
 #include "physicsObjectStructure.h"
 
+// Which visual shader to use for this object
+enum class ObjectShaderType { Planet, Star };
+
 class PhysicsObject
 {
 private:
-  const unsigned int defaultRecordedBufferSize{6000};
+  unsigned int defaultRecordedBufferSize{6000};
   std::vector<vec3> recorderBuffer;
-  unsigned int timeframe{};
 public:
+  unsigned int timeframe{};
+  std::string name{"Object"};
+  ObjectShaderType shaderType{ObjectShaderType::Planet};
+
   RenderedObject renderedObject;
   PhysicsObjectStructure data;
+
   void SetVelocity(const vec3& velocity);
   void Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);
-  PhysicsObject(const vec3& velocity, const vec3& position,float mass);
+  PhysicsObject(const vec3& velocity, const vec3& position, float mass,
+                const std::string& name = "Object",
+                ObjectShaderType shaderType = ObjectShaderType::Planet);
+
+  // Timeline accessors
+  unsigned int getTimeframe() const { return timeframe; }
+  unsigned int getBufferSize() const { return static_cast<unsigned int>(recorderBuffer.size()); }
+  void setTimeframeAndRestore(unsigned int frame);
+  void clearRecording();
 };
