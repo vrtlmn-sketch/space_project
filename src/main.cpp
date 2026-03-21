@@ -54,21 +54,33 @@ static void buildScene(
   }
 
   if (data.cloud.enabled) {
+    // Find the most massive body (assumed to be the central attractor) to
+    // give cloud particles correct circular-orbit velocities at spawn.
+    float centralMass = 0.0f;
+    for (const auto& pod : data.objects)
+      if (pod.mass > centralMass) centralMass = pod.mass;
     cloud = std::make_unique<CloudObject>(
       vec3{0, 0, -3},
       data.cloud.count,
       asteroidBeltDistribution,
-      vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ}
+      vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ},
+      centralMass
     );
   }
 }
 
 // ─── main ────────────────────────────────────────────────────────────────────
 
-int main() {
+int main(int argc, char** argv) {
 
   Renderer renderer;
   renderer.InitWindow("BlackholeSim", 1200, 800);
+
+  // --template flag: skip startup modal and load solar system template directly
+  if (argc > 1 && std::string(argv[1]) == "--template") {
+    renderer.showStartupModal = false;
+    renderer.startupChoice = Renderer::StartupChoice::Template;
+  }
 
   std::vector<PhysicsObject>   physicsObjects;
   std::vector<LineObject>      lineObjects;
@@ -233,7 +245,7 @@ int main() {
     background.Update(renderer);
 
     // Draw all UI panels
-    renderer.DrawUI(physicsObjects, cb);
+    renderer.DrawUI(physicsObjects, cloud.get(), cb);
 
     if (!renderer.UpdateInputs()) {
       std::cout << "Exiting\n";

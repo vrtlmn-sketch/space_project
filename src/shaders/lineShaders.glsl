@@ -6,7 +6,7 @@ uniform mat4 uWorld;
 uniform vec3 uCamera;
 
 void main() {
-  vec3 color = {1.0f,1.0f,1.0f};
-  color = color/distance(-uCamera,vPos)*5.f;
+  vec3 color = vec3(1.0, 1.0, 1.0);
+  color = color / distance(-uCamera, vPos) * 5.0;
   FragColor = vec4(color, 1.f);
 }

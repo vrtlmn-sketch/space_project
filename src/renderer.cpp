@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "physicsObject.h"
+#include "cloudObject.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -264,11 +265,11 @@ bool Renderer::DrawStartupModal() {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawUI  — master call, drives all sub-panels
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, const SceneCallbacks& cb) {
+void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb) {
   DrawControlsPanel();
   DrawTimeline(physicsObjects);
   if (showSpawnPanel)  DrawSpawnPanel(cb);
-  if (showScenePanel)  DrawScenePanel(physicsObjects, cb);
+  if (showScenePanel)  DrawScenePanel(physicsObjects, cloud, cb);
   if (ghostDragActive) DrawGhostObject();
 }
 
@@ -560,7 +561,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawScenePanel  (floating hierarchy / inspector)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, const SceneCallbacks& cb) {
+void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb) {
   ImGui::SetNextWindowSize(ImVec2(360, 520), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImVec2(20, 600),   ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowBgAlpha(0.92f);
@@ -601,7 +602,19 @@ void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, const 
   ImGui::Text("Objects (%zu)", physicsObjects.size());
   ImGui::Separator();
 
-  static int selectedIdx = -1;
+  static int selectedIdx = -1;  // -1 = none, -2 = cloud
+
+  // ── Cloud entry ──
+  if (cloud) {
+    bool cloudSel = (selectedIdx == -2);
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.12f, 0.28f, 0.18f, 1.f));
+    char cloudLabel[64];
+    snprintf(cloudLabel, sizeof(cloudLabel), "[~] Asteroid Belt  (%d particles)",
+             cloud->particleCount());
+    if (ImGui::Selectable(cloudLabel, cloudSel, ImGuiSelectableFlags_None, ImVec2(0, 20)))
+      selectedIdx = cloudSel ? -1 : -2;
+    ImGui::PopStyleColor();
+  }
 
   // ── Object list ──
   for (int i = 0; i < (int)physicsObjects.size(); i++) {

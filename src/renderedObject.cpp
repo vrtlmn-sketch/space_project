@@ -542,13 +542,31 @@ void RenderedObject::renderCloud(float cameraTranslate[3], float rotation, int f
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, rotation, fbWidth, fbHeight);
-  glPointSize(3);
+  glPointSize(2);
   glDrawArrays(GL_POINTS, 0, bufferSize);
   hasBeenRendered=true;
 }
 
+void RenderedObject::SetCloudOrbitalVelocities(float centralMass, float G)
+{
+  // Particles are stored in local space (relative to the cloud's coordinates).
+  // The attractor is at the cloud origin (0,0,0) in local space.
+  // Circular orbit speed: v = sqrt(G * M / r)
+  // Orbit is in the XZ plane; tangent direction is (-z/r, 0, x/r).
+  for (auto& p : cloudParticles) {
+    float x = p.position.x;
+    float z = p.position.z;
+    float r = std::sqrt(x*x + z*z);
+    if (r < 1e-6f) continue;
+    float speed = std::sqrt(G * centralMass / r);
+    // tangent (CCW when viewed from above): (-z, 0, x) / r
+    p.velocity = vec3{ -z / r * speed, 0.0f, x / r * speed };
+  }
+}
+
 //this is really bad. Needs to be refactored. Also must write a compute shader for this 
-void RenderedObject::UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies)
+void RenderedObject::UpdateCloudPhysics
+(const std::vector<PhysicsObjectStructure>& bigBodies)
 {
   float G = 0.0001f;
   float dt{1/10.f};
@@ -564,18 +582,17 @@ void RenderedObject::UpdateCloudPhysics(const std::vector<PhysicsObjectStructure
         - realPosition;
       float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
       //std::cout<<d2<<"\n";
-      if (d2 == 0) continue;                 
+      // Softened gravity: use d2 + epsilon to prevent velocity explosion
+      // at very close approach, which was sending particles off to infinity.
+      float d2soft = d2 + 0.01f;
       vec3 dir = normalize(r);
-      float accel = G * other.mass*first.mass/ d2;    
+      float accel = G * other.mass / d2soft;   // standard a = GM/r², no first.mass
       first.velocity += dir * accel * dt;        
     }
     first.position+=first.velocity;
 
-    UVObjectMeshBuffer[i*3] = first.position.x;
+    UVObjectMeshBuffer[i*3]   = first.position.x;
     UVObjectMeshBuffer[i*3+1] = first.position.y;
     UVObjectMeshBuffer[i*3+2] = first.position.z;
-    //std::cout<<UVObjectMeshBuffer[i]<<" "<<UVObjectMeshBuffer[i+1]<<" "<<UVObjectMeshBuffer[i+2]<<"\n";
-
-    //std::cerr<<"updated physics\n";
   }
 }

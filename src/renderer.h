@@ -99,7 +99,7 @@ private:
   void DrawControlsPanel();
   void DrawTimeline(std::vector<PhysicsObject>& physicsObjects);
   void DrawSpawnPanel(const SceneCallbacks& cb);
-  void DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, const SceneCallbacks& cb);
+  void DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
   void DrawGhostObject();
 
 public:
@@ -140,7 +140,7 @@ public:
   char           savePathBuf[256] = "project.json";
 
   // Draw ALL UI for one frame — call after all scene rendering
-  void DrawUI(std::vector<PhysicsObject>& physicsObjects, const SceneCallbacks& cb);
+  void DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
 
   // Draw startup modal — returns true while modal is still open
   bool DrawStartupModal();
