@@ -143,29 +143,30 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
   UVObjectMeshBuffer.reserve(objectCount*3);
   meshType=MeshType::cloud;
   this->hasBeenRendered=false;
-  vec3 dimensions{
-    (float)pow(objectCount,1.f/3.f),
-    (float)pow(objectCount,1.f/3.f),
-    (float)pow(objectCount,1.f/3.f)
-  };
-  for(float i=0;i<dimensions.x;i+=size.x/dimensions.x)
-    for(float j=0;j<dimensions.y;j+=size.y/dimensions.y)
-      for(float k=0;k<dimensions.z;k+=size.z/dimensions.z)
+
+  // Iterate exactly objectCount times total by treating indices as integer counts
+  // per axis.  dim = cbrt(objectCount), loop i/j/k from 0..dim-1 by 1.
+  // This prevents explosion when any size component is very small.
+  int dim = (int)std::cbrt((float)objectCount);
+  if (dim < 1) dim = 1;
+
+  for(int i = 0; i < dim; i++)
+    for(int j = 0; j < dim; j++)
+      for(int k = 0; k < dim; k++)
       {
         vec3 point{
-          (float)i/dimensions.x*size.x-size.x/2.f,
-          (float)j/dimensions.y*size.y-size.y/2.f,
-          (float)k/dimensions.z*size.z-size.z/2.f
+          ((float)i / dim) * size.x - size.x * 0.5f,
+          ((float)j / dim) * size.y - size.y * 0.5f,
+          ((float)k / dim) * size.z - size.z * 0.5f
         };
-        if(distributionFunction(point.x,point.y,point.z)>1.f/objectCount)
+        if(distributionFunction(point.x, point.y, point.z) > 1.f/objectCount)
         {
           UVObjectMeshBuffer.emplace_back(point.x);
           UVObjectMeshBuffer.emplace_back(point.y);
           UVObjectMeshBuffer.emplace_back(point.z);
-          cloudParticles.emplace_back(PhysicsObjectStructure{vec3{0,0,0},vec3{point.x,point.y,point.z},0.02});
-
+          cloudParticles.emplace_back(PhysicsObjectStructure{
+            vec3{0,0,0}, vec3{point.x, point.y, point.z}, 0.02f});
         }
-        //std::cout<<(flag?"spawnedPoint":"didn't spawn pont")<<" at "<<point.x<<" "<<point.y<<" "<<point.z<<"\n";
       }
   bufferSize = UVObjectMeshBuffer.size();
 }

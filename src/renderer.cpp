@@ -292,9 +292,13 @@ void Renderer::DrawControlsPanel() {
   // ── Row 1: Simulation controls ──
   ImGui::BeginGroup();
 
-  // Pause / Play
+  // Pause / Play — highlight button orange when simulation is paused
   if (paused) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.80f, 0.40f, 0.00f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.55f, 0.10f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.65f, 0.30f, 0.00f, 1.00f));
     if (ImGui::Button("▶ Play  [P]", ImVec2(110, 32))) paused = false;
+    ImGui::PopStyleColor(3);
   } else {
     if (ImGui::Button("⏸ Pause [P]", ImVec2(110, 32))) paused = true;
   }
