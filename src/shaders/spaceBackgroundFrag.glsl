@@ -18,7 +18,7 @@ uniform vec2 uResolution;
 
 struct spaceObject
 {
-    vec4  position;   // xyz = world pos, w unused
+    vec4  position;    // xyz = world pos, w unused
     float mass;
     float radius;
     float temperature; // Kelvin  (0 = planet/cloud)
@@ -44,18 +44,6 @@ vec3 rotateY(vec3 v, float angle)
     return vec3(v.x * c + v.z * s,
                 v.y,
                -v.x * s + v.z * c);
-}
-
-// Rotate an object position the same way the rasterizer does:
-// vertex shader does: rotateY(aPos + uCamera) and then projects.
-// So in world space, the camera sits at -uCamera, and rotation is around
-// the camera point. To match: shift by uCamera, rotateY, shift back.
-vec3 rotateAroundCamera(vec3 worldPos)
-{
-    vec3 p = worldPos + uCamera;
-    p = rotateY(p, uRotation);
-    p = p - uCamera;
-    return p;
 }
 
 // Blackbody colour using Charity/Krystek polynomial approximation
@@ -113,42 +101,12 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
     return dot(closest, closest);
 }
 
-// Simple hash for procedural starfield
-float hash(vec2 p)
-{
-    p = fract(p * vec2(443.897, 441.423));
-    p += dot(p, p + 19.19);
-    return fract(p.x * p.y);
-}
-
-// Procedural starfield: sample along direction rd
-vec3 starfield(vec3 rd)
-{
-    vec3 col = vec3(0.0);
-    for (int i = 0; i < 3; i++)
-    {
-        float scale = 200.0 + float(i) * 300.0;
-        vec2  cell  = floor(rd.xy * scale);
-        float h     = hash(cell + float(i) * 7.3);
-        if (h > 0.993)
-        {
-            vec2  off    = vec2(hash(cell + 1.0), hash(cell + 2.0)) - 0.5;
-            vec2  center = (cell + 0.5 + off * 0.3) / scale;
-            float dist   = length(rd.xy * scale - (cell + 0.5 + off * 0.3));
-            float bright = exp(-dist * dist * 80.0) * (h - 0.993) * 150.0;
-            float temp   = mix(3000.0, 25000.0, hash(cell + 3.0));
-            col += bright * blackbody(temp);
-        }
-    }
-    return col;
-}
-
 // ---------------------------------------------------------------------------
 // Shading
 // ---------------------------------------------------------------------------
 
 // Diffuse + specular from all star lights, given surface point and normal.
-// ro = ray origin (camera world pos), hitPos and normal in *rotated* world space.
+// All coordinates are in world space (same frame as ro = -uCamera).
 vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal)
 {
     vec3 baseColor = vec3(0.3, 0.5, 0.7);
@@ -158,13 +116,12 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal)
 
     for (int i = 0; i < uObjectCount; i++)
     {
-        if (objects[i].objectType < 0.5) continue; // skip non-stars
-        if (objects[i].objectType > 1.5) continue; // skip clouds
+        int otype = int(objects[i].objectType + 0.5);
+        if (otype != 1) continue; // only stars light planets
 
-        // Rotate star position the same way we rotate planet positions
-        vec3  lpos  = rotateAroundCamera(objects[i].position.xyz);
+        vec3  lpos  = objects[i].position.xyz;
         float lT    = objects[i].temperature;
-        vec3  lCol  = blackbody(lT);
+        vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
 
         vec3  ldir  = lpos - hitPos;
         float dist2 = dot(ldir, ldir);
@@ -181,18 +138,18 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal)
     return result;
 }
 
-// One reflection bounce (in rotated world space)
+// One reflection bounce
 vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
 {
     vec3 reflDir = reflect(rd, normal);
-    vec3 reflCol = starfield(reflDir);
+    vec3 reflCol = vec3(0.0);
 
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
         if (otype == 2) continue;
 
-        vec3  cen = rotateAroundCamera(objects[i].position.xyz);
+        vec3  cen = objects[i].position.xyz;
         float rad = objects[i].radius;
         float t   = raySphere(hitPos + normal * 0.001, reflDir, cen, rad);
         if (t > 0.0)
@@ -221,37 +178,52 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
 
 void main()
 {
-    // Ray origin: camera is at world position = -uCamera
-    // (because the rasterizer shifts vertices by +uCamera to centre on camera)
+    // -----------------------------------------------------------------------
+    // Ray construction.
+    //
+    // The rasterizer vertex shader does:
+    //   clipPos = uProj * rotateY(uWorld * (aPos + uCamera), uRotation)
+    //
+    // A vertex at the sphere centre (aPos = 0) maps to:
+    //   clipPos = uProj * rotateY(objectCoord + uCamera, uRotation)
+    //
+    // We want the raytracer to agree with this.  Choose the pre-rotation
+    // world frame (before the rotateY is applied):
+    //   - Camera world position:  ro = -uCamera
+    //     (adding uCamera to a vertex shifts it so the camera sits at 0)
+    //   - Sphere centre world pos: objects[i].position.xyz  (unchanged)
+    //   - Ray direction: start with the NDC view ray, then rotate it back
+    //     from the rasterizer's rotated frame to the pre-rotation world frame
+    //     using the inverse rotation (angle = -uRotation).
+    // -----------------------------------------------------------------------
+
     vec3 ro = -uCamera;
 
-    // Reconstruct view-space ray direction from fragment coordinate.
-    // uProj[0][0] = f/aspect,  uProj[1][1] = f   (column-major, perspective matrix)
-    vec2 ndc    = (gl_FragCoord.xy / uResolution) * 2.0 - 1.0;
-    float fx    = uProj[0][0]; // f / aspect
-    float fy    = uProj[1][1]; // f
-    // view-space direction: x/fx gives tan(angle) * 1/aspect normalised correctly
+    vec2  ndc     = (gl_FragCoord.xy / uResolution) * 2.0 - 1.0;
+    float fx      = uProj[0][0]; // f / aspect  (column-major)
+    float fy      = uProj[1][1]; // f
     vec3  rayView = normalize(vec3(ndc.x / fx, ndc.y / fy, -1.0));
 
-    // Transform view-space ray to world space using the same rotation as the rasterizer.
-    // The rasterizer applies: rotateY(vertex + camera, rotation), so the "forward"
-    // direction in the rasterizer view is rotateY(-Z, rotation).
-    // We rotate the ray direction by -rotation to undo the view rotation:
+    // Rotate view-space ray back to pre-rotation world space
     vec3 rd = rotateY(rayView, -uRotation);
 
-    // Background: dark space + procedural stars
-    vec3 color = vec3(0.0, 0.0, 0.03) + starfield(normalize(rd));
+    // Pure black background — no atmosphere in space
+    vec3 color = vec3(0.0);
 
-    // Find nearest solid intersection (rotate object positions to match rasterizer)
+    // -----------------------------------------------------------------------
+    // Find nearest solid intersection
+    // -----------------------------------------------------------------------
     float tMin   = 1e30;
     int   hitIdx = -1;
 
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
-        if (otype == 2) continue; // clouds are volumetric
+        if (otype == 2) continue; // clouds are volumetric only
 
-        vec3  cen = rotateAroundCamera(objects[i].position.xyz);
+        // Object positions are stored in pre-rotation world space — no
+        // transform needed; they match ro directly.
+        vec3  cen = objects[i].position.xyz;
         float rad = objects[i].radius;
         float t   = raySphere(ro, rd, cen, rad);
         if (t > 0.0 && t < tMin)
@@ -261,47 +233,79 @@ void main()
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Shade hit
+    // -----------------------------------------------------------------------
+    if (hitIdx >= 0)
+    {
+        vec3  cen    = objects[hitIdx].position.xyz;
+        vec3  hitPos = ro + rd * tMin;
+        vec3  normal = normalize(hitPos - cen);
+        int   otype  = int(objects[hitIdx].objectType + 0.5);
+
+        if (otype == 1) // Star — emissive blackbody surface + corona
+        {
+            float T    = objects[hitIdx].temperature;
+            vec3  bcol = blackbody(T);
+            // Limb darkening: edge of disc is slightly cooler/darker
+            float cosA = dot(-normal, rd);
+            float limb = pow(max(cosA, 0.0), 0.3);
+            color = bcol * limb;
+        }
+        else // Planet — diffuse + specular + 1 reflection bounce
+        {
+            vec3 lit  = shadePlanet(ro, hitPos, normal);
+            vec3 refl = reflectionBounce(ro, rd, hitPos, normal);
+            color = lit + refl * 0.1;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Star corona: additive glow around every star, visible even past the
+    // geometric sphere edge.  Uses closest-approach distance to sphere centre,
+    // scaled by a corona radius several times larger than the sphere.
+    // -----------------------------------------------------------------------
+    for (int i = 0; i < uObjectCount; i++)
+    {
+        int otype = int(objects[i].objectType + 0.5);
+        if (otype != 1) continue;
+
+        vec3  cen      = objects[i].position.xyz;
+        float srad     = objects[i].radius;
+        float T        = objects[i].temperature;
+        vec3  scol     = blackbody(T);
+
+        // Only add corona where the ray does NOT hit the sphere solid surface
+        // (avoid double-brightening the disc centre)
+        float tHit     = raySphere(ro, rd, cen, srad);
+        if (tHit > 0.0 && hitIdx >= 0 && objects[hitIdx].position.xyz == cen)
+            continue;
+
+        float d2       = closestApproachDist2(ro, rd, cen);
+        float coronaR  = srad * 4.0;          // corona extends to 4× sphere radius
+        float falloff  = exp(-d2 / (coronaR * coronaR));
+        // Dim the corona compared with the solid disc so it reads as a glow
+        color += scol * falloff * 0.6;
+    }
+
+    // -----------------------------------------------------------------------
     // Volumetric cloud glow (additive)
+    // -----------------------------------------------------------------------
     vec3 cloudGlow = vec3(0.0);
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
         if (otype != 2) continue;
 
-        vec3  cen   = rotateAroundCamera(objects[i].position.xyz);
-        float sigma = max(objects[i].radius * 3.0, 0.01);
+        vec3  cen   = objects[i].position.xyz;
+        float sigma = max(objects[i].radius * 2.0, 0.02);
         float d2    = closestApproachDist2(ro, rd, cen);
         float glow  = exp(-d2 / (sigma * sigma));
         vec3  gcol  = (objects[i].temperature > 100.0)
                        ? blackbody(objects[i].temperature)
-                       : vec3(0.6, 0.7, 1.0);
-        cloudGlow += gcol * glow * 0.5;
+                       : vec3(0.55, 0.65, 1.0);
+        cloudGlow += gcol * glow * 0.35;
     }
-
-    if (hitIdx >= 0)
-    {
-        vec3  cen     = rotateAroundCamera(objects[hitIdx].position.xyz);
-        vec3  hitPos  = ro + rd * tMin;
-        vec3  normal  = normalize(hitPos - cen);
-        int   otype   = int(objects[hitIdx].objectType + 0.5);
-
-        if (otype == 1) // Star — emissive blackbody
-        {
-            float T    = objects[hitIdx].temperature;
-            vec3  bcol = blackbody(T);
-            float cosA = dot(-normal, rd);
-            float limb = pow(max(cosA, 0.0), 0.4);
-            float spec = pow(max(cosA, 0.0), 8.0);
-            color = bcol * (0.8 * limb + 0.5 * spec);
-        }
-        else // Planet — diffuse + specular + 1 reflection
-        {
-            vec3  lit  = shadePlanet(ro, hitPos, normal);
-            vec3  refl = reflectionBounce(ro, rd, hitPos, normal);
-            color = lit + refl * 0.1;
-        }
-    }
-
     color += cloudGlow;
 
     FragColor = vec4(color, 1.0);

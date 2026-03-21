@@ -253,15 +253,21 @@ void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<R
 }
 void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
-  for(int i=0;i<bufferSize;i+=3) 
+  // bufferSize = UVObjectMeshBuffer.size() (float count), each particle = 3 floats
+  int particleCount = (int)UVObjectMeshBuffer.size() / 3;
+  for(int i = 0; i < particleCount; i++)
   {
+    int fi = i * 3;
+    // radius 0.12: large enough that the volumetric gaussian glow is visible
+    // (sigma = radius*2 = 0.24 in the shader; exp(-d²/0.0576) has noticeable
+    // falloff over ~0.2 world units per particle)
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
-        UVObjectMeshBuffer[i]+coordinates.x,
-        UVObjectMeshBuffer[i+1]+coordinates.y,
-        UVObjectMeshBuffer[i+2]+coordinates.z,
+        UVObjectMeshBuffer[fi  ] + coordinates.x,
+        UVObjectMeshBuffer[fi+1] + coordinates.y,
+        UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      0.002f, 0.002f, 0.0f, 2.0f}); // objectType=2 cloud particle
+      0.12f, 0.12f, 0.0f, 2.0f}); // objectType=2 cloud particle
   }
 }
 

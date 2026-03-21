@@ -78,6 +78,7 @@ int main() {
   // reallocation would copy/move them and corrupt GPU state)
   physicsObjects.reserve(256);
   lineObjects.reserve(256);
+  grids.reserve(256); // GridObject holds OpenGL handles; reallocation would corrupt them
 
   GridData  currentGrid  = GridData{4, 10.f, 10.f, 30, 2.f};
   CloudData currentCloud = CloudData{false, 2000, 3.f, 3.f, 3.f};
