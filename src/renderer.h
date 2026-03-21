@@ -32,6 +32,7 @@ struct SpawnFormState {
   float  posX       = 0.0f, posY = 0.0f, posZ = -3.0f;
   float  velX       = 0.0f, velY = 0.0f, velZ =  0.0f;
   int    shaderType = 0;   // 0=Planet, 1=Star
+  float  temperature = 5778.0f; // Kelvin (meaningful for stars)
 };
 
 struct GridFormState {
@@ -126,6 +127,12 @@ public:
   bool InitWindow(const char* wName, int wheight, int wwidth);
   bool BeginFrame();
   void Draw(RenderedObject& ro);
+  // Draw a physics object with temperature+objectType forwarded to the raytracer SSBO
+  void DrawPhysicsObject(RenderedObject& ro, float temperature, float objectType);
+  // Upload star light positions+colours to all planet (non-star) rendered objects
+  void UploadStarLights(std::vector<RenderedObject*>& planetShaders,
+                        const std::vector<vec3>& positions,
+                        const std::vector<vec3>& colors);
   void EndFrame();
 
   // Public spawn form and save path (accessed from main.cpp)

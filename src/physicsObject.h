@@ -22,11 +22,14 @@ public:
   RenderedObject renderedObject;
   PhysicsObjectStructure data;
 
+  float temperature{0.0f}; // Kelvin — 0 for planets; e.g. 5778 for Sun
+
   void SetVelocity(const vec3& velocity);
   void Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);
   PhysicsObject(const vec3& velocity, const vec3& position, float mass,
                 const std::string& name = "Object",
-                ObjectShaderType shaderType = ObjectShaderType::Planet);
+                ObjectShaderType shaderType = ObjectShaderType::Planet,
+                float temperature = 0.0f);
 
   // Timeline accessors
   unsigned int getTimeframe() const { return timeframe; }

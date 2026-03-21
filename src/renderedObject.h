@@ -33,6 +33,12 @@ private:
   unsigned int objectCoordinateUniform{};
   unsigned int objectCountUniform{};
   unsigned int rotationUniform{};
+  unsigned int resolutionUniform{};
+  unsigned int temperatureUniform{};
+  // per-object-type lighting uniforms (planet shader)
+  unsigned int lightCountUniform{};
+  unsigned int lightPositionsUniform{};
+  unsigned int lightColorsUniform{};
 
   //rendering stuff
   unsigned int vao{};
@@ -53,14 +59,21 @@ public:
   void setupRender();
 
   void translateMesh(vec3 v);
-  void transformPerspectiveMesh(GLuint program, float cameraTranslate[3] , float rotation);
-  void renderMesh(float cameraTranslate[3],float rotation);
-  void renderLine(float cameraTranslate[3],float rotation);
-  void renderCloud(float cameraTranslate[3],float rotation);
-  void renderGrid(float cameraTranslate[3],float rotation);
-  void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
+  void transformPerspectiveMesh(GLuint program, float cameraTranslate[3], float rotation,
+                                int fbWidth = 800, int fbHeight = 600);
+  void uploadStarLighting(const std::vector<vec3>& positions,
+                          const std::vector<vec3>& colors);
+  void uploadTemperature(float kelvin);
+  void uploadResolution(int w, int h);
+  void renderMesh(float cameraTranslate[3], float rotation, int fbWidth = 800, int fbHeight = 600);
+  void renderLine(float cameraTranslate[3], float rotation, int fbWidth = 800, int fbHeight = 600);
+  void renderCloud(float cameraTranslate[3], float rotation, int fbWidth = 800, int fbHeight = 600);
+  void renderGrid(float cameraTranslate[3], float rotation, int fbWidth = 800, int fbHeight = 600);
+  void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
+                           float temperature = 0.0f, float objectType = 0.0f);
 
-void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,float rotation);
+void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
+                 float rotation, int fbWidth = 800, int fbHeight = 600);
 void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 void UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 

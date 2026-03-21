@@ -13,6 +13,7 @@ struct PhysicsObjectData {
   vec3  position{};
   vec3  velocity{};
   int   shaderType{}; // 0=Planet, 1=Star
+  float temperature{0.0f}; // Kelvin
 };
 
 struct GridData {

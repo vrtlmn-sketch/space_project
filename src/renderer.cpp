@@ -99,19 +99,42 @@ void Renderer::EndFrame() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Draw  (unchanged scene dispatch)
+// Draw  (scene dispatch — threads framebuffer dims through all render calls)
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, rotation);
-    if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, rotation);
-    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, rotation);
-    if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation);
+    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, rotation, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, rotation, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, rotation, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation, fbWidth, fbHeight);
   }
   if (rayTracerView) {
-    if      (ro.meshType == MeshType::plane)  ro.renderPlane(cameraTranslate, rayTracedObjects, rotation);
+    if      (ro.meshType == MeshType::plane)  ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, fbWidth, fbHeight);
     else if (ro.meshType == MeshType::sphere) ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);
     else if (ro.meshType == MeshType::cloud)  ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
+  }
+}
+
+void Renderer::DrawPhysicsObject(RenderedObject& ro, float temperature, float objectType) {
+  if (!rayTracerView) {
+    if (ro.meshType == MeshType::sphere) {
+      ro.renderMesh(cameraTranslate, rotation, fbWidth, fbHeight);
+    }
+  }
+  if (rayTracerView) {
+    if (ro.meshType == MeshType::sphere)
+      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, temperature, objectType);
+    else if (ro.meshType == MeshType::plane)
+      ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, fbWidth, fbHeight);
+  }
+}
+
+void Renderer::UploadStarLights(std::vector<RenderedObject*>& planetShaders,
+                                 const std::vector<vec3>& positions,
+                                 const std::vector<vec3>& colors)
+{
+  for (auto* ro : planetShaders) {
+    ro->uploadStarLighting(positions, colors);
   }
 }
 
@@ -449,9 +472,28 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::SetNextItemWidth(100); ImGui::InputFloat("Z##vel", &spawnForm.velZ, 0.01f);
       ImGui::Spacing();
       ImGui::Text("Appearance:");
-      const char* shaderItems[] = { "Planet  (red, Phong)",
-                                    "Star    (blue-white, Phong)" };
+      const char* shaderItems[] = { "Planet  (rocky, lit by stars)",
+                                    "Star    (emissive, blackbody colour)" };
       ImGui::Combo("Shader", &spawnForm.shaderType, shaderItems, 2);
+      if (spawnForm.shaderType == 1) {
+        ImGui::SetNextItemWidth(300);
+        ImGui::SliderFloat("Temperature (K)", &spawnForm.temperature, 1000.f, 50000.f, "%.0f K");
+        // Live blackbody colour preview swatch
+        float t = spawnForm.temperature;
+        float r, g, b;
+        if (t <= 6600.f) {
+          r = 1.0f;
+          g = std::max(0.0f, std::min(1.0f, (0.39008157876901960784f * std::log(t/100.f) - 0.63184144378862745098f)));
+          b = (t <= 1900.f) ? 0.0f
+            : std::max(0.0f, std::min(1.0f, (0.54320678911019607843f * std::log(t/100.f - 10.f) - 1.19625408914f)));
+        } else {
+          r = std::max(0.0f, std::min(1.0f, (329.698727446f * std::pow(t/100.f - 60.f, -0.1332047592f)) / 255.f));
+          g = std::max(0.0f, std::min(1.0f, (288.1221695283f * std::pow(t/100.f - 60.f, -0.0755148492f)) / 255.f));
+          b = 1.0f;
+        }
+        ImGui::SameLine();
+        ImGui::ColorButton("##bbprev", ImVec4(r, g, b, 1.0f), ImGuiColorEditFlags_NoTooltip, ImVec2(24, 24));
+      }
       ImGui::Spacing();
       ImGui::Separator();
       ImGui::Spacing();
@@ -515,9 +557,9 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 // DrawScenePanel  (floating hierarchy / inspector)
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, const SceneCallbacks& cb) {
-  ImGui::SetNextWindowSize(ImVec2(320, 400), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(360, 520), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImVec2(20, 600),   ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowBgAlpha(0.90f);
+  ImGui::SetNextWindowBgAlpha(0.92f);
 
   bool open = true;
   ImGui::Begin("Scene [H]", &open, ImGuiWindowFlags_None);
@@ -552,33 +594,129 @@ void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, const 
   }
 
   ImGui::Separator();
-  ImGui::Text("Physics Objects (%zu)", physicsObjects.size());
+  ImGui::Text("Objects (%zu)", physicsObjects.size());
   ImGui::Separator();
 
   static int selectedIdx = -1;
+
+  // ── Object list ──
   for (int i = 0; i < (int)physicsObjects.size(); i++) {
     auto& obj = physicsObjects[i];
+
+    // Type icon
+    const char* icon = (obj.shaderType == ObjectShaderType::Star) ? "[*]" : "[ ]";
     char label[96];
-    snprintf(label, sizeof(label), "[%d] %s  (m=%.1f)##obj%d",
-             i, obj.name.c_str(), obj.data.mass, i);
+    snprintf(label, sizeof(label), "%s %s  m=%.1f##obj%d",
+             icon, obj.name.c_str(), obj.data.mass, i);
+
     bool sel = (selectedIdx == i);
-    if (ImGui::Selectable(label, sel)) selectedIdx = i;
+    ImGui::PushStyleColor(ImGuiCol_Header,
+      (obj.shaderType == ObjectShaderType::Star)
+        ? ImVec4(0.35f, 0.22f, 0.05f, 1.f)
+        : ImVec4(0.10f, 0.20f, 0.38f, 1.f));
+    if (ImGui::Selectable(label, sel, ImGuiSelectableFlags_None, ImVec2(0, 20)))
+      selectedIdx = (sel) ? -1 : i; // click again to deselect
+    ImGui::PopStyleColor();
   }
 
-  // Inspector for selected object
+  // ── Inspector ──
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
+    ImGui::Spacing();
     ImGui::Separator();
     auto& obj = physicsObjects[selectedIdx];
-    ImGui::Text("Inspector: %s", obj.name.c_str());
-    ImGui::InputText("Name##ins", obj.name.data(), obj.name.capacity() + 1,
-                     ImGuiInputTextFlags_None);
-    ImGui::Text("Position:  %.3f  %.3f  %.3f",
-                obj.data.position.x, obj.data.position.y, obj.data.position.z);
-    ImGui::Text("Velocity:  %.3f  %.3f  %.3f",
-                obj.data.velocity.x, obj.data.velocity.y, obj.data.velocity.z);
-    ImGui::Text("Mass:      %.1f", obj.data.mass);
-    ImGui::Text("Frame:     %u / %u", obj.getTimeframe(), obj.getBufferSize());
+
+    ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), "Inspector: %s", obj.name.c_str());
+    ImGui::Separator();
+
+    // Name
+    char nameBuf[64];
+    strncpy(nameBuf, obj.name.c_str(), sizeof(nameBuf) - 1);
+    nameBuf[sizeof(nameBuf) - 1] = '\0';
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::InputText("Name##ins", nameBuf, sizeof(nameBuf)))
+      obj.name = nameBuf;
+
     ImGui::Spacing();
+
+    // Type selector
+    int typeIdx = (obj.shaderType == ObjectShaderType::Star) ? 1 : 0;
+    const char* typeItems[] = { "Planet", "Star" };
+    ImGui::SetNextItemWidth(130);
+    if (ImGui::Combo("Type##ins", &typeIdx, typeItems, 2)) {
+      obj.shaderType = (typeIdx == 1) ? ObjectShaderType::Star : ObjectShaderType::Planet;
+      // Reload shaders to match new type
+      if (obj.shaderType == ObjectShaderType::Star)
+        obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
+                                        "src/shaders/brightStartFragShader.glsl");
+      else
+        obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
+                                        "src/shaders/defaultFrag.glsl");
+    }
+
+    // Mass (drag)
+    ImGui::SetNextItemWidth(180);
+    if (ImGui::DragFloat("Mass##ins", &obj.data.mass, 0.5f, 0.1f, 5000.f, "%.1f")) {
+      // Resize sphere to match new mass
+      obj.renderedObject.GenerateMeshSphere(
+        0.014f * std::pow(obj.data.mass, 0.3f), 32, 32);
+    }
+
+    ImGui::Spacing();
+
+    // Position
+    ImGui::Text("Position");
+    ImGui::SetNextItemWidth(100);
+    ImGui::DragFloat("X##posin", &obj.data.position.x, 0.005f, -50.f, 50.f, "%.3f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::DragFloat("Y##posin", &obj.data.position.y, 0.005f, -50.f, 50.f, "%.3f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::DragFloat("Z##posin", &obj.data.position.z, 0.005f, -50.f, 50.f, "%.3f");
+    // Keep renderedObject in sync
+    obj.renderedObject.coordinates = obj.data.position;
+
+    // Velocity
+    ImGui::Text("Velocity");
+    ImGui::SetNextItemWidth(100);
+    ImGui::DragFloat("X##velin", &obj.data.velocity.x, 0.001f, -10.f, 10.f, "%.4f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::DragFloat("Y##velin", &obj.data.velocity.y, 0.001f, -10.f, 10.f, "%.4f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);
+    ImGui::DragFloat("Z##velin", &obj.data.velocity.z, 0.001f, -10.f, 10.f, "%.4f");
+
+    ImGui::Spacing();
+
+    // Temperature (always shown — 0 means "not a star / not glowing")
+    ImGui::SetNextItemWidth(220);
+    ImGui::SliderFloat("Temp (K)##ins", &obj.temperature, 0.f, 50000.f, "%.0f K");
+    // Live blackbody colour swatch
+    {
+      float t = obj.temperature;
+      float r2, g2, b2;
+      if (t < 1000.f) { r2 = 0.f; g2 = 0.f; b2 = 0.f; }
+      else if (t <= 6600.f) {
+        r2 = 1.0f;
+        g2 = std::max(0.0f, std::min(1.0f, (0.39008157876f * std::log(t/100.f) - 0.63184144f)));
+        b2 = (t <= 1900.f) ? 0.0f
+           : std::max(0.0f, std::min(1.0f, (0.54320678f * std::log(t/100.f - 10.f) - 1.196254f)));
+      } else {
+        r2 = std::max(0.0f, std::min(1.0f, (329.698727f * std::pow(t/100.f - 60.f, -0.13320f)) / 255.f));
+        g2 = std::max(0.0f, std::min(1.0f, (288.122169f * std::pow(t/100.f - 60.f, -0.07551f)) / 255.f));
+        b2 = 1.0f;
+      }
+      ImGui::SameLine();
+      ImGui::ColorButton("##bbins", ImVec4(r2, g2, b2, 1.f),
+                         ImGuiColorEditFlags_NoTooltip, ImVec2(22, 22));
+    }
+
+    ImGui::Spacing();
+    ImGui::Text("Frame: %u / %u", obj.getTimeframe(), obj.getBufferSize());
+
+    ImGui::Spacing();
+    ImGui::Separator();
     if (ImGui::Button("Delete Object", ImVec2(150, 32))) {
       if (cb.deleteObject) cb.deleteObject(selectedIdx);
       selectedIdx = -1;

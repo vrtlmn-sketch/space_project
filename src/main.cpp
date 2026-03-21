@@ -38,7 +38,7 @@ static void buildScene(
     physicsObjects.emplace_back(
       vec3{pod.velocity.x, pod.velocity.y, pod.velocity.z},
       vec3{pod.position.x, pod.position.y, pod.position.z},
-      pod.mass, pod.name, st);
+      pod.mass, pod.name, st, pod.temperature);
   }
   for (auto& obj : physicsObjects)
     lineObjects.emplace_back(vec3{obj.data.position});
@@ -74,6 +74,10 @@ int main() {
   std::vector<LineObject>      lineObjects;
   std::vector<GridObject>      grids;
   std::unique_ptr<CloudObject> cloud;
+  // Pre-reserve to avoid reallocation (PhysicsObject holds OpenGL handles —
+  // reallocation would copy/move them and corrupt GPU state)
+  physicsObjects.reserve(256);
+  lineObjects.reserve(256);
 
   GridData  currentGrid  = GridData{4, 10.f, 10.f, 30, 2.f};
   CloudData currentCloud = CloudData{false, 2000, 3.f, 3.f, 3.f};
@@ -92,7 +96,7 @@ int main() {
     physicsObjects.emplace_back(
       vec3{form.velX, form.velY, form.velZ},
       vec3{form.posX, form.posY, form.posZ},
-      form.mass, std::string(form.name), st);
+      form.mass, std::string(form.name), st, form.temperature);
     lineObjects.emplace_back(vec3{form.posX, form.posY, form.posZ});
   };
 
@@ -172,6 +176,38 @@ int main() {
     // Ghost-drag: confirm placement on click
     if (renderer.UpdateGhostDrag(renderer.spawnForm)) {
       cb.spawnPhysicsObject(renderer.spawnForm);
+    }
+
+    // Collect star positions + blackbody colours for planet lighting
+    std::vector<vec3> starPositions;
+    std::vector<vec3> starColors;
+    for (const auto& obj : physicsObjects) {
+      if (obj.shaderType == ObjectShaderType::Star) {
+        starPositions.push_back(obj.data.position);
+        // Basic blackbody approximation for the light colour
+        float t = obj.temperature;
+        float r, g, b;
+        if (t <= 6600.f) {
+          r = 1.0f;
+          g = std::max(0.0f, std::min(1.0f, (0.39008157876901960784f * std::log(t/100.f) - 0.63184144378862745098f)));
+          b = (t <= 1900.f) ? 0.0f
+            : std::max(0.0f, std::min(1.0f, (0.54320678911019607843f * std::log(t/100.f - 10.f) - 1.19625408914f)));
+        } else {
+          r = std::max(0.0f, std::min(1.0f, (329.698727446f * std::pow(t/100.f - 60.f, -0.1332047592f)) / 255.f));
+          g = std::max(0.0f, std::min(1.0f, (288.1221695283f * std::pow(t/100.f - 60.f, -0.0755148492f)) / 255.f));
+          b = 1.0f;
+        }
+        starColors.push_back(vec3{r, g, b});
+      }
+    }
+    // Upload to all planet shaders
+    for (auto& obj : physicsObjects) {
+      if (obj.shaderType == ObjectShaderType::Planet && !starPositions.empty()) {
+        obj.renderedObject.uploadStarLighting(starPositions, starColors);
+      }
+      if (obj.shaderType == ObjectShaderType::Star) {
+        obj.renderedObject.uploadTemperature(obj.temperature);
+      }
     }
 
     // Physics objects + trail lines

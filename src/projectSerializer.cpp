@@ -24,11 +24,12 @@ bool ProjectSerializer::Save(const std::string& path,
   json objsArr = json::array();
   for (const auto& obj : physicsObjects) {
     json o;
-    o["name"]       = obj.name;
-    o["mass"]       = obj.data.mass;
-    o["position"]   = vec3ToJson(obj.data.position);
-    o["velocity"]   = vec3ToJson(obj.data.velocity);
-    o["shaderType"] = static_cast<int>(obj.shaderType);
+    o["name"]        = obj.name;
+    o["mass"]        = obj.data.mass;
+    o["position"]    = vec3ToJson(obj.data.position);
+    o["velocity"]    = vec3ToJson(obj.data.velocity);
+    o["shaderType"]  = static_cast<int>(obj.shaderType);
+    o["temperature"] = obj.temperature;
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -79,11 +80,12 @@ ProjectData ProjectSerializer::Load(const std::string& path)
   if (root.contains("physicsObjects")) {
     for (const auto& o : root["physicsObjects"]) {
       PhysicsObjectData pod;
-      pod.name       = o.value("name",       "Object");
-      pod.mass       = o.value("mass",        1.0f);
-      pod.position   = jsonToVec3(o["position"]);
-      pod.velocity   = jsonToVec3(o["velocity"]);
-      pod.shaderType = o.value("shaderType",  0);
+      pod.name        = o.value("name",        "Object");
+      pod.mass        = o.value("mass",         1.0f);
+      pod.position    = jsonToVec3(o["position"]);
+      pod.velocity    = jsonToVec3(o["velocity"]);
+      pod.shaderType  = o.value("shaderType",   0);
+      pod.temperature = o.value("temperature",  0.0f);
       data.objects.push_back(pod);
     }
   }
@@ -112,21 +114,40 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 }
 
 // ─── Solar System Template ───────────────────────────────────────────────────
+// Physics: G=0.0001, dt=0.1  =>  circular orbit speed v = sqrt(G*M_sun/r)
+// Sun mass = 300, placed at world origin (0,0,-3) to sit in view.
+// Planets orbit in XZ plane. At position (+r, 0, -3), tangent CCW is (0,0,-v).
+// Asteroid belt cloud: flat disc centred on sun, radius ~0.95.
 ProjectData ProjectSerializer::SolarSystemTemplate()
 {
   ProjectData data;
 
+  // G=0.0001, M_sun=300
+  // v_circ(r) = sqrt(0.0001 * 300 / r) = sqrt(0.03 / r)
+  // Mercury r=0.15  v=sqrt(0.03/0.15)=0.4472
+  // Venus   r=0.28  v=sqrt(0.03/0.28)=0.3273
+  // Earth   r=0.42  v=sqrt(0.03/0.42)=0.2673
+  // Mars    r=0.62  v=sqrt(0.03/0.62)=0.2199
+  // Jupiter r=1.10  v=sqrt(0.03/1.10)=0.1650
+  // Saturn  r=1.65  v=sqrt(0.03/1.65)=0.1348
+
   data.objects = {
-    // name,   mass,  position,                  velocity,                  shader
-    {"Sun",    250.f, {0.f,  .01f,  .00f},  {0.f,   0.f,  -3.f},    1},
-    {"Earth",    5.f, {0.f, -.004f,-.18f},  {-.00f, 0.f,  -3.f},    0},
-    {"Mars",    10.f, {-.18f,.002f,-.10f},  {-0.7f, 0.f,  -3.7f},   0},
-    {"Rock",     2.f, {-.13f,.004f,  .00f}, {0.7f,  0.f,  -3.7f},   0},
-    {"Giant",   10.f, {.18f, .022f,-.10f},  {-0.6f,-0.6f, -3.1f},   0},
+    //  name        mass    position (x,y,z)         velocity (x,y,z)       shader  temp(K)
+    { "Sun",       300.f,  { 0.f,   0.f,  -3.f  }, { 0.f, 0.f,   0.f   },  1,  5778.f },
+    { "Mercury",     2.f,  { 0.15f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.447f},  0,     0.f },
+    { "Venus",       5.f,  { 0.28f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.327f},  0,     0.f },
+    { "Earth",       6.f,  { 0.42f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.267f},  0,     0.f },
+    { "Mars",        3.f,  { 0.62f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.220f},  0,     0.f },
+    { "Jupiter",    80.f,  { 1.10f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.165f},  0,     0.f },
+    { "Saturn",     60.f,  { 1.65f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.135f},  0,     0.f },
   };
 
-  data.grid = GridData{4, 10.f, 10.f, 30, 2.f};
-  data.cloud = CloudData{false, 2000, 3.f, 3.f, 3.f};
+  // Thin flat grid (gravity ripple visualisation)
+  data.grid = GridData{2, 20.f, 20.f, 40, 3.f};
+
+  // Asteroid belt: flat particle cloud, disc shape centred on sun.
+  // Size 2.0 in X/Z gives particles from -1 to +1 around origin which is ~belt radius.
+  data.cloud = CloudData{true, 3000, 2.0f, 0.08f, 2.0f};
 
   return data;
 }
