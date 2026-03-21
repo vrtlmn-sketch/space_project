@@ -7,8 +7,7 @@ void PlaneObject::Update(Renderer& renderer){
     return;
   }
 
-  renderedObject.UploadSSBOObjects(renderer.rayTracedObjects);
-  //renderedObject.UploadSSBOParticles(renderer.rayTracedObjects);
+  // renderPlane handles SSBO upload and draw internally
   renderer.Draw(renderedObject);
 }
 

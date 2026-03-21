@@ -150,3 +150,15 @@ float randomDistribution(float x, float y, float z){
   return 1-distance(vec3{0,0,0},vec3{x,y,z});
 };
 
+// Returns > 0 for points in an asteroid-belt ring in the XZ plane.
+// Input coords are in [-sizeX/2, sizeX/2] range (cloud size from template = 2.0).
+// Ring inner radius ~0.5, outer ~1.0 (in normalised coords relative to size/2).
+float asteroidBeltDistribution(float x, float y, float z) {
+  float r = std::sqrt(x * x + z * z); // radius in XZ plane
+  // Accept points whose XZ radius is between 0.45 and 0.95 (in world units,
+  // where cloud sizeX = 2 means x ranges -1..1, so ring is 0.45..0.95 world units)
+  float inRing = (r >= 0.45f && r <= 0.95f) ? 1.0f : 0.0f;
+  // Y is already thin (sizeY=0.08 → y in -0.04..0.04), always accept
+  return inRing;
+}
+

@@ -380,11 +380,14 @@ void RenderedObject::uploadResolution(int w, int h)
 
 void RenderedObject::setupShaders(const std::string& vertPath, const std::string& fragPath){
 
+  // Clear previous shader source strings so re-calls don't accumulate
+  fragShader.clear();
+  vertShader.clear();
+
   std::ifstream defaultFragFile(fragPath);
   std::ifstream defaultVertFile(vertPath);
 
   std::string temp;
-  //reading shaders from file
   while(std::getline(defaultFragFile, temp))
   {
     fragShader.append(temp +"\n");
@@ -394,29 +397,52 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
     vertShader.append(temp+"\n");
   }
 
+  // Delete old GPU objects if they exist
+  if (program)       { glDeleteProgram(program);          program = 0; }
+  if (vertexShader)  { /* already detached/deleted after link */ }
+  if (fragmentShader){ /* already detached/deleted after link */ }
+
   program = glCreateProgram();
   vertexShader = glCreateShader(GL_VERTEX_SHADER);
   const char* vertShaderCharBuffer = vertShader.c_str();
   glShaderSource(vertexShader, 1, &vertShaderCharBuffer, nullptr);
   glCompileShader(vertexShader);
+  {
+    GLint ok = 0; glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+      char buf[512]; glGetShaderInfoLog(vertexShader, 512, nullptr, buf);
+      std::cerr << "[vert] " << vertPath << ": " << buf << "\n";
+    }
+  }
 
   const char* fragShaderCharBuffer = fragShader.c_str();
-
   fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
   glShaderSource(fragmentShader, 1, &fragShaderCharBuffer, nullptr);
   glCompileShader(fragmentShader);
-  GLint success;
-  glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-  if(!success)
   {
-    std::cerr<<"shader failed to compile!\n";
+    GLint ok = 0; glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+      char buf[512]; glGetShaderInfoLog(fragmentShader, 512, nullptr, buf);
+      std::cerr << "[frag] " << fragPath << ": " << buf << "\n";
+    }
   }
 
   glAttachShader(program, vertexShader);
   glAttachShader(program, fragmentShader);
   glLinkProgram(program);
+  {
+    GLint ok = 0; glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (!ok) {
+      char buf[512]; glGetProgramInfoLog(program, 512, nullptr, buf);
+      std::cerr << "[link] " << fragPath << ": " << buf << "\n";
+    }
+  }
   glDeleteShader(vertexShader);
   glDeleteShader(fragmentShader);
+
+  // After re-linking, uniform locations need refreshing.
+  // setupRender() fetches them — mark as needing re-init.
+  hasBeenRendered = false;
 }
 
 void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTranslate[3], float rotation,

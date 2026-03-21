@@ -57,7 +57,7 @@ static void buildScene(
     cloud = std::make_unique<CloudObject>(
       vec3{0, 0, -3},
       data.cloud.count,
-      randomDistribution,
+      asteroidBeltDistribution,
       vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ}
     );
   }
@@ -118,7 +118,7 @@ int main() {
     cloud.reset();
     if (cf.enabled) {
       cloud = std::make_unique<CloudObject>(
-        vec3{0, 0, -3}, cf.count, randomDistribution,
+        vec3{0, 0, -3}, cf.count, asteroidBeltDistribution,
         vec3{cf.sizeX, cf.sizeY, cf.sizeZ});
     }
   };
