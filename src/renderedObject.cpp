@@ -168,7 +168,11 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
             vec3{0,0,0}, vec3{point.x, point.y, point.z}, 0.02f});
         }
       }
-  bufferSize = UVObjectMeshBuffer.size();
+  // bufferSize = particle count (NOT float count).
+  // renderCloud passes bufferSize as the vertex count to glDrawArrays(GL_POINTS,...).
+  // Each particle occupies 3 consecutive floats; passing the float count would
+  // tell the GPU to read 3x too many "vertices", nearly all at garbage positions.
+  bufferSize = (int)cloudParticles.size();
 }
 
 void RenderedObject::GenerateMeshPlane(float width, float height)

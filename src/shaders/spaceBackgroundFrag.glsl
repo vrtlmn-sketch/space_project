@@ -234,58 +234,57 @@ void main()
     }
 
     // -----------------------------------------------------------------------
-    // Shade hit
+    // Shade hit — planets only.
+    // Stars are not shaded as a hard sphere surface; they are rendered
+    // entirely as a volumetric glow below, so the sphere is just used for
+    // occlusion (blocking planets behind it) and skipped for colour.
     // -----------------------------------------------------------------------
     if (hitIdx >= 0)
     {
-        vec3  cen    = objects[hitIdx].position.xyz;
-        vec3  hitPos = ro + rd * tMin;
-        vec3  normal = normalize(hitPos - cen);
-        int   otype  = int(objects[hitIdx].objectType + 0.5);
-
-        if (otype == 1) // Star — emissive blackbody surface + corona
+        int otype = int(objects[hitIdx].objectType + 0.5);
+        if (otype != 1) // Planet — diffuse + specular + 1 reflection bounce
         {
-            float T    = objects[hitIdx].temperature;
-            vec3  bcol = blackbody(T);
-            // Limb darkening: edge of disc is slightly cooler/darker
-            float cosA = dot(-normal, rd);
-            float limb = pow(max(cosA, 0.0), 0.3);
-            color = bcol * limb;
-        }
-        else // Planet — diffuse + specular + 1 reflection bounce
-        {
-            vec3 lit  = shadePlanet(ro, hitPos, normal);
-            vec3 refl = reflectionBounce(ro, rd, hitPos, normal);
+            vec3  cen    = objects[hitIdx].position.xyz;
+            vec3  hitPos = ro + rd * tMin;
+            vec3  normal = normalize(hitPos - cen);
+            vec3  lit    = shadePlanet(ro, hitPos, normal);
+            vec3  refl   = reflectionBounce(ro, rd, hitPos, normal);
             color = lit + refl * 0.1;
         }
+        // otype == 1 (star): colour comes entirely from the glow pass below
     }
 
     // -----------------------------------------------------------------------
-    // Star corona: additive glow around every star, visible even past the
-    // geometric sphere edge.  Uses closest-approach distance to sphere centre,
-    // scaled by a corona radius several times larger than the sphere.
+    // Star glow — every star is a soft radiant blob.
+    // We use the closest-approach distance from the ray to the star centre.
+    // Inside the geometric sphere (d < srad) the glow saturates to the full
+    // blackbody colour.  Outside it falls off with two overlapping Gaussians:
+    //   - a tight inner halo (1× srad sigma) for a bright hot core
+    //   - a wide outer corona (5× srad sigma) for the visible bloom
+    // The hard sphere edge is intentionally not rendered.
     // -----------------------------------------------------------------------
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
         if (otype != 1) continue;
 
-        vec3  cen      = objects[i].position.xyz;
-        float srad     = objects[i].radius;
-        float T        = objects[i].temperature;
-        vec3  scol     = blackbody(T);
+        vec3  cen   = objects[i].position.xyz;
+        float srad  = objects[i].radius;
+        float T     = objects[i].temperature;
+        vec3  scol  = blackbody(T);
 
-        // Only add corona where the ray does NOT hit the sphere solid surface
-        // (avoid double-brightening the disc centre)
-        float tHit     = raySphere(ro, rd, cen, srad);
-        if (tHit > 0.0 && hitIdx >= 0 && objects[hitIdx].position.xyz == cen)
-            continue;
+        float d2    = closestApproachDist2(ro, rd, cen);
 
-        float d2       = closestApproachDist2(ro, rd, cen);
-        float coronaR  = srad * 4.0;          // corona extends to 4× sphere radius
-        float falloff  = exp(-d2 / (coronaR * coronaR));
-        // Dim the corona compared with the solid disc so it reads as a glow
-        color += scol * falloff * 0.6;
+        // Tight core: saturates when ray passes through the sphere
+        float coreR   = srad * 1.2;
+        float core    = exp(-d2 / (coreR * coreR));
+
+        // Wide corona: visible glow well beyond the geometric edge
+        float coronaR = srad * 6.0;
+        float corona  = exp(-d2 / (coronaR * coronaR)) * 0.4;
+
+        float total   = clamp(core + corona, 0.0, 1.0);
+        color += scol * total;
     }
 
     // -----------------------------------------------------------------------
