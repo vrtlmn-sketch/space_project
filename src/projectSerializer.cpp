@@ -145,9 +145,9 @@ ProjectData ProjectSerializer::SolarSystemTemplate()
   // Thin flat grid (gravity ripple visualisation)
   data.grid = GridData{2, 20.f, 20.f, 40, 3.f};
 
-  // Asteroid belt: flat particle cloud, disc shape centred on sun.
-  // Size 2.0 in X/Z gives particles from -1 to +1 around origin which is ~belt radius.
-  data.cloud = CloudData{true, 3000, 2.0f, 0.08f, 2.0f};
+  // Particle cloud: sphere of particles at the scene centre.
+  // Pulled chaotically by all bodies — no pre-set orbital velocity.
+  data.cloud = CloudData{true, 3000, 1.0f, 1.0f, 1.0f};
 
   return data;
 }

@@ -740,6 +740,34 @@ void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudO
     }
   }
 
+  // ── Cloud Inspector ──
+  if (selectedIdx == -2 && cloud != nullptr) {
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.4f, 1.0f), "Inspector: Particle Cloud");
+    ImGui::Separator();
+
+    ImGui::Spacing();
+    ImGui::Text("Particle Count (active): %d", cloud->particleCount());
+
+    ImGui::Spacing();
+    ImGui::Checkbox("Enabled##cloud", &cloudForm.enabled);
+    ImGui::SetNextItemWidth(220);
+    ImGui::SliderInt("Count##cloud", &cloudForm.count, 100, 5000);
+
+    ImGui::Spacing();
+    ImGui::Text("Spawn Radius");
+    ImGui::SetNextItemWidth(90); ImGui::SliderFloat("X##csi", &cloudForm.sizeX, 0.5f, 10.f); ImGui::SameLine();
+    ImGui::SetNextItemWidth(90); ImGui::SliderFloat("Y##csi", &cloudForm.sizeY, 0.5f, 10.f); ImGui::SameLine();
+    ImGui::SetNextItemWidth(90); ImGui::SliderFloat("Z##csi", &cloudForm.sizeZ, 0.5f, 10.f);
+
+    ImGui::Spacing();
+    if (ImGui::Button("Rebuild Cloud", ImVec2(150, 32))) {
+      if (cb.applyCloud) cb.applyCloud(cloudForm);
+    }
+  }
+
   ImGui::End();
 }
 

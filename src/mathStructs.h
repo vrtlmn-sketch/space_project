@@ -31,6 +31,7 @@ struct vec3{
 
 float randomDistribution(float x, float y, float z);
 float asteroidBeltDistribution(float x, float y, float z);
+float sphereDistribution(float x, float y, float z);
 
 void rotate(vec3& v, float DegY);
 

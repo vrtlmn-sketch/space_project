@@ -54,17 +54,11 @@ static void buildScene(
   }
 
   if (data.cloud.enabled) {
-    // Find the most massive body (assumed to be the central attractor) to
-    // give cloud particles correct circular-orbit velocities at spawn.
-    float centralMass = 0.0f;
-    for (const auto& pod : data.objects)
-      if (pod.mass > centralMass) centralMass = pod.mass;
     cloud = std::make_unique<CloudObject>(
       vec3{0, 0, -3},
       data.cloud.count,
-      asteroidBeltDistribution,
-      vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ},
-      centralMass
+      sphereDistribution,
+      vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ}
     );
   }
 }
@@ -131,7 +125,7 @@ int main(int argc, char** argv) {
     cloud.reset();
     if (cf.enabled) {
       cloud = std::make_unique<CloudObject>(
-        vec3{0, 0, -3}, cf.count, asteroidBeltDistribution,
+        vec3{0, 0, -3}, cf.count, sphereDistribution,
         vec3{cf.sizeX, cf.sizeY, cf.sizeZ});
     }
   };

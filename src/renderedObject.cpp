@@ -569,27 +569,33 @@ void RenderedObject::UpdateCloudPhysics
 (const std::vector<PhysicsObjectStructure>& bigBodies)
 {
   float G = 0.0001f;
-  float dt{1/10.f};
-  //std::cerr<<cloudParticles.size()<<" size\n";
-  for(int i=0;i <cloudParticles.size();i++)
+  float dt = 0.1f;
+  // Max speed per frame — prevents particles escaping the visible scene after
+  // a close flyby. Value tuned so the fastest interesting motion stays on screen.
+  const float maxSpeed = 0.08f;
+
+  for(int i = 0; i < (int)cloudParticles.size(); i++)
   {
-    auto& first=cloudParticles[i];
-    for(auto& other:bigBodies)
+    auto& first = cloudParticles[i];
+    for(auto& other : bigBodies)
     {
-      if(&other == &first) continue;           
-      vec3 realPosition = first.position+this->coordinates;
-      vec3 r = vec3{other.position.x,other.position.y,other.position.z}
-        - realPosition;
+      vec3 realPosition = first.position + this->coordinates;
+      vec3 r = vec3{other.position.x, other.position.y, other.position.z} - realPosition;
       float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
-      //std::cout<<d2<<"\n";
-      // Softened gravity: use d2 + epsilon to prevent velocity explosion
-      // at very close approach, which was sending particles off to infinity.
+      // Softened gravity: epsilon prevents velocity explosion at close approach.
       float d2soft = d2 + 0.01f;
       vec3 dir = normalize(r);
-      float accel = G * other.mass / d2soft;   // standard a = GM/r², no first.mass
-      first.velocity += dir * accel * dt;        
+      float accel = G * other.mass / d2soft;  // standard a = GM/r²
+      first.velocity += dir * accel * dt;
     }
-    first.position+=first.velocity;
+    // Clamp speed so no particle escapes the visible region.
+    float speed = std::sqrt(first.velocity.x*first.velocity.x
+                          + first.velocity.y*first.velocity.y
+                          + first.velocity.z*first.velocity.z);
+    if (speed > maxSpeed)
+      first.velocity = first.velocity * (maxSpeed / speed);
+
+    first.position += first.velocity;
 
     UVObjectMeshBuffer[i*3]   = first.position.x;
     UVObjectMeshBuffer[i*3+1] = first.position.y;
