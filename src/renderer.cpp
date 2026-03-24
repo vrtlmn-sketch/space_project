@@ -267,7 +267,7 @@ bool Renderer::DrawStartupModal() {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb) {
   DrawControlsPanel();
-  DrawTimeline(physicsObjects);
+  DrawTimeline(physicsObjects, cloud);
   if (showSpawnPanel)  DrawSpawnPanel(cb);
   if (showScenePanel)  DrawScenePanel(physicsObjects, cloud, cb);
   if (ghostDragActive) DrawGhostObject();
@@ -359,7 +359,7 @@ void Renderer::DrawControlsPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawTimeline  (bottom, full width)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects) {
+void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud) {
   const float panelH = 70.f;
   ImGuiIO& io = ImGui::GetIO();
 
@@ -378,6 +378,9 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects) {
   for (auto& obj : physicsObjects) {
     if (obj.getBufferSize() > maxBuf) maxBuf = obj.getBufferSize();
     curFrame = obj.getTimeframe();
+  }
+  if (cloud) {
+    if (cloud->getBufferSize() > maxBuf) maxBuf = cloud->getBufferSize();
   }
 
   if (maxBuf == 0) {
@@ -411,6 +414,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects) {
       if (ImGui::IsMouseClicked(0)) {
         paused = true;
         for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(kp.frame);
+        if (cloud) cloud->setTimeframeAndRestore(kp.frame);
       }
     }
   }
@@ -422,6 +426,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects) {
     paused = true;
     for (auto& obj : physicsObjects)
       obj.setTimeframeAndRestore((unsigned int)frameInt);
+    if (cloud) cloud->setTimeframeAndRestore((unsigned int)frameInt);
   }
   ImGui::SameLine();
   ImGui::Text("Frame %d / %u", frameInt, maxBuf - 1);
@@ -536,7 +541,6 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 
     // ── Particle Cloud tab ──
     if (ImGui::BeginTabItem("Particle Cloud")) {
-      ImGui::Checkbox("Enable Cloud", &cloudForm.enabled);
       ImGui::SliderInt("Particle Count", &cloudForm.count, 100, 5000);
       ImGui::Text("Size:");
       ImGui::SetNextItemWidth(90); ImGui::SliderFloat("X##cs", &cloudForm.sizeX, 0.5f, 10.f); ImGui::SameLine();
@@ -547,7 +551,13 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       int distIdx = 0;
       ImGui::Combo("Distribution", &distIdx, distItems, 1);
       ImGui::Spacing();
-      if (ImGui::Button("Apply Cloud", ImVec2(160, 36))) {
+      if (ImGui::Button("Spawn Particles", ImVec2(160, 36))) {
+        cloudForm.enabled = true;
+        if (cb.applyCloud) cb.applyCloud(cloudForm);
+      }
+      ImGui::SameLine();
+      if (ImGui::Button("Remove Cloud", ImVec2(160, 36))) {
+        cloudForm.enabled = false;
         if (cb.applyCloud) cb.applyCloud(cloudForm);
       }
       ImGui::EndTabItem();
@@ -752,7 +762,6 @@ void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudO
     ImGui::Text("Particle Count (active): %d", cloud->particleCount());
 
     ImGui::Spacing();
-    ImGui::Checkbox("Enabled##cloud", &cloudForm.enabled);
     ImGui::SetNextItemWidth(220);
     ImGui::SliderInt("Count##cloud", &cloudForm.count, 100, 5000);
 
@@ -763,7 +772,13 @@ void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudO
     ImGui::SetNextItemWidth(90); ImGui::SliderFloat("Z##csi", &cloudForm.sizeZ, 0.5f, 10.f);
 
     ImGui::Spacing();
-    if (ImGui::Button("Rebuild Cloud", ImVec2(150, 32))) {
+    if (ImGui::Button("Respawn Cloud", ImVec2(150, 32))) {
+      cloudForm.enabled = true;
+      if (cb.applyCloud) cb.applyCloud(cloudForm);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove Cloud##scene", ImVec2(150, 32))) {
+      cloudForm.enabled = false;
       if (cb.applyCloud) cb.applyCloud(cloudForm);
     }
   }

@@ -87,14 +87,14 @@ void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, 
 void GenerateMeshGrid(const vec3& size, int subdivisions);
 
   void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
-// Set circular orbital velocities for cloud particles around the cloud's own
-// origin.  Call once after GenerateMeshCloud.  centralMass is the attractor
-// mass (e.g. Sun), G is the gravitational constant used in UpdateCloudPhysics.
-void SetCloudOrbitalVelocities(float centralMass, float G);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);
 
   int cloudParticleCount() const { return (int)cloudParticles.size(); }
+
+  // Cloud particle snapshot for timeline recording
+  std::vector<vec3> getParticlePositions() const;
+  void setParticlePositions(const std::vector<vec3>& positions);
 
 void perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]);
 

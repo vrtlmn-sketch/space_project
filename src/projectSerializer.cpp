@@ -102,10 +102,10 @@ ProjectData ProjectSerializer::Load(const std::string& path)
   if (root.contains("cloud")) {
     const auto& c    = root["cloud"];
     data.cloud.enabled = c.value("enabled", false);
-    data.cloud.count   = c.value("count",   2000);
-    data.cloud.sizeX   = c.value("sizeX",   3.f);
-    data.cloud.sizeY   = c.value("sizeY",   3.f);
-    data.cloud.sizeZ   = c.value("sizeZ",   3.f);
+    data.cloud.count   = c.value("count",   40000);
+    data.cloud.sizeX   = c.value("sizeX",   5.f);
+    data.cloud.sizeY   = c.value("sizeY",   5.f);
+    data.cloud.sizeZ   = c.value("sizeZ",   5.f);
   }
 
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()
@@ -114,40 +114,26 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 }
 
 // ─── Solar System Template ───────────────────────────────────────────────────
-// Physics: G=0.0001, dt=0.1  =>  circular orbit speed v = sqrt(G*M_sun/r)
-// Sun mass = 300, placed at world origin (0,0,-3) to sit in view.
-// Planets orbit in XZ plane. At position (+r, 0, -3), tangent CCW is (0,0,-v).
-// Asteroid belt cloud: flat disc centred on sun, radius ~0.95.
+// Scene layout from the original "add:grid" commit (9fd17dd).
+// Five chaotic bodies + 200-particle cloud + 4 grids.
 ProjectData ProjectSerializer::SolarSystemTemplate()
 {
   ProjectData data;
 
-  // G=0.0001, M_sun=300
-  // v_circ(r) = sqrt(0.0001 * 300 / r) = sqrt(0.03 / r)
-  // Mercury r=0.15  v=sqrt(0.03/0.15)=0.4472
-  // Venus   r=0.28  v=sqrt(0.03/0.28)=0.3273
-  // Earth   r=0.42  v=sqrt(0.03/0.42)=0.2673
-  // Mars    r=0.62  v=sqrt(0.03/0.62)=0.2199
-  // Jupiter r=1.10  v=sqrt(0.03/1.10)=0.1650
-  // Saturn  r=1.65  v=sqrt(0.03/1.65)=0.1348
-
   data.objects = {
-    //  name        mass    position (x,y,z)         velocity (x,y,z)       shader  temp(K)
-    { "Sun",       300.f,  { 0.f,   0.f,  -3.f  }, { 0.f, 0.f,   0.f   },  1,  5778.f },
-    { "Mercury",     2.f,  { 0.15f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.447f},  0,     0.f },
-    { "Venus",       5.f,  { 0.28f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.327f},  0,     0.f },
-    { "Earth",       6.f,  { 0.42f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.267f},  0,     0.f },
-    { "Mars",        3.f,  { 0.62f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.220f},  0,     0.f },
-    { "Jupiter",    80.f,  { 1.10f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.165f},  0,     0.f },
-    { "Saturn",     60.f,  { 1.65f, 0.f,  -3.f  }, { 0.f, 0.f,  -0.135f},  0,     0.f },
+    //  name        mass    position (x,y,z)              velocity (x,y,z)             shader  temp(K)
+    { "Sun",       250.f,  { 0.0f,   0.0f,  -3.0f  },   { 0.0f,   0.01f,  0.0f   },  1,  57780.f },
+    { "Earth",       5.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  0,     0.f },
+    { "Mars",       10.f,  {-0.7f,   0.0f,  -3.7f  },   {-0.18f,  0.002f,-0.10f  },  0,     0.f },
+    { "Planet4",     2.f,  { 0.7f,   0.0f,  -3.7f  },   {-0.13f,  0.004f, 0.0f   },  0,     0.f },
+    { "Planet5",    10.f,  {-0.6f,  -0.6f,  -3.1f  },   { 0.18f,  0.022f,-0.10f  },  0,     0.f },
   };
 
-  // Thin flat grid (gravity ripple visualisation)
-  data.grid = GridData{2, 20.f, 20.f, 40, 3.f};
+  // 4 grids, spacing=2, size 10x10x10, 30 subdivisions
+  data.grid = GridData{4, 10.f, 10.f, 30, 2.f};
 
-  // Particle cloud: sphere of particles at the scene centre.
-  // Pulled chaotically by all bodies — no pre-set orbital velocity.
-  data.cloud = CloudData{true, 3000, 1.0f, 1.0f, 1.0f};
+  // 200-particle cloud, 3x3x3 sphere (randomDistribution used in buildScene)
+  data.cloud = CloudData{true, 200, 3.0f, 3.0f, 3.0f};
 
   return data;
 }

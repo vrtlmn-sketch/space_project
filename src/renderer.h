@@ -97,7 +97,7 @@ private:
 
   // ImGui helpers
   void DrawControlsPanel();
-  void DrawTimeline(std::vector<PhysicsObject>& physicsObjects);
+  void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud);
   void DrawSpawnPanel(const SceneCallbacks& cb);
   void DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
   void DrawGhostObject();

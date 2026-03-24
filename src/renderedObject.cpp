@@ -144,15 +144,15 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
   meshType=MeshType::cloud;
   this->hasBeenRendered=false;
 
-  // Iterate exactly objectCount times total by treating indices as integer counts
-  // per axis.  dim = cbrt(objectCount), loop i/j/k from 0..dim-1 by 1.
-  // This prevents explosion when any size component is very small.
-  int dim = (int)std::cbrt((float)objectCount);
+  // Over-generate grid candidates so that after the distribution filter
+  // rejects some, we still reach the requested objectCount.
+  int dim = (int)std::ceil(std::cbrt((float)objectCount * 8.0f));
   if (dim < 1) dim = 1;
+  int collected = 0;
 
-  for(int i = 0; i < dim; i++)
-    for(int j = 0; j < dim; j++)
-      for(int k = 0; k < dim; k++)
+  for(int i = 0; i < dim && collected < objectCount; i++)
+    for(int j = 0; j < dim && collected < objectCount; j++)
+      for(int k = 0; k < dim && collected < objectCount; k++)
       {
         vec3 point{
           ((float)i / dim) * size.x - size.x * 0.5f,
@@ -166,6 +166,7 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
           UVObjectMeshBuffer.emplace_back(point.z);
           cloudParticles.emplace_back(PhysicsObjectStructure{
             vec3{0,0,0}, vec3{point.x, point.y, point.z}, 0.02f});
+          collected++;
         }
       }
   // bufferSize = particle count (NOT float count).
@@ -262,16 +263,14 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
   for(int i = 0; i < particleCount; i++)
   {
     int fi = i * 3;
-    // radius 0.12: large enough that the volumetric gaussian glow is visible
-    // (sigma = radius*2 = 0.24 in the shader; exp(-d²/0.0576) has noticeable
-    // falloff over ~0.2 world units per particle)
+    // radius 0.008: small dots matching rasterizer appearance
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
         UVObjectMeshBuffer[fi  ] + coordinates.x,
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      0.12f, 0.12f, 0.0f, 2.0f}); // objectType=2 cloud particle
+      0.002f, 0.002f, 0.0f, 2.0f}); // objectType=2 cloud particle
   }
 }
 
@@ -536,32 +535,16 @@ void RenderedObject::renderLine(float cameraTranslate[3], float rotation, int fb
 }
 
 void RenderedObject::renderCloud(float cameraTranslate[3], float rotation, int fbWidth, int fbHeight){
+  if(bufferSize == 0 || UVObjectMeshBuffer.empty()) return;
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, rotation, fbWidth, fbHeight);
-  glPointSize(2);
+  glPointSize(5);
   glDrawArrays(GL_POINTS, 0, bufferSize);
   hasBeenRendered=true;
-}
-
-void RenderedObject::SetCloudOrbitalVelocities(float centralMass, float G)
-{
-  // Particles are stored in local space (relative to the cloud's coordinates).
-  // The attractor is at the cloud origin (0,0,0) in local space.
-  // Circular orbit speed: v = sqrt(G * M / r)
-  // Orbit is in the XZ plane; tangent direction is (-z/r, 0, x/r).
-  for (auto& p : cloudParticles) {
-    float x = p.position.x;
-    float z = p.position.z;
-    float r = std::sqrt(x*x + z*z);
-    if (r < 1e-6f) continue;
-    float speed = std::sqrt(G * centralMass / r);
-    // tangent (CCW when viewed from above): (-z, 0, x) / r
-    p.velocity = vec3{ -z / r * speed, 0.0f, x / r * speed };
-  }
 }
 
 //this is really bad. Needs to be refactored. Also must write a compute shader for this 
@@ -569,36 +552,45 @@ void RenderedObject::UpdateCloudPhysics
 (const std::vector<PhysicsObjectStructure>& bigBodies)
 {
   float G = 0.0001f;
-  float dt = 0.1f;
-  // Max speed per frame — prevents particles escaping the visible scene after
-  // a close flyby. Value tuned so the fastest interesting motion stays on screen.
-  const float maxSpeed = 0.08f;
+  float dt{1/10.f};
 
   for(int i = 0; i < (int)cloudParticles.size(); i++)
   {
     auto& first = cloudParticles[i];
     for(auto& other : bigBodies)
     {
+      if(&other == &first) continue;
       vec3 realPosition = first.position + this->coordinates;
-      vec3 r = vec3{other.position.x, other.position.y, other.position.z} - realPosition;
+      vec3 r = vec3{other.position.x, other.position.y, other.position.z}
+        - realPosition;
       float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
-      // Softened gravity: epsilon prevents velocity explosion at close approach.
-      float d2soft = d2 + 0.01f;
+      if (d2 == 0) continue;
       vec3 dir = normalize(r);
-      float accel = G * other.mass / d2soft;  // standard a = GM/r²
+      float accel = G * other.mass * first.mass / d2;
       first.velocity += dir * accel * dt;
     }
-    // Clamp speed so no particle escapes the visible region.
-    float speed = std::sqrt(first.velocity.x*first.velocity.x
-                          + first.velocity.y*first.velocity.y
-                          + first.velocity.z*first.velocity.z);
-    if (speed > maxSpeed)
-      first.velocity = first.velocity * (maxSpeed / speed);
-
     first.position += first.velocity;
 
     UVObjectMeshBuffer[i*3]   = first.position.x;
     UVObjectMeshBuffer[i*3+1] = first.position.y;
     UVObjectMeshBuffer[i*3+2] = first.position.z;
+  }
+}
+
+std::vector<vec3> RenderedObject::getParticlePositions() const {
+  std::vector<vec3> positions;
+  positions.reserve(cloudParticles.size());
+  for (const auto& p : cloudParticles)
+    positions.push_back(p.position);
+  return positions;
+}
+
+void RenderedObject::setParticlePositions(const std::vector<vec3>& positions) {
+  int count = std::min((int)positions.size(), (int)cloudParticles.size());
+  for (int i = 0; i < count; i++) {
+    cloudParticles[i].position = positions[i];
+    UVObjectMeshBuffer[i*3]   = positions[i].x;
+    UVObjectMeshBuffer[i*3+1] = positions[i].y;
+    UVObjectMeshBuffer[i*3+2] = positions[i].z;
   }
 }

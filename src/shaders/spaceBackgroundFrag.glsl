@@ -274,21 +274,26 @@ void main()
         vec3  scol  = blackbody(T);
 
         float d2    = closestApproachDist2(ro, rd, cen);
+        float srad2 = srad * srad;
 
-        // Tight core: saturates when ray passes through the sphere
-        float coreR   = srad * 1.2;
-        float core    = exp(-d2 / (coreR * coreR));
+        // Inside the sphere: full brightness (matches rasterized disc exactly)
+        // Outside: corona glow falls off from the sphere edge
+        float core;
+        if (d2 < srad2)
+            core = 5.0;
+        else
+            core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.5));
 
-        // Wide corona: visible glow well beyond the geometric edge
-        float coronaR = srad * 6.0;
-        float corona  = exp(-d2 / (coronaR * coronaR)) * 0.4;
+        // Wide corona: cinematic bloom beyond the geometric edge
+        float coronaR = srad * 5.0;
+        float corona  = exp(-d2 / (coronaR * coronaR)) * 0.8;
 
-        float total   = clamp(core + corona, 0.0, 1.0);
+        float total   = core + corona;
         color += scol * total;
     }
 
     // -----------------------------------------------------------------------
-    // Volumetric cloud glow (additive)
+    // Volumetric cloud glow (additive) — particles rendered like bright stars
     // -----------------------------------------------------------------------
     vec3 cloudGlow = vec3(0.0);
     for (int i = 0; i < uObjectCount; i++)
@@ -297,13 +302,20 @@ void main()
         if (otype != 2) continue;
 
         vec3  cen   = objects[i].position.xyz;
-        float sigma = max(objects[i].radius * 2.0, 0.02);
         float d2    = closestApproachDist2(ro, rd, cen);
-        float glow  = exp(-d2 / (sigma * sigma));
+
+        // Tight bright core — like a star point
+        float coreS  = max(objects[i].radius * 2.0, 0.002);
+        float core   = exp(-d2 / (coreS * coreS)) * 6.0;
+
+        // Subtle wider halo
+        float haloS  = coreS * 4.0;
+        float halo   = exp(-d2 / (haloS * haloS)) * 0.8;
+
         vec3  gcol  = (objects[i].temperature > 100.0)
                        ? blackbody(objects[i].temperature)
                        : vec3(0.55, 0.65, 1.0);
-        cloudGlow += gcol * glow * 0.35;
+        cloudGlow += gcol * (core + halo);
     }
     color += cloudGlow;
 
