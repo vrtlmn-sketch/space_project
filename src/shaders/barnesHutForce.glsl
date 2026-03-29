@@ -42,7 +42,8 @@ uniform float uDt;           // timestep (0.1)
 uniform float uTheta;        // Barnes-Hut opening angle (0.5)
 
 // ── Softening to avoid singularity ──
-const float SOFTENING2 = 1e-6;
+const float SOFTENING2 = 0.001;       // increased to prevent close-encounter blow-ups
+const float SELF_DIST2 = 1e-8;        // if leaf COM is this close to us, it's our own leaf
 
 void main() {
   uint gid = gl_GlobalInvocationID.x;
@@ -82,6 +83,11 @@ void main() {
     // Theta criterion: if node is far enough away, treat as single body
     // OR if this is a leaf (particleCount <= 1)
     if (node.particleCount <= 1 || (nodeSize / d) < uTheta) {
+      // Self-interaction check: if this is a single-particle leaf and
+      // its COM is essentially at our position, it's our own leaf — skip.
+      float rawD2 = dot(r, r);
+      if (node.particleCount == 1 && rawD2 < SELF_DIST2) continue;
+
       // Acceleration = G * M_other / d^2  (Newton's law: F/m = GM/r²)
       float accel = uG * node.com.w / d2;
       acc += normalize(r) * accel;

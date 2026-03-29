@@ -148,8 +148,9 @@ void CloudObject::readbackParticlesFromGPU() {
   }
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-  // Mark mesh as needing re-upload
-  renderedObject.hasBeenRendered = false;
+  // No need to reset hasBeenRendered — renderCloud() always re-uploads
+  // the buffer data via glBufferData. Resetting it would leak VAO/VBO
+  // resources by re-calling setupRender() every frame.
 }
 
 // ── Dispatch Barnes-Hut compute ─────────────────────────────────────────────
