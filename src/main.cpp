@@ -243,6 +243,20 @@ int main(int argc, char** argv) {
 
     background.Update(renderer);
 
+    // If primary view is raytraced, dispatch compute shader + blit to screen
+    if (renderer.rayTracerView) {
+      int fbw = renderer.GetFbWidth();
+      int fbh = renderer.GetFbHeight();
+      renderer.DispatchRaytracer(fbw, fbh);
+      renderer.BlitRaytracerToScreen();
+
+      // If recording, do a separate dispatch at recording resolution + capture
+      if (renderer.IsRecording()) {
+        renderer.DispatchAndCaptureRecordingFrame();
+        // Re-bind the display texture so BlitRaytracerToScreen still works for PiP etc.
+      }
+    }
+
     // ── Secondary (PiP) render pass ─────────────────────────────────────────
     // Renders the OTHER view (rasterizer or raytracer) into the PiP FBO.
     // BeginSecondaryPass flips rayTracerView and binds the FBO.
@@ -260,6 +274,14 @@ int main(int argc, char** argv) {
     if (cloud)
       renderer.Draw(cloud->renderedObject);
     background.Update(renderer);
+
+    // If secondary view is raytraced, dispatch compute + blit into the PiP FBO
+    if (renderer.rayTracerView) {
+      int pw = renderer.GetFbWidth();   // fbWidth is set to PiP size during secondary pass
+      int ph = renderer.GetFbHeight();
+      renderer.DispatchRaytracer(pw, ph);
+      renderer.BlitRaytracerToScreen();
+    }
 
     renderer.EndSecondaryPass();
     // ── End secondary pass ──────────────────────────────────────────────────

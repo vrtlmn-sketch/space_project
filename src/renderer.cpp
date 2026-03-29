@@ -2,6 +2,8 @@
 #include "physicsObject.h"
 #include "cloudObject.h"
 
+#include <cstring>
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
@@ -78,6 +80,9 @@ bool Renderer::InitWindow(
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 460");
 
+  // ── Compute shader raytracer + blit setup ──
+  InitComputeShader();
+
   initialised = true;
   return true;
 }
@@ -129,7 +134,8 @@ void Renderer::Draw(RenderedObject& ro) {
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
-    if      (ro.meshType == MeshType::plane)  ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, pitch, zoom, fbWidth, fbHeight);
+    // Plane: compute shader handles rendering — just accumulate objects, don't render
+    if      (ro.meshType == MeshType::plane)  { /* no-op: DispatchRaytracer called from main */ }
     else if (ro.meshType == MeshType::sphere) ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);
     else if (ro.meshType == MeshType::cloud)  ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
   }
@@ -144,8 +150,7 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float temperature, float ob
   if (rayTracerView) {
     if (ro.meshType == MeshType::sphere)
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, temperature, objectType);
-    else if (ro.meshType == MeshType::plane)
-      ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, pitch, zoom, fbWidth, fbHeight);
+    // Plane: no-op — compute shader dispatch from main
   }
 }
 
@@ -208,8 +213,15 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)  flipKeyPressed = true;
     else { if (flipKeyPressed) raytracerIsMain = !raytracerIsMain; flipKeyPressed = false; }
 
-    // R = record (no-op placeholder for now)
-    // (previously toggled raytracer view — now handled by dual view)
+    // R = toggle recording (edge-triggered)
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)  recordKeyPressed = true;
+    else {
+      if (recordKeyPressed) {
+        if (recording) StopRecording();
+        else           StartRecording();
+      }
+      recordKeyPressed = false;
+    }
 
     if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS)  reverseButtonPressed = true;
     else { if (reverseButtonPressed) playingForward = !playingForward; reverseButtonPressed = false; }
@@ -330,7 +342,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawControlsPanel() {
   const float panelW = 960.f;
-  const float panelH = 130.f;
+  const float panelH = 200.f;
   ImGuiIO& io = ImGui::GetIO();
 
   ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - panelW) * 0.5f, 8.f), ImGuiCond_Always);
@@ -370,12 +382,22 @@ void Renderer::DrawControlsPanel() {
     raytracerIsMain = !raytracerIsMain;
   ImGui::SameLine();
 
-  // Record placeholder
-  ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.10f, 0.10f, 1.00f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.00f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.80f, 0.15f, 0.15f, 1.00f));
-  ImGui::Button("Record [R]", ImVec2(100, 32)); // no-op for now
-  ImGui::PopStyleColor(3);
+  // Record button — bright red when recording, dark red when idle
+  if (recording) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.10f, 0.10f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.20f, 0.20f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
+    if (ImGui::Button("Stop [R]", ImVec2(100, 32)))
+      StopRecording();
+    ImGui::PopStyleColor(3);
+  } else {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.10f, 0.10f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.80f, 0.15f, 0.15f, 1.00f));
+    if (ImGui::Button("Record [R]", ImVec2(100, 32)))
+      StartRecording();
+    ImGui::PopStyleColor(3);
+  }
   ImGui::SameLine();
 
   // Spawn / Scene panels
@@ -422,6 +444,80 @@ void Renderer::DrawControlsPanel() {
   ImGui::DragFloat("FOV", &zoom, 0.5f, 5.f, 120.f, "%.0f");
   ImGui::SameLine();
   if (ImGui::Button("Reset Camera", ImVec2(100, 0))) resetCamera();
+  ImGui::EndGroup();
+
+  ImGui::Spacing();
+
+  // ── Row 3: Recording settings ──
+  ImGui::BeginGroup();
+  ImGui::Text("Rec:");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(180);
+  // Disable path editing while recording
+  if (recording) ImGui::BeginDisabled();
+  ImGui::InputText("File##rec", recordPathBuf, sizeof(recordPathBuf));
+  if (recording) ImGui::EndDisabled();
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(60);
+  if (recording) ImGui::BeginDisabled();
+  const char* fpsItems[] = { "24", "30", "60" };
+  int fpsIdx = (recordFps == 24) ? 0 : (recordFps == 60) ? 2 : 1;
+  if (ImGui::Combo("FPS##rec", &fpsIdx, fpsItems, 3)) {
+    recordFps = (fpsIdx == 0) ? 24 : (fpsIdx == 2) ? 60 : 30;
+  }
+  if (recording) ImGui::EndDisabled();
+  ImGui::SameLine();
+
+  // Resolution preset dropdown
+  if (recording) ImGui::BeginDisabled();
+  static const struct { const char* label; int w; int h; } resPresets[] = {
+    { "360p  (640x360)",     640,   360 },
+    { "480p  (854x480)",     854,   480 },
+    { "720p  (1280x720)",   1280,   720 },
+    { "1080p (1920x1080)",  1920,  1080 },
+    { "1440p (2560x1440)",  2560,  1440 },
+    { "4K    (3840x2160)",  3840,  2160 },
+    { "Custom",                0,     0 },
+  };
+  static const int numPresets = (int)(sizeof(resPresets) / sizeof(resPresets[0]));
+  ImGui::SetNextItemWidth(145);
+  if (ImGui::Combo("Res##rec", &recordResPreset, [](void*, int idx, const char** out) -> bool {
+    *out = resPresets[idx].label; return true;
+  }, nullptr, numPresets)) {
+    if (recordResPreset < numPresets - 1) {
+      recordWidth  = resPresets[recordResPreset].w;
+      recordHeight = resPresets[recordResPreset].h;
+    }
+  }
+  if (recording) ImGui::EndDisabled();
+
+  // If "Custom" is selected, show W/H input fields
+  if (recordResPreset == numPresets - 1) {
+    ImGui::SameLine();
+    if (recording) ImGui::BeginDisabled();
+    ImGui::SetNextItemWidth(60);
+    if (ImGui::InputInt("W##recw", &recordWidth, 0, 0)) {
+      if (recordWidth < 16)   recordWidth = 16;
+      if (recordWidth > 7680) recordWidth = 7680;
+    }
+    ImGui::SameLine();
+    ImGui::Text("x");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(60);
+    if (ImGui::InputInt("H##rech", &recordHeight, 0, 0)) {
+      if (recordHeight < 16)   recordHeight = 16;
+      if (recordHeight > 4320) recordHeight = 4320;
+    }
+    if (recording) ImGui::EndDisabled();
+  }
+
+  ImGui::SameLine();
+  if (recording) {
+    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "REC %d frames (%dx%d)",
+                       recordedFrames, recordWidth, recordHeight);
+  } else {
+    ImGui::TextDisabled("Idle (%dx%d)", recordWidth, recordHeight);
+  }
   ImGui::EndGroup();
 
   ImGui::End();
@@ -1082,9 +1178,352 @@ void Renderer::DrawPipWindow() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Compute shader: compile + init blit quad
+// ─────────────────────────────────────────────────────────────────────────────
+static GLuint compileShaderFromFile(const std::string& path, GLenum type) {
+  std::ifstream f(path);
+  if (!f) { std::cerr << "[shader] cannot open " << path << "\n"; return 0; }
+  std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  GLuint s = glCreateShader(type);
+  const char* c = src.c_str();
+  glShaderSource(s, 1, &c, nullptr);
+  glCompileShader(s);
+  GLint ok = 0; glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+  if (!ok) {
+    char buf[1024]; glGetShaderInfoLog(s, 1024, nullptr, buf);
+    std::cerr << "[shader] " << path << ": " << buf << "\n";
+    glDeleteShader(s);
+    return 0;
+  }
+  return s;
+}
+
+void Renderer::InitComputeShader() {
+  // ── 1. Compile compute shader ──
+  GLuint cs = compileShaderFromFile("src/shaders/raytracerCompute.glsl", GL_COMPUTE_SHADER);
+  if (!cs) { std::cerr << "[RT] compute shader compilation failed\n"; return; }
+
+  rtComputeProgram = glCreateProgram();
+  glAttachShader(rtComputeProgram, cs);
+  glLinkProgram(rtComputeProgram);
+  {
+    GLint ok = 0; glGetProgramiv(rtComputeProgram, GL_LINK_STATUS, &ok);
+    if (!ok) {
+      char buf[1024]; glGetProgramInfoLog(rtComputeProgram, 1024, nullptr, buf);
+      std::cerr << "[RT] compute program link: " << buf << "\n";
+      glDeleteProgram(rtComputeProgram); rtComputeProgram = 0;
+    }
+  }
+  glDeleteShader(cs);
+
+  // Cache uniform locations
+  if (rtComputeProgram) {
+    rtLocObjectCount = glGetUniformLocation(rtComputeProgram, "uObjectCount");
+    rtLocProj        = glGetUniformLocation(rtComputeProgram, "uProj");
+    rtLocCamera      = glGetUniformLocation(rtComputeProgram, "uCamera");
+    rtLocRotation    = glGetUniformLocation(rtComputeProgram, "uRotation");
+    rtLocPitch       = glGetUniformLocation(rtComputeProgram, "uPitch");
+    rtLocResolution  = glGetUniformLocation(rtComputeProgram, "uResolution");
+  }
+
+  // ── 2. Create SSBO for raytracer objects ──
+  glGenBuffers(1, &rtSSBO);
+
+  // ── 3. Compile blit shaders (vert + frag) ──
+  GLuint bv = compileShaderFromFile("src/shaders/blitVert.glsl", GL_VERTEX_SHADER);
+  GLuint bf = compileShaderFromFile("src/shaders/blitFrag.glsl", GL_FRAGMENT_SHADER);
+  if (bv && bf) {
+    blitProgram = glCreateProgram();
+    glAttachShader(blitProgram, bv);
+    glAttachShader(blitProgram, bf);
+    glLinkProgram(blitProgram);
+    {
+      GLint ok = 0; glGetProgramiv(blitProgram, GL_LINK_STATUS, &ok);
+      if (!ok) {
+        char buf[1024]; glGetProgramInfoLog(blitProgram, 1024, nullptr, buf);
+        std::cerr << "[blit] link: " << buf << "\n";
+        glDeleteProgram(blitProgram); blitProgram = 0;
+      }
+    }
+    if (blitProgram)
+      blitLocTexture = glGetUniformLocation(blitProgram, "uTexture");
+  }
+  if (bv) glDeleteShader(bv);
+  if (bf) glDeleteShader(bf);
+
+  // ── 4. Create fullscreen quad VAO/VBO for blit ──
+  float quadVerts[] = {
+    -1.f, -1.f, 0.f,
+     1.f, -1.f, 0.f,
+     1.f,  1.f, 0.f,
+    -1.f, -1.f, 0.f,
+     1.f,  1.f, 0.f,
+    -1.f,  1.f, 0.f,
+  };
+  glGenVertexArrays(1, &blitVAO);
+  glGenBuffers(1, &blitVBO);
+  glBindVertexArray(blitVAO);
+  glBindBuffer(GL_ARRAY_BUFFER, blitVBO);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(quadVerts), quadVerts, GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+  glEnableVertexAttribArray(0);
+  glBindVertexArray(0);
+
+  std::cout << "[RT] Compute shader initialised (program=" << rtComputeProgram
+            << ", blit=" << blitProgram << ")\n";
+}
+
+void Renderer::EnsureRtOutputTex(int w, int h) {
+  if (w == rtTexWidth && h == rtTexHeight && rtOutputTex != 0) return;
+
+  if (rtOutputTex) { glDeleteTextures(1, &rtOutputTex); rtOutputTex = 0; }
+
+  rtTexWidth = w;
+  rtTexHeight = h;
+
+  glGenTextures(1, &rtOutputTex);
+  glBindTexture(GL_TEXTURE_2D, rtOutputTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void Renderer::DestroyComputeResources() {
+  if (rtComputeProgram) { glDeleteProgram(rtComputeProgram); rtComputeProgram = 0; }
+  if (rtOutputTex)      { glDeleteTextures(1, &rtOutputTex); rtOutputTex = 0; }
+  if (rtSSBO)           { glDeleteBuffers(1, &rtSSBO);       rtSSBO = 0; }
+  if (blitProgram)      { glDeleteProgram(blitProgram);      blitProgram = 0; }
+  if (blitVAO)          { glDeleteVertexArrays(1, &blitVAO); blitVAO = 0; }
+  if (blitVBO)          { glDeleteBuffers(1, &blitVBO);      blitVBO = 0; }
+  rtTexWidth = rtTexHeight = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DispatchRaytracer — upload SSBO + uniforms, dispatch compute, memory barrier
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DispatchRaytracer(int width, int height) {
+  if (!rtComputeProgram) return;
+
+  EnsureRtOutputTex(width, height);
+
+  // Upload SSBO
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               rayTracedObjects.size() * sizeof(RayTracerObject),
+               rayTracedObjects.data(),
+               GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+
+  // Bind output image
+  glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+  glUseProgram(rtComputeProgram);
+
+  // Uniforms
+  glUniform1i(rtLocObjectCount, (int)rayTracedObjects.size());
+
+  // Build projection matrix (same as transformPerspectiveMesh)
+  float aspect = (height > 0) ? (float)width / (float)height : 1.0f;
+  float fovy   = zoom * M_PI / 180.0f;
+  float f      = 1.0f / std::tan(fovy * 0.5f);
+  float zNear  = 0.1f, zFar = 100.0f;
+  float proj[16] = {};
+  proj[0]  = f / aspect;
+  proj[5]  = f;
+  proj[10] = (zFar + zNear) / (zNear - zFar);
+  proj[11] = -1.0f;
+  proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+  glUniformMatrix4fv(rtLocProj, 1, GL_FALSE, proj);
+
+  float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
+  glUniform3fv(rtLocCamera, 1, cam);
+  glUniform1f(rtLocRotation, rotation);
+  glUniform1f(rtLocPitch, pitch);
+  glUniform2f(rtLocResolution, (float)width, (float)height);
+
+  // Dispatch
+  GLuint gx = (width  + 15) / 16;
+  GLuint gy = (height + 15) / 16;
+  glDispatchCompute(gx, gy, 1);
+
+  // Memory barrier so subsequent texture reads see the compute results
+  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BlitRaytracerToScreen — draw fullscreen quad sampling rtOutputTex
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::BlitRaytracerToScreen() {
+  if (!blitProgram || !rtOutputTex) return;
+
+  glDisable(GL_DEPTH_TEST);
+  glUseProgram(blitProgram);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, rtOutputTex);
+  glUniform1i(blitLocTexture, 0);
+
+  glBindVertexArray(blitVAO);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+  glBindVertexArray(0);
+
+  glEnable(GL_DEPTH_TEST);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recording: Start / Stop / CaptureFrame
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::StartRecording() {
+  if (recording) return;
+
+  // Ensure even dimensions (x264 requires it)
+  int w = recordWidth  & ~1;
+  int h = recordHeight & ~1;
+  if (w < 16) w = 16;
+  if (h < 16) h = 16;
+  recordWidth = w;
+  recordHeight = h;
+
+  // Recording captures the compute-shader raytracer output,
+  // so force the raytracer to be the main (fullscreen) view.
+  raytracerIsMain = true;
+
+  char cmd[512];
+  snprintf(cmd, sizeof(cmd),
+    "ffmpeg -y -f rawvideo -pix_fmt rgba -s %dx%d -r %d -i - "
+    "-c:v libx264 -pix_fmt yuv420p -preset fast \"%s\" 2>/dev/null",
+    w, h, recordFps, recordPathBuf);
+
+  ffmpegPipe = popen(cmd, "w");
+  if (!ffmpegPipe) {
+    std::cerr << "[REC] Failed to open ffmpeg pipe\n";
+    return;
+  }
+  recording = true;
+  recordedFrames = 0;
+  pixelBuffer.resize((size_t)w * h * 4);
+  std::cout << "[REC] Recording started: " << recordPathBuf
+            << " (" << w << "x" << h << " @ " << recordFps << " fps)\n";
+}
+
+void Renderer::StopRecording() {
+  if (!recording) return;
+  if (ffmpegPipe) {
+    pclose(ffmpegPipe);
+    ffmpegPipe = nullptr;
+  }
+  recording = false;
+  std::cout << "[REC] Recording stopped: " << recordedFrames << " frames written to "
+            << recordPathBuf << "\n";
+  recordedFrames = 0;
+}
+
+void Renderer::CaptureFrame(int w, int h) {
+  if (!recording || !ffmpegPipe || !recOutputTex) return;
+  if ((int)pixelBuffer.size() != w * h * 4) pixelBuffer.resize((size_t)w * h * 4);
+
+  // Read back from the recording output texture (separate from display)
+  glBindTexture(GL_TEXTURE_2D, recOutputTex);
+  glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
+
+  // Flip rows (OpenGL is bottom-up, ffmpeg expects top-down)
+  int rowBytes = w * 4;
+  std::vector<uint8_t> rowTemp((size_t)rowBytes);
+  for (int y = 0; y < h / 2; y++) {
+    uint8_t* top = pixelBuffer.data() + y * rowBytes;
+    uint8_t* bot = pixelBuffer.data() + (h - 1 - y) * rowBytes;
+    std::memcpy(rowTemp.data(), top, rowBytes);
+    std::memcpy(top, bot, rowBytes);
+    std::memcpy(bot, rowTemp.data(), rowBytes);
+  }
+
+  fwrite(pixelBuffer.data(), 1, pixelBuffer.size(), ffmpegPipe);
+  recordedFrames++;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recording output texture (separate from display rtOutputTex)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::EnsureRecOutputTex(int w, int h) {
+  if (w == recTexWidth && h == recTexHeight && recOutputTex != 0) return;
+
+  DestroyRecOutputTex();
+
+  recTexWidth = w;
+  recTexHeight = h;
+
+  glGenTextures(1, &recOutputTex);
+  glBindTexture(GL_TEXTURE_2D, recOutputTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void Renderer::DestroyRecOutputTex() {
+  if (recOutputTex) { glDeleteTextures(1, &recOutputTex); recOutputTex = 0; }
+  recTexWidth = recTexHeight = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DispatchAndCaptureRecordingFrame — dispatch compute at recording resolution,
+// capture to ffmpeg, then restore display texture binding
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DispatchAndCaptureRecordingFrame() {
+  if (!recording || !rtComputeProgram) return;
+
+  int rw = recordWidth;
+  int rh = recordHeight;
+  EnsureRecOutputTex(rw, rh);
+
+  // Bind the RECORDING texture as the compute output (not the display texture)
+  glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+  // SSBO is already uploaded by the primary DispatchRaytracer call, so reuse it
+  glUseProgram(rtComputeProgram);
+
+  // Uniforms — same camera, but with recording resolution
+  glUniform1i(rtLocObjectCount, (int)rayTracedObjects.size());
+
+  float aspect = (rh > 0) ? (float)rw / (float)rh : 1.0f;
+  float fovy   = zoom * M_PI / 180.0f;
+  float f      = 1.0f / std::tan(fovy * 0.5f);
+  float zNear  = 0.1f, zFar = 100.0f;
+  float proj[16] = {};
+  proj[0]  = f / aspect;
+  proj[5]  = f;
+  proj[10] = (zFar + zNear) / (zNear - zFar);
+  proj[11] = -1.0f;
+  proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+  glUniformMatrix4fv(rtLocProj, 1, GL_FALSE, proj);
+
+  float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
+  glUniform3fv(rtLocCamera, 1, cam);
+  glUniform1f(rtLocRotation, rotation);
+  glUniform1f(rtLocPitch, pitch);
+  glUniform2f(rtLocResolution, (float)rw, (float)rh);
+
+  GLuint gx = (rw + 15) / 16;
+  GLuint gy = (rh + 15) / 16;
+  glDispatchCompute(gx, gy, 1);
+  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+  // Capture frame from the recording texture
+  CaptureFrame(rw, rh);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Destructor
 // ─────────────────────────────────────────────────────────────────────────────
 Renderer::~Renderer() {
+  StopRecording();
+  DestroyComputeResources();
+  DestroyRecOutputTex();
   DestroyPipFBO();
   if (initialised) {
     ImGui_ImplOpenGL3_Shutdown();

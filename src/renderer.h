@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdlib>
+#include <cstdio>
 #include <cmath>
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -68,6 +69,7 @@ private:
 
   // Keyboard edge-detection flags
   bool flipKeyPressed{false};
+  bool recordKeyPressed{false};
   bool quitButtonPressed{false};
   bool pauseButtonPressed{false};
   bool reverseButtonPressed{false};
@@ -97,6 +99,50 @@ private:
 
   // Framebuffer size
   int fbWidth{}, fbHeight{};
+
+  // ── Compute shader raytracer ──
+  GLuint rtComputeProgram{0};
+  GLuint rtOutputTex{0};
+  int    rtTexWidth{0}, rtTexHeight{0};  // current output texture dimensions
+  GLuint rtSSBO{0};                      // SSBO for raytracer objects (compute shader)
+
+  // Compute shader uniform locations
+  GLint rtLocObjectCount{-1};
+  GLint rtLocProj{-1};
+  GLint rtLocCamera{-1};
+  GLint rtLocRotation{-1};
+  GLint rtLocPitch{-1};
+  GLint rtLocResolution{-1};
+
+  // ── Blit shader (fullscreen quad to display compute output) ──
+  GLuint blitProgram{0};
+  GLuint blitVAO{0}, blitVBO{0};
+  GLint  blitLocTexture{-1};
+
+  void InitComputeShader();
+  void EnsureRtOutputTex(int w, int h);
+  void DestroyComputeResources();
+
+  // ── Video recording ──
+  FILE*  ffmpegPipe{nullptr};
+  bool   recording{false};
+  int    recordedFrames{0};
+  int    recordFps{30};                  // user-selectable: 24, 30, 60
+  char   recordPathBuf[256] = "output.mp4";
+  std::vector<uint8_t> pixelBuffer;
+
+  // Recording resolution
+  int    recordResPreset{3};             // index into resolution presets (default = 1080p)
+  int    recordWidth{1920};
+  int    recordHeight{1080};
+
+  // Separate output texture for recording (avoids resizing the display texture)
+  GLuint recOutputTex{0};
+  int    recTexWidth{0}, recTexHeight{0};
+  void   EnsureRecOutputTex(int w, int h);
+  void   DestroyRecOutputTex();
+
+  void CaptureFrame(int w, int h);
 
   // ── PiP (Picture-in-Picture) secondary view FBO ──
   GLuint pipFBO{0};
@@ -157,6 +203,19 @@ public:
                         const std::vector<vec3>& colors);
   void EndFrame();
 
+  // ── Compute shader raytracer public API ──
+  void DispatchRaytracer(int width, int height);
+  void BlitRaytracerToScreen();
+  GLuint GetRtOutputTex() const { return rtOutputTex; }
+
+  // ── Recording public API ──
+  void StartRecording();
+  void StopRecording();
+  bool IsRecording() const { return recording; }
+  int  GetRecordWidth()  const { return recordWidth; }
+  int  GetRecordHeight() const { return recordHeight; }
+  void DispatchAndCaptureRecordingFrame();   // dispatch compute at recording resolution + capture
+
   // Public spawn form and save path (accessed from main.cpp)
   SpawnFormState spawnForm{};
   char           savePathBuf[256] = "project.json";
@@ -178,6 +237,10 @@ public:
 
   // Expose window handle for ImGui backend
   GLFWwindow* GetWindow() const { return window; }
+
+  // Expose framebuffer dimensions
+  int GetFbWidth()  const { return fbWidth; }
+  int GetFbHeight() const { return fbHeight; }
 
   ~Renderer();
 };
