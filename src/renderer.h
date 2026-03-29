@@ -51,6 +51,8 @@ struct CloudFormState {
   std::string formationFile = "milky_way_5k.json"; // empty = procedural
   int   computeMethod = 0; // 0=CPU, 1=Barnes-Hut GPU
   float theta       = 0.5f; // Barnes-Hut opening angle
+  float temperature = 4500.f; // Kelvin — blackbody colour for particles
+  int   renderMode  = 0; // 0=Points, 1=Nebula (soft glow)
 };
 
 // ---- Callbacks from Renderer back to main ----
@@ -121,6 +123,7 @@ private:
   GLint rtLocRotation{-1};
   GLint rtLocPitch{-1};
   GLint rtLocResolution{-1};
+  GLint rtLocMaxBounces{-1};
 
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
@@ -143,6 +146,14 @@ private:
   int    recordResPreset{3};             // index into resolution presets (default = 1080p)
   int    recordWidth{1920};
   int    recordHeight{1080};
+
+  // Live raytracer resolution (0 = Native/framebuffer, otherwise a fixed resolution)
+  int    rtLiveResPreset{0};             // index into rtLivePresets (default = Native)
+  int    rtLiveWidth{0};                 // 0 = use framebuffer size
+  int    rtLiveHeight{0};
+
+  // Raytracer quality settings
+  int    rtMaxBounces{1};                // reflection bounces (0 = no reflections)
 
   // Separate output texture for recording (avoids resizing the display texture)
   GLuint recOutputTex{0};
@@ -217,6 +228,9 @@ public:
   void DispatchRaytracer(int width, int height);
   void BlitRaytracerToScreen();
   GLuint GetRtOutputTex() const { return rtOutputTex; }
+  int  GetRtLiveWidth()  const { return rtLiveWidth; }
+  int  GetRtLiveHeight() const { return rtLiveHeight; }
+  int  GetRtMaxBounces() const { return rtMaxBounces; }
 
   // ── Recording public API ──
   void StartRecording();

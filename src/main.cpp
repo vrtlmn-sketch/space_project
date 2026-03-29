@@ -70,6 +70,8 @@ static void buildScene(
     // Apply compute method settings
     cloud->computeMethod = static_cast<CloudComputeMethod>(data.cloud.computeMethod);
     cloud->barnesHutTheta = data.cloud.theta;
+    cloud->temperature = data.cloud.temperature;
+    cloud->renderMode = data.cloud.renderMode;
   }
 }
 
@@ -145,6 +147,8 @@ int main(int argc, char** argv) {
       }
       cloud->computeMethod = static_cast<CloudComputeMethod>(cf.computeMethod);
       cloud->barnesHutTheta = cf.theta;
+      cloud->temperature = cf.temperature;
+      cloud->renderMode = cf.renderMode;
     }
   };
 
@@ -263,9 +267,14 @@ int main(int argc, char** argv) {
 
     // If primary view is raytraced, dispatch compute shader + blit to screen
     if (renderer.rayTracerView && renderer.raytracerEnabled) {
-      int fbw = renderer.GetFbWidth();
-      int fbh = renderer.GetFbHeight();
-      renderer.DispatchRaytracer(fbw, fbh);
+      int rtw = renderer.GetRtLiveWidth();
+      int rth = renderer.GetRtLiveHeight();
+      // If 0 (Native), use framebuffer size
+      if (rtw <= 0 || rth <= 0) {
+        rtw = renderer.GetFbWidth();
+        rth = renderer.GetFbHeight();
+      }
+      renderer.DispatchRaytracer(rtw, rth);
       renderer.BlitRaytracerToScreen();
 
       // If recording, do a separate dispatch at recording resolution + capture
@@ -289,14 +298,21 @@ int main(int argc, char** argv) {
     }
     for (auto& g : grids)
       renderer.Draw(g.renderedObject);
-    if (cloud)
+    if (cloud) {
+      cloud->renderedObject.uploadTemperature(cloud->temperature);
+      cloud->renderedObject.uploadRenderMode(cloud->renderMode);
       renderer.Draw(cloud->renderedObject);
+    }
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO
     if (renderer.rayTracerView && renderer.raytracerEnabled) {
-      int pw = renderer.GetFbWidth();   // fbWidth is set to PiP size during secondary pass
-      int ph = renderer.GetFbHeight();
+      int pw = renderer.GetRtLiveWidth();
+      int ph = renderer.GetRtLiveHeight();
+      if (pw <= 0 || ph <= 0) {
+        pw = renderer.GetFbWidth();
+        ph = renderer.GetFbHeight();
+      }
       renderer.DispatchRaytracer(pw, ph);
       renderer.BlitRaytracerToScreen();
     }

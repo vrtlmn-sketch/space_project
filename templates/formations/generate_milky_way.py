@@ -31,7 +31,10 @@ PARTICLE_MASS   = 0.02       # uniform mass for all particles
 
 # Disk geometry (world units)
 R_MIN           = 0.15       # inner radius  (avoid singularity near center)
-R_MAX           = 2.5        # outer radius
+R_MAX_REF       = 3.0        # reference outer radius at REF_COUNT particles
+REF_COUNT       = 5000       # reference particle count for R_MAX scaling
+R_MAX_FLOOR     = 1.5        # minimum R_MAX (small clouds don't vanish)
+R_MAX_CEIL      = 8.0        # maximum R_MAX (huge clouds stay manageable)
 DISK_HEIGHT     = 0.06       # half-thickness of the disk (Y)
 
 # Spiral arm perturbation
@@ -66,15 +69,22 @@ VARIANTS = [
 ]
 
 
+def compute_r_max(num_particles):
+    """Scale outer radius with particle count: sqrt scaling from reference."""
+    raw = R_MAX_REF * math.sqrt(num_particles / REF_COUNT)
+    return max(R_MAX_FLOOR, min(R_MAX_CEIL, raw))
+
+
 def generate_particles(num_particles, seed=42):
     """Generate a list of particle dicts for a spiral galaxy disk."""
     random.seed(seed)
     particles = []
+    r_max = compute_r_max(num_particles)
 
     for _ in range(num_particles):
         # Radial distribution: power-law biased toward inner radii
         u = random.random()
-        r = R_MIN + (R_MAX - R_MIN) * (u ** 0.6)
+        r = R_MIN + (r_max - R_MIN) * (u ** 0.6)
 
         # Base angle — uniform
         theta = random.uniform(0, 2 * math.pi)
@@ -96,7 +106,7 @@ def generate_particles(num_particles, seed=42):
         # Position
         x = r * math.cos(theta)
         z = r * math.sin(theta)
-        y = random.gauss(0, DISK_HEIGHT * (1 + 0.5 * (r / R_MAX)))
+        y = random.gauss(0, DISK_HEIGHT * (1 + 0.5 * (r / r_max)))
 
         # Tangential velocity for approximately circular orbit
         # v = sqrt(G * M / r)  (standard Newtonian circular orbit)
@@ -137,4 +147,5 @@ for filename, count, desc in VARIANTS:
         json.dump(formation, f, separators=(",", ":"))
 
     size_mb = os.path.getsize(out_path) / 1024 / 1024
-    print(f"Generated {count:>9,} particles -> {filename}.json  ({size_mb:.1f} MB)")
+    r_max = compute_r_max(count)
+    print(f"Generated {count:>9,} particles -> {filename}.json  ({size_mb:.1f} MB, R_MAX={r_max:.2f})")

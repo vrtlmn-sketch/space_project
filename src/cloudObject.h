@@ -50,6 +50,8 @@ public:
   std::string formationFile;  // empty = procedural generation
   CloudComputeMethod computeMethod{CloudComputeMethod::CPU};
   float barnesHutTheta{0.5f};
+  float temperature{4500.f};   // Kelvin — blackbody colour for particles
+  int   renderMode{0};         // 0=Points, 1=Nebula
 
   void Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects);
 

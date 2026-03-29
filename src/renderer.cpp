@@ -436,6 +436,24 @@ static void BlackbodyColor(float t, float& r, float& g, float& b) {
   }
 }
 
+// ── Helper: extract a numeric size hint from formation filenames ──
+// Handles patterns like "milky_way_5k.json" → 5000, "milky_way_1m.json" → 1000000
+static int extractParticleCount(const std::string& name) {
+  // Find the last segment before ".json" that looks like a number+suffix
+  auto dot = name.rfind('.');
+  if (dot == std::string::npos) dot = name.size();
+  // Walk backwards from dot to find the numeric part
+  auto us = name.rfind('_', dot);
+  if (us == std::string::npos) return 0;
+  std::string token = name.substr(us + 1, dot - us - 1); // e.g. "5k", "100k", "1m", "simple"
+  if (token.empty()) return 0;
+  char suffix = token.back();
+  int multiplier = 1;
+  if (suffix == 'k' || suffix == 'K') { multiplier = 1000; token.pop_back(); }
+  else if (suffix == 'm' || suffix == 'M') { multiplier = 1000000; token.pop_back(); }
+  try { return std::stoi(token) * multiplier; } catch (...) { return 0; }
+}
+
 // ── Helper: scan templates/formations/ for .json files ──
 static std::vector<std::string> ScanFormationFiles() {
   std::vector<std::string> files;
@@ -445,7 +463,13 @@ static std::vector<std::string> ScanFormationFiles() {
     if (entry.is_regular_file() && entry.path().extension() == ".json")
       files.push_back(entry.path().filename().string());
   }
-  std::sort(files.begin(), files.end());
+  // Sort by particle count (extracted from filename), then alphabetically as tiebreak
+  std::sort(files.begin(), files.end(), [](const std::string& a, const std::string& b) {
+    int ca = extractParticleCount(a);
+    int cb = extractParticleCount(b);
+    if (ca != cb) return ca < cb;
+    return a < b;
+  });
   return files;
 }
 
@@ -682,6 +706,34 @@ void Renderer::DrawControlsPanel() {
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
+  // ── Live RT resolution ──
+  static const struct { const char* label; int w; int h; } rtLivePresets[] = {
+    { "Native",  0,    0 },
+    { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
+    { "360p",   640,  360 }, { "480p",  854,  480 },
+    { "720p",  1280,  720 }, { "1080p",1920, 1080 },
+  };
+  static const int numRtPresets = (int)(sizeof(rtLivePresets) / sizeof(rtLivePresets[0]));
+  ImGui::Text("RT");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(70);
+  if (ImGui::Combo("##rtres", &rtLiveResPreset, [](void*, int idx) -> const char* {
+    return rtLivePresets[idx].label;
+  }, nullptr, numRtPresets)) {
+    rtLiveWidth  = rtLivePresets[rtLiveResPreset].w;
+    rtLiveHeight = rtLivePresets[rtLiveResPreset].h;
+  }
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(45);
+  ImGui::SliderInt("##bounce", &rtMaxBounces, 0, 4, "%d");
+  ImGui::SameLine();
+  ImGui::TextDisabled("bnc");
+  ImGui::SameLine();
+
+  // Separator
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+
   // Quit
   ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
@@ -898,6 +950,24 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
           cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
         }
       }
+
+      ImGui::Spacing();
+
+      // ── Appearance ──
+      ImGui::SeparatorText("Appearance");
+
+      // Render mode
+      const char* spawnRmItems[] = { "Points", "Nebula" };
+      ImGui::SetNextItemWidth(-1);
+      ImGui::Combo("##sp_rendermode", &cloudForm.renderMode, spawnRmItems, 2);
+
+      // Temperature slider with colour preview
+      ImGui::SetNextItemWidth(-30);
+      ImGui::SliderFloat("##sp_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K");
+      float sr, sg, sb;
+      BlackbodyColor(cloudForm.temperature, sr, sg, sb);
+      ImGui::SameLine();
+      ImGui::ColorButton("##sp_bb", ImVec4(sr, sg, sb, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
 
       ImGui::Spacing();
       if (ImGui::Button("Spawn Cloud", ImVec2(-1, 28))) {
@@ -1140,6 +1210,26 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
       ImGui::SliderFloat("Theta##ci", &cloudForm.theta, 0.1f, 1.5f, "%.2f");
       ImGui::TextDisabled("Lower = more accurate, slower");
     }
+
+    // ── Appearance ──
+    ImGui::SeparatorText("Appearance");
+
+    // Render mode
+    const char* renderModeItems[] = { "Points", "Nebula" };
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::Combo("##ci_rendermode", &cloudForm.renderMode, renderModeItems, 2)) {
+      cloud->renderMode = cloudForm.renderMode;
+    }
+
+    // Temperature slider with colour preview
+    ImGui::SetNextItemWidth(-30);
+    if (ImGui::SliderFloat("##ci_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K")) {
+      cloud->temperature = cloudForm.temperature;
+    }
+    float cr, cg, cb_;
+    BlackbodyColor(cloudForm.temperature, cr, cg, cb_);
+    ImGui::SameLine();
+    ImGui::ColorButton("##ci_bb", ImVec4(cr, cg, cb_, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -1429,6 +1519,7 @@ void Renderer::InitComputeShader() {
     rtLocRotation    = glGetUniformLocation(rtComputeProgram, "uRotation");
     rtLocPitch       = glGetUniformLocation(rtComputeProgram, "uPitch");
     rtLocResolution  = glGetUniformLocation(rtComputeProgram, "uResolution");
+    rtLocMaxBounces  = glGetUniformLocation(rtComputeProgram, "uMaxBounces");
   }
 
   // ── 2. Create SSBO for raytracer objects ──
@@ -1548,6 +1639,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
   glUniform1f(rtLocRotation, rotation);
   glUniform1f(rtLocPitch, pitch);
   glUniform2f(rtLocResolution, (float)width, (float)height);
+  if (rtLocMaxBounces >= 0)
+    glUniform1i(rtLocMaxBounces, rtMaxBounces);
 
   // Dispatch
   GLuint gx = (width  + 15) / 16;

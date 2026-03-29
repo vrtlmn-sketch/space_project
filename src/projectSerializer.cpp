@@ -50,7 +50,9 @@ bool ProjectSerializer::Save(const std::string& path,
     {"sizeZ",   cloud.sizeZ},
     {"formationFile",  cloud.formationFile},
     {"computeMethod",  cloud.computeMethod},
-    {"theta",          cloud.theta}
+    {"theta",          cloud.theta},
+    {"temperature",    cloud.temperature},
+    {"renderMode",     cloud.renderMode}
   };
 
   std::ofstream f(path);
@@ -112,6 +114,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     data.cloud.formationFile = c.value("formationFile", std::string{});
     data.cloud.computeMethod = c.value("computeMethod", 0);
     data.cloud.theta         = c.value("theta",         0.5f);
+    data.cloud.temperature   = c.value("temperature",   4500.f);
+    data.cloud.renderMode    = c.value("renderMode",    0);
   }
 
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()
@@ -139,7 +143,7 @@ ProjectData ProjectSerializer::SolarSystemTemplate()
   data.grid = GridData{4, 10.f, 10.f, 30, 2.f};
 
   // Cloud from milky_way_5k.json formation by default (CPU mode for now)
-  data.cloud = CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f};
+  data.cloud = CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f, 4500.f, 0};
 
   return data;
 }

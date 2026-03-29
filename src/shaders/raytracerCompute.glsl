@@ -16,6 +16,9 @@ uniform float uPitch;
 // framebuffer size
 uniform vec2 uResolution;
 
+// quality settings
+uniform int uMaxBounces; // 0 = no reflections, 1+ = bounce count
+
 struct spaceObject
 {
     vec4  position;    // xyz = world pos, w unused
@@ -229,7 +232,9 @@ void main()
             vec3  hitPos = ro + rd * tMin;
             vec3  normal = normalize(hitPos - cen);
             vec3  lit    = shadePlanet(ro, hitPos, normal);
-            vec3  refl   = reflectionBounce(ro, rd, hitPos, normal);
+            vec3  refl   = vec3(0.0);
+            if (uMaxBounces > 0)
+                refl = reflectionBounce(ro, rd, hitPos, normal);
             color = lit + refl * 0.1;
         }
     }
@@ -275,7 +280,7 @@ void main()
         vec3  cen   = objects[i].position.xyz;
         float d2    = closestApproachDist2(ro, rd, cen);
 
-        float coreS  = max(objects[i].radius * 2.0, 0.002);
+        float coreS  = max(objects[i].radius * 2.0, 0.001);
         float core   = exp(-d2 / (coreS * coreS)) * 6.0;
 
         float haloS  = coreS * 4.0;

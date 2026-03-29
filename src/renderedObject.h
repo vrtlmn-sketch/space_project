@@ -38,6 +38,7 @@ private:
   unsigned int pitchUniform{};
   unsigned int resolutionUniform{};
   unsigned int temperatureUniform{};
+  unsigned int renderModeUniform{};
   // per-object-type lighting uniforms (planet shader)
   unsigned int lightCountUniform{};
   unsigned int lightPositionsUniform{};
@@ -58,6 +59,7 @@ private:
 public:
   MeshType meshType{MeshType::sphere};
   vec3 coordinates;
+  float cachedTemperature{0.f};  // set by uploadTemperature(), used by renderCloudRaytraced()
 
   void setupRender();
 
@@ -68,6 +70,7 @@ public:
   void uploadStarLighting(const std::vector<vec3>& positions,
                           const std::vector<vec3>& colors);
   void uploadTemperature(float kelvin);
+  void uploadRenderMode(int mode);
   void uploadResolution(int w, int h);
   void renderMesh(float cameraTranslate[3], float rotation, float pitch = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderLine(float cameraTranslate[3], float rotation, float pitch = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);

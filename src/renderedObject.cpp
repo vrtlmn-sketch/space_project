@@ -270,7 +270,7 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      0.002f, 0.002f, 0.0f, 2.0f}); // objectType=2 cloud particle
+      0.001f, 0.001f, cachedTemperature, 2.0f}); // objectType=2 cloud particle
   }
 }
 
@@ -343,6 +343,7 @@ void RenderedObject::setupRender()
   objectCountUniform      = glGetUniformLocation(program, "uObjectCount");
   resolutionUniform       = glGetUniformLocation(program, "uResolution");
   temperatureUniform      = glGetUniformLocation(program, "uTemperature");
+  renderModeUniform       = glGetUniformLocation(program, "uRenderMode");
   lightCountUniform       = glGetUniformLocation(program, "uLightCount");
   lightPositionsUniform   = glGetUniformLocation(program, "uLightPositions");
   lightColorsUniform      = glGetUniformLocation(program, "uLightColors");
@@ -378,9 +379,17 @@ void RenderedObject::uploadStarLighting(const std::vector<vec3>& positions,
 
 void RenderedObject::uploadTemperature(float kelvin)
 {
+  cachedTemperature = kelvin;
   glUseProgram(program);
   if (temperatureUniform != (unsigned int)-1)
     glUniform1f(temperatureUniform, kelvin);
+}
+
+void RenderedObject::uploadRenderMode(int mode)
+{
+  glUseProgram(program);
+  if (renderModeUniform != (unsigned int)-1)
+    glUniform1i(renderModeUniform, mode);
 }
 
 void RenderedObject::uploadResolution(int w, int h)
@@ -547,8 +556,27 @@ void RenderedObject::renderCloud(float cameraTranslate[3], float rotation, float
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, fovDeg, fbWidth, fbHeight);
-  glPointSize(5);
+
+  // Check render mode: if nebula, enable blending and larger point sprites
+  GLint curRenderMode = 0;
+  if (renderModeUniform != (unsigned int)-1)
+    glGetUniformiv(program, renderModeUniform, &curRenderMode);
+
+  if (curRenderMode == 1) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE); // additive blending for nebula glow
+    glEnable(GL_PROGRAM_POINT_SIZE);
+    glPointSize(8);
+  } else {
+    glPointSize(2);
+  }
+
   glDrawArrays(GL_POINTS, 0, bufferSize);
+
+  if (curRenderMode == 1) {
+    glDisable(GL_BLEND);
+    glDisable(GL_PROGRAM_POINT_SIZE);
+  }
   hasBeenRendered=true;
 }
 
