@@ -180,6 +180,11 @@ int main(int argc, char** argv) {
   while (true) {
     if (!renderer.BeginFrame()) continue;
 
+    // Set primary view based on which view is "main"
+    // raytracerIsMain=false → rasterizer fullscreen (primary), raytracer PiP (secondary)
+    // raytracerIsMain=true  → raytracer fullscreen (primary), rasterizer PiP (secondary)
+    renderer.rayTracerView = renderer.raytracerIsMain;
+
     // Ghost-drag: confirm placement on click
     if (renderer.UpdateGhostDrag(renderer.spawnForm)) {
       cb.spawnPhysicsObject(renderer.spawnForm);
@@ -237,6 +242,27 @@ int main(int argc, char** argv) {
       cloud->Update(renderer, physData);
 
     background.Update(renderer);
+
+    // ── Secondary (PiP) render pass ─────────────────────────────────────────
+    // Renders the OTHER view (rasterizer or raytracer) into the PiP FBO.
+    // BeginSecondaryPass flips rayTracerView and binds the FBO.
+    renderer.BeginSecondaryPass();
+
+    // Re-draw all objects into the FBO (no physics, just rendering)
+    for (int i = 0; i < (int)physicsObjects.size(); i++) {
+      renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
+                                 physicsObjects[i].temperature,
+                                 (physicsObjects[i].shaderType == ObjectShaderType::Star) ? 1.0f : 0.0f);
+      lineObjects[i].Update(renderer);
+    }
+    for (auto& g : grids)
+      renderer.Draw(g.renderedObject);
+    if (cloud)
+      renderer.Draw(cloud->renderedObject);
+    background.Update(renderer);
+
+    renderer.EndSecondaryPass();
+    // ── End secondary pass ──────────────────────────────────────────────────
 
     // Draw all UI panels
     renderer.DrawUI(physicsObjects, cloud.get(), cb);

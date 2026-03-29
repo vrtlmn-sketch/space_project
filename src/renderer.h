@@ -67,7 +67,7 @@ private:
   bool  initialised{false};
 
   // Keyboard edge-detection flags
-  bool rayTracerViewButtonPressed{false};
+  bool flipKeyPressed{false};
   bool quitButtonPressed{false};
   bool pauseButtonPressed{false};
   bool reverseButtonPressed{false};
@@ -98,6 +98,15 @@ private:
   // Framebuffer size
   int fbWidth{}, fbHeight{};
 
+  // ── PiP (Picture-in-Picture) secondary view FBO ──
+  GLuint pipFBO{0};
+  GLuint pipColorTex{0};
+  GLuint pipDepthRBO{0};
+  int    pipWidth{0}, pipHeight{0};   // current FBO dimensions
+
+  void   EnsurePipFBO(int w, int h);  // create/resize FBO
+  void   DestroyPipFBO();
+
   // ImGui helpers
   void DrawControlsPanel();
   void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud);
@@ -105,6 +114,7 @@ private:
   void DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
   void DrawGhostObject();
   void DrawQuitDialog(const SceneCallbacks& cb);
+  void DrawPipWindow();   // show secondary view FBO as ImGui image
 
 public:
   // ---- Public camera state (exposed so UI sliders can drive them) ----
@@ -116,8 +126,14 @@ public:
   // ---- Simulation state ----
   std::vector<RayTracerObject> rayTracedObjects{};
   bool rayTracerView{false};
+  bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
   bool paused{false};
   bool playingForward{true};
+
+  // ---- Secondary (PiP) render pass ----
+  // Call these from main.cpp to bracket the secondary draw pass
+  void BeginSecondaryPass();   // bind FBO, set viewport, clear, flip rayTracerView
+  void EndSecondaryPass();     // unbind FBO, restore viewport, restore rayTracerView
 
   // ---- Timeline keypoints ----
   std::vector<Keypoint> keypoints{};

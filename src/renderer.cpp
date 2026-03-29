@@ -204,8 +204,12 @@ bool Renderer::UpdateInputs() {
     if (zoom > 120.0f) zoom = 120.0f;
 
     // Toggle keys (fire on release)
-    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)  rayTracerViewButtonPressed = true;
-    else { if (rayTracerViewButtonPressed) rayTracerView = !rayTracerView; rayTracerViewButtonPressed = false; }
+    // F = flip main/PiP views
+    if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)  flipKeyPressed = true;
+    else { if (flipKeyPressed) raytracerIsMain = !raytracerIsMain; flipKeyPressed = false; }
+
+    // R = record (no-op placeholder for now)
+    // (previously toggled raytracer view — now handled by dual view)
 
     if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS)  reverseButtonPressed = true;
     else { if (reverseButtonPressed) playingForward = !playingForward; reverseButtonPressed = false; }
@@ -314,6 +318,7 @@ bool Renderer::DrawStartupModal() {
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb) {
   DrawControlsPanel();
   DrawTimeline(physicsObjects, cloud);
+  DrawPipWindow();
   if (showSpawnPanel)  DrawSpawnPanel(cb);
   if (showScenePanel)  DrawScenePanel(physicsObjects, cloud, cb);
   if (ghostDragActive) DrawGhostObject();
@@ -324,7 +329,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
 // DrawControlsPanel  (top-centre)
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawControlsPanel() {
-  const float panelW = 850.f;
+  const float panelW = 960.f;
   const float panelH = 130.f;
   ImGuiIO& io = ImGui::GetIO();
 
@@ -360,12 +365,17 @@ void Renderer::DrawControlsPanel() {
   }
   ImGui::SameLine();
 
-  // Raytrace toggle
-  if (rayTracerView) {
-    if (ImGui::Button("Raytrace ON  [R]", ImVec2(130, 32))) rayTracerView = false;
-  } else {
-    if (ImGui::Button("Raytrace OFF [R]", ImVec2(130, 32))) rayTracerView = true;
-  }
+  // Flip view (swap main/PiP)
+  if (ImGui::Button(raytracerIsMain ? "Flip [F] (RT main)" : "Flip [F] (Rast main)", ImVec2(160, 32)))
+    raytracerIsMain = !raytracerIsMain;
+  ImGui::SameLine();
+
+  // Record placeholder
+  ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.10f, 0.10f, 1.00f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.00f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.80f, 0.15f, 0.15f, 1.00f));
+  ImGui::Button("Record [R]", ImVec2(100, 32)); // no-op for now
+  ImGui::PopStyleColor(3);
   ImGui::SameLine();
 
   // Spawn / Scene panels
@@ -945,9 +955,137 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PiP FBO management
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::EnsurePipFBO(int w, int h) {
+  if (w == pipWidth && h == pipHeight && pipFBO != 0) return; // already right size
+
+  DestroyPipFBO();
+
+  pipWidth = w;
+  pipHeight = h;
+
+  glGenFramebuffers(1, &pipFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
+
+  // Colour attachment (texture — we'll display this in ImGui)
+  glGenTextures(1, &pipColorTex);
+  glBindTexture(GL_TEXTURE_2D, pipColorTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pipColorTex, 0);
+
+  // Depth attachment (renderbuffer)
+  glGenRenderbuffers(1, &pipDepthRBO);
+  glBindRenderbuffer(GL_RENDERBUFFER, pipDepthRBO);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, pipDepthRBO);
+
+  GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE) {
+    std::cerr << "[PiP] Framebuffer incomplete: 0x" << std::hex << status << std::dec << "\n";
+  }
+
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void Renderer::DestroyPipFBO() {
+  if (pipFBO)       { glDeleteFramebuffers(1, &pipFBO);     pipFBO = 0; }
+  if (pipColorTex)  { glDeleteTextures(1, &pipColorTex);    pipColorTex = 0; }
+  if (pipDepthRBO)  { glDeleteRenderbuffers(1, &pipDepthRBO); pipDepthRBO = 0; }
+  pipWidth = pipHeight = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BeginSecondaryPass / EndSecondaryPass — bracket the PiP draw pass
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::BeginSecondaryPass() {
+  // PiP is 1/4 of window size (half each dimension)
+  int pw = fbWidth / 2;
+  int ph = fbHeight / 2;
+  if (pw < 1) pw = 1;
+  if (ph < 1) ph = 1;
+  EnsurePipFBO(pw, ph);
+
+  // Flip to the OTHER view for the secondary pass
+  rayTracerView = !rayTracerView;
+
+  // Clear accumulated raytracer objects from the primary pass
+  // (they belong to the primary view; the secondary pass will re-accumulate)
+  rayTracedObjects.clear();
+  rayTracedObjects.reserve(20);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
+  glViewport(0, 0, pw, ph);
+  glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  // Override fbWidth/fbHeight so Draw calls use PiP resolution
+  fbWidth = pw;
+  fbHeight = ph;
+}
+
+void Renderer::EndSecondaryPass() {
+  // Unbind FBO — back to default framebuffer
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+  // Restore original framebuffer size
+  int fbw = 0, fbh = 0;
+  glfwGetFramebufferSize(window, &fbw, &fbh);
+  glViewport(0, 0, fbw, fbh);
+  fbWidth = fbw;
+  fbHeight = fbh;
+
+  // Flip rayTracerView back to the primary view
+  rayTracerView = !rayTracerView;
+
+  // Clear secondary raytracer objects (EndFrame will clear primary ones)
+  rayTracedObjects.clear();
+  rayTracedObjects.reserve(20);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawPipWindow — display secondary view FBO as an ImGui image
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawPipWindow() {
+  if (pipColorTex == 0) return;
+
+  ImGuiIO& io = ImGui::GetIO();
+  // PiP window: bottom-right corner, above the timeline
+  float pipW = (float)pipWidth;
+  float pipH = (float)pipHeight;
+  // Scale down display size so it's ~1/4 screen
+  float displayW = io.DisplaySize.x * 0.30f;
+  float displayH = displayW * (pipH / pipW);
+
+  float margin = 10.f;
+  float timelineH = 70.f; // height of timeline panel
+  ImGui::SetNextWindowPos(
+    ImVec2(io.DisplaySize.x - displayW - margin,
+           io.DisplaySize.y - timelineH - displayH - margin),
+    ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(displayW + 16, displayH + 36), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.85f);
+
+  const char* label = raytracerIsMain ? "Rasterizer" : "Raytracer";
+
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse
+                         | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove;
+  ImGui::Begin(label, nullptr, flags);
+
+  // Flip Y: OpenGL textures are bottom-up; ImGui expects top-down
+  ImGui::Image((ImTextureID)(uintptr_t)pipColorTex,
+               ImVec2(displayW, displayH),
+               ImVec2(0, 1), ImVec2(1, 0));
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Destructor
 // ─────────────────────────────────────────────────────────────────────────────
 Renderer::~Renderer() {
+  DestroyPipFBO();
   if (initialised) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
