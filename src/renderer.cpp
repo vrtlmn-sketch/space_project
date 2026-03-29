@@ -165,8 +165,15 @@ bool Renderer::UpdateInputs() {
   // If ImGui wants the keyboard, skip game keys
   ImGuiIO& io = ImGui::GetIO();
 
-  if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-    glfwSetWindowShouldClose(window, 1);
+  // Esc = open quit dialog (edge-triggered so it doesn't re-fire)
+  if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) escKeyPressed = true;
+  else { if (escKeyPressed) { showQuitDialog = true; } escKeyPressed = false; }
+
+  // Intercept GLFW window-close button → show quit dialog instead of closing
+  if (glfwWindowShouldClose(window)) {
+    glfwSetWindowShouldClose(window, 0); // cancel the close
+    showQuitDialog = true;
+  }
 
   if (!io.WantCaptureKeyboard) {
     // WASD = position movement (yaw-aware, horizontal plane)
@@ -219,9 +226,9 @@ bool Renderer::UpdateInputs() {
   }
 
   if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS)  quitButtonPressed = true;
-  else { if (quitButtonPressed) return false; }
+  else { if (quitButtonPressed) { showQuitDialog = true; } quitButtonPressed = false; }
 
-  if (glfwWindowShouldClose(window)) return false;
+  if (quitConfirmed) return false;
   return true;
 }
 
@@ -313,6 +320,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
   if (showSpawnPanel)  DrawSpawnPanel(cb);
   if (showScenePanel)  DrawScenePanel(physicsObjects, cloud, cb);
   if (ghostDragActive) DrawGhostObject();
+  DrawQuitDialog(cb);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -829,6 +837,46 @@ void Renderer::DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudO
       cloudForm.enabled = false;
       if (cb.applyCloud) cb.applyCloud(cloudForm);
     }
+  }
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawQuitDialog — "Save before quitting?" modal
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawQuitDialog(const SceneCallbacks& cb) {
+  if (!showQuitDialog) return;
+
+  ImGuiIO& io = ImGui::GetIO();
+  ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+  ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(360, 160), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.95f);
+
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
+                         | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
+  ImGui::Begin("Quit##quitdlg", nullptr, flags);
+
+  ImGui::TextWrapped("Do you want to save your project before quitting?");
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  float bw = 100.f;
+  if (ImGui::Button("Save & Quit", ImVec2(bw, 36))) {
+    if (cb.saveProject) cb.saveProject();
+    quitConfirmed = true;
+    showQuitDialog = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Quit", ImVec2(bw, 36))) {
+    quitConfirmed = true;
+    showQuitDialog = false;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Cancel", ImVec2(bw, 36))) {
+    showQuitDialog = false;
   }
 
   ImGui::End();

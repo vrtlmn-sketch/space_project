@@ -86,6 +86,9 @@ private:
   bool         showScenePanel{false};
   bool         showSaveDialog{false};
   bool         showLoadDialog{false};
+  bool         showQuitDialog{false};
+  bool         quitConfirmed{false};
+  bool         escKeyPressed{false};
   char         loadPathBuf[256]  = "project.json";
   char         keypointLabelBuf[64] = "Key";
   GridFormState  gridForm{};
@@ -101,6 +104,7 @@ private:
   void DrawSpawnPanel(const SceneCallbacks& cb);
   void DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
   void DrawGhostObject();
+  void DrawQuitDialog(const SceneCallbacks& cb);
 
 public:
   // ---- Public camera state (exposed so UI sliders can drive them) ----
