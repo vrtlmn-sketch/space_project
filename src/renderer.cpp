@@ -6,6 +6,21 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+// File-level pointer so the C-style GLFW scroll callback can reach the Renderer.
+static Renderer* g_scrollReceiver = nullptr;
+
+static void scrollCallback(GLFWwindow* /*window*/, double /*xoffset*/, double yoffset) {
+  // Let ImGui handle scroll first if it wants it
+  ImGuiIO& io = ImGui::GetIO();
+  if (io.WantCaptureMouse) return;
+
+  if (g_scrollReceiver) {
+    g_scrollReceiver->zoom -= (float)yoffset * 2.0f; // scroll up = zoom in (lower FOV)
+    if (g_scrollReceiver->zoom < 5.0f)   g_scrollReceiver->zoom = 5.0f;
+    if (g_scrollReceiver->zoom > 120.0f) g_scrollReceiver->zoom = 120.0f;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // InitWindow
 // ─────────────────────────────────────────────────────────────────────────────
@@ -25,6 +40,10 @@ bool Renderer::InitWindow(
   glfwMakeContextCurrent(window);
   glfwSwapInterval(1);
   gladLoadGL(glfwGetProcAddress);
+
+  // Register scroll callback for FOV zoom
+  g_scrollReceiver = this;
+  glfwSetScrollCallback(window, scrollCallback);
 
   int fbw, fbh;
   glfwGetFramebufferSize(window, &fbw, &fbh);
@@ -104,13 +123,13 @@ void Renderer::EndFrame() {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, rotation, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, rotation, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, rotation, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
-    if      (ro.meshType == MeshType::plane)  ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, fbWidth, fbHeight);
+    if      (ro.meshType == MeshType::plane)  ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, pitch, zoom, fbWidth, fbHeight);
     else if (ro.meshType == MeshType::sphere) ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);
     else if (ro.meshType == MeshType::cloud)  ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
   }
@@ -119,14 +138,14 @@ void Renderer::Draw(RenderedObject& ro) {
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float temperature, float objectType) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
-      ro.renderMesh(cameraTranslate, rotation, fbWidth, fbHeight);
+      ro.renderMesh(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
     }
   }
   if (rayTracerView) {
     if (ro.meshType == MeshType::sphere)
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, temperature, objectType);
     else if (ro.meshType == MeshType::plane)
-      ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, fbWidth, fbHeight);
+      ro.renderPlane(cameraTranslate, rayTracedObjects, rotation, pitch, zoom, fbWidth, fbHeight);
   }
 }
 
@@ -150,14 +169,35 @@ bool Renderer::UpdateInputs() {
     glfwSetWindowShouldClose(window, 1);
 
   if (!io.WantCaptureKeyboard) {
-    if (glfwGetKey(window, GLFW_KEY_SPACE)      == GLFW_PRESS) move(vec3{0, -cameraSpeed, 0});
-    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) move(vec3{0,  cameraSpeed, 0});
+    // WASD = position movement (yaw-aware, horizontal plane)
     if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  cameraSpeed});
     if (glfwGetKey(window, GLFW_KEY_S)          == GLFW_PRESS) move(vec3{0,  0, -cameraSpeed});
     if (glfwGetKey(window, GLFW_KEY_A)          == GLFW_PRESS) move(vec3{ cameraSpeed, 0, 0});
     if (glfwGetKey(window, GLFW_KEY_D)          == GLFW_PRESS) move(vec3{-cameraSpeed, 0, 0});
-    if (glfwGetKey(window, GLFW_KEY_Q)          == GLFW_PRESS) rotation -= cameraRotationSpeed;
-    if (glfwGetKey(window, GLFW_KEY_E)          == GLFW_PRESS) rotation += cameraRotationSpeed;
+    // Space = up, Left Ctrl = down
+    if (glfwGetKey(window, GLFW_KEY_SPACE)       == GLFW_PRESS) move(vec3{0, -cameraSpeed, 0});
+    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL)== GLFW_PRESS) move(vec3{0,  cameraSpeed, 0});
+
+    // Arrow keys = look direction (yaw / pitch)
+    if (glfwGetKey(window, GLFW_KEY_LEFT)  == GLFW_PRESS) rotation -= cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) rotation += cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_UP)    == GLFW_PRESS) pitch    -= cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_DOWN)  == GLFW_PRESS) pitch    += cameraRotationSpeed;
+
+    // Clamp pitch to avoid flipping (-89° to +89°)
+    const float maxPitch = 89.0f * 3.14159265f / 180.0f;
+    if (pitch >  maxPitch) pitch =  maxPitch;
+    if (pitch < -maxPitch) pitch = -maxPitch;
+
+    // Zoom: Shift + Plus/Minus (FOV-based)
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
+      if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= 0.5f; // Shift+= (plus) = zoom in
+      if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  zoom += 0.5f; // Shift+- = zoom out
+    }
+    // Clamp zoom/FOV
+    if (zoom < 5.0f)   zoom = 5.0f;
+    if (zoom > 120.0f) zoom = 120.0f;
 
     // Toggle keys (fire on release)
     if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)  rayTracerViewButtonPressed = true;
@@ -202,6 +242,8 @@ void Renderer::movePublic(float dx, float dy, float dz) {
 void Renderer::resetCamera() {
   cameraTranslate[0] = cameraTranslate[1] = cameraTranslate[2] = 0.0f;
   rotation = 0.0f;
+  pitch = 0.0f;
+  zoom = 45.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -338,19 +380,25 @@ void Renderer::DrawControlsPanel() {
   ImGui::BeginGroup();
   ImGui::Text("Cam:");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(80);
+  ImGui::SetNextItemWidth(70);
   ImGui::DragFloat("X##cam", &cameraTranslate[0], 0.02f, -100.f, 100.f, "%.2f");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(80);
+  ImGui::SetNextItemWidth(70);
   ImGui::DragFloat("Y##cam", &cameraTranslate[1], 0.02f, -100.f, 100.f, "%.2f");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(80);
+  ImGui::SetNextItemWidth(70);
   ImGui::DragFloat("Z##cam", &cameraTranslate[2], 0.02f, -100.f, 100.f, "%.2f");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(80);
-  ImGui::DragFloat("Rot [Q/E]", &rotation, 0.01f, -6.28f, 6.28f, "%.2f");
+  ImGui::SetNextItemWidth(65);
+  ImGui::DragFloat("Yaw", &rotation, 0.01f, -6.28f, 6.28f, "%.2f");
   ImGui::SameLine();
-  if (ImGui::Button("Reset Camera", ImVec2(110, 0))) resetCamera();
+  ImGui::SetNextItemWidth(65);
+  ImGui::DragFloat("Pitch", &pitch, 0.01f, -1.55f, 1.55f, "%.2f");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(65);
+  ImGui::DragFloat("FOV", &zoom, 0.5f, 5.f, 120.f, "%.0f");
+  ImGui::SameLine();
+  if (ImGui::Button("Reset Camera", ImVec2(100, 0))) resetCamera();
   ImGui::EndGroup();
 
   ImGui::End();
@@ -823,10 +871,9 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
   float ndcX = (io.MousePos.x / io.DisplaySize.x) * 2.f - 1.f;
   float ndcY = 1.f - (io.MousePos.y / io.DisplaySize.y) * 2.f;
 
-  // Rough inverse: scale by frustum half-size at z=-3 (FOV 45°, ratio ~1.3)
-  // tan(22.5°) ≈ 0.4142
+  // Rough inverse: scale by frustum half-size at z plane using current FOV
   float zPlane    = -cameraTranslate[2] + (-3.f);
-  float halfH     = std::tan(0.3927f) * std::abs(zPlane);
+  float halfH     = std::tan(zoom * 0.5f * 3.14159265f / 180.0f) * std::abs(zPlane);
   float aspect    = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : 1.f;
 
   ghostX = -cameraTranslate[0] + ndcX * halfH * aspect;

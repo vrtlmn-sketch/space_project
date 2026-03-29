@@ -106,6 +106,8 @@ public:
   // ---- Public camera state (exposed so UI sliders can drive them) ----
   float cameraTranslate[3] = { 0, 0, 0 };
   float rotation{};
+  float pitch{};
+  float zoom{45.0f}; // FOV in degrees (lower = zoomed in)
 
   // ---- Simulation state ----
   std::vector<RayTracerObject> rayTracedObjects{};

@@ -95,13 +95,13 @@ void RenderedObject::GenerateMeshGrid(const vec3& size, int subdivisions){
 
 }
 
-void RenderedObject::renderGrid(float cameraTranslate[3], float rotation, int fbWidth, int fbHeight){
+void RenderedObject::renderGrid(float cameraTranslate[3], float rotation, float pitch, float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(vec3), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_LINE_STRIP, 0, bufferSize);
   hasBeenRendered=true;
 }
@@ -274,14 +274,14 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
   }
 }
 
-void RenderedObject::renderMesh(float cameraTranslate[3], float rotation, int fbWidth, int fbHeight)
+void RenderedObject::renderMesh(float cameraTranslate[3], float rotation, float pitch, float fovDeg, int fbWidth, int fbHeight)
 {
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
   hasBeenRendered=true;
 }
@@ -289,7 +289,8 @@ void RenderedObject::renderMesh(float cameraTranslate[3], float rotation, int fb
 //Plane is also a raytracer screen
 void RenderedObject::renderPlane(float cameraTranslate[3],
                                  const std::vector<RayTracerObject>& rayTracedObjectList,
-                                 float rotation, int fbWidth, int fbHeight)
+                                 float rotation, float pitch, float fovDeg,
+                                 int fbWidth, int fbHeight)
 {
   if(!hasBeenRendered) { setupRender(); }
 
@@ -310,7 +311,7 @@ void RenderedObject::renderPlane(float cameraTranslate[3],
   if (objectCountUniform != (unsigned int)-1)
     glUniform1i(objectCountUniform, (int)rayTracedObjectList.size());
 
-  transformPerspectiveMesh(program, cameraTranslate, rotation, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
   hasBeenRendered=true;
 }
@@ -336,6 +337,7 @@ void RenderedObject::setupRender()
 
   cameraTranslateUniform  = glGetUniformLocation(program, "uCamera");
   rotationUniform         = glGetUniformLocation(program, "uRotation");
+  pitchUniform            = glGetUniformLocation(program, "uPitch");
   pointCountUniform       = glGetUniformLocation(program, "uPointCount");
   objectCoordinateUniform = glGetUniformLocation(program, "uPointCoordinates");
   objectCountUniform      = glGetUniformLocation(program, "uObjectCount");
@@ -456,6 +458,7 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
 }
 
 void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTranslate[3], float rotation,
+                                               float pitch, float fovDeg,
                                                int fbWidth, int fbHeight)
 {
   //we bind the uniforms
@@ -463,7 +466,7 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTransl
   GLuint worldMatrixBuffer = glGetUniformLocation(program, "uWorld");
   float proj[16];
   float aspect = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : (800.0f / 600.0f);
-  float fovy   = 45.0f * M_PI / 180.0f; // 45 degrees in radians
+  float fovy   = fovDeg * M_PI / 180.0f;
   perspective(fovy, aspect, 0.1f, 100.0f, proj);
   //we fill perspective uniform
   glUniformMatrix4fv(projectionMatrixBuffer, 1, GL_FALSE, proj);
@@ -488,6 +491,8 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTransl
 
   glUniform3fv(objectCoordinateUniform, 1, tempCoords);
   glUniform1f(rotationUniform, rotation);
+  if (pitchUniform != (unsigned int)-1)
+    glUniform1f(pitchUniform, pitch);
 
   // Upload resolution if uniform exists (raytracer plane uses this)
   if (resolutionUniform != (unsigned int)-1) {
@@ -523,25 +528,25 @@ void RenderedObject::AddPointToLine(const vec3& point){
 }
 
 
-void RenderedObject::renderLine(float cameraTranslate[3], float rotation, int fbWidth, int fbHeight){
+void RenderedObject::renderLine(float cameraTranslate[3], float rotation, float pitch, float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, linePoints.size()*sizeof(vec3), &linePoints[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_LINE_STRIP, 0, bufferSize);
   hasBeenRendered=true;
 }
 
-void RenderedObject::renderCloud(float cameraTranslate[3], float rotation, int fbWidth, int fbHeight){
+void RenderedObject::renderCloud(float cameraTranslate[3], float rotation, float pitch, float fovDeg, int fbWidth, int fbHeight){
   if(bufferSize == 0 || UVObjectMeshBuffer.empty()) return;
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, fovDeg, fbWidth, fbHeight);
   glPointSize(5);
   glDrawArrays(GL_POINTS, 0, bufferSize);
   hasBeenRendered=true;
