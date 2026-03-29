@@ -3,6 +3,7 @@
 #include "cloudObject.h"
 
 #include <cstring>
+#include <filesystem>
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -303,6 +304,10 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)  flipKeyPressed = true;
     else { if (flipKeyPressed) raytracerIsMain = !raytracerIsMain; flipKeyPressed = false; }
 
+    // T = toggle raytracer on/off (edge-triggered)
+    if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)  rtToggleKeyPressed = true;
+    else { if (rtToggleKeyPressed) raytracerEnabled = !raytracerEnabled; rtToggleKeyPressed = false; }
+
     // R = toggle recording (edge-triggered)
     if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)  recordKeyPressed = true;
     else {
@@ -431,6 +436,19 @@ static void BlackbodyColor(float t, float& r, float& g, float& b) {
   }
 }
 
+// ── Helper: scan templates/formations/ for .json files ──
+static std::vector<std::string> ScanFormationFiles() {
+  std::vector<std::string> files;
+  const std::string dir = "templates/formations";
+  if (!std::filesystem::exists(dir)) return files;
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json")
+      files.push_back(entry.path().filename().string());
+  }
+  std::sort(files.begin(), files.end());
+  return files;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawUI  — master call: fullscreen dockspace + programmatic layout + all panels
 // ─────────────────────────────────────────────────────────────────────────────
@@ -538,6 +556,18 @@ void Renderer::DrawControlsPanel() {
 
   if (ImGui::Button(raytracerIsMain ? "Flip [F]##rt" : "Flip [F]##rs", ImVec2(65, 0)))
     raytracerIsMain = !raytracerIsMain;
+  ImGui::SameLine();
+
+  // Raytracer enable/disable toggle
+  if (raytracerEnabled) {
+    if (ImGui::Button("RT On [T]", ImVec2(65, 0))) raytracerEnabled = false;
+  } else {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.35f, 0.35f, 0.35f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.50f, 0.50f, 0.50f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.60f, 0.60f, 0.60f, 1.00f));
+    if (ImGui::Button("RT Off [T]", ImVec2(65, 0))) raytracerEnabled = true;
+    ImGui::PopStyleColor(3);
+  }
   ImGui::SameLine();
 
   // Record
@@ -824,13 +854,51 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 
     // ── Cloud tab ──
     if (ImGui::BeginTabItem("Cloud")) {
-      ImGui::SliderInt("Count", &cloudForm.count, 100, 5000);
-      ImGui::Text("Size");
-      ImGui::SetNextItemWidth(-1);
-      float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
-      if (ImGui::DragFloat3("##csz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
-        cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
+      // Formation file selector
+      static std::vector<std::string> formationFiles;
+      static bool scanned = false;
+      if (!scanned) { formationFiles = ScanFormationFiles(); scanned = true; }
+      // Re-scan button
+      if (ImGui::Button("Rescan##cf")) formationFiles = ScanFormationFiles();
+      ImGui::SameLine();
+      ImGui::TextDisabled("(%zu formations)", formationFiles.size());
+
+      // Dropdown for formation selection
+      int formIdx = -1; // -1 = procedural
+      for (int i = 0; i < (int)formationFiles.size(); i++) {
+        if (formationFiles[i] == cloudForm.formationFile) { formIdx = i; break; }
       }
+      // Build combo items: "Procedural" + all formation files
+      const char* previewStr = (formIdx >= 0) ? formationFiles[formIdx].c_str() : "Procedural";
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::BeginCombo("##cform", previewStr)) {
+        if (ImGui::Selectable("Procedural", formIdx < 0)) {
+          cloudForm.formationFile.clear();
+          formIdx = -1;
+        }
+        for (int i = 0; i < (int)formationFiles.size(); i++) {
+          bool sel = (formIdx == i);
+          if (ImGui::Selectable(formationFiles[i].c_str(), sel)) {
+            cloudForm.formationFile = formationFiles[i];
+            formIdx = i;
+          }
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::Spacing();
+
+      // Show procedural controls only if no formation file
+      if (cloudForm.formationFile.empty()) {
+        ImGui::SliderInt("Count", &cloudForm.count, 100, 5000);
+        ImGui::Text("Size");
+        ImGui::SetNextItemWidth(-1);
+        float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
+        if (ImGui::DragFloat3("##csz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
+          cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
+        }
+      }
+
       ImGui::Spacing();
       if (ImGui::Button("Spawn Cloud", ImVec2(-1, 28))) {
         cloudForm.enabled = true;
@@ -1010,25 +1078,86 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
     ImGui::Separator();
 
     ImGui::Text("Active: %d particles", cloud->particleCount());
+    ImGui::TextDisabled("Frame: %u / %u", cloud->getTimeframe(), cloud->getBufferSize());
     ImGui::Spacing();
 
-    ImGui::SliderInt("Count##ci", &cloudForm.count, 100, 5000);
-    ImGui::Spacing();
-    ImGui::Text("Spawn Radius");
-    ImGui::SetNextItemWidth(-1);
-    float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
-    if (ImGui::DragFloat3("##cisz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
-      cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
+    // ── Formation file selector ──
+    ImGui::SeparatorText("Formation");
+
+    // Rescan + file list (reuse the same static list as spawn panel)
+    static std::vector<std::string> inspFormFiles;
+    static bool inspScanned = false;
+    if (!inspScanned) { inspFormFiles = ScanFormationFiles(); inspScanned = true; }
+    if (ImGui::Button("Rescan##ci_rescan")) { inspFormFiles = ScanFormationFiles(); }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%zu files)", inspFormFiles.size());
+
+    int formIdx = -1;
+    for (int i = 0; i < (int)inspFormFiles.size(); i++) {
+      if (inspFormFiles[i] == cloudForm.formationFile) { formIdx = i; break; }
     }
+    const char* previewStr = (formIdx >= 0) ? inspFormFiles[formIdx].c_str() : "Procedural";
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##ci_form", previewStr)) {
+      if (ImGui::Selectable("Procedural", formIdx < 0)) {
+        cloudForm.formationFile.clear();
+        formIdx = -1;
+      }
+      for (int i = 0; i < (int)inspFormFiles.size(); i++) {
+        bool sel = (formIdx == i);
+        if (ImGui::Selectable(inspFormFiles[i].c_str(), sel)) {
+          cloudForm.formationFile = inspFormFiles[i];
+          formIdx = i;
+        }
+      }
+      ImGui::EndCombo();
+    }
+
     ImGui::Spacing();
+
+    // ── Procedural-only controls ──
+    if (cloudForm.formationFile.empty()) {
+      ImGui::SliderInt("Count##ci", &cloudForm.count, 100, 5000);
+      ImGui::Spacing();
+      ImGui::Text("Spawn Radius");
+      ImGui::SetNextItemWidth(-1);
+      float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
+      if (ImGui::DragFloat3("##cisz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
+        cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
+      }
+      ImGui::Spacing();
+    }
+
+    // ── Compute method ──
+    ImGui::SeparatorText("Physics");
+    const char* methodItems[] = { "CPU", "Barnes-Hut GPU" };
+    ImGui::SetNextItemWidth(-1);
+    ImGui::Combo("##ci_method", &cloudForm.computeMethod, methodItems, 2);
+
+    // Theta slider (only for Barnes-Hut)
+    if (cloudForm.computeMethod == 1) {
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("Theta##ci", &cloudForm.theta, 0.1f, 1.5f, "%.2f");
+      ImGui::TextDisabled("Lower = more accurate, slower");
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
     if (ImGui::Button("Respawn", ImVec2(-1, 28))) {
       cloudForm.enabled = true;
       if (cb.applyCloud) cb.applyCloud(cloudForm);
     }
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
     if (ImGui::Button("Remove", ImVec2(-1, 28))) {
       cloudForm.enabled = false;
       if (cb.applyCloud) cb.applyCloud(cloudForm);
+      selectedIdx = -1;
     }
+    ImGui::PopStyleColor(3);
   }
 
   // ── Nothing selected ──
@@ -1247,6 +1376,9 @@ void Renderer::DrawPipWindow() {
                ImVec2(0, 1), ImVec2(1, 0));
 
   ImGui::TextDisabled("%s  %dx%d", raytracerIsMain ? "Rasterizer" : "Raytracer", pipWidth, pipHeight);
+  if (!raytracerEnabled) {
+    ImGui::TextDisabled("(Raytracer disabled)");
+  }
   ImGui::End();
 }
 

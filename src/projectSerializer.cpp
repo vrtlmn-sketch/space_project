@@ -47,7 +47,10 @@ bool ProjectSerializer::Save(const std::string& path,
     {"count",   cloud.count},
     {"sizeX",   cloud.sizeX},
     {"sizeY",   cloud.sizeY},
-    {"sizeZ",   cloud.sizeZ}
+    {"sizeZ",   cloud.sizeZ},
+    {"formationFile",  cloud.formationFile},
+    {"computeMethod",  cloud.computeMethod},
+    {"theta",          cloud.theta}
   };
 
   std::ofstream f(path);
@@ -101,11 +104,14 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 
   if (root.contains("cloud")) {
     const auto& c    = root["cloud"];
-    data.cloud.enabled = c.value("enabled", false);
-    data.cloud.count   = c.value("count",   40000);
-    data.cloud.sizeX   = c.value("sizeX",   5.f);
-    data.cloud.sizeY   = c.value("sizeY",   5.f);
-    data.cloud.sizeZ   = c.value("sizeZ",   5.f);
+    data.cloud.enabled       = c.value("enabled", false);
+    data.cloud.count         = c.value("count",   40000);
+    data.cloud.sizeX         = c.value("sizeX",   5.f);
+    data.cloud.sizeY         = c.value("sizeY",   5.f);
+    data.cloud.sizeZ         = c.value("sizeZ",   5.f);
+    data.cloud.formationFile = c.value("formationFile", std::string{});
+    data.cloud.computeMethod = c.value("computeMethod", 0);
+    data.cloud.theta         = c.value("theta",         0.5f);
   }
 
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()
@@ -132,8 +138,8 @@ ProjectData ProjectSerializer::SolarSystemTemplate()
   // 4 grids, spacing=2, size 10x10x10, 30 subdivisions
   data.grid = GridData{4, 10.f, 10.f, 30, 2.f};
 
-  // 200-particle cloud, 3x3x3 sphere (randomDistribution used in buildScene)
-  data.cloud = CloudData{true, 200, 3.0f, 3.0f, 3.0f};
+  // Cloud from milky_way_5k.json formation by default (CPU mode for now)
+  data.cloud = CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f};
 
   return data;
 }

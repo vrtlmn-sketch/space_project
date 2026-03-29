@@ -3,6 +3,7 @@
 #include "mathStructs.h"
 #include "rayTracerObject.h"
 #include "physicsObjectStructure.h"
+#include "cloudParticle.h"
 
 
 enum class MeshType{
@@ -14,6 +15,7 @@ enum class MeshType{
 };
 
 class RenderedObject {
+  friend class CloudObject;  // CloudObject needs direct access for GPU readback
 private:
   int horizontalSubdivisions{};
   int verticalSubdivisions{};
@@ -50,7 +52,7 @@ private:
   std::vector<float> UVObjectMeshBuffer{};
   std::vector<vec3>  UVObjectMesh{};
   std::vector<vec3>  linePoints{};
-  std::vector<PhysicsObjectStructure> cloudParticles;
+  std::vector<CloudParticle> cloudParticles;
   std::vector<PhysicsObjectStructure> gridPoints;
   std::vector<std::vector<vec3>> UVObjectMeshPoints{};
 public:
@@ -95,9 +97,12 @@ void GenerateMeshGrid(const vec3& size, int subdivisions);
 
   int cloudParticleCount() const { return (int)cloudParticles.size(); }
 
-  // Cloud particle snapshot for timeline recording
-  std::vector<vec3> getParticlePositions() const;
-  void setParticlePositions(const std::vector<vec3>& positions);
+  // Cloud particle snapshot for timeline recording (pos + vel)
+  std::vector<ParticleSnapshot> getParticleSnapshots() const;
+  void setParticleSnapshots(const std::vector<ParticleSnapshot>& snapshots);
+
+  // Load cloud particles from a pre-built vector (formation files)
+  void LoadCloudFromFormation(const std::vector<CloudParticle>& particles);
 
 void perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]);
 

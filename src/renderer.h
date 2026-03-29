@@ -48,6 +48,9 @@ struct CloudFormState {
   int   count       = 2000;
   float sizeX       = 3.f, sizeY = 3.f, sizeZ = 3.f;
   int   distribution = 0; // 0=Sinusoidal
+  std::string formationFile = "milky_way_5k.json"; // empty = procedural
+  int   computeMethod = 0; // 0=CPU, 1=Barnes-Hut GPU
+  float theta       = 0.5f; // Barnes-Hut opening angle
 };
 
 // ---- Callbacks from Renderer back to main ----
@@ -75,6 +78,7 @@ private:
   bool reverseButtonPressed{false};
   bool spawnPanelKeyPressed{false};
   bool scenePanelKeyPressed{false};
+  bool rtToggleKeyPressed{false};
 
   void move(vec3&& moveVector);
 
@@ -178,7 +182,8 @@ public:
   std::vector<RayTracerObject> rayTracedObjects{};
   bool rayTracerView{false};
   bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
-  bool paused{false};
+  bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
+  bool paused{true};
   bool playingForward{true};
 
   // ---- Secondary (PiP) render pass ----

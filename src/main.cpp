@@ -54,12 +54,22 @@ static void buildScene(
   }
 
   if (data.cloud.enabled) {
-    cloud = std::make_unique<CloudObject>(
-      vec3{0, 0, -3},
-      data.cloud.count,
-      randomDistribution,
-      vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ}
-    );
+    if (!data.cloud.formationFile.empty()) {
+      // Load from formation file
+      std::string formPath = "templates/formations/" + data.cloud.formationFile;
+      cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, formPath);
+    } else {
+      // Legacy procedural generation
+      cloud = std::make_unique<CloudObject>(
+        vec3{0, 0, -3},
+        data.cloud.count,
+        randomDistribution,
+        vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ}
+      );
+    }
+    // Apply compute method settings
+    cloud->computeMethod = static_cast<CloudComputeMethod>(data.cloud.computeMethod);
+    cloud->barnesHutTheta = data.cloud.theta;
   }
 }
 
@@ -87,7 +97,7 @@ int main(int argc, char** argv) {
   grids.reserve(256); // GridObject holds OpenGL handles; reallocation would corrupt them
 
   GridData  currentGrid  = GridData{4, 10.f, 10.f, 30, 2.f};
-  CloudData currentCloud = CloudData{false, 2000, 3.f, 3.f, 3.f};
+  CloudData currentCloud = CloudData{};
 
   PlaneObject background{vec3{0, 0, -3}, 1, 1};
   background.SetShaders("src/shaders/raytracerVertex.glsl",
@@ -121,12 +131,20 @@ int main(int argc, char** argv) {
 
   cb.applyCloud = [&](const CloudFormState& cf) {
     currentCloud = CloudData{cf.enabled, cf.count,
-                             cf.sizeX, cf.sizeY, cf.sizeZ};
+                             cf.sizeX, cf.sizeY, cf.sizeZ,
+                             cf.formationFile, cf.computeMethod, cf.theta};
     cloud.reset();
     if (cf.enabled) {
-      cloud = std::make_unique<CloudObject>(
-        vec3{0, 0, -3}, cf.count, randomDistribution,
-        vec3{cf.sizeX, cf.sizeY, cf.sizeZ});
+      if (!cf.formationFile.empty()) {
+        std::string formPath = "templates/formations/" + cf.formationFile;
+        cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, formPath);
+      } else {
+        cloud = std::make_unique<CloudObject>(
+          vec3{0, 0, -3}, cf.count, randomDistribution,
+          vec3{cf.sizeX, cf.sizeY, cf.sizeZ});
+      }
+      cloud->computeMethod = static_cast<CloudComputeMethod>(cf.computeMethod);
+      cloud->barnesHutTheta = cf.theta;
     }
   };
 
@@ -244,7 +262,7 @@ int main(int argc, char** argv) {
     background.Update(renderer);
 
     // If primary view is raytraced, dispatch compute shader + blit to screen
-    if (renderer.rayTracerView) {
+    if (renderer.rayTracerView && renderer.raytracerEnabled) {
       int fbw = renderer.GetFbWidth();
       int fbh = renderer.GetFbHeight();
       renderer.DispatchRaytracer(fbw, fbh);
@@ -276,7 +294,7 @@ int main(int argc, char** argv) {
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO
-    if (renderer.rayTracerView) {
+    if (renderer.rayTracerView && renderer.raytracerEnabled) {
       int pw = renderer.GetFbWidth();   // fbWidth is set to PiP size during secondary pass
       int ph = renderer.GetFbHeight();
       renderer.DispatchRaytracer(pw, ph);

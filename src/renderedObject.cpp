@@ -164,8 +164,8 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
           UVObjectMeshBuffer.emplace_back(point.x);
           UVObjectMeshBuffer.emplace_back(point.y);
           UVObjectMeshBuffer.emplace_back(point.z);
-          cloudParticles.emplace_back(PhysicsObjectStructure{
-            vec3{0,0,0}, vec3{point.x, point.y, point.z}, 0.02f});
+          cloudParticles.emplace_back(CloudParticle{
+            vec3{point.x, point.y, point.z}, vec3{0,0,0}, vec3{0,0,0}, 0.02f});
           collected++;
         }
       }
@@ -564,17 +564,16 @@ void RenderedObject::UpdateCloudPhysics
     auto& first = cloudParticles[i];
     for(auto& other : bigBodies)
     {
-      if(&other == &first) continue;
       vec3 realPosition = first.position + this->coordinates;
       vec3 r = vec3{other.position.x, other.position.y, other.position.z}
         - realPosition;
       float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
       if (d2 == 0) continue;
       vec3 dir = normalize(r);
-      float accel = G * other.mass * first.mass / d2;
+      float accel = G * other.mass / d2;
       first.velocity += dir * accel * dt;
     }
-    first.position += first.velocity;
+    first.position += first.velocity * dt;
 
     UVObjectMeshBuffer[i*3]   = first.position.x;
     UVObjectMeshBuffer[i*3+1] = first.position.y;
@@ -582,20 +581,35 @@ void RenderedObject::UpdateCloudPhysics
   }
 }
 
-std::vector<vec3> RenderedObject::getParticlePositions() const {
-  std::vector<vec3> positions;
-  positions.reserve(cloudParticles.size());
+std::vector<ParticleSnapshot> RenderedObject::getParticleSnapshots() const {
+  std::vector<ParticleSnapshot> snaps;
+  snaps.reserve(cloudParticles.size());
   for (const auto& p : cloudParticles)
-    positions.push_back(p.position);
-  return positions;
+    snaps.push_back(ParticleSnapshot{p.position, p.velocity});
+  return snaps;
 }
 
-void RenderedObject::setParticlePositions(const std::vector<vec3>& positions) {
-  int count = std::min((int)positions.size(), (int)cloudParticles.size());
+void RenderedObject::setParticleSnapshots(const std::vector<ParticleSnapshot>& snapshots) {
+  int count = std::min((int)snapshots.size(), (int)cloudParticles.size());
   for (int i = 0; i < count; i++) {
-    cloudParticles[i].position = positions[i];
-    UVObjectMeshBuffer[i*3]   = positions[i].x;
-    UVObjectMeshBuffer[i*3+1] = positions[i].y;
-    UVObjectMeshBuffer[i*3+2] = positions[i].z;
+    cloudParticles[i].position = snapshots[i].position;
+    cloudParticles[i].velocity = snapshots[i].velocity;
+    UVObjectMeshBuffer[i*3]   = snapshots[i].position.x;
+    UVObjectMeshBuffer[i*3+1] = snapshots[i].position.y;
+    UVObjectMeshBuffer[i*3+2] = snapshots[i].position.z;
   }
+}
+
+void RenderedObject::LoadCloudFromFormation(const std::vector<CloudParticle>& particles) {
+  cloudParticles = particles;
+  UVObjectMeshBuffer.clear();
+  UVObjectMeshBuffer.reserve(particles.size() * 3);
+  for (const auto& p : particles) {
+    UVObjectMeshBuffer.emplace_back(p.position.x);
+    UVObjectMeshBuffer.emplace_back(p.position.y);
+    UVObjectMeshBuffer.emplace_back(p.position.z);
+  }
+  bufferSize = (int)cloudParticles.size();
+  meshType = MeshType::cloud;
+  hasBeenRendered = false;
 }
