@@ -143,7 +143,7 @@ private:
   std::vector<uint8_t> pixelBuffer;
 
   // Recording resolution
-  int    recordResPreset{3};             // index into resolution presets (default = 1080p)
+  int    recordResPreset{6};             // index into resolution presets (default = 1080p)
   int    recordWidth{1920};
   int    recordHeight{1080};
 
@@ -154,6 +154,18 @@ private:
 
   // Raytracer quality settings
   int    rtMaxBounces{1};                // reflection bounces (0 = no reflections)
+
+  // Dirty-flag: skip raytracer dispatch when nothing changed
+  float  rtLastCamera[3]{};
+  float  rtLastRotation{};
+  float  rtLastPitch{};
+  float  rtLastZoom{};
+  int    rtLastBounces{-1};
+  int    rtLastWidth{};
+  int    rtLastHeight{};
+  size_t rtLastObjectCount{};
+  std::vector<RayTracerObject> rtLastObjects;  // snapshot for memcmp
+  bool   rtDirty{true};                        // force first frame
 
   // Separate output texture for recording (avoids resizing the display texture)
   GLuint recOutputTex{0};

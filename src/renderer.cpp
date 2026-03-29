@@ -659,6 +659,7 @@ void Renderer::DrawControlsPanel() {
   ImGui::SameLine();
 
   static const struct { const char* label; int w; int h; } resPresets[] = {
+    { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
     { "360p",   640,  360 }, { "480p",   854,  480 },
     { "720p",  1280,  720 }, { "1080p", 1920, 1080 },
     { "1440p", 2560, 1440 }, { "4K",    3840, 2160 },
@@ -1603,6 +1604,33 @@ void Renderer::DestroyComputeResources() {
 void Renderer::DispatchRaytracer(int width, int height) {
   if (!rtComputeProgram) return;
 
+  // ── Dirty check: skip dispatch if nothing changed since last frame ──
+  // Always dispatch when recording (need every frame captured).
+  bool dirty = rtDirty || recording;
+  if (!dirty) {
+    dirty = (cameraTranslate[0] != rtLastCamera[0] ||
+             cameraTranslate[1] != rtLastCamera[1] ||
+             cameraTranslate[2] != rtLastCamera[2] ||
+             rotation != rtLastRotation ||
+             pitch    != rtLastPitch    ||
+             zoom     != rtLastZoom     ||
+             rtMaxBounces != rtLastBounces ||
+             width  != rtLastWidth  ||
+             height != rtLastHeight ||
+             rayTracedObjects.size() != rtLastObjectCount);
+  }
+  if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
+    dirty = (std::memcmp(rayTracedObjects.data(), rtLastObjects.data(),
+                         rayTracedObjects.size() * sizeof(RayTracerObject)) != 0);
+  } else if (!dirty) {
+    dirty = true; // size changed but was caught above
+  }
+
+  if (!dirty) {
+    // Nothing changed — the existing rtOutputTex is still valid.
+    return;
+  }
+
   EnsureRtOutputTex(width, height);
 
   // Upload SSBO
@@ -1649,6 +1677,20 @@ void Renderer::DispatchRaytracer(int width, int height) {
 
   // Memory barrier so subsequent texture reads see the compute results
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+  // ── Snapshot state for dirty check next frame ──
+  rtLastCamera[0] = cameraTranslate[0];
+  rtLastCamera[1] = cameraTranslate[1];
+  rtLastCamera[2] = cameraTranslate[2];
+  rtLastRotation  = rotation;
+  rtLastPitch     = pitch;
+  rtLastZoom      = zoom;
+  rtLastBounces   = rtMaxBounces;
+  rtLastWidth     = width;
+  rtLastHeight    = height;
+  rtLastObjectCount = rayTracedObjects.size();
+  rtLastObjects     = rayTracedObjects;   // deep copy for memcmp
+  rtDirty           = false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
