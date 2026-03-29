@@ -196,12 +196,9 @@ bool Renderer::UpdateInputs() {
     if (pitch >  maxPitch) pitch =  maxPitch;
     if (pitch < -maxPitch) pitch = -maxPitch;
 
-    // Zoom: Shift + Plus/Minus (FOV-based)
-    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
-      if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= 0.5f; // Shift+= (plus) = zoom in
-      if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  zoom += 0.5f; // Shift+- = zoom out
-    }
+    // Zoom: +/- keys (FOV-based)
+    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= 0.5f; // + (or =) = zoom in
+    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  zoom += 0.5f; // - = zoom out
     // Clamp zoom/FOV
     if (zoom < 5.0f)   zoom = 5.0f;
     if (zoom > 120.0f) zoom = 120.0f;
@@ -327,7 +324,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
 // DrawControlsPanel  (top-centre)
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawControlsPanel() {
-  const float panelW = 780.f;
+  const float panelW = 850.f;
   const float panelH = 130.f;
   ImGuiIO& io = ImGui::GetIO();
 
@@ -377,6 +374,14 @@ void Renderer::DrawControlsPanel() {
   ImGui::SameLine();
   if (ImGui::Button(showScenePanel ? "Scene [H] *" : "Scene [H]", ImVec2(100, 32)))
     showScenePanel = !showScenePanel;
+  ImGui::SameLine();
+  // Quit button — red tint
+  ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
+  if (ImGui::Button("Quit", ImVec2(60, 32)))
+    showQuitDialog = true;
+  ImGui::PopStyleColor(3);
 
   ImGui::EndGroup();
 
