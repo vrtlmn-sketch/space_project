@@ -96,6 +96,10 @@ private:
   GridFormState  gridForm{};
   CloudFormState cloudForm{};
   int            spawnTab{0};  // 0=Physics, 1=Grid, 2=Cloud
+  int            selectedIdx{-1}; // -1=none, -2=cloud
+
+  // Dock layout
+  bool           dockLayoutInitialized{false};
 
   // Framebuffer size
   int fbWidth{}, fbHeight{};
@@ -157,7 +161,8 @@ private:
   void DrawControlsPanel();
   void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud);
   void DrawSpawnPanel(const SceneCallbacks& cb);
-  void DrawScenePanel(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
+  void DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
+  void DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
   void DrawGhostObject();
   void DrawQuitDialog(const SceneCallbacks& cb);
   void DrawPipWindow();   // show secondary view FBO as ImGui image
