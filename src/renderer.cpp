@@ -181,9 +181,9 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_S)          == GLFW_PRESS) move(vec3{0,  0, -cameraSpeed});
     if (glfwGetKey(window, GLFW_KEY_A)          == GLFW_PRESS) move(vec3{ cameraSpeed, 0, 0});
     if (glfwGetKey(window, GLFW_KEY_D)          == GLFW_PRESS) move(vec3{-cameraSpeed, 0, 0});
-    // Space = up, Left Ctrl = down
-    if (glfwGetKey(window, GLFW_KEY_SPACE)       == GLFW_PRESS) move(vec3{0, -cameraSpeed, 0});
-    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL)== GLFW_PRESS) move(vec3{0,  cameraSpeed, 0});
+    // Space = down, Shift = up
+    if (glfwGetKey(window, GLFW_KEY_SPACE)      == GLFW_PRESS) move(vec3{0, -cameraSpeed, 0});
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) move(vec3{0,  cameraSpeed, 0});
 
     // Arrow keys = look direction (yaw / pitch)
     if (glfwGetKey(window, GLFW_KEY_LEFT)  == GLFW_PRESS) rotation -= cameraRotationSpeed;
