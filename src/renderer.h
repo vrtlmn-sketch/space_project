@@ -92,6 +92,8 @@ private:
   bool rtToggleKeyPressed{false};
   bool captureKeyPressed{false};
   bool clearCaptureKeyPressed{false};
+  bool recStartKeyPressed{false};
+  bool recStopKeyPressed{false};
 
   void move(vec3&& moveVector);
 
@@ -152,6 +154,12 @@ private:
   int    recordFps{30};                  // user-selectable: 24, 30, 60
   char   recordPathBuf[256] = "output.mp4";
   std::vector<uint8_t> pixelBuffer;
+
+  // ── Image export ──
+  char   imagePathBuf[256] = "screenshot.bmp";
+  void   CaptureImage();
+  bool   showImgSavedDialog{false};         // show "Saved" dialog
+  char   imgSavedPath[256]{};
 
   // Recording resolution
   int    recordResPreset{6};             // index into resolution presets (default = 1080p)
@@ -236,6 +244,13 @@ public:
   void InsertCameraKeyframe(unsigned int frame);
   // Remove the camera keyframe at (or nearest to) the given frame
   void RemoveCameraKeyframe(unsigned int frame);
+
+  // ---- Recording keyframes (auto-start/stop) ----
+  int recStartFrame{-1};  // -1 = not set
+  int recStopFrame{-1};   // -1 = not set
+  bool recStartRequested{false};
+  bool recStopRequested{false};
+  bool recMarkerRecordRequested{false}; // R key when both markers set: jump to start + record
 
   // ---- Startup modal state ----
   // Set to false once user has chosen a project

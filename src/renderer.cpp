@@ -309,11 +309,18 @@ bool Renderer::UpdateInputs() {
     else { if (rtToggleKeyPressed) raytracerEnabled = !raytracerEnabled; rtToggleKeyPressed = false; }
 
     // R = toggle recording (edge-triggered)
+    // If both rec markers are set and not currently recording, trigger marker-based recording.
+    // Otherwise, toggle recording immediately (legacy behaviour).
     if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)  recordKeyPressed = true;
     else {
       if (recordKeyPressed) {
-        if (recording) StopRecording();
-        else           StartRecording();
+        if (recording) {
+          StopRecording();
+        } else if (recStartFrame >= 0 && recStopFrame >= 0) {
+          recMarkerRecordRequested = true;
+        } else {
+          StartRecording();
+        }
       }
       recordKeyPressed = false;
     }
@@ -346,6 +353,14 @@ bool Renderer::UpdateInputs() {
       captureKeyPressed = false;
       clearCaptureKeyPressed = false;
     }
+
+    // 1 = set recording start keyframe (edge-triggered)
+    if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS)  recStartKeyPressed = true;
+    else { if (recStartKeyPressed) { recStartRequested = true; } recStartKeyPressed = false; }
+
+    // 2 = set recording stop keyframe (edge-triggered)
+    if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)  recStopKeyPressed = true;
+    else { if (recStopKeyPressed) { recStopRequested = true; } recStopKeyPressed = false; }
   }
 
   // Q = open quit dialog (always active, even when ImGui has keyboard)
@@ -566,6 +581,33 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
   DrawPipWindow();
   if (ghostDragActive) DrawGhostObject();
   DrawQuitDialog(cb);
+
+  // ── "Image saved" dialog (same style as quit dialog) ──
+  if (showImgSavedDialog) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+    ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(340, 140), ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
+                           | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar
+                           | ImGuiWindowFlags_NoDocking;
+    ImGui::Begin("Image Saved##isd", nullptr, flags);
+
+    ImGui::TextWrapped("Saved: %s", imgSavedPath);
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    float bw = 95.f;
+    float windowW = ImGui::GetWindowSize().x;
+    ImGui::SetCursorPosX((windowW - bw) * 0.5f);
+    if (ImGui::Button("OK", ImVec2(bw, 30))) {
+      showImgSavedDialog = false;
+    }
+
+    ImGui::End();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -751,6 +793,17 @@ void Renderer::DrawControlsPanel() {
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
+  // ── Image export ──
+  ImGui::SetNextItemWidth(110);
+  ImGui::InputText("##imgf", imagePathBuf, sizeof(imagePathBuf));
+  ImGui::SameLine();
+  if (ImGui::Button("Snap", ImVec2(45, 0))) CaptureImage();
+  ImGui::SameLine();
+
+  // Separator
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+
   // Quit
   ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
@@ -908,6 +961,94 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
     }
     if (deleteIdx >= 0) {
       cameraKeyframes.erase(cameraKeyframes.begin() + deleteIdx);
+    }
+  }
+
+  // ── Recording keyframe lane ──
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Text("Recording");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Set Start [1]")) {
+    recStartRequested = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Set Stop [2]")) {
+    recStopRequested = true;
+  }
+  if (recStartFrame >= 0 || recStopFrame >= 0) {
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear Rec")) {
+      recStartFrame = -1;
+      recStopFrame  = -1;
+    }
+  }
+
+  if (recStartFrame >= 0 || recStopFrame >= 0) {
+    ImVec2 recPos = ImGui::GetCursorScreenPos();
+    float recBarH = 14.0f;
+    ImGui::Dummy(ImVec2(sliderW, recBarH));
+
+    // Background bar
+    dl->AddRectFilled(recPos, ImVec2(recPos.x + sliderW, recPos.y + recBarH),
+                      IM_COL32(30, 30, 40, 180));
+
+    // Shaded region between start and stop
+    if (recStartFrame >= 0 && recStopFrame >= 0 && recStartFrame < recStopFrame) {
+      float tS = (float)recStartFrame / (float)(maxBuf - 1);
+      float tE = (float)recStopFrame  / (float)(maxBuf - 1);
+      dl->AddRectFilled(
+        ImVec2(recPos.x + tS * sliderW, recPos.y),
+        ImVec2(recPos.x + tE * sliderW, recPos.y + recBarH),
+        IM_COL32(60, 120, 60, 100));
+    }
+
+    float yMid = recPos.y + recBarH * 0.5f;
+
+    // Start marker (green triangle)
+    if (recStartFrame >= 0) {
+      float t = (float)recStartFrame / (float)(maxBuf - 1);
+      float xPos = recPos.x + t * sliderW;
+      dl->AddTriangleFilled(
+        ImVec2(xPos - 5, yMid - 5),
+        ImVec2(xPos + 5, yMid - 5),
+        ImVec2(xPos,     yMid + 5),
+        IM_COL32(50, 220, 50, 220));
+      if (std::abs(ImGui::GetMousePos().x - xPos) < 8 &&
+          std::abs(ImGui::GetMousePos().y - yMid) < 8) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Rec Start @ frame %d", recStartFrame);
+        ImGui::EndTooltip();
+        if (ImGui::IsMouseClicked(0)) {
+          paused = true;
+          for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)recStartFrame);
+          if (cloud) cloud->setTimeframeAndRestore((unsigned int)recStartFrame);
+        }
+        if (ImGui::IsMouseClicked(1)) recStartFrame = -1;
+      }
+    }
+
+    // Stop marker (red triangle)
+    if (recStopFrame >= 0) {
+      float t = (float)recStopFrame / (float)(maxBuf - 1);
+      float xPos = recPos.x + t * sliderW;
+      dl->AddTriangleFilled(
+        ImVec2(xPos - 5, yMid - 5),
+        ImVec2(xPos + 5, yMid - 5),
+        ImVec2(xPos,     yMid + 5),
+        IM_COL32(220, 50, 50, 220));
+      if (std::abs(ImGui::GetMousePos().x - xPos) < 8 &&
+          std::abs(ImGui::GetMousePos().y - yMid) < 8) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Rec Stop @ frame %d", recStopFrame);
+        ImGui::EndTooltip();
+        if (ImGui::IsMouseClicked(0)) {
+          paused = true;
+          for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)recStopFrame);
+          if (cloud) cloud->setTimeframeAndRestore((unsigned int)recStopFrame);
+        }
+        if (ImGui::IsMouseClicked(1)) recStopFrame = -1;
+      }
     }
   }
 
@@ -1864,6 +2005,96 @@ void Renderer::CaptureFrame(int w, int h) {
 
   fwrite(pixelBuffer.data(), 1, pixelBuffer.size(), ffmpegPipe);
   recordedFrames++;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CaptureImage — render one frame with the raytracer at recording resolution
+//                and pipe through ffmpeg to produce an image file
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::CaptureImage() {
+  if (!rtComputeProgram) {
+    std::cerr << "[IMG] Raytracer compute program not available\n";
+    return;
+  }
+
+  int w = recordWidth;
+  int h = recordHeight;
+  if (w <= 0 || h <= 0) return;
+
+  // Dispatch raytracer at recording resolution into recOutputTex
+  EnsureRecOutputTex(w, h);
+  glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+
+  // Upload SSBO with object data.  rayTracedObjects is cleared by
+  // EndSecondaryPass before DrawUI runs, so use rtLastObjects which is
+  // a snapshot taken during the most recent DispatchRaytracer call.
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               rtLastObjects.size() * sizeof(RayTracerObject),
+               rtLastObjects.data(),
+               GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+
+  glUseProgram(rtComputeProgram);
+  glUniform1i(rtLocObjectCount, (int)rtLastObjects.size());
+
+  float aspect = (h > 0) ? (float)w / (float)h : 1.0f;
+  float fovy   = zoom * M_PI / 180.0f;
+  float f      = 1.0f / std::tan(fovy * 0.5f);
+  float zNear  = 0.1f, zFar = 100.0f;
+  float proj[16] = {};
+  proj[0]  = f / aspect;
+  proj[5]  = f;
+  proj[10] = (zFar + zNear) / (zNear - zFar);
+  proj[11] = -1.0f;
+  proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+  glUniformMatrix4fv(rtLocProj, 1, GL_FALSE, proj);
+
+  float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
+  glUniform3fv(rtLocCamera, 1, cam);
+  glUniform1f(rtLocRotation, rotation);
+  glUniform1f(rtLocPitch, pitch);
+  glUniform2f(rtLocResolution, (float)w, (float)h);
+
+  GLuint gx = (w + 15) / 16;
+  GLuint gy = (h + 15) / 16;
+  glDispatchCompute(gx, gy, 1);
+  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+  // Read back pixels from recOutputTex
+  std::vector<uint8_t> pixels((size_t)w * h * 4);
+  glBindTexture(GL_TEXTURE_2D, recOutputTex);
+  glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+  // Flip vertically (OpenGL is bottom-up, ffmpeg expects top-down)
+  int rowBytes = w * 4;
+  std::vector<uint8_t> rowTemp((size_t)rowBytes);
+  for (int y = 0; y < h / 2; y++) {
+    uint8_t* top = pixels.data() + y * rowBytes;
+    uint8_t* bot = pixels.data() + (h - 1 - y) * rowBytes;
+    std::memcpy(rowTemp.data(), top, rowBytes);
+    std::memcpy(top, bot, rowBytes);
+    std::memcpy(bot, rowTemp.data(), rowBytes);
+  }
+
+  // Pipe through ffmpeg — format determined by file extension
+  char cmd[512];
+  std::snprintf(cmd, sizeof(cmd),
+    "ffmpeg -y -f rawvideo -pix_fmt rgba -s %dx%d -i - "
+    "-frames:v 1 -update 1 \"%s\" 2>/dev/null",
+    w, h, imagePathBuf);
+  FILE* pipe = popen(cmd, "w");
+  if (!pipe) {
+    std::cerr << "[IMG] Failed to open ffmpeg pipe\n";
+    return;
+  }
+  fwrite(pixels.data(), 1, pixels.size(), pipe);
+  pclose(pipe);
+  std::cout << "[IMG] Saved: " << imagePathBuf << " (" << w << "x" << h << ")\n";
+
+  // Trigger "Saved" dialog
+  showImgSavedDialog = true;
+  std::snprintf(imgSavedPath, sizeof(imgSavedPath), "%s (%dx%d)", imagePathBuf, w, h);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
