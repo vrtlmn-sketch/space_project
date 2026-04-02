@@ -26,6 +26,15 @@ struct Keypoint {
   std::string  label{"Key"};
 };
 
+// ---- Camera keyframe on the timeline ----
+struct CameraKeyframe {
+  unsigned int frame{};
+  float pos[3]{};
+  float rotation{};
+  float pitch{};
+  float zoom{45.0f};
+};
+
 // ---- Spawn form state ----
 struct SpawnFormState {
   char   name[64]   = "Object";
@@ -81,6 +90,8 @@ private:
   bool spawnPanelKeyPressed{false};
   bool scenePanelKeyPressed{false};
   bool rtToggleKeyPressed{false};
+  bool captureKeyPressed{false};
+  bool clearCaptureKeyPressed{false};
 
   void move(vec3&& moveVector);
 
@@ -216,6 +227,15 @@ public:
 
   // ---- Timeline keypoints ----
   std::vector<Keypoint> keypoints{};
+
+  // ---- Camera keyframes ----
+  std::vector<CameraKeyframe> cameraKeyframes{};
+  bool captureRequested{false}; // set by C key; main.cpp polls, calls InsertCameraKeyframe, resets
+  bool clearCaptureRequested{false}; // set by Shift+C; main.cpp polls, calls RemoveCameraKeyframe, resets
+  // Insert or overwrite a camera keyframe at the given frame
+  void InsertCameraKeyframe(unsigned int frame);
+  // Remove the camera keyframe at (or nearest to) the given frame
+  void RemoveCameraKeyframe(unsigned int frame);
 
   // ---- Startup modal state ----
   // Set to false once user has chosen a project

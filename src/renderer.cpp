@@ -331,9 +331,25 @@ bool Renderer::UpdateInputs() {
     // H = toggle scene panel
     if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS)  scenePanelKeyPressed = true;
     else { if (scenePanelKeyPressed) showScenePanel = !showScenePanel; scenePanelKeyPressed = false; }
+
+    // C = capture camera keyframe, Shift+C = clear camera keyframe (edge-triggered)
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
+      captureKeyPressed = true;
+      if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+          glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)
+        clearCaptureKeyPressed = true;
+    } else {
+      if (captureKeyPressed) {
+        if (clearCaptureKeyPressed) clearCaptureRequested = true;
+        else                        captureRequested = true;
+      }
+      captureKeyPressed = false;
+      clearCaptureKeyPressed = false;
+    }
   }
 
-  if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS)  quitButtonPressed = true;
+  // Q = open quit dialog (always active, even when ImGui has keyboard)
+  if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)  quitButtonPressed = true;
   else { if (quitButtonPressed) { showQuitDialog = true; } quitButtonPressed = false; }
 
   if (quitConfirmed) return false;
@@ -827,6 +843,72 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
+  }
+
+  // ── Camera keyframe lane ──
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Text("Camera");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Capture [C]")) {
+    captureRequested = true;
+  }
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Clear [Shift+C]")) {
+    clearCaptureRequested = true;
+  }
+
+  if (!cameraKeyframes.empty()) {
+    // Draw camera keyframe markers on a small bar
+    ImVec2 camPos = ImGui::GetCursorScreenPos();
+    float camBarH = 14.0f;
+    ImGui::Dummy(ImVec2(sliderW, camBarH));
+
+    // Background bar
+    dl->AddRectFilled(camPos, ImVec2(camPos.x + sliderW, camPos.y + camBarH),
+                      IM_COL32(30, 30, 40, 180));
+
+    int deleteIdx = -1;
+    for (int ci = 0; ci < (int)cameraKeyframes.size(); ++ci) {
+      auto& ck = cameraKeyframes[ci];
+      float t = (float)ck.frame / (float)(maxBuf - 1);
+      float xPos = camPos.x + t * sliderW;
+      float yMid = camPos.y + camBarH * 0.5f;
+
+      // Cyan triangle
+      dl->AddTriangleFilled(
+        ImVec2(xPos - 5, yMid - 5),
+        ImVec2(xPos + 5, yMid - 5),
+        ImVec2(xPos,     yMid + 5),
+        IM_COL32(0, 220, 255, 220));
+
+      // Hit test
+      if (std::abs(ImGui::GetMousePos().x - xPos) < 8 &&
+          std::abs(ImGui::GetMousePos().y - yMid) < 8) {
+        ImGui::BeginTooltip();
+        ImGui::Text("Cam @ frame %u", ck.frame);
+        ImGui::EndTooltip();
+        // Left-click: jump to frame + restore camera
+        if (ImGui::IsMouseClicked(0)) {
+          paused = true;
+          for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(ck.frame);
+          if (cloud) cloud->setTimeframeAndRestore(ck.frame);
+          cameraTranslate[0] = ck.pos[0];
+          cameraTranslate[1] = ck.pos[1];
+          cameraTranslate[2] = ck.pos[2];
+          rotation = ck.rotation;
+          pitch    = ck.pitch;
+          zoom     = ck.zoom;
+        }
+        // Right-click: delete
+        if (ImGui::IsMouseClicked(1)) {
+          deleteIdx = ci;
+        }
+      }
+    }
+    if (deleteIdx >= 0) {
+      cameraKeyframes.erase(cameraKeyframes.begin() + deleteIdx);
+    }
   }
 
   ImGui::End();
@@ -1855,6 +1937,52 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
 
   // Capture frame from the recording texture
   CaptureFrame(rw, rh);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Camera keyframe helpers
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::InsertCameraKeyframe(unsigned int frame) {
+  // If a keyframe already exists at this frame, overwrite it
+  for (auto& kf : cameraKeyframes) {
+    if (kf.frame == frame) {
+      kf.pos[0] = cameraTranslate[0];
+      kf.pos[1] = cameraTranslate[1];
+      kf.pos[2] = cameraTranslate[2];
+      kf.rotation = rotation;
+      kf.pitch    = pitch;
+      kf.zoom     = zoom;
+      return;
+    }
+  }
+  // Otherwise insert, keeping the vector sorted by frame
+  CameraKeyframe kf;
+  kf.frame   = frame;
+  kf.pos[0]  = cameraTranslate[0];
+  kf.pos[1]  = cameraTranslate[1];
+  kf.pos[2]  = cameraTranslate[2];
+  kf.rotation = rotation;
+  kf.pitch    = pitch;
+  kf.zoom     = zoom;
+  auto it = cameraKeyframes.begin();
+  while (it != cameraKeyframes.end() && it->frame < frame) ++it;
+  cameraKeyframes.insert(it, kf);
+}
+
+void Renderer::RemoveCameraKeyframe(unsigned int frame) {
+  if (cameraKeyframes.empty()) return;
+  // Find the keyframe nearest to the given frame
+  int bestIdx = 0;
+  unsigned int bestDist = (frame > cameraKeyframes[0].frame)
+    ? (frame - cameraKeyframes[0].frame)
+    : (cameraKeyframes[0].frame - frame);
+  for (int i = 1; i < (int)cameraKeyframes.size(); ++i) {
+    unsigned int d = (frame > cameraKeyframes[i].frame)
+      ? (frame - cameraKeyframes[i].frame)
+      : (cameraKeyframes[i].frame - frame);
+    if (d < bestDist) { bestDist = d; bestIdx = i; }
+  }
+  cameraKeyframes.erase(cameraKeyframes.begin() + bestIdx);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

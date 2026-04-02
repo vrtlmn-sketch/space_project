@@ -263,6 +263,41 @@ int main(int argc, char** argv) {
     if (cloud)
       cloud->Update(renderer, physData);
 
+    // ── Camera keyframe interpolation ──────────────────────────────────────
+    // When playing, interpolate camera between keyframes
+    if (!renderer.paused && !renderer.cameraKeyframes.empty() && !physicsObjects.empty()) {
+      unsigned int curFrame = physicsObjects[0].getTimeframe();
+      auto& kfs = renderer.cameraKeyframes;
+      // Find bracketing keyframes
+      const CameraKeyframe* before = nullptr;
+      const CameraKeyframe* after  = nullptr;
+      for (auto& kf : kfs) {
+        if (kf.frame <= curFrame) before = &kf;
+        if (kf.frame >= curFrame && !after) after = &kf;
+      }
+      // Only interpolate if we're within the keyframed range
+      if (before && after) {
+        if (before->frame == after->frame) {
+          // Exactly on a keyframe
+          renderer.cameraTranslate[0] = before->pos[0];
+          renderer.cameraTranslate[1] = before->pos[1];
+          renderer.cameraTranslate[2] = before->pos[2];
+          renderer.rotation = before->rotation;
+          renderer.pitch    = before->pitch;
+          renderer.zoom     = before->zoom;
+        } else {
+          // Linear interpolation
+          float t = (float)(curFrame - before->frame) / (float)(after->frame - before->frame);
+          renderer.cameraTranslate[0] = before->pos[0] + t * (after->pos[0] - before->pos[0]);
+          renderer.cameraTranslate[1] = before->pos[1] + t * (after->pos[1] - before->pos[1]);
+          renderer.cameraTranslate[2] = before->pos[2] + t * (after->pos[2] - before->pos[2]);
+          renderer.rotation = before->rotation + t * (after->rotation - before->rotation);
+          renderer.pitch    = before->pitch    + t * (after->pitch    - before->pitch);
+          renderer.zoom     = before->zoom     + t * (after->zoom     - before->zoom);
+        }
+      }
+    }
+
     background.Update(renderer);
 
     // If primary view is raytraced, dispatch compute shader + blit to screen
@@ -327,6 +362,25 @@ int main(int argc, char** argv) {
       std::cout << "Exiting\n";
       return 0;
     }
+
+    // ── Handle camera keyframe capture request ─────────────────────────────
+    if (renderer.captureRequested) {
+      renderer.captureRequested = false;
+      if (!physicsObjects.empty()) {
+        unsigned int curFrame = physicsObjects[0].getTimeframe();
+        renderer.InsertCameraKeyframe(curFrame);
+      }
+    }
+
+    // ── Handle camera keyframe clear request ────────────────────────────────
+    if (renderer.clearCaptureRequested) {
+      renderer.clearCaptureRequested = false;
+      if (!physicsObjects.empty()) {
+        unsigned int curFrame = physicsObjects[0].getTimeframe();
+        renderer.RemoveCameraKeyframe(curFrame);
+      }
+    }
+
     renderer.EndFrame();
   }
 
