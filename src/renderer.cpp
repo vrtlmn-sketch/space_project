@@ -1995,6 +1995,11 @@ void Renderer::CaptureFrame(int w, int h) {
   if (!recording || !ffmpegPipe || !recOutputTex) return;
   if ((int)pixelBuffer.size() != w * h * 4) pixelBuffer.resize((size_t)w * h * 4);
 
+  // Ensure all GPU work (compute shader writes) is complete before CPU readback.
+  // glMemoryBarrier alone only guarantees visibility for subsequent shader reads,
+  // not for CPU-side glGetTexImage — glFinish blocks until the GPU is done.
+  glFinish();
+
   // Read back from the recording output texture (separate from display)
   glBindTexture(GL_TEXTURE_2D, recOutputTex);
   glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
@@ -2067,6 +2072,9 @@ void Renderer::CaptureImage() {
   GLuint gy = (h + 15) / 16;
   glDispatchCompute(gx, gy, 1);
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+  // Ensure compute shader is done before CPU readback
+  glFinish();
 
   // Read back pixels from recOutputTex
   std::vector<uint8_t> pixels((size_t)w * h * 4);
@@ -2144,11 +2152,14 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   // Bind the RECORDING texture as the compute output (not the display texture)
   glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
-  // SSBO is already uploaded by the primary DispatchRaytracer call, so reuse it
+  // SSBO is already uploaded by the primary DispatchRaytracer call — rebind for safety
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
   glUseProgram(rtComputeProgram);
 
   // Uniforms — same camera, but with recording resolution
   glUniform1i(rtLocObjectCount, (int)rayTracedObjects.size());
+  if (rtLocMaxBounces >= 0)
+    glUniform1i(rtLocMaxBounces, rtMaxBounces);
 
   float aspect = (rh > 0) ? (float)rw / (float)rh : 1.0f;
   float fovy   = zoom * M_PI / 180.0f;
