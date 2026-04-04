@@ -1,12 +1,14 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <memory>
 #include "renderedObject.h"
 #include "mathStructs.h"
 #include "renderer.h"
 #include "physicsObjectStructure.h"
 #include "cloudParticle.h"
 #include "octree.h"
+#include "frameStore.h"
 
 // Compute method enum
 enum class CloudComputeMethod {
@@ -17,8 +19,10 @@ enum class CloudComputeMethod {
 class CloudObject
 {
 private:
-  unsigned int defaultRecordedBufferSize{6000};
-  std::vector<std::vector<ParticleSnapshot>> particleHistory;
+  std::unique_ptr<FrameStore> frameStore;  // lazy-init after particle count is known
+
+  // Helper: ensure frameStore exists with the right record size.
+  void ensureFrameStore();
 
   // ── Barnes-Hut GPU resources ──
   bool   gpuInitialized{false};
@@ -69,7 +73,11 @@ public:
 
   // Timeline accessors
   unsigned int getTimeframe() const { return timeframe; }
-  unsigned int getBufferSize() const { return static_cast<unsigned int>(particleHistory.size()); }
+  unsigned int getBufferSize() const { return frameStore ? static_cast<unsigned int>(frameStore->totalFrames()) : 0u; }
   void setTimeframeAndRestore(unsigned int frame);
   void clearRecording();
+
+  // Allow main loop to propagate RAM budget
+  void setRamBudget(size_t bytes) { if (frameStore) frameStore->setRamBudget(bytes); }
+  size_t ramBytes() const { return frameStore ? frameStore->ramBytes() : 0; }
 };

@@ -13,4 +13,5 @@ public:
   LineObject(vec3&& position);
   void SetShaders(const std::string& vertShaderPath,const std::string& fragShaderPath);
   void AddPoint(const vec3& point);
+  void TrimLinePoints(size_t maxPoints);
 };

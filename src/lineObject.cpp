@@ -21,5 +21,8 @@ void LineObject::SetShaders(const std::string& vertShaderPath,const std::string&
 
 void LineObject::AddPoint(const vec3& point){
   renderedObject.AddPointToLine(point);
+}
 
+void LineObject::TrimLinePoints(size_t maxPoints){
+  renderedObject.TrimLinePoints(maxPoints);
 }

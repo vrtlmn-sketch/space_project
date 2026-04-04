@@ -536,6 +536,14 @@ void RenderedObject::AddPointToLine(const vec3& point){
   bufferSize = linePoints.size();
 }
 
+void RenderedObject::TrimLinePoints(size_t maxPoints){
+  if (maxPoints == 0 || linePoints.size() <= maxPoints) return;
+  size_t excess = linePoints.size() - maxPoints;
+  linePoints.erase(linePoints.begin(), linePoints.begin() + static_cast<ptrdiff_t>(excess));
+  bufferSize = linePoints.size();
+  hasBeenRendered = false;
+}
+
 
 void RenderedObject::renderLine(float cameraTranslate[3], float rotation, float pitch, float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }

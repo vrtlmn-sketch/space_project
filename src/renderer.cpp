@@ -804,6 +804,13 @@ void Renderer::DrawControlsPanel() {
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
+  // ── RAM budget slider ──
+  ImGui::Text("RAM");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(60);
+  ImGui::SliderFloat("##ram", &ramBudgetGB, 1.0f, 128.0f, "%.0f GB");
+  ImGui::SameLine();
+
   // Quit
   ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));

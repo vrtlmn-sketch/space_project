@@ -97,6 +97,7 @@ void GenerateMeshGrid(const vec3& size, int subdivisions);
   void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);
+  void TrimLinePoints(size_t maxPoints);
 
   int cloudParticleCount() const { return (int)cloudParticles.size(); }
 

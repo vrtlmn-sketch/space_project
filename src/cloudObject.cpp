@@ -54,6 +54,23 @@ static GLuint compileComputeShader(const std::string& path) {
   return prog;
 }
 
+// ── FrameStore lazy initialisation ──────────────────────────────────────────
+void CloudObject::ensureFrameStore() {
+  if (frameStore) return;
+  int count = renderedObject.cloudParticleCount();
+  if (count <= 0) return;
+  size_t recordBytes = static_cast<size_t>(count) * sizeof(ParticleSnapshot);
+  frameStore = std::make_unique<FrameStore>(recordBytes);
+}
+
+// ── Helper: restore particle state from a FrameStore record ─────────────────
+static void restoreFromRecord(const void* record, int particleCount,
+                              RenderedObject& renderedObject) {
+  std::vector<ParticleSnapshot> snaps(particleCount);
+  std::memcpy(snaps.data(), record, particleCount * sizeof(ParticleSnapshot));
+  renderedObject.setParticleSnapshots(snaps);
+}
+
 // ── GPU init / destroy ──────────────────────────────────────────────────────
 void CloudObject::initGPU() {
   if (gpuInitialized) return;
@@ -236,15 +253,19 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
 // ── Update ──────────────────────────────────────────────────────────────────
 void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects){
   renderedObject.coordinates = position;
+  ensureFrameStore();
 
   if(!renderer.paused)
   {
     if(renderer.playingForward)
     {
-      if(timeframe < particleHistory.size())
+      if(frameStore && timeframe < frameStore->totalFrames())
       {
         // Replay recorded frame
-        renderedObject.setParticleSnapshots(particleHistory[timeframe]);
+        const void* record = frameStore->get(timeframe);
+        if (record) {
+          restoreFromRecord(record, renderedObject.cloudParticleCount(), renderedObject);
+        }
         // If GPU mode, re-upload to GPU so octree builds from correct state
         if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
           uploadParticlesToGPU();
@@ -265,16 +286,26 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
         } else {
           renderedObject.UpdateCloudPhysics(physicsObjects);
         }
-        particleHistory.push_back(renderedObject.getParticleSnapshots());
+        // Record the frame
+        if (frameStore) {
+          auto snaps = renderedObject.getParticleSnapshots();
+          frameStore->push(snaps.data());
+        }
         timeframe++;
       }
     }
     else
     {
-      // Playing backward
-      if(!particleHistory.empty())
+      // Playing backward — clamp timeframe before accessing
+      if(frameStore && frameStore->totalFrames() > 0)
       {
-        renderedObject.setParticleSnapshots(particleHistory[timeframe]);
+        unsigned int maxFrame = static_cast<unsigned int>(frameStore->totalFrames()) - 1;
+        if (timeframe > maxFrame) timeframe = maxFrame;
+
+        const void* record = frameStore->get(timeframe);
+        if (record) {
+          restoreFromRecord(record, renderedObject.cloudParticleCount(), renderedObject);
+        }
         if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
           uploadParticlesToGPU();
         }
@@ -292,9 +323,14 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
 
 void CloudObject::setTimeframeAndRestore(unsigned int frame)
 {
-  if(particleHistory.empty()) return;
-  timeframe = (frame < particleHistory.size()) ? frame : (unsigned int)particleHistory.size() - 1;
-  renderedObject.setParticleSnapshots(particleHistory[timeframe]);
+  ensureFrameStore();
+  if(!frameStore || frameStore->totalFrames() == 0) return;
+  unsigned int maxFrame = static_cast<unsigned int>(frameStore->totalFrames()) - 1;
+  timeframe = (frame <= maxFrame) ? frame : maxFrame;
+  const void* record = frameStore->get(timeframe);
+  if (record) {
+    restoreFromRecord(record, renderedObject.cloudParticleCount(), renderedObject);
+  }
   // Sync GPU if in Barnes-Hut mode
   if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
     uploadParticlesToGPU();
@@ -303,8 +339,7 @@ void CloudObject::setTimeframeAndRestore(unsigned int frame)
 
 void CloudObject::clearRecording()
 {
-  particleHistory.clear();
-  particleHistory.reserve(defaultRecordedBufferSize);
+  if (frameStore) frameStore->clear();
   timeframe = 0;
 }
 
@@ -312,7 +347,7 @@ CloudObject::CloudObject(const vec3& position, int objectCount, float (*distribu
   renderedObject.GenerateMeshCloud(objectCount, distributionFunction, size);
   this->position = position;
   renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
-  particleHistory.reserve(defaultRecordedBufferSize);
+  // frameStore is lazy-init'd in ensureFrameStore() once particle count is known
 }
 
 CloudObject::CloudObject(const vec3& position, const std::string& formationPath){
@@ -326,7 +361,6 @@ CloudObject::CloudObject(const vec3& position, const std::string& formationPath)
     // Fallback: create a tiny procedural cloud
     renderedObject.GenerateMeshCloud(100, [](float,float,float){ return 1.0f; }, vec3{1,1,1});
     renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
-    particleHistory.reserve(defaultRecordedBufferSize);
     return;
   }
 
@@ -358,7 +392,7 @@ CloudObject::CloudObject(const vec3& position, const std::string& formationPath)
 
   renderedObject.LoadCloudFromFormation(cloudData);
   renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
-  particleHistory.reserve(defaultRecordedBufferSize);
+  // frameStore is lazy-init'd in ensureFrameStore() once particle count is known
 }
 
 CloudObject::~CloudObject() {

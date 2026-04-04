@@ -10,8 +10,8 @@ void PhysicsObject::SetVelocity(const vec3& velocity)
 
 PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position, float mass,
                              const std::string& objName, ObjectShaderType sType, float temp)
+  : frameStore(sizeof(vec3))
 {
-  recorderBuffer.reserve(defaultRecordedBufferSize);
   this->data.velocity=velocity;
   this->data.position=position;
   this->data.mass=mass;
@@ -31,16 +31,19 @@ PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position, float m
 
 void PhysicsObject::setTimeframeAndRestore(unsigned int frame)
 {
-  if(recorderBuffer.empty()) return;
-  timeframe = (frame < recorderBuffer.size()) ? frame : (unsigned int)recorderBuffer.size() - 1;
-  data.position = recorderBuffer[timeframe];
-  renderedObject.coordinates = data.position;
+  if(frameStore.totalFrames() == 0) return;
+  unsigned int maxFrame = static_cast<unsigned int>(frameStore.totalFrames()) - 1;
+  timeframe = (frame <= maxFrame) ? frame : maxFrame;
+  const void* p = frameStore.get(timeframe);
+  if (p) {
+    std::memcpy(&data.position, p, sizeof(vec3));
+    renderedObject.coordinates = data.position;
+  }
 }
 
 void PhysicsObject::clearRecording()
 {
-  recorderBuffer.clear();
-  recorderBuffer.reserve(defaultRecordedBufferSize);
+  frameStore.clear();
   timeframe = 0;
 }
 
@@ -50,9 +53,10 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
   {
     if(renderer.playingForward)
     {
-      if(timeframe<recorderBuffer.size())
+      if(timeframe < frameStore.totalFrames())
       {
-        data.position = recorderBuffer[timeframe];
+        const void* p = frameStore.get(timeframe);
+        if (p) std::memcpy(&data.position, p, sizeof(vec3));
         renderedObject.coordinates=data.position;
         timeframe++;
       }
@@ -71,14 +75,18 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
         }
         data.position += data.velocity * dt;
         renderedObject.coordinates=data.position;
-        recorderBuffer.emplace_back(data.position);
+        frameStore.push(&data.position);
         timeframe++;
       }
     }
     else {
-      if(!recorderBuffer.empty())
+      // Playing backward — clamp timeframe to valid range first
+      if(frameStore.totalFrames() > 0)
       {
-        data.position = recorderBuffer[timeframe];
+        if (timeframe >= frameStore.totalFrames())
+          timeframe = static_cast<unsigned int>(frameStore.totalFrames()) - 1;
+        const void* p = frameStore.get(timeframe);
+        if (p) std::memcpy(&data.position, p, sizeof(vec3));
         renderedObject.coordinates=data.position;
         timeframe = (timeframe>0)?timeframe-1:timeframe;
       }
@@ -88,4 +96,3 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
                              temperature,
                              (shaderType == ObjectShaderType::Star) ? 1.0f : 0.0f);
 }
-

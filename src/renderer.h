@@ -228,6 +228,9 @@ public:
   bool paused{true};
   bool playingForward{true};
 
+  // ---- RAM budget for frame history (GB) ----
+  float ramBudgetGB{1.0f};  // user-configurable: 1–128 GB
+
   // ---- Secondary (PiP) render pass ----
   // Call these from main.cpp to bracket the secondary draw pass
   void BeginSecondaryPass();   // bind FBO, set viewport, clear, flip rayTracerView

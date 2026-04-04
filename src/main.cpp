@@ -248,7 +248,10 @@ int main(int argc, char** argv) {
     for (int i = 0; i < (int)physicsObjects.size(); i++) {
       physicsObjects[i].Update(physicsObjects, renderer);
       lineObjects[i].Update(renderer);
-      lineObjects[i].AddPoint(physicsObjects[i].data.position);
+      // Only grow trails when simulating new frames forward
+      if (!renderer.paused && renderer.playingForward) {
+        lineObjects[i].AddPoint(physicsObjects[i].data.position);
+      }
     }
 
     // Gather physics data for grid/cloud
@@ -262,6 +265,26 @@ int main(int argc, char** argv) {
 
     if (cloud)
       cloud->Update(renderer, physData);
+
+    // ── Propagate RAM budget to all FrameStores ───────────────────────────
+    {
+      size_t totalBudget = static_cast<size_t>(renderer.ramBudgetGB * (1024.0 * 1024.0 * 1024.0));
+      int storeCount = (int)physicsObjects.size() + (cloud ? 1 : 0);
+      if (storeCount > 0) {
+        size_t perStore = totalBudget / (size_t)storeCount;
+        for (auto& obj : physicsObjects)
+          obj.setRamBudget(perStore);
+        if (cloud)
+          cloud->setRamBudget(perStore);
+      }
+      // Trim trail lines to match the physics buffer frame count
+      // (use first physics object's frame count as the reference)
+      if (!physicsObjects.empty()) {
+        size_t maxTrailPoints = physicsObjects[0].getBufferSize();
+        for (auto& line : lineObjects)
+          line.TrimLinePoints(maxTrailPoints);
+      }
+    }
 
     // ── Camera keyframe interpolation ──────────────────────────────────────
     // When playing, interpolate camera between keyframes
