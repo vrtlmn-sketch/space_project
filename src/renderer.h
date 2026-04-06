@@ -152,6 +152,20 @@ private:
   GLint geoLocMaxSteps{-1};
   GLint geoLocBHPos{-1};
 
+  // ── Acyclic geodesic compute shader raytracer ──
+  GLuint acyclicComputeProgram{0};
+
+  // Acyclic shader uniform locations
+  GLint acyLocObjectCount{-1};
+  GLint acyLocProj{-1};
+  GLint acyLocCamera{-1};
+  GLint acyLocRotation{-1};
+  GLint acyLocPitch{-1};
+  GLint acyLocResolution{-1};
+  GLint acyLocMaxBounces{-1};
+  GLint acyLocMaxSteps{-1};
+  GLint acyLocBHPos{-1};
+
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
   GLuint blitVAO{0}, blitVBO{0};

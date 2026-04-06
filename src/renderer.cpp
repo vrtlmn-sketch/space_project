@@ -1826,6 +1826,37 @@ void Renderer::InitComputeShader() {
     }
   }
 
+  // ── 1c. Compile acyclic geodesic compute shader ──
+  GLuint acs = compileShaderFromFile("src/shaders/acyclicGeodesicCompute.glsl", GL_COMPUTE_SHADER);
+  if (!acs) { std::cerr << "[ACY] acyclic geodesic compute shader compilation failed\n"; }
+  else {
+    acyclicComputeProgram = glCreateProgram();
+    glAttachShader(acyclicComputeProgram, acs);
+    glLinkProgram(acyclicComputeProgram);
+    {
+      GLint ok = 0; glGetProgramiv(acyclicComputeProgram, GL_LINK_STATUS, &ok);
+      if (!ok) {
+        char buf[1024]; glGetProgramInfoLog(acyclicComputeProgram, 1024, nullptr, buf);
+        std::cerr << "[ACY] compute program link: " << buf << "\n";
+        glDeleteProgram(acyclicComputeProgram); acyclicComputeProgram = 0;
+      }
+    }
+    glDeleteShader(acs);
+
+    // Cache acyclic uniform locations
+    if (acyclicComputeProgram) {
+      acyLocObjectCount = glGetUniformLocation(acyclicComputeProgram, "uObjectCount");
+      acyLocProj        = glGetUniformLocation(acyclicComputeProgram, "uProj");
+      acyLocCamera      = glGetUniformLocation(acyclicComputeProgram, "uCamera");
+      acyLocRotation    = glGetUniformLocation(acyclicComputeProgram, "uRotation");
+      acyLocPitch       = glGetUniformLocation(acyclicComputeProgram, "uPitch");
+      acyLocResolution  = glGetUniformLocation(acyclicComputeProgram, "uResolution");
+      acyLocMaxBounces  = glGetUniformLocation(acyclicComputeProgram, "uMaxBounces");
+      acyLocMaxSteps    = glGetUniformLocation(acyclicComputeProgram, "uMaxSteps");
+      acyLocBHPos       = glGetUniformLocation(acyclicComputeProgram, "uBHPos");
+    }
+  }
+
   // ── 2. Create SSBO for raytracer objects ──
   glGenBuffers(1, &rtSSBO);
 
@@ -1894,6 +1925,7 @@ void Renderer::EnsureRtOutputTex(int w, int h) {
 void Renderer::DestroyComputeResources() {
   if (rtComputeProgram)      { glDeleteProgram(rtComputeProgram);      rtComputeProgram = 0; }
   if (geodesicComputeProgram){ glDeleteProgram(geodesicComputeProgram);geodesicComputeProgram = 0; }
+  if (acyclicComputeProgram) { glDeleteProgram(acyclicComputeProgram); acyclicComputeProgram = 0; }
   if (rtOutputTex)      { glDeleteTextures(1, &rtOutputTex); rtOutputTex = 0; }
   if (rtSSBO)           { glDeleteBuffers(1, &rtSSBO);       rtSSBO = 0; }
   if (blitProgram)      { glDeleteProgram(blitProgram);      blitProgram = 0; }
@@ -1907,13 +1939,15 @@ void Renderer::DestroyComputeResources() {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DispatchRaytracer(int width, int height) {
   // Select shader program based on rendering method
-  bool useGeodesic = (raytracerMethod == 1 || raytracerMethod == 2);
+  // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
+  bool needsBH = (raytracerMethod == 1 || raytracerMethod == 2);
 
-  // For geodesic mode, find the BlackHole object to get its position.
+  // For geodesic/acyclic mode, find the BlackHole object to get its position.
   // If no BlackHole exists, fall back to simple raytracer.
   float bhPos[3] = {0.0f, 0.0f, -3.0f}; // fallback position (unused if no BH)
   bool  hasBH = false;
-  if (useGeodesic) {
+  int   effectiveMethod = raytracerMethod;
+  if (needsBH) {
     for (const auto& obj : rayTracedObjects) {
       int otype = (int)(obj.objectType + 0.5f);
       if (otype == 3) {
@@ -1926,11 +1960,48 @@ void Renderer::DispatchRaytracer(int width, int height) {
     }
     if (!hasBH) {
       // No black hole in scene — fall back to simple raytracer
-      useGeodesic = false;
+      effectiveMethod = 0;
     }
   }
 
-  GLuint activeProgram = useGeodesic ? geodesicComputeProgram : rtComputeProgram;
+  // Select program and uniform locations based on effective method
+  GLuint activeProgram;
+  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locResolution, locMaxBounces;
+  GLint locMaxSteps = -1, locBHPos = -1;
+
+  if (effectiveMethod == 2) {
+    activeProgram  = acyclicComputeProgram;
+    locObjectCount = acyLocObjectCount;
+    locProj        = acyLocProj;
+    locCamera      = acyLocCamera;
+    locRotation    = acyLocRotation;
+    locPitch       = acyLocPitch;
+    locResolution  = acyLocResolution;
+    locMaxBounces  = acyLocMaxBounces;
+    locMaxSteps    = acyLocMaxSteps;
+    locBHPos       = acyLocBHPos;
+  } else if (effectiveMethod == 1) {
+    activeProgram  = geodesicComputeProgram;
+    locObjectCount = geoLocObjectCount;
+    locProj        = geoLocProj;
+    locCamera      = geoLocCamera;
+    locRotation    = geoLocRotation;
+    locPitch       = geoLocPitch;
+    locResolution  = geoLocResolution;
+    locMaxBounces  = geoLocMaxBounces;
+    locMaxSteps    = geoLocMaxSteps;
+    locBHPos       = geoLocBHPos;
+  } else {
+    activeProgram  = rtComputeProgram;
+    locObjectCount = rtLocObjectCount;
+    locProj        = rtLocProj;
+    locCamera      = rtLocCamera;
+    locRotation    = rtLocRotation;
+    locPitch       = rtLocPitch;
+    locResolution  = rtLocResolution;
+    locMaxBounces  = rtLocMaxBounces;
+  }
+
   if (!activeProgram) return;
 
   // ── Dirty check: skip dispatch if nothing changed since last frame ──
@@ -1979,15 +2050,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
 
   glUseProgram(activeProgram);
 
-  // Uniforms — pick the right location set based on active shader
-  GLint locObjectCount = useGeodesic ? geoLocObjectCount : rtLocObjectCount;
-  GLint locProj        = useGeodesic ? geoLocProj        : rtLocProj;
-  GLint locCamera      = useGeodesic ? geoLocCamera      : rtLocCamera;
-  GLint locRotation    = useGeodesic ? geoLocRotation    : rtLocRotation;
-  GLint locPitch       = useGeodesic ? geoLocPitch       : rtLocPitch;
-  GLint locResolution  = useGeodesic ? geoLocResolution  : rtLocResolution;
-  GLint locMaxBounces  = useGeodesic ? geoLocMaxBounces  : rtLocMaxBounces;
-
+  // Uniforms — location set was already selected above
   glUniform1i(locObjectCount, (int)rayTracedObjects.size());
 
   // Build projection matrix (same as transformPerspectiveMesh)
@@ -2011,13 +2074,13 @@ void Renderer::DispatchRaytracer(int width, int height) {
   if (locMaxBounces >= 0)
     glUniform1i(locMaxBounces, rtMaxBounces);
 
-  // Geodesic-only uniform: max integration steps
-  if (useGeodesic && geoLocMaxSteps >= 0)
-    glUniform1i(geoLocMaxSteps, rtMaxSteps);
+  // Geodesic/Acyclic-only uniform: max integration steps
+  if (effectiveMethod >= 1 && locMaxSteps >= 0)
+    glUniform1i(locMaxSteps, rtMaxSteps);
 
-  // Geodesic-only uniform: black hole world-space position
-  if (useGeodesic && geoLocBHPos >= 0)
-    glUniform3fv(geoLocBHPos, 1, bhPos);
+  // Geodesic/Acyclic-only uniform: black hole world-space position
+  if (effectiveMethod >= 1 && locBHPos >= 0)
+    glUniform3fv(locBHPos, 1, bhPos);
 
   // Dispatch
   GLuint gx = (width  + 15) / 16;
@@ -2155,10 +2218,11 @@ void Renderer::CaptureImage() {
   if (w <= 0 || h <= 0) return;
 
   // Select shader based on current rendering method (same logic as DispatchRaytracer)
-  bool useGeodesic = (raytracerMethod == 1 || raytracerMethod == 2);
+  bool needsBH_cap = (raytracerMethod == 1 || raytracerMethod == 2);
   float bhPos[3] = {0.0f, 0.0f, -3.0f};
   bool  hasBH = false;
-  if (useGeodesic) {
+  int   effectiveMethod = raytracerMethod;
+  if (needsBH_cap) {
     for (const auto& obj : rtLastObjects) {
       int otype = (int)(obj.objectType + 0.5f);
       if (otype == 3) {
@@ -2169,9 +2233,45 @@ void Renderer::CaptureImage() {
         break;
       }
     }
-    if (!hasBH) useGeodesic = false;
+    if (!hasBH) effectiveMethod = 0;
   }
-  GLuint activeProgram = useGeodesic ? geodesicComputeProgram : rtComputeProgram;
+
+  GLuint activeProgram;
+  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locResolution, locMaxBounces;
+  GLint locMaxSteps = -1, locBHPos = -1;
+
+  if (effectiveMethod == 2) {
+    activeProgram  = acyclicComputeProgram;
+    locObjectCount = acyLocObjectCount;
+    locProj        = acyLocProj;
+    locCamera      = acyLocCamera;
+    locRotation    = acyLocRotation;
+    locPitch       = acyLocPitch;
+    locResolution  = acyLocResolution;
+    locMaxBounces  = acyLocMaxBounces;
+    locMaxSteps    = acyLocMaxSteps;
+    locBHPos       = acyLocBHPos;
+  } else if (effectiveMethod == 1) {
+    activeProgram  = geodesicComputeProgram;
+    locObjectCount = geoLocObjectCount;
+    locProj        = geoLocProj;
+    locCamera      = geoLocCamera;
+    locRotation    = geoLocRotation;
+    locPitch       = geoLocPitch;
+    locResolution  = geoLocResolution;
+    locMaxBounces  = geoLocMaxBounces;
+    locMaxSteps    = geoLocMaxSteps;
+    locBHPos       = geoLocBHPos;
+  } else {
+    activeProgram  = rtComputeProgram;
+    locObjectCount = rtLocObjectCount;
+    locProj        = rtLocProj;
+    locCamera      = rtLocCamera;
+    locRotation    = rtLocRotation;
+    locPitch       = rtLocPitch;
+    locResolution  = rtLocResolution;
+    locMaxBounces  = rtLocMaxBounces;
+  }
   if (!activeProgram) return;
 
   // Dispatch raytracer at recording resolution into recOutputTex
@@ -2187,14 +2287,6 @@ void Renderer::CaptureImage() {
                rtLastObjects.data(),
                GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
-
-  GLint locObjectCount = useGeodesic ? geoLocObjectCount : rtLocObjectCount;
-  GLint locProj        = useGeodesic ? geoLocProj        : rtLocProj;
-  GLint locCamera      = useGeodesic ? geoLocCamera      : rtLocCamera;
-  GLint locRotation    = useGeodesic ? geoLocRotation    : rtLocRotation;
-  GLint locPitch       = useGeodesic ? geoLocPitch       : rtLocPitch;
-  GLint locResolution  = useGeodesic ? geoLocResolution  : rtLocResolution;
-  GLint locMaxBounces  = useGeodesic ? geoLocMaxBounces  : rtLocMaxBounces;
 
   glUseProgram(activeProgram);
   glUniform1i(locObjectCount, (int)rtLastObjects.size());
@@ -2219,10 +2311,10 @@ void Renderer::CaptureImage() {
   if (locMaxBounces >= 0)
     glUniform1i(locMaxBounces, rtMaxBounces);
 
-  if (useGeodesic && geoLocMaxSteps >= 0)
-    glUniform1i(geoLocMaxSteps, rtMaxSteps);
-  if (useGeodesic && geoLocBHPos >= 0)
-    glUniform3fv(geoLocBHPos, 1, bhPos);
+  if (effectiveMethod >= 1 && locMaxSteps >= 0)
+    glUniform1i(locMaxSteps, rtMaxSteps);
+  if (effectiveMethod >= 1 && locBHPos >= 0)
+    glUniform3fv(locBHPos, 1, bhPos);
 
   GLuint gx = (w + 15) / 16;
   GLuint gy = (h + 15) / 16;
@@ -2306,10 +2398,11 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   EnsureRecOutputTex(rw, rh);
 
   // Select shader based on current rendering method (same logic as DispatchRaytracer)
-  bool useGeodesic = (raytracerMethod == 1 || raytracerMethod == 2);
+  bool needsBH_rec = (raytracerMethod == 1 || raytracerMethod == 2);
   float bhPos[3] = {0.0f, 0.0f, -3.0f};
   bool  hasBH = false;
-  if (useGeodesic) {
+  int   effectiveMethod = raytracerMethod;
+  if (needsBH_rec) {
     for (const auto& obj : rayTracedObjects) {
       int otype = (int)(obj.objectType + 0.5f);
       if (otype == 3) {
@@ -2320,9 +2413,45 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
         break;
       }
     }
-    if (!hasBH) useGeodesic = false;
+    if (!hasBH) effectiveMethod = 0;
   }
-  GLuint activeProgram = useGeodesic ? geodesicComputeProgram : rtComputeProgram;
+
+  GLuint activeProgram;
+  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locResolution, locMaxBounces;
+  GLint locMaxSteps = -1, locBHPos = -1;
+
+  if (effectiveMethod == 2) {
+    activeProgram  = acyclicComputeProgram;
+    locObjectCount = acyLocObjectCount;
+    locProj        = acyLocProj;
+    locCamera      = acyLocCamera;
+    locRotation    = acyLocRotation;
+    locPitch       = acyLocPitch;
+    locResolution  = acyLocResolution;
+    locMaxBounces  = acyLocMaxBounces;
+    locMaxSteps    = acyLocMaxSteps;
+    locBHPos       = acyLocBHPos;
+  } else if (effectiveMethod == 1) {
+    activeProgram  = geodesicComputeProgram;
+    locObjectCount = geoLocObjectCount;
+    locProj        = geoLocProj;
+    locCamera      = geoLocCamera;
+    locRotation    = geoLocRotation;
+    locPitch       = geoLocPitch;
+    locResolution  = geoLocResolution;
+    locMaxBounces  = geoLocMaxBounces;
+    locMaxSteps    = geoLocMaxSteps;
+    locBHPos       = geoLocBHPos;
+  } else {
+    activeProgram  = rtComputeProgram;
+    locObjectCount = rtLocObjectCount;
+    locProj        = rtLocProj;
+    locCamera      = rtLocCamera;
+    locRotation    = rtLocRotation;
+    locPitch       = rtLocPitch;
+    locResolution  = rtLocResolution;
+    locMaxBounces  = rtLocMaxBounces;
+  }
   if (!activeProgram) return;
 
   // Bind the RECORDING texture as the compute output (not the display texture)
@@ -2330,14 +2459,6 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
 
   // SSBO is already uploaded by the primary DispatchRaytracer call — rebind for safety
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
-
-  GLint locObjectCount = useGeodesic ? geoLocObjectCount : rtLocObjectCount;
-  GLint locProj        = useGeodesic ? geoLocProj        : rtLocProj;
-  GLint locCamera      = useGeodesic ? geoLocCamera      : rtLocCamera;
-  GLint locRotation    = useGeodesic ? geoLocRotation    : rtLocRotation;
-  GLint locPitch       = useGeodesic ? geoLocPitch       : rtLocPitch;
-  GLint locResolution  = useGeodesic ? geoLocResolution  : rtLocResolution;
-  GLint locMaxBounces  = useGeodesic ? geoLocMaxBounces  : rtLocMaxBounces;
 
   glUseProgram(activeProgram);
 
@@ -2364,10 +2485,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   glUniform1f(locPitch, pitch);
   glUniform2f(locResolution, (float)rw, (float)rh);
 
-  if (useGeodesic && geoLocMaxSteps >= 0)
-    glUniform1i(geoLocMaxSteps, rtMaxSteps);
-  if (useGeodesic && geoLocBHPos >= 0)
-    glUniform3fv(geoLocBHPos, 1, bhPos);
+  if (effectiveMethod >= 1 && locMaxSteps >= 0)
+    glUniform1i(locMaxSteps, rtMaxSteps);
+  if (effectiveMethod >= 1 && locBHPos >= 0)
+    glUniform3fv(locBHPos, 1, bhPos);
 
   GLuint gx = (rw + 15) / 16;
   GLuint gy = (rh + 15) / 16;
