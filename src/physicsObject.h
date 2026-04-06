@@ -8,7 +8,7 @@
 #include "frameStore.h"
 
 // Which visual shader to use for this object
-enum class ObjectShaderType { Planet, Star };
+enum class ObjectShaderType { Planet, Star, BlackHole };
 
 class PhysicsObject
 {

@@ -123,20 +123,19 @@ ProjectData ProjectSerializer::Load(const std::string& path)
   return data;
 }
 
-// ─── Solar System Template ───────────────────────────────────────────────────
-// Scene layout from the original "add:grid" commit (9fd17dd).
-// Five chaotic bodies + 200-particle cloud + 4 grids.
-ProjectData ProjectSerializer::SolarSystemTemplate()
+// ─── Milky Way Template ──────────────────────────────────────────────────────
+// Central black hole + orbiting star + planets + cloud.
+ProjectData ProjectSerializer::MilkyWayTemplate()
 {
   ProjectData data;
 
   data.objects = {
-    //  name        mass    position (x,y,z)              velocity (x,y,z)             shader  temp(K)
-    { "Sun",       250.f,  { 0.0f,   0.0f,  -3.0f  },   { 0.0f,   0.01f,  0.0f   },  1,  57780.f },
-    { "Earth",       5.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  0,     0.f },
-    { "Mars",       10.f,  {-0.7f,   0.0f,  -3.7f  },   {-0.18f,  0.002f,-0.10f  },  0,     0.f },
-    { "Planet4",     2.f,  { 0.7f,   0.0f,  -3.7f  },   {-0.13f,  0.004f, 0.0f   },  0,     0.f },
-    { "Planet5",    10.f,  {-0.6f,  -0.6f,  -3.1f  },   { 0.18f,  0.022f,-0.10f  },  0,     0.f },
+    //  name               mass    position (x,y,z)              velocity (x,y,z)             shader  temp(K)
+    { "Sagittarius A*", 250.f,  { 0.0f,   0.0f,  -3.0f  },   { 0.0f,   0.01f,  0.0f   },  2,     0.f },
+    { "Sol",             15.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  1,  5778.f },
+    { "Mars",           10.f,   {-0.7f,   0.0f,  -3.7f  },   {-0.18f,  0.002f,-0.10f  },  0,     0.f },
+    { "Planet4",         2.f,   { 0.7f,   0.0f,  -3.7f  },   {-0.13f,  0.004f, 0.0f   },  0,     0.f },
+    { "Planet5",        10.f,   {-0.6f,  -0.6f,  -3.1f  },   { 0.18f,  0.022f,-0.10f  },  0,     0.f },
   };
 
   // 4 grids, spacing=2, size 10x10x10, 30 subdivisions

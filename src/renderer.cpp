@@ -419,11 +419,11 @@ bool Renderer::DrawStartupModal() {
 
   float bw = 430.f;
   // ── Template ──
-  if (ImGui::Button("Start with Solar System Template", ImVec2(bw, 48))) {
+  if (ImGui::Button("Start with Milky Way Template", ImVec2(bw, 48))) {
     startupChoice  = StartupChoice::Template;
     showStartupModal = false;
   }
-  ImGui::TextDisabled("  Sun + 4 orbiting bodies — the classic setup");
+  ImGui::TextDisabled("  Black hole + orbiting star & planets — the classic setup");
   ImGui::Spacing();
 
   // ── Empty ──
@@ -762,6 +762,14 @@ void Renderer::DrawRenderingSettings() {
   ImGui::Text("Max Bounces");
   ImGui::SetNextItemWidth(-1);
   ImGui::SliderInt("##bounce2", &rtMaxBounces, 0, 4, "%d");
+
+  // ── Max steps (geodesic only) ──
+  if (raytracerMethod >= 1) {
+    ImGui::Spacing();
+    ImGui::Text("Max Steps");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderInt("##maxsteps", &rtMaxSteps, 32, 1024, "%d");
+  }
 
   ImGui::Spacing();
   ImGui::Separator();
@@ -1119,9 +1127,9 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       }
 
       ImGui::Spacing();
-      const char* shaderItems[] = { "Planet", "Star" };
+      const char* shaderItems[] = { "Planet", "Star", "Black Hole" };
       ImGui::SetNextItemWidth(-1);
-      ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 2);
+      ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 3);
       if (spawnForm.shaderType == 1) {
         ImGui::SetNextItemWidth(-30);
         ImGui::SliderFloat("##stemp", &spawnForm.temperature, 1000.f, 50000.f, "%.0f K");
@@ -1293,15 +1301,18 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, Cl
   // Object list
   for (int i = 0; i < (int)physicsObjects.size(); i++) {
     auto& obj = physicsObjects[i];
-    const char* icon = (obj.shaderType == ObjectShaderType::Star) ? "[*]" : "[ ]";
+    const char* icon = (obj.shaderType == ObjectShaderType::Star) ? "[*]"
+                     : (obj.shaderType == ObjectShaderType::BlackHole) ? "[O]" : "[ ]";
     char label[96];
     snprintf(label, sizeof(label), "%s %s  m=%.1f##o%d", icon, obj.name.c_str(), obj.data.mass, i);
 
     bool sel = (selectedIdx == i);
-    ImGui::PushStyleColor(ImGuiCol_Header,
-      (obj.shaderType == ObjectShaderType::Star)
+    ImVec4 headerCol = (obj.shaderType == ObjectShaderType::Star)
         ? ImVec4(0.25f, 0.16f, 0.04f, 1.f)
-        : ImVec4(0.08f, 0.14f, 0.26f, 1.f));
+        : (obj.shaderType == ObjectShaderType::BlackHole)
+        ? ImVec4(0.12f, 0.06f, 0.18f, 1.f)
+        : ImVec4(0.08f, 0.14f, 0.26f, 1.f);
+    ImGui::PushStyleColor(ImGuiCol_Header, headerCol);
     if (ImGui::Selectable(label, sel))
       selectedIdx = sel ? -1 : i;
     ImGui::PopStyleColor();
@@ -1335,11 +1346,15 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
     ImGui::Spacing();
 
     // Type
-    int typeIdx = (obj.shaderType == ObjectShaderType::Star) ? 1 : 0;
-    const char* typeItems[] = { "Planet", "Star" };
+    int typeIdx = (obj.shaderType == ObjectShaderType::Star) ? 1
+                : (obj.shaderType == ObjectShaderType::BlackHole) ? 2 : 0;
+    const char* typeItems[] = { "Planet", "Star", "Black Hole" };
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##itype", &typeIdx, typeItems, 2)) {
-      obj.shaderType = (typeIdx == 1) ? ObjectShaderType::Star : ObjectShaderType::Planet;
+    if (ImGui::Combo("##itype", &typeIdx, typeItems, 3)) {
+      if (typeIdx == 2)      obj.shaderType = ObjectShaderType::BlackHole;
+      else if (typeIdx == 1) obj.shaderType = ObjectShaderType::Star;
+      else                   obj.shaderType = ObjectShaderType::Planet;
+
       if (obj.shaderType == ObjectShaderType::Star)
         obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
                                          "src/shaders/brightStartFragShader.glsl");
@@ -1780,6 +1795,37 @@ void Renderer::InitComputeShader() {
     rtLocMaxBounces  = glGetUniformLocation(rtComputeProgram, "uMaxBounces");
   }
 
+  // ── 1b. Compile geodesic compute shader ──
+  GLuint gcs = compileShaderFromFile("src/shaders/geodesicCompute.glsl", GL_COMPUTE_SHADER);
+  if (!gcs) { std::cerr << "[GEO] geodesic compute shader compilation failed\n"; }
+  else {
+    geodesicComputeProgram = glCreateProgram();
+    glAttachShader(geodesicComputeProgram, gcs);
+    glLinkProgram(geodesicComputeProgram);
+    {
+      GLint ok = 0; glGetProgramiv(geodesicComputeProgram, GL_LINK_STATUS, &ok);
+      if (!ok) {
+        char buf[1024]; glGetProgramInfoLog(geodesicComputeProgram, 1024, nullptr, buf);
+        std::cerr << "[GEO] compute program link: " << buf << "\n";
+        glDeleteProgram(geodesicComputeProgram); geodesicComputeProgram = 0;
+      }
+    }
+    glDeleteShader(gcs);
+
+    // Cache geodesic uniform locations
+    if (geodesicComputeProgram) {
+      geoLocObjectCount = glGetUniformLocation(geodesicComputeProgram, "uObjectCount");
+      geoLocProj        = glGetUniformLocation(geodesicComputeProgram, "uProj");
+      geoLocCamera      = glGetUniformLocation(geodesicComputeProgram, "uCamera");
+      geoLocRotation    = glGetUniformLocation(geodesicComputeProgram, "uRotation");
+      geoLocPitch       = glGetUniformLocation(geodesicComputeProgram, "uPitch");
+      geoLocResolution  = glGetUniformLocation(geodesicComputeProgram, "uResolution");
+      geoLocMaxBounces  = glGetUniformLocation(geodesicComputeProgram, "uMaxBounces");
+      geoLocMaxSteps    = glGetUniformLocation(geodesicComputeProgram, "uMaxSteps");
+      geoLocBHPos       = glGetUniformLocation(geodesicComputeProgram, "uBHPos");
+    }
+  }
+
   // ── 2. Create SSBO for raytracer objects ──
   glGenBuffers(1, &rtSSBO);
 
@@ -1846,7 +1892,8 @@ void Renderer::EnsureRtOutputTex(int w, int h) {
 }
 
 void Renderer::DestroyComputeResources() {
-  if (rtComputeProgram) { glDeleteProgram(rtComputeProgram); rtComputeProgram = 0; }
+  if (rtComputeProgram)      { glDeleteProgram(rtComputeProgram);      rtComputeProgram = 0; }
+  if (geodesicComputeProgram){ glDeleteProgram(geodesicComputeProgram);geodesicComputeProgram = 0; }
   if (rtOutputTex)      { glDeleteTextures(1, &rtOutputTex); rtOutputTex = 0; }
   if (rtSSBO)           { glDeleteBuffers(1, &rtSSBO);       rtSSBO = 0; }
   if (blitProgram)      { glDeleteProgram(blitProgram);      blitProgram = 0; }
@@ -1859,10 +1906,37 @@ void Renderer::DestroyComputeResources() {
 // DispatchRaytracer — upload SSBO + uniforms, dispatch compute, memory barrier
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DispatchRaytracer(int width, int height) {
-  if (!rtComputeProgram) return;
+  // Select shader program based on rendering method
+  bool useGeodesic = (raytracerMethod == 1 || raytracerMethod == 2);
+
+  // For geodesic mode, find the BlackHole object to get its position.
+  // If no BlackHole exists, fall back to simple raytracer.
+  float bhPos[3] = {0.0f, 0.0f, -3.0f}; // fallback position (unused if no BH)
+  bool  hasBH = false;
+  if (useGeodesic) {
+    for (const auto& obj : rayTracedObjects) {
+      int otype = (int)(obj.objectType + 0.5f);
+      if (otype == 3) {
+        bhPos[0] = obj.coordinates.x;
+        bhPos[1] = obj.coordinates.y;
+        bhPos[2] = obj.coordinates.z;
+        hasBH = true;
+        break;
+      }
+    }
+    if (!hasBH) {
+      // No black hole in scene — fall back to simple raytracer
+      useGeodesic = false;
+    }
+  }
+
+  GLuint activeProgram = useGeodesic ? geodesicComputeProgram : rtComputeProgram;
+  if (!activeProgram) return;
 
   // ── Dirty check: skip dispatch if nothing changed since last frame ──
   // Always dispatch when recording (need every frame captured).
+  static int lastMethod = -1;
+  static int lastSteps  = -1;
   bool dirty = rtDirty || recording;
   if (!dirty) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
@@ -1874,6 +1948,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
              rtMaxBounces != rtLastBounces ||
              width  != rtLastWidth  ||
              height != rtLastHeight ||
+             raytracerMethod != lastMethod ||
+             rtMaxSteps != lastSteps ||
              rayTracedObjects.size() != rtLastObjectCount);
   }
   if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
@@ -1901,10 +1977,18 @@ void Renderer::DispatchRaytracer(int width, int height) {
   // Bind output image
   glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
-  glUseProgram(rtComputeProgram);
+  glUseProgram(activeProgram);
 
-  // Uniforms
-  glUniform1i(rtLocObjectCount, (int)rayTracedObjects.size());
+  // Uniforms — pick the right location set based on active shader
+  GLint locObjectCount = useGeodesic ? geoLocObjectCount : rtLocObjectCount;
+  GLint locProj        = useGeodesic ? geoLocProj        : rtLocProj;
+  GLint locCamera      = useGeodesic ? geoLocCamera      : rtLocCamera;
+  GLint locRotation    = useGeodesic ? geoLocRotation    : rtLocRotation;
+  GLint locPitch       = useGeodesic ? geoLocPitch       : rtLocPitch;
+  GLint locResolution  = useGeodesic ? geoLocResolution  : rtLocResolution;
+  GLint locMaxBounces  = useGeodesic ? geoLocMaxBounces  : rtLocMaxBounces;
+
+  glUniform1i(locObjectCount, (int)rayTracedObjects.size());
 
   // Build projection matrix (same as transformPerspectiveMesh)
   float aspect = (height > 0) ? (float)width / (float)height : 1.0f;
@@ -1917,15 +2001,23 @@ void Renderer::DispatchRaytracer(int width, int height) {
   proj[10] = (zFar + zNear) / (zNear - zFar);
   proj[11] = -1.0f;
   proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
-  glUniformMatrix4fv(rtLocProj, 1, GL_FALSE, proj);
+  glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
 
   float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
-  glUniform3fv(rtLocCamera, 1, cam);
-  glUniform1f(rtLocRotation, rotation);
-  glUniform1f(rtLocPitch, pitch);
-  glUniform2f(rtLocResolution, (float)width, (float)height);
-  if (rtLocMaxBounces >= 0)
-    glUniform1i(rtLocMaxBounces, rtMaxBounces);
+  glUniform3fv(locCamera, 1, cam);
+  glUniform1f(locRotation, rotation);
+  glUniform1f(locPitch, pitch);
+  glUniform2f(locResolution, (float)width, (float)height);
+  if (locMaxBounces >= 0)
+    glUniform1i(locMaxBounces, rtMaxBounces);
+
+  // Geodesic-only uniform: max integration steps
+  if (useGeodesic && geoLocMaxSteps >= 0)
+    glUniform1i(geoLocMaxSteps, rtMaxSteps);
+
+  // Geodesic-only uniform: black hole world-space position
+  if (useGeodesic && geoLocBHPos >= 0)
+    glUniform3fv(geoLocBHPos, 1, bhPos);
 
   // Dispatch
   GLuint gx = (width  + 15) / 16;
@@ -1945,6 +2037,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
   rtLastBounces   = rtMaxBounces;
   rtLastWidth     = width;
   rtLastHeight    = height;
+  lastMethod      = raytracerMethod;
+  lastSteps       = rtMaxSteps;
   rtLastObjectCount = rayTracedObjects.size();
   rtLastObjects     = rayTracedObjects;   // deep copy for memcmp
   rtDirty           = false;

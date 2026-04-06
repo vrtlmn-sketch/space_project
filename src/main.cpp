@@ -32,9 +32,9 @@ static void buildScene(
   cloud.reset();
 
   for (const auto& pod : data.objects) {
-    ObjectShaderType st = (pod.shaderType == 1)
-                        ? ObjectShaderType::Star
-                        : ObjectShaderType::Planet;
+    ObjectShaderType st = ObjectShaderType::Planet;
+    if (pod.shaderType == 1)      st = ObjectShaderType::Star;
+    else if (pod.shaderType == 2) st = ObjectShaderType::BlackHole;
     physicsObjects.emplace_back(
       vec3{pod.velocity.x, pod.velocity.y, pod.velocity.z},
       vec3{pod.position.x, pod.position.y, pod.position.z},
@@ -109,9 +109,9 @@ int main(int argc, char** argv) {
   SceneCallbacks cb;
 
   cb.spawnPhysicsObject = [&](const SpawnFormState& form) {
-    ObjectShaderType st = (form.shaderType == 1)
-                        ? ObjectShaderType::Star
-                        : ObjectShaderType::Planet;
+    ObjectShaderType st = ObjectShaderType::Planet;
+    if (form.shaderType == 1)      st = ObjectShaderType::Star;
+    else if (form.shaderType == 2) st = ObjectShaderType::BlackHole;
     physicsObjects.emplace_back(
       vec3{form.velX, form.velY, form.velZ},
       vec3{form.posX, form.posY, form.posZ},
@@ -184,7 +184,7 @@ int main(int argc, char** argv) {
   {
     using SC = Renderer::StartupChoice;
     if (renderer.startupChoice == SC::Template) {
-      ProjectData tmpl = ProjectSerializer::SolarSystemTemplate();
+      ProjectData tmpl = ProjectSerializer::MilkyWayTemplate();
       currentGrid  = tmpl.grid;
       currentCloud = tmpl.cloud;
       buildScene(tmpl, physicsObjects, lineObjects, grids, cloud);
@@ -349,9 +349,12 @@ int main(int argc, char** argv) {
 
     // Re-draw all objects into the FBO (no physics, just rendering)
     for (int i = 0; i < (int)physicsObjects.size(); i++) {
+      float objType = 0.0f;
+      if (physicsObjects[i].shaderType == ObjectShaderType::Star)      objType = 1.0f;
+      else if (physicsObjects[i].shaderType == ObjectShaderType::BlackHole) objType = 3.0f;
       renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
                                  physicsObjects[i].temperature,
-                                 (physicsObjects[i].shaderType == ObjectShaderType::Star) ? 1.0f : 0.0f);
+                                 objType);
       lineObjects[i].Update(renderer);
     }
     for (auto& g : grids)

@@ -24,7 +24,9 @@ PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position, float m
   {
     renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/brightStartFragShader.glsl");
   }
-  else{
+  else
+  {
+    // Planet and BlackHole both use the dark default shader
     renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/defaultFrag.glsl");
   }
 }
@@ -92,7 +94,8 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
       }
     }
   }
-  renderer.DrawPhysicsObject(renderedObject,
-                             temperature,
-                             (shaderType == ObjectShaderType::Star) ? 1.0f : 0.0f);
+  float objectType = 0.0f; // default: planet
+  if (shaderType == ObjectShaderType::Star)      objectType = 1.0f;
+  else if (shaderType == ObjectShaderType::BlackHole) objectType = 3.0f;
+  renderer.DrawPhysicsObject(renderedObject, temperature, objectType);
 }

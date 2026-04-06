@@ -12,7 +12,7 @@ struct PhysicsObjectData {
   float mass{};
   vec3  position{};
   vec3  velocity{};
-  int   shaderType{}; // 0=Planet, 1=Star
+  int   shaderType{}; // 0=Planet, 1=Star, 2=BlackHole
   float temperature{0.0f}; // Kelvin
 };
 
@@ -53,6 +53,6 @@ public:
   // Load a JSON file; returns populated ProjectData or empty on error
   static ProjectData Load(const std::string& path);
 
-  // Build the solar-system template data
-  static ProjectData SolarSystemTemplate();
+  // Build the milky way template data
+  static ProjectData MilkyWayTemplate();
 };

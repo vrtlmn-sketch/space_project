@@ -41,7 +41,7 @@ struct SpawnFormState {
   float  mass       = 5.0f;
   float  posX       = 0.0f, posY = 0.0f, posZ = -3.0f;
   float  velX       = 0.0f, velY = 0.0f, velZ =  0.0f;
-  int    shaderType = 0;   // 0=Planet, 1=Star
+  int    shaderType = 0;   // 0=Planet, 1=Star, 2=BlackHole
   float  temperature = 5778.0f; // Kelvin (meaningful for stars)
 };
 
@@ -129,7 +129,7 @@ private:
   int    rtTexWidth{0}, rtTexHeight{0};  // current output texture dimensions
   GLuint rtSSBO{0};                      // SSBO for raytracer objects (compute shader)
 
-  // Compute shader uniform locations
+  // Compute shader uniform locations (simple raytracer)
   GLint rtLocObjectCount{-1};
   GLint rtLocProj{-1};
   GLint rtLocCamera{-1};
@@ -137,6 +137,20 @@ private:
   GLint rtLocPitch{-1};
   GLint rtLocResolution{-1};
   GLint rtLocMaxBounces{-1};
+
+  // ── Geodesic compute shader raytracer ──
+  GLuint geodesicComputeProgram{0};
+
+  // Geodesic shader uniform locations
+  GLint geoLocObjectCount{-1};
+  GLint geoLocProj{-1};
+  GLint geoLocCamera{-1};
+  GLint geoLocRotation{-1};
+  GLint geoLocPitch{-1};
+  GLint geoLocResolution{-1};
+  GLint geoLocMaxBounces{-1};
+  GLint geoLocMaxSteps{-1};
+  GLint geoLocBHPos{-1};
 
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
@@ -167,12 +181,13 @@ private:
   int    recordHeight{1080};
 
   // Live raytracer resolution (0 = Native/framebuffer, otherwise a fixed resolution)
-  int    rtLiveResPreset{0};             // index into rtLivePresets (default = Native)
-  int    rtLiveWidth{0};                 // 0 = use framebuffer size
-  int    rtLiveHeight{0};
+  int    rtLiveResPreset{1};             // index into rtLivePresets (default = 80p)
+  int    rtLiveWidth{142};               // 0 = use framebuffer size
+  int    rtLiveHeight{80};
 
   // Raytracer quality settings
   int    rtMaxBounces{1};                // reflection bounces (0 = no reflections)
+  int    rtMaxSteps{256};                // geodesic integration steps per ray
 
   // Dirty-flag: skip raytracer dispatch when nothing changed
   float  rtLastCamera[3]{};
