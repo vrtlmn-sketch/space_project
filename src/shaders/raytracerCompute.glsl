@@ -25,7 +25,7 @@ struct spaceObject
     float mass;
     float radius;
     float temperature; // Kelvin  (0 = planet/cloud)
-    float objectType;  // 0=planet, 1=star, 2=cloud
+    float objectType;  // 0=planet, 1=star, 2=cloud, 3=black hole
 };
 
 layout(std430, binding = 1) buffer Objects {
@@ -200,7 +200,7 @@ void main()
     vec3 color = vec3(0.0);
 
     // -----------------------------------------------------------------------
-    // Find nearest solid intersection
+    // Find nearest solid intersection (planets, stars, AND black holes)
     // -----------------------------------------------------------------------
     float tMin   = 1e30;
     int   hitIdx = -1;
@@ -208,7 +208,7 @@ void main()
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
-        if (otype == 2) continue;
+        if (otype == 2) continue; // skip clouds — they're volumetric
 
         vec3  cen = objects[i].position.xyz;
         float rad = objects[i].radius;
@@ -221,13 +221,29 @@ void main()
     }
 
     // -----------------------------------------------------------------------
-    // Shade hit — planets only
+    // Shade the nearest solid hit
     // -----------------------------------------------------------------------
     if (hitIdx >= 0)
     {
         int otype = int(objects[hitIdx].objectType + 0.5);
-        if (otype != 1)
+        if (otype == 3)
         {
+            // Black hole — completely black, absorbs everything
+            color = vec3(0.0);
+        }
+        else if (otype == 1)
+        {
+            // Star — shade as bright surface (limb-darkened blackbody)
+            vec3  cen    = objects[hitIdx].position.xyz;
+            vec3  hitPos = ro + rd * tMin;
+            vec3  normal = normalize(hitPos - cen);
+            float cosA   = dot(-normal, rd);
+            float limb   = pow(max(cosA, 0.0), 0.5);
+            color = blackbody(objects[hitIdx].temperature) * limb;
+        }
+        else
+        {
+            // Planet — Blinn-Phong shading
             vec3  cen    = objects[hitIdx].position.xyz;
             vec3  hitPos = ro + rd * tMin;
             vec3  normal = normalize(hitPos - cen);
@@ -240,7 +256,7 @@ void main()
     }
 
     // -----------------------------------------------------------------------
-    // Star glow
+    // Star glow — only for stars in front of (or at) the nearest solid hit
     // -----------------------------------------------------------------------
     for (int i = 0; i < uObjectCount; i++)
     {
@@ -251,6 +267,12 @@ void main()
         float srad  = objects[i].radius;
         float T     = objects[i].temperature;
         vec3  scol  = blackbody(T);
+
+        // Distance of star center along the ray (for occlusion check)
+        float tStar = dot(cen - ro, rd);
+
+        // If the star's closest approach is behind a solid hit, skip its glow
+        if (hitIdx >= 0 && tStar > tMin + srad * 5.0) continue;
 
         float d2    = closestApproachDist2(ro, rd, cen);
         float srad2 = srad * srad;
@@ -269,7 +291,7 @@ void main()
     }
 
     // -----------------------------------------------------------------------
-    // Volumetric cloud glow
+    // Volumetric cloud glow — only for clouds in front of nearest solid hit
     // -----------------------------------------------------------------------
     vec3 cloudGlow = vec3(0.0);
     for (int i = 0; i < uObjectCount; i++)
@@ -278,6 +300,11 @@ void main()
         if (otype != 2) continue;
 
         vec3  cen   = objects[i].position.xyz;
+
+        // Distance of cloud along the ray (for occlusion check)
+        float tCloud = dot(cen - ro, rd);
+        if (hitIdx >= 0 && tCloud > tMin) continue;
+
         float d2    = closestApproachDist2(ro, rd, cen);
 
         float coreS  = max(objects[i].radius * 2.0, 0.001);

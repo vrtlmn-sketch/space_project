@@ -24,9 +24,13 @@ PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position, float m
   {
     renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/brightStartFragShader.glsl");
   }
+  else if(sType == ObjectShaderType::BlackHole)
+  {
+    // Black hole — pure black silhouette
+    renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/blackHoleFrag.glsl");
+  }
   else
   {
-    // Planet and BlackHole both use the dark default shader
     renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/defaultFrag.glsl");
   }
 }

@@ -293,6 +293,9 @@ void main()
     // We integrate in world space. The position is relative to the black hole
     // for the acceleration computation, but we track the absolute world
     // position for scene intersection tests.
+    //
+    // Glow is accumulated per-step during integration, so objects behind a
+    // solid hit are naturally occluded (we stop on hit). No path array needed.
     // -----------------------------------------------------------------------
     vec3 pos = ro;           // world-space ray position
     vec3 vel = rd;           // ray direction (unit vector initially)
@@ -309,15 +312,8 @@ void main()
     vec3  hitPos   = vec3(0.0);
     vec3  hitNorm  = vec3(0.0);
 
-    // -----------------------------------------------------------------------
-    // Phase 1: Integrate the ray and store the path
-    // We store positions so we can compute per-object closest approach after.
-    // -----------------------------------------------------------------------
-    const int PATH_MAX = 257; // uMaxSteps + 1 (start position)
-    vec3 path[PATH_MAX];
-    int  pathLen = 0;
-    path[0] = ro;
-    pathLen = 1;
+    // Accumulated glow from the curved portion of the ray
+    vec3 curvedGlow = vec3(0.0);
 
     for (int step = 0; step < uMaxSteps; step++)
     {
@@ -349,19 +345,16 @@ void main()
         pos = newState.pos + uBHPos;  // back to world space
         vel = normalize(newState.vel); // keep unit speed (null geodesic)
 
-        // Store path point
-        if (pathLen < PATH_MAX)
-        {
-            path[pathLen] = pos;
-            pathLen++;
-        }
-
-        // ── Check intersection with scene objects along this segment ──
+        // ── Check intersection with solid objects along this segment ──
         vec3  segDir  = pos - prevPos;
         float segLen  = length(segDir);
         if (segLen > 0.0001)
         {
             vec3 segNorm = segDir / segLen;
+
+            // Find the nearest solid hit along this segment
+            float segTMin = segLen; // only accept hits within segment
+            int   segHit  = -1;
 
             for (int i = 0; i < uObjectCount; i++)
             {
@@ -371,16 +364,118 @@ void main()
                 vec3  cen = objects[i].position.xyz;
                 float rad = objects[i].radius;
                 float t   = raySphere(prevPos, segNorm, cen, rad);
-                if (t > 0.0 && t < segLen)
+                if (t > 0.0 && t < segTMin)
                 {
-                    hitScene = true;
-                    hitIdx   = i;
-                    hitPos   = prevPos + segNorm * t;
-                    hitNorm  = normalize(hitPos - cen);
-                    break;
+                    segTMin = t;
+                    segHit  = i;
                 }
             }
-            if (hitScene) break;
+
+            if (segHit >= 0)
+            {
+                hitScene = true;
+                hitIdx   = segHit;
+                hitPos   = prevPos + segNorm * segTMin;
+                hitNorm  = normalize(hitPos - objects[segHit].position.xyz);
+
+                // Accumulate glow from objects in front of the hit along this segment
+                for (int i = 0; i < uObjectCount; i++)
+                {
+                    int otype = int(objects[i].objectType + 0.5);
+                    vec3 cen  = objects[i].position.xyz;
+
+                    // Use the sub-segment up to the hit point
+                    float subLen = segTMin;
+                    vec3  subDir = segNorm;
+
+                    float d2 = closestApproachDist2(prevPos, subDir, cen);
+
+                    if (otype == 1)
+                    {
+                        float srad  = objects[i].radius;
+                        float T     = objects[i].temperature;
+                        vec3  scol  = blackbody(T);
+                        float srad2 = srad * srad;
+
+                        float core;
+                        if (d2 < srad2) core = 5.0;
+                        else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.5));
+
+                        float coronaR = srad * 5.0;
+                        float corona  = exp(-d2 / (coronaR * coronaR)) * 0.8;
+
+                        curvedGlow += scol * (core + corona);
+                    }
+                    else if (otype == 2)
+                    {
+                        float coreS = max(objects[i].radius * 2.0, 0.001);
+                        float core  = exp(-d2 / (coreS * coreS)) * 6.0;
+
+                        float haloS = coreS * 4.0;
+                        float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
+
+                        vec3 gcol = (objects[i].temperature > 100.0)
+                                     ? blackbody(objects[i].temperature)
+                                     : vec3(0.55, 0.65, 1.0);
+                        curvedGlow += gcol * (core + halo);
+                    }
+                }
+                break;
+            }
+        }
+
+        // ── Accumulate glow from this segment (no solid hit yet) ──
+        for (int i = 0; i < uObjectCount; i++)
+        {
+            int otype = int(objects[i].objectType + 0.5);
+            vec3 cen  = objects[i].position.xyz;
+
+            // Closest approach of this segment to the object
+            vec3  seg     = pos - prevPos;
+            float segLen2 = dot(seg, seg);
+            float sd2;
+            if (segLen2 < 1e-10)
+            {
+                vec3 diff = prevPos - cen;
+                sd2 = dot(diff, diff);
+            }
+            else
+            {
+                float t = clamp(dot(cen - prevPos, seg) / segLen2, 0.0, 1.0);
+                vec3  closest = prevPos + seg * t;
+                vec3  diff = closest - cen;
+                sd2 = dot(diff, diff);
+            }
+
+            if (otype == 1)
+            {
+                float srad  = objects[i].radius;
+                float T     = objects[i].temperature;
+                vec3  scol  = blackbody(T);
+                float srad2 = srad * srad;
+
+                float core;
+                if (sd2 < srad2) core = 5.0;
+                else core = 5.0 * exp(-(sd2 - srad2) / (srad2 * 0.5));
+
+                float coronaR = srad * 5.0;
+                float corona  = exp(-sd2 / (coronaR * coronaR)) * 0.8;
+
+                curvedGlow += scol * (core + corona);
+            }
+            else if (otype == 2)
+            {
+                float coreS = max(objects[i].radius * 2.0, 0.001);
+                float core  = exp(-sd2 / (coreS * coreS)) * 6.0;
+
+                float haloS = coreS * 4.0;
+                float halo  = exp(-sd2 / (haloS * haloS)) * 0.8;
+
+                vec3 gcol = (objects[i].temperature > 100.0)
+                             ? blackbody(objects[i].temperature)
+                             : vec3(0.55, 0.65, 1.0);
+                curvedGlow += gcol * (core + halo);
+            }
         }
     }
 
@@ -388,6 +483,7 @@ void main()
     // intersections from the escape point outward with the final velocity
     if (!hitScene)
     {
+        float escTMin = 1e30;
         for (int i = 0; i < uObjectCount; i++)
         {
             int otype = int(objects[i].objectType + 0.5);
@@ -396,13 +492,56 @@ void main()
             vec3  cen = objects[i].position.xyz;
             float rad = objects[i].radius;
             float t   = raySphere(pos, vel, cen, rad);
-            if (t > 0.0)
+            if (t > 0.0 && t < escTMin)
             {
+                escTMin  = t;
                 hitScene = true;
                 hitIdx   = i;
                 hitPos   = pos + vel * t;
                 hitNorm  = normalize(hitPos - cen);
-                break;
+            }
+        }
+
+        // Add glow from objects along the escape direction (only those in front of hit)
+        for (int i = 0; i < uObjectCount; i++)
+        {
+            int otype = int(objects[i].objectType + 0.5);
+            vec3 cen  = objects[i].position.xyz;
+
+            // Occlusion: skip glow from objects behind the solid hit
+            float tObj = dot(cen - pos, vel);
+            if (hitScene && tObj > escTMin) continue;
+
+            float d2 = closestApproachDist2(pos, vel, cen);
+
+            if (otype == 1)
+            {
+                float srad  = objects[i].radius;
+                float T     = objects[i].temperature;
+                vec3  scol  = blackbody(T);
+                float srad2 = srad * srad;
+
+                float core;
+                if (d2 < srad2) core = 5.0;
+                else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.5));
+
+                float coronaR = srad * 5.0;
+                float corona  = exp(-d2 / (coronaR * coronaR)) * 0.8;
+
+                curvedGlow += scol * (core + corona);
+            }
+            else if (otype == 2)
+            {
+                float coreS = max(objects[i].radius * 2.0, 0.001);
+                float core  = exp(-d2 / (coreS * coreS)) * 6.0;
+
+                float haloS = coreS * 4.0;
+                float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
+
+                vec3 gcol = (objects[i].temperature > 100.0)
+                             ? blackbody(objects[i].temperature)
+                             : vec3(0.55, 0.65, 1.0);
+                curvedGlow += gcol * (core + halo);
             }
         }
     }
@@ -413,7 +552,12 @@ void main()
     if (hitScene && hitIdx >= 0)
     {
         int otype = int(objects[hitIdx].objectType + 0.5);
-        if (otype == 1)
+        if (otype == 3)
+        {
+            // Black hole — completely black
+            color = vec3(0.0);
+        }
+        else if (otype == 1)
         {
             // Star — shade as bright core
             float cosA = dot(-hitNorm, vel);
@@ -431,84 +575,10 @@ void main()
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Phase 2: Glow computation
-    //
-    // For each object, find the minimum squared distance from the curved ray
-    // path to the object center, then compute glow using the same formula as
-    // the simple shader. No per-object storage needed — we iterate over all
-    // path segments for each object.
-    // -----------------------------------------------------------------------
+    // Add accumulated glow (only if not captured by BH)
     if (!captured)
     {
-        for (int i = 0; i < uObjectCount; i++)
-        {
-            int otype = int(objects[i].objectType + 0.5);
-            vec3 cen  = objects[i].position.xyz;
-
-            // Find minimum squared distance from curved path to this object
-            float d2 = 1e30;
-
-            // Check all stored path segments
-            for (int s = 0; s < pathLen - 1; s++)
-            {
-                vec3  seg     = path[s + 1] - path[s];
-                float segLen2 = dot(seg, seg);
-                float sd2;
-                if (segLen2 < 1e-10)
-                {
-                    vec3 diff = path[s] - cen;
-                    sd2 = dot(diff, diff);
-                }
-                else
-                {
-                    float t = clamp(dot(cen - path[s], seg) / segLen2, 0.0, 1.0);
-                    vec3  closest = path[s] + seg * t;
-                    vec3  diff = closest - cen;
-                    sd2 = dot(diff, diff);
-                }
-                d2 = min(d2, sd2);
-            }
-
-            // Also check straight-line continuation from escape point
-            float d2escape = closestApproachDist2(pos, vel, cen);
-            d2 = min(d2, d2escape);
-
-            // Compute glow using same formulas as simple shader
-            if (otype == 1)
-            {
-                // Star glow
-                float srad  = objects[i].radius;
-                float T     = objects[i].temperature;
-                vec3  scol  = blackbody(T);
-                float srad2 = srad * srad;
-
-                float core;
-                if (d2 < srad2)
-                    core = 5.0;
-                else
-                    core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.5));
-
-                float coronaR = srad * 5.0;
-                float corona  = exp(-d2 / (coronaR * coronaR)) * 0.8;
-
-                color += scol * (core + corona);
-            }
-            else if (otype == 2)
-            {
-                // Cloud glow
-                float coreS = max(objects[i].radius * 2.0, 0.001);
-                float core  = exp(-d2 / (coreS * coreS)) * 6.0;
-
-                float haloS = coreS * 4.0;
-                float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
-
-                vec3 gcol = (objects[i].temperature > 100.0)
-                             ? blackbody(objects[i].temperature)
-                             : vec3(0.55, 0.65, 1.0);
-                color += gcol * (core + halo);
-            }
-        }
+        color += curvedGlow;
     }
 
     // -----------------------------------------------------------------------
