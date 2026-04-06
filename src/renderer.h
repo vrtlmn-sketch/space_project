@@ -211,6 +211,7 @@ private:
   void DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
   void DrawGhostObject();
   void DrawQuitDialog(const SceneCallbacks& cb);
+  void DrawRenderingSettings();  // rendering method + RT quality settings
   void DrawPipWindow();   // show secondary view FBO as ImGui image
 
 public:
@@ -225,6 +226,7 @@ public:
   bool rayTracerView{false};
   bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
+  int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
   bool paused{true};
   bool playingForward{true};
 

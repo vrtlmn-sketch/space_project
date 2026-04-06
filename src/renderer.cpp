@@ -550,6 +550,10 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
     ImGuiID dock_right;
     ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.22f, &dock_right, &dock_main);
 
+    // Split right sidebar: top=inspector, bottom=rendering settings (60/40)
+    ImGuiID dock_right_top, dock_right_bottom;
+    ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.40f, &dock_right_bottom, &dock_right_top);
+
     // Split bottom: PiP on the right side ~30% width
     ImGuiID dock_bottom_left, dock_bottom_right;
     ImGui::DockBuilderSplitNode(dock_bottom, ImGuiDir_Right, 0.30f, &dock_bottom_right, &dock_bottom_left);
@@ -562,7 +566,8 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
     ImGui::DockBuilderDockWindow("Controls",       dock_top);
     ImGui::DockBuilderDockWindow("Spawn",           dock_left_top);
     ImGui::DockBuilderDockWindow("Hierarchy",       dock_left_bottom);
-    ImGui::DockBuilderDockWindow("Inspector",       dock_right);
+    ImGui::DockBuilderDockWindow("Inspector",       dock_right_top);
+    ImGui::DockBuilderDockWindow("Rendering Settings", dock_right_bottom);
     ImGui::DockBuilderDockWindow("Timeline",        dock_bottom_left);
     ImGui::DockBuilderDockWindow("Secondary View",  dock_bottom_right);
 
@@ -578,6 +583,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
   DrawSpawnPanel(cb);
   DrawSceneHierarchy(physicsObjects, cloud, cb);
   DrawInspector(physicsObjects, cloud, cb);
+  DrawRenderingSettings();
   DrawPipWindow();
   if (ghostDragActive) DrawGhostObject();
   DrawQuitDialog(cb);
@@ -696,26 +702,92 @@ void Renderer::DrawControlsPanel() {
   if (ImGui::Button("Reset##cam", ImVec2(45, 0))) resetCamera();
   ImGui::SameLine();
 
+  if (recording)
+    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "REC %d", recordedFrames);
+
+  ImGui::SameLine();
+
   // Separator
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
-  // Recording settings
-  ImGui::SetNextItemWidth(110);
-  if (recording) ImGui::BeginDisabled();
-  ImGui::InputText("##recf", recordPathBuf, sizeof(recordPathBuf));
-  if (recording) ImGui::EndDisabled();
-  ImGui::SameLine();
+  // Quit
+  ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
+  if (ImGui::Button("Quit", ImVec2(45, 0))) showQuitDialog = true;
+  ImGui::PopStyleColor(3);
 
-  ImGui::SetNextItemWidth(45);
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawRenderingSettings  (docked right-bottom — rendering method + RT quality)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawRenderingSettings() {
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+  ImGui::Begin("Rendering Settings", nullptr, flags);
+
+  // ── Rendering method ──
+  ImGui::Text("Rendering Method");
+  ImGui::SetNextItemWidth(-1);
+  const char* methodItems[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
+  ImGui::Combo("##rtmethod", &raytracerMethod, methodItems, 3);
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // ── Live RT resolution ──
+  static const struct { const char* label; int w; int h; } rtLivePresets[] = {
+    { "Native",  0,    0 },
+    { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
+    { "360p",   640,  360 }, { "480p",  854,  480 },
+    { "720p",  1280,  720 }, { "1080p",1920, 1080 },
+  };
+  static const int numRtPresets = (int)(sizeof(rtLivePresets) / sizeof(rtLivePresets[0]));
+  ImGui::Text("RT Resolution");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::Combo("##rtres2", &rtLiveResPreset, [](void*, int idx) -> const char* {
+    static const char* labels[] = { "Native", "80p", "144p", "240p", "360p", "480p", "720p", "1080p" };
+    return labels[idx];
+  }, nullptr, numRtPresets)) {
+    rtLiveWidth  = rtLivePresets[rtLiveResPreset].w;
+    rtLiveHeight = rtLivePresets[rtLiveResPreset].h;
+  }
+
+  ImGui::Spacing();
+
+  // ── Max bounces ──
+  ImGui::Text("Max Bounces");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::SliderInt("##bounce2", &rtMaxBounces, 0, 4, "%d");
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // ── Recording settings ──
+  ImGui::Text("Recording Path");
+  ImGui::SetNextItemWidth(-1);
+  if (recording) ImGui::BeginDisabled();
+  ImGui::InputText("##recf2", recordPathBuf, sizeof(recordPathBuf));
+  if (recording) ImGui::EndDisabled();
+
+  ImGui::Spacing();
+
+  ImGui::Text("Recording FPS");
+  ImGui::SetNextItemWidth(-1);
   if (recording) ImGui::BeginDisabled();
   const char* fpsItems[] = { "24", "30", "60" };
   int fpsIdx = (recordFps == 24) ? 0 : (recordFps == 60) ? 2 : 1;
-  if (ImGui::Combo("##fps", &fpsIdx, fpsItems, 3))
+  if (ImGui::Combo("##fps2", &fpsIdx, fpsItems, 3))
     recordFps = (fpsIdx == 0) ? 24 : (fpsIdx == 2) ? 60 : 30;
   if (recording) ImGui::EndDisabled();
-  ImGui::SameLine();
 
+  ImGui::Spacing();
+
+  ImGui::Text("Recording Resolution");
   static const struct { const char* label; int w; int h; } resPresets[] = {
     { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
     { "360p",   640,  360 }, { "480p",   854,  480 },
@@ -725,8 +797,8 @@ void Renderer::DrawControlsPanel() {
   };
   static const int numPresets = (int)(sizeof(resPresets) / sizeof(resPresets[0]));
   if (recording) ImGui::BeginDisabled();
-  ImGui::SetNextItemWidth(70);
-  if (ImGui::Combo("##res", &recordResPreset, [](void*, int idx) -> const char* {
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::Combo("##res2", &recordResPreset, [](void*, int idx) -> const char* {
     return resPresets[idx].label;
   }, nullptr, numPresets)) {
     if (recordResPreset < numPresets - 1) {
@@ -737,86 +809,41 @@ void Renderer::DrawControlsPanel() {
   if (recording) ImGui::EndDisabled();
 
   if (recordResPreset == numPresets - 1) {
-    ImGui::SameLine();
     if (recording) ImGui::BeginDisabled();
-    ImGui::SetNextItemWidth(50);
-    if (ImGui::InputInt("##rw", &recordWidth, 0, 0)) {
+    ImGui::SetNextItemWidth(60);
+    if (ImGui::InputInt("##rw2", &recordWidth, 0, 0)) {
       if (recordWidth < 16) recordWidth = 16;
       if (recordWidth > 7680) recordWidth = 7680;
     }
     ImGui::SameLine(); ImGui::Text("x"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(50);
-    if (ImGui::InputInt("##rh", &recordHeight, 0, 0)) {
+    ImGui::SetNextItemWidth(60);
+    if (ImGui::InputInt("##rh2", &recordHeight, 0, 0)) {
       if (recordHeight < 16) recordHeight = 16;
       if (recordHeight > 4320) recordHeight = 4320;
     }
     if (recording) ImGui::EndDisabled();
-  }
-
-  ImGui::SameLine();
-  if (recording)
-    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "REC %d", recordedFrames);
-  else
+  } else {
     ImGui::TextDisabled("%dx%d", recordWidth, recordHeight);
-
-  ImGui::SameLine();
-
-  // Separator
-  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
-
-  // ── Live RT resolution ──
-  static const struct { const char* label; int w; int h; } rtLivePresets[] = {
-    { "Native",  0,    0 },
-    { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
-    { "360p",   640,  360 }, { "480p",  854,  480 },
-    { "720p",  1280,  720 }, { "1080p",1920, 1080 },
-  };
-  static const int numRtPresets = (int)(sizeof(rtLivePresets) / sizeof(rtLivePresets[0]));
-  ImGui::Text("RT");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(70);
-  if (ImGui::Combo("##rtres", &rtLiveResPreset, [](void*, int idx) -> const char* {
-    return rtLivePresets[idx].label;
-  }, nullptr, numRtPresets)) {
-    rtLiveWidth  = rtLivePresets[rtLiveResPreset].w;
-    rtLiveHeight = rtLivePresets[rtLiveResPreset].h;
   }
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(45);
-  ImGui::SliderInt("##bounce", &rtMaxBounces, 0, 4, "%d");
-  ImGui::SameLine();
-  ImGui::TextDisabled("bnc");
-  ImGui::SameLine();
 
-  // Separator
-  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
 
   // ── Image export ──
-  ImGui::SetNextItemWidth(110);
-  ImGui::InputText("##imgf", imagePathBuf, sizeof(imagePathBuf));
-  ImGui::SameLine();
-  if (ImGui::Button("Snap", ImVec2(45, 0))) CaptureImage();
-  ImGui::SameLine();
+  ImGui::Text("Screenshot Path");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::InputText("##imgf2", imagePathBuf, sizeof(imagePathBuf));
+  if (ImGui::Button("Snap", ImVec2(-1, 0))) CaptureImage();
 
-  // Separator
-  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
 
-  // ── RAM budget slider ──
-  ImGui::Text("RAM");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(60);
-  ImGui::SliderFloat("##ram", &ramBudgetGB, 1.0f, 128.0f, "%.0f GB");
-  ImGui::SameLine();
-
-  // Quit
-  ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
-  if (ImGui::Button("Quit", ImVec2(45, 0))) showQuitDialog = true;
-  ImGui::PopStyleColor(3);
+  // ── RAM budget ──
+  ImGui::Text("RAM Budget");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::SliderFloat("##ram2", &ramBudgetGB, 1.0f, 128.0f, "%.0f GB");
 
   ImGui::End();
 }
