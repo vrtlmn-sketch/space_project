@@ -39,8 +39,8 @@ layout(std430, binding = 1) buffer Objects {
 uniform vec3  uBHPos;                          // world-space black hole position
 const float BH_RS  = 0.05;                    // Schwarzschild radius — small enough that
                                                // the star (r~0.07) is outside the event horizon
-const float BH_RMAX = 5.0;                    // escape radius — beyond this, gravity negligible
 const float BH_PHOTON_SPHERE = 1.5 * BH_RS;   // r = 1.5 * r_s
+const float BH_ESCAPE_ACCEL = 1e-5;           // acceleration threshold for escape
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -330,13 +330,18 @@ void main()
         }
 
         // ── Termination: ray escaped ──
-        if (r >= BH_RMAX)
+        // Exit when ray is moving away from BH and acceleration is negligible.
+        float radialVel = dot(normalize(relPos), vel);
+        vec3  accel     = geodesicAccel(relPos, vel);
+        float accelMag  = length(accel);
+        if (radialVel > 0.0 && accelMag < BH_ESCAPE_ACCEL)
         {
             break;
         }
 
         // ── Adaptive step size ──
-        float stepScale = clamp(r / (3.0 * BH_RS), 0.1, 2.0);
+        // Scale step by distance: close to BH needs small steps, far away uses large steps
+        float stepScale = clamp(r / (3.0 * BH_RS), 0.1, 10.0);
         float dt = baseStep * stepScale;
 
         // ── RK4 step (in BH-relative coordinates) ──
