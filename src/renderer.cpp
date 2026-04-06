@@ -2154,6 +2154,26 @@ void Renderer::CaptureImage() {
   int h = recordHeight;
   if (w <= 0 || h <= 0) return;
 
+  // Select shader based on current rendering method (same logic as DispatchRaytracer)
+  bool useGeodesic = (raytracerMethod == 1 || raytracerMethod == 2);
+  float bhPos[3] = {0.0f, 0.0f, -3.0f};
+  bool  hasBH = false;
+  if (useGeodesic) {
+    for (const auto& obj : rtLastObjects) {
+      int otype = (int)(obj.objectType + 0.5f);
+      if (otype == 3) {
+        bhPos[0] = obj.coordinates.x;
+        bhPos[1] = obj.coordinates.y;
+        bhPos[2] = obj.coordinates.z;
+        hasBH = true;
+        break;
+      }
+    }
+    if (!hasBH) useGeodesic = false;
+  }
+  GLuint activeProgram = useGeodesic ? geodesicComputeProgram : rtComputeProgram;
+  if (!activeProgram) return;
+
   // Dispatch raytracer at recording resolution into recOutputTex
   EnsureRecOutputTex(w, h);
   glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
@@ -2168,8 +2188,16 @@ void Renderer::CaptureImage() {
                GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
 
-  glUseProgram(rtComputeProgram);
-  glUniform1i(rtLocObjectCount, (int)rtLastObjects.size());
+  GLint locObjectCount = useGeodesic ? geoLocObjectCount : rtLocObjectCount;
+  GLint locProj        = useGeodesic ? geoLocProj        : rtLocProj;
+  GLint locCamera      = useGeodesic ? geoLocCamera      : rtLocCamera;
+  GLint locRotation    = useGeodesic ? geoLocRotation    : rtLocRotation;
+  GLint locPitch       = useGeodesic ? geoLocPitch       : rtLocPitch;
+  GLint locResolution  = useGeodesic ? geoLocResolution  : rtLocResolution;
+  GLint locMaxBounces  = useGeodesic ? geoLocMaxBounces  : rtLocMaxBounces;
+
+  glUseProgram(activeProgram);
+  glUniform1i(locObjectCount, (int)rtLastObjects.size());
 
   float aspect = (h > 0) ? (float)w / (float)h : 1.0f;
   float fovy   = zoom * M_PI / 180.0f;
@@ -2181,13 +2209,20 @@ void Renderer::CaptureImage() {
   proj[10] = (zFar + zNear) / (zNear - zFar);
   proj[11] = -1.0f;
   proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
-  glUniformMatrix4fv(rtLocProj, 1, GL_FALSE, proj);
+  glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
 
   float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
-  glUniform3fv(rtLocCamera, 1, cam);
-  glUniform1f(rtLocRotation, rotation);
-  glUniform1f(rtLocPitch, pitch);
-  glUniform2f(rtLocResolution, (float)w, (float)h);
+  glUniform3fv(locCamera, 1, cam);
+  glUniform1f(locRotation, rotation);
+  glUniform1f(locPitch, pitch);
+  glUniform2f(locResolution, (float)w, (float)h);
+  if (locMaxBounces >= 0)
+    glUniform1i(locMaxBounces, rtMaxBounces);
+
+  if (useGeodesic && geoLocMaxSteps >= 0)
+    glUniform1i(geoLocMaxSteps, rtMaxSteps);
+  if (useGeodesic && geoLocBHPos >= 0)
+    glUniform3fv(geoLocBHPos, 1, bhPos);
 
   GLuint gx = (w + 15) / 16;
   GLuint gy = (h + 15) / 16;
@@ -2270,17 +2305,46 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   int rh = recordHeight;
   EnsureRecOutputTex(rw, rh);
 
+  // Select shader based on current rendering method (same logic as DispatchRaytracer)
+  bool useGeodesic = (raytracerMethod == 1 || raytracerMethod == 2);
+  float bhPos[3] = {0.0f, 0.0f, -3.0f};
+  bool  hasBH = false;
+  if (useGeodesic) {
+    for (const auto& obj : rayTracedObjects) {
+      int otype = (int)(obj.objectType + 0.5f);
+      if (otype == 3) {
+        bhPos[0] = obj.coordinates.x;
+        bhPos[1] = obj.coordinates.y;
+        bhPos[2] = obj.coordinates.z;
+        hasBH = true;
+        break;
+      }
+    }
+    if (!hasBH) useGeodesic = false;
+  }
+  GLuint activeProgram = useGeodesic ? geodesicComputeProgram : rtComputeProgram;
+  if (!activeProgram) return;
+
   // Bind the RECORDING texture as the compute output (not the display texture)
   glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
   // SSBO is already uploaded by the primary DispatchRaytracer call — rebind for safety
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
-  glUseProgram(rtComputeProgram);
+
+  GLint locObjectCount = useGeodesic ? geoLocObjectCount : rtLocObjectCount;
+  GLint locProj        = useGeodesic ? geoLocProj        : rtLocProj;
+  GLint locCamera      = useGeodesic ? geoLocCamera      : rtLocCamera;
+  GLint locRotation    = useGeodesic ? geoLocRotation    : rtLocRotation;
+  GLint locPitch       = useGeodesic ? geoLocPitch       : rtLocPitch;
+  GLint locResolution  = useGeodesic ? geoLocResolution  : rtLocResolution;
+  GLint locMaxBounces  = useGeodesic ? geoLocMaxBounces  : rtLocMaxBounces;
+
+  glUseProgram(activeProgram);
 
   // Uniforms — same camera, but with recording resolution
-  glUniform1i(rtLocObjectCount, (int)rayTracedObjects.size());
-  if (rtLocMaxBounces >= 0)
-    glUniform1i(rtLocMaxBounces, rtMaxBounces);
+  glUniform1i(locObjectCount, (int)rayTracedObjects.size());
+  if (locMaxBounces >= 0)
+    glUniform1i(locMaxBounces, rtMaxBounces);
 
   float aspect = (rh > 0) ? (float)rw / (float)rh : 1.0f;
   float fovy   = zoom * M_PI / 180.0f;
@@ -2292,13 +2356,18 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   proj[10] = (zFar + zNear) / (zNear - zFar);
   proj[11] = -1.0f;
   proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
-  glUniformMatrix4fv(rtLocProj, 1, GL_FALSE, proj);
+  glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
 
   float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
-  glUniform3fv(rtLocCamera, 1, cam);
-  glUniform1f(rtLocRotation, rotation);
-  glUniform1f(rtLocPitch, pitch);
-  glUniform2f(rtLocResolution, (float)rw, (float)rh);
+  glUniform3fv(locCamera, 1, cam);
+  glUniform1f(locRotation, rotation);
+  glUniform1f(locPitch, pitch);
+  glUniform2f(locResolution, (float)rw, (float)rh);
+
+  if (useGeodesic && geoLocMaxSteps >= 0)
+    glUniform1i(geoLocMaxSteps, rtMaxSteps);
+  if (useGeodesic && geoLocBHPos >= 0)
+    glUniform3fv(geoLocBHPos, 1, bhPos);
 
   GLuint gx = (rw + 15) / 16;
   GLuint gy = (rh + 15) / 16;
