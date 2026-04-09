@@ -32,6 +32,7 @@ struct CameraKeyframe {
   float pos[3]{};
   float rotation{};
   float pitch{};
+  float roll{};
   float zoom{45.0f};
 };
 
@@ -135,6 +136,7 @@ private:
   GLint rtLocCamera{-1};
   GLint rtLocRotation{-1};
   GLint rtLocPitch{-1};
+  GLint rtLocRoll{-1};
   GLint rtLocResolution{-1};
   GLint rtLocMaxBounces{-1};
 
@@ -147,6 +149,7 @@ private:
   GLint geoLocCamera{-1};
   GLint geoLocRotation{-1};
   GLint geoLocPitch{-1};
+  GLint geoLocRoll{-1};
   GLint geoLocResolution{-1};
   GLint geoLocMaxBounces{-1};
   GLint geoLocMaxSteps{-1};
@@ -161,6 +164,7 @@ private:
   GLint acyLocCamera{-1};
   GLint acyLocRotation{-1};
   GLint acyLocPitch{-1};
+  GLint acyLocRoll{-1};
   GLint acyLocResolution{-1};
   GLint acyLocMaxBounces{-1};
   GLint acyLocMaxSteps{-1};
@@ -207,6 +211,7 @@ private:
   float  rtLastCamera[3]{};
   float  rtLastRotation{};
   float  rtLastPitch{};
+  float  rtLastRoll{};
   float  rtLastZoom{};
   int    rtLastBounces{-1};
   int    rtLastWidth{};
@@ -248,6 +253,7 @@ public:
   float cameraTranslate[3] = { 0, 0, 0 };
   float rotation{};
   float pitch{};
+  float roll{};
   float zoom{45.0f}; // FOV in degrees (lower = zoomed in)
 
   // ---- Simulation state ----

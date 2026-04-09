@@ -8,9 +8,20 @@ uniform mat4 uWorld;
 uniform vec3 uCamera;
 uniform float uRotation;
 uniform float uPitch;
+uniform float uRoll;
 
 void main(){
   vec4 aPosRot=uWorld*vec4(aPos+uCamera,1.0);
+
+  // Roll (Z-axis rotation) — applied first
+  float xr = aPosRot.x;
+  float yr = aPosRot.y;
+  aPosRot.x=
+    xr*cos(uRoll)
+    -yr*sin(uRoll);
+  aPosRot.y=
+    xr*sin(uRoll)
+    +yr*cos(uRoll);
 
   // Yaw (Y-axis rotation)
   float z = aPosRot.z;

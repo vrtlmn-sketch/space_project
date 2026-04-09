@@ -307,6 +307,7 @@ int main(int argc, char** argv) {
           renderer.cameraTranslate[2] = before->pos[2];
           renderer.rotation = before->rotation;
           renderer.pitch    = before->pitch;
+          renderer.roll     = before->roll;
           renderer.zoom     = before->zoom;
         } else {
           // Linear interpolation
@@ -316,6 +317,7 @@ int main(int argc, char** argv) {
           renderer.cameraTranslate[2] = before->pos[2] + t * (after->pos[2] - before->pos[2]);
           renderer.rotation = before->rotation + t * (after->rotation - before->rotation);
           renderer.pitch    = before->pitch    + t * (after->pitch    - before->pitch);
+          renderer.roll     = before->roll     + t * (after->roll     - before->roll);
           renderer.zoom     = before->zoom     + t * (after->zoom     - before->zoom);
         }
       }

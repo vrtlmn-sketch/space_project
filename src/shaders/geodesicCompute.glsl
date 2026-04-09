@@ -12,6 +12,7 @@ uniform mat4 uProj;
 uniform vec3 uCamera;
 uniform float uRotation;
 uniform float uPitch;
+uniform float uRoll;
 
 // framebuffer size
 uniform vec2 uResolution;
@@ -62,6 +63,15 @@ vec3 rotateX(vec3 v, float angle)
     return vec3(v.x,
                 v.y * c - v.z * s,
                 v.y * s + v.z * c);
+}
+
+vec3 rotateZ(vec3 v, float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return vec3(v.x * c - v.y * s,
+                v.x * s + v.y * c,
+                v.z);
 }
 
 vec3 blackbody(float T)
@@ -285,7 +295,7 @@ void main()
     float fy        = uProj[1][1];
     vec3  rayView   = normalize(vec3(ndc.x / fx, ndc.y / fy, -1.0));
 
-    vec3 rd = rotateY(rotateX(rayView, -uPitch), -uRotation);
+    vec3 rd = rotateY(rotateX(rotateZ(rayView, -uRoll), -uPitch), -uRotation);
 
     // -----------------------------------------------------------------------
     // Geodesic integration

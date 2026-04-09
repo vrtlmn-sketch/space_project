@@ -219,10 +219,10 @@ void Renderer::EndFrame() {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, rotation, pitch, roll, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, rotation, pitch, roll, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, rotation, pitch, roll, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, rotation, pitch, roll, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
     // Plane: compute shader handles rendering — just accumulate objects, don't render
@@ -235,7 +235,7 @@ void Renderer::Draw(RenderedObject& ro) {
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float temperature, float objectType) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
-      ro.renderMesh(cameraTranslate, rotation, pitch, zoom, fbWidth, fbHeight);
+      ro.renderMesh(cameraTranslate, rotation, pitch, roll, zoom, fbWidth, fbHeight);
     }
   }
   if (rayTracerView) {
@@ -291,6 +291,10 @@ bool Renderer::UpdateInputs() {
     const float maxPitch = 89.0f * 3.14159265f / 180.0f;
     if (pitch >  maxPitch) pitch =  maxPitch;
     if (pitch < -maxPitch) pitch = -maxPitch;
+
+    // Roll (,/. keys) — unclamped, full 360°
+    if (glfwGetKey(window, GLFW_KEY_COMMA)  == GLFW_PRESS) roll += cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) roll -= cameraRotationSpeed;
 
     // Zoom: +/- keys (FOV-based)
     if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= 0.5f; // + (or =) = zoom in
@@ -389,6 +393,7 @@ void Renderer::resetCamera() {
   cameraTranslate[0] = cameraTranslate[1] = cameraTranslate[2] = 0.0f;
   rotation = 0.0f;
   pitch = 0.0f;
+  roll = 0.0f;
   zoom = 45.0f;
 }
 
@@ -696,6 +701,9 @@ void Renderer::DrawControlsPanel() {
   ImGui::SetNextItemWidth(50);
   ImGui::DragFloat("##pit", &pitch, 0.01f, -1.55f, 1.55f, "%.1f");
   ImGui::SameLine();
+  ImGui::SetNextItemWidth(50);
+  ImGui::DragFloat("##roll", &roll, 0.01f, -6.28f, 6.28f, "%.1f");
+  ImGui::SameLine();
   ImGui::SetNextItemWidth(45);
   ImGui::DragFloat("##fov", &zoom, 0.5f, 5.f, 120.f, "%.0f");
   ImGui::SameLine();
@@ -993,6 +1001,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
           cameraTranslate[2] = ck.pos[2];
           rotation = ck.rotation;
           pitch    = ck.pitch;
+          roll     = ck.roll;
           zoom     = ck.zoom;
         }
         // Right-click: delete
@@ -1791,6 +1800,7 @@ void Renderer::InitComputeShader() {
     rtLocCamera      = glGetUniformLocation(rtComputeProgram, "uCamera");
     rtLocRotation    = glGetUniformLocation(rtComputeProgram, "uRotation");
     rtLocPitch       = glGetUniformLocation(rtComputeProgram, "uPitch");
+    rtLocRoll        = glGetUniformLocation(rtComputeProgram, "uRoll");
     rtLocResolution  = glGetUniformLocation(rtComputeProgram, "uResolution");
     rtLocMaxBounces  = glGetUniformLocation(rtComputeProgram, "uMaxBounces");
   }
@@ -1819,6 +1829,7 @@ void Renderer::InitComputeShader() {
       geoLocCamera      = glGetUniformLocation(geodesicComputeProgram, "uCamera");
       geoLocRotation    = glGetUniformLocation(geodesicComputeProgram, "uRotation");
       geoLocPitch       = glGetUniformLocation(geodesicComputeProgram, "uPitch");
+      geoLocRoll        = glGetUniformLocation(geodesicComputeProgram, "uRoll");
       geoLocResolution  = glGetUniformLocation(geodesicComputeProgram, "uResolution");
       geoLocMaxBounces  = glGetUniformLocation(geodesicComputeProgram, "uMaxBounces");
       geoLocMaxSteps    = glGetUniformLocation(geodesicComputeProgram, "uMaxSteps");
@@ -1850,6 +1861,7 @@ void Renderer::InitComputeShader() {
       acyLocCamera      = glGetUniformLocation(acyclicComputeProgram, "uCamera");
       acyLocRotation    = glGetUniformLocation(acyclicComputeProgram, "uRotation");
       acyLocPitch       = glGetUniformLocation(acyclicComputeProgram, "uPitch");
+      acyLocRoll        = glGetUniformLocation(acyclicComputeProgram, "uRoll");
       acyLocResolution  = glGetUniformLocation(acyclicComputeProgram, "uResolution");
       acyLocMaxBounces  = glGetUniformLocation(acyclicComputeProgram, "uMaxBounces");
       acyLocMaxSteps    = glGetUniformLocation(acyclicComputeProgram, "uMaxSteps");
@@ -1966,7 +1978,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
 
   // Select program and uniform locations based on effective method
   GLuint activeProgram;
-  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locResolution, locMaxBounces;
+  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locRoll, locResolution, locMaxBounces;
   GLint locMaxSteps = -1, locBHPos = -1;
 
   if (effectiveMethod == 2) {
@@ -1976,6 +1988,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locCamera      = acyLocCamera;
     locRotation    = acyLocRotation;
     locPitch       = acyLocPitch;
+    locRoll        = acyLocRoll;
     locResolution  = acyLocResolution;
     locMaxBounces  = acyLocMaxBounces;
     locMaxSteps    = acyLocMaxSteps;
@@ -1987,6 +2000,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locCamera      = geoLocCamera;
     locRotation    = geoLocRotation;
     locPitch       = geoLocPitch;
+    locRoll        = geoLocRoll;
     locResolution  = geoLocResolution;
     locMaxBounces  = geoLocMaxBounces;
     locMaxSteps    = geoLocMaxSteps;
@@ -1998,6 +2012,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locCamera      = rtLocCamera;
     locRotation    = rtLocRotation;
     locPitch       = rtLocPitch;
+    locRoll        = rtLocRoll;
     locResolution  = rtLocResolution;
     locMaxBounces  = rtLocMaxBounces;
   }
@@ -2013,8 +2028,9 @@ void Renderer::DispatchRaytracer(int width, int height) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
              cameraTranslate[1] != rtLastCamera[1] ||
              cameraTranslate[2] != rtLastCamera[2] ||
-             rotation != rtLastRotation ||
+              rotation != rtLastRotation ||
              pitch    != rtLastPitch    ||
+             roll     != rtLastRoll     ||
              zoom     != rtLastZoom     ||
              rtMaxBounces != rtLastBounces ||
              width  != rtLastWidth  ||
@@ -2070,6 +2086,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
   glUniform3fv(locCamera, 1, cam);
   glUniform1f(locRotation, rotation);
   glUniform1f(locPitch, pitch);
+  if (locRoll >= 0)
+    glUniform1f(locRoll, roll);
   glUniform2f(locResolution, (float)width, (float)height);
   if (locMaxBounces >= 0)
     glUniform1i(locMaxBounces, rtMaxBounces);
@@ -2096,6 +2114,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   rtLastCamera[2] = cameraTranslate[2];
   rtLastRotation  = rotation;
   rtLastPitch     = pitch;
+  rtLastRoll      = roll;
   rtLastZoom      = zoom;
   rtLastBounces   = rtMaxBounces;
   rtLastWidth     = width;
@@ -2237,7 +2256,7 @@ void Renderer::CaptureImage() {
   }
 
   GLuint activeProgram;
-  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locResolution, locMaxBounces;
+  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locRoll, locResolution, locMaxBounces;
   GLint locMaxSteps = -1, locBHPos = -1;
 
   if (effectiveMethod == 2) {
@@ -2247,6 +2266,7 @@ void Renderer::CaptureImage() {
     locCamera      = acyLocCamera;
     locRotation    = acyLocRotation;
     locPitch       = acyLocPitch;
+    locRoll        = acyLocRoll;
     locResolution  = acyLocResolution;
     locMaxBounces  = acyLocMaxBounces;
     locMaxSteps    = acyLocMaxSteps;
@@ -2258,6 +2278,7 @@ void Renderer::CaptureImage() {
     locCamera      = geoLocCamera;
     locRotation    = geoLocRotation;
     locPitch       = geoLocPitch;
+    locRoll        = geoLocRoll;
     locResolution  = geoLocResolution;
     locMaxBounces  = geoLocMaxBounces;
     locMaxSteps    = geoLocMaxSteps;
@@ -2269,6 +2290,7 @@ void Renderer::CaptureImage() {
     locCamera      = rtLocCamera;
     locRotation    = rtLocRotation;
     locPitch       = rtLocPitch;
+    locRoll        = rtLocRoll;
     locResolution  = rtLocResolution;
     locMaxBounces  = rtLocMaxBounces;
   }
@@ -2307,6 +2329,8 @@ void Renderer::CaptureImage() {
   glUniform3fv(locCamera, 1, cam);
   glUniform1f(locRotation, rotation);
   glUniform1f(locPitch, pitch);
+  if (locRoll >= 0)
+    glUniform1f(locRoll, roll);
   glUniform2f(locResolution, (float)w, (float)h);
   if (locMaxBounces >= 0)
     glUniform1i(locMaxBounces, rtMaxBounces);
@@ -2417,7 +2441,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   }
 
   GLuint activeProgram;
-  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locResolution, locMaxBounces;
+  GLint locObjectCount, locProj, locCamera, locRotation, locPitch, locRoll, locResolution, locMaxBounces;
   GLint locMaxSteps = -1, locBHPos = -1;
 
   if (effectiveMethod == 2) {
@@ -2427,6 +2451,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locCamera      = acyLocCamera;
     locRotation    = acyLocRotation;
     locPitch       = acyLocPitch;
+    locRoll        = acyLocRoll;
     locResolution  = acyLocResolution;
     locMaxBounces  = acyLocMaxBounces;
     locMaxSteps    = acyLocMaxSteps;
@@ -2438,6 +2463,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locCamera      = geoLocCamera;
     locRotation    = geoLocRotation;
     locPitch       = geoLocPitch;
+    locRoll        = geoLocRoll;
     locResolution  = geoLocResolution;
     locMaxBounces  = geoLocMaxBounces;
     locMaxSteps    = geoLocMaxSteps;
@@ -2449,6 +2475,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locCamera      = rtLocCamera;
     locRotation    = rtLocRotation;
     locPitch       = rtLocPitch;
+    locRoll        = rtLocRoll;
     locResolution  = rtLocResolution;
     locMaxBounces  = rtLocMaxBounces;
   }
@@ -2483,6 +2510,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   glUniform3fv(locCamera, 1, cam);
   glUniform1f(locRotation, rotation);
   glUniform1f(locPitch, pitch);
+  if (locRoll >= 0)
+    glUniform1f(locRoll, roll);
   glUniform2f(locResolution, (float)rw, (float)rh);
 
   if (effectiveMethod >= 1 && locMaxSteps >= 0)
@@ -2511,6 +2540,7 @@ void Renderer::InsertCameraKeyframe(unsigned int frame) {
       kf.pos[2] = cameraTranslate[2];
       kf.rotation = rotation;
       kf.pitch    = pitch;
+      kf.roll     = roll;
       kf.zoom     = zoom;
       return;
     }
@@ -2523,6 +2553,7 @@ void Renderer::InsertCameraKeyframe(unsigned int frame) {
   kf.pos[2]  = cameraTranslate[2];
   kf.rotation = rotation;
   kf.pitch    = pitch;
+  kf.roll     = roll;
   kf.zoom     = zoom;
   auto it = cameraKeyframes.begin();
   while (it != cameraKeyframes.end() && it->frame < frame) ++it;

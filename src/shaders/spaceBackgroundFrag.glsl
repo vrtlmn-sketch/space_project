@@ -13,6 +13,7 @@ uniform mat4 uWorld;
 uniform vec3 uCamera;
 uniform float uRotation;
 uniform float uPitch;
+uniform float uRoll;
 
 // framebuffer size (for NDC reconstruction)
 uniform vec2 uResolution;
@@ -54,6 +55,15 @@ vec3 rotateX(vec3 v, float angle)
     return vec3(v.x,
                 v.y * c - v.z * s,
                 v.y * s + v.z * c);
+}
+
+vec3 rotateZ(vec3 v, float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return vec3(v.x * c - v.y * s,
+                v.x * s + v.y * c,
+                v.z);
 }
 
 // Blackbody colour using Charity/Krystek polynomial approximation
@@ -216,7 +226,7 @@ void main()
 
     // Rotate view-space ray back to pre-rotation world space
     // Apply inverse pitch first (undo X rotation), then inverse yaw (undo Y rotation)
-    vec3 rd = rotateY(rotateX(rayView, -uPitch), -uRotation);
+    vec3 rd = rotateY(rotateX(rotateZ(rayView, -uRoll), -uPitch), -uRotation);
 
     // Pure black background — no atmosphere in space
     vec3 color = vec3(0.0);

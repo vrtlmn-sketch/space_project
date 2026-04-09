@@ -36,6 +36,7 @@ private:
   unsigned int objectCountUniform{};
   unsigned int rotationUniform{};
   unsigned int pitchUniform{};
+  unsigned int rollUniform{};
   unsigned int resolutionUniform{};
   unsigned int temperatureUniform{};
   unsigned int renderModeUniform{};
@@ -65,22 +66,22 @@ public:
 
   void translateMesh(vec3 v);
   void transformPerspectiveMesh(GLuint program, float cameraTranslate[3], float rotation,
-                                float pitch = 0.f, float fovDeg = 45.f,
+                                float pitch = 0.f, float roll = 0.f, float fovDeg = 45.f,
                                 int fbWidth = 800, int fbHeight = 600);
   void uploadStarLighting(const std::vector<vec3>& positions,
                           const std::vector<vec3>& colors);
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadResolution(int w, int h);
-  void renderMesh(float cameraTranslate[3], float rotation, float pitch = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
-  void renderLine(float cameraTranslate[3], float rotation, float pitch = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
-  void renderCloud(float cameraTranslate[3], float rotation, float pitch = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
-  void renderGrid(float cameraTranslate[3], float rotation, float pitch = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderMesh(float cameraTranslate[3], float rotation, float pitch = 0.f, float roll = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderLine(float cameraTranslate[3], float rotation, float pitch = 0.f, float roll = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderCloud(float cameraTranslate[3], float rotation, float pitch = 0.f, float roll = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderGrid(float cameraTranslate[3], float rotation, float pitch = 0.f, float roll = 0.f, float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                            float temperature = 0.0f, float objectType = 0.0f);
 
 void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
-                 float rotation, float pitch = 0.f, float fovDeg = 45.f,
+                 float rotation, float pitch = 0.f, float roll = 0.f, float fovDeg = 45.f,
                  int fbWidth = 800, int fbHeight = 600);
 void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 void UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
