@@ -11,9 +11,7 @@ uniform int uObjectCount;
 uniform mat4 uProj;
 uniform mat4 uWorld;
 uniform vec3 uCamera;
-uniform float uRotation;
-uniform float uPitch;
-uniform float uRoll;
+uniform mat3 uViewRot;
 
 // framebuffer size (for NDC reconstruction)
 uniform vec2 uResolution;
@@ -38,33 +36,6 @@ layout(std430, binding = 1) buffer Objects {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-vec3 rotateY(vec3 v, float angle)
-{
-    float c = cos(angle);
-    float s = sin(angle);
-    return vec3(v.x * c + v.z * s,
-                v.y,
-               -v.x * s + v.z * c);
-}
-
-vec3 rotateX(vec3 v, float angle)
-{
-    float c = cos(angle);
-    float s = sin(angle);
-    return vec3(v.x,
-                v.y * c - v.z * s,
-                v.y * s + v.z * c);
-}
-
-vec3 rotateZ(vec3 v, float angle)
-{
-    float c = cos(angle);
-    float s = sin(angle);
-    return vec3(v.x * c - v.y * s,
-                v.x * s + v.y * c,
-                v.z);
-}
 
 // Blackbody colour using Charity/Krystek polynomial approximation
 vec3 blackbody(float T)
@@ -226,7 +197,7 @@ void main()
 
     // Rotate view-space ray back to pre-rotation world space
     // Apply inverse pitch first (undo X rotation), then inverse yaw (undo Y rotation)
-    vec3 rd = rotateY(rotateX(rotateZ(rayView, -uRoll), -uPitch), -uRotation);
+    vec3 rd = transpose(uViewRot) * rayView;
 
     // Pure black background — no atmosphere in space
     vec3 color = vec3(0.0);

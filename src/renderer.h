@@ -97,6 +97,12 @@ private:
   bool recStopKeyPressed{false};
 
   void move(vec3&& moveVector);
+  void rotateCamera(float dyaw, float dpitch, float droll);
+  void syncEulerFromMatrix();   // extract rotation/pitch/roll from camMatrix
+
+  // Internal camera orientation matrix (row-major 3x3)
+  // Represents the view rotation: V = Rx(pitch) * Ry(yaw) * Rz(roll)
+  float camMatrix[9] = { 1,0,0, 0,1,0, 0,0,1 };
 
   // Ghost drag
   bool    ghostDragActive{false};
@@ -134,9 +140,7 @@ private:
   GLint rtLocObjectCount{-1};
   GLint rtLocProj{-1};
   GLint rtLocCamera{-1};
-  GLint rtLocRotation{-1};
-  GLint rtLocPitch{-1};
-  GLint rtLocRoll{-1};
+  GLint rtLocViewRot{-1};
   GLint rtLocResolution{-1};
   GLint rtLocMaxBounces{-1};
 
@@ -147,9 +151,7 @@ private:
   GLint geoLocObjectCount{-1};
   GLint geoLocProj{-1};
   GLint geoLocCamera{-1};
-  GLint geoLocRotation{-1};
-  GLint geoLocPitch{-1};
-  GLint geoLocRoll{-1};
+  GLint geoLocViewRot{-1};
   GLint geoLocResolution{-1};
   GLint geoLocMaxBounces{-1};
   GLint geoLocMaxSteps{-1};
@@ -162,9 +164,7 @@ private:
   GLint acyLocObjectCount{-1};
   GLint acyLocProj{-1};
   GLint acyLocCamera{-1};
-  GLint acyLocRotation{-1};
-  GLint acyLocPitch{-1};
-  GLint acyLocRoll{-1};
+  GLint acyLocViewRot{-1};
   GLint acyLocResolution{-1};
   GLint acyLocMaxBounces{-1};
   GLint acyLocMaxSteps{-1};
@@ -209,9 +209,7 @@ private:
 
   // Dirty-flag: skip raytracer dispatch when nothing changed
   float  rtLastCamera[3]{};
-  float  rtLastRotation{};
-  float  rtLastPitch{};
-  float  rtLastRoll{};
+  float  rtLastViewRot[9]{1,0,0, 0,1,0, 0,0,1};
   float  rtLastZoom{};
   int    rtLastBounces{-1};
   int    rtLastWidth{};
@@ -255,6 +253,7 @@ public:
   float pitch{};
   float roll{};
   float zoom{45.0f}; // FOV in degrees (lower = zoomed in)
+  void syncMatrixFromEuler();   // rebuild camMatrix from rotation/pitch/roll
 
   // ---- Simulation state ----
   std::vector<RayTracerObject> rayTracedObjects{};

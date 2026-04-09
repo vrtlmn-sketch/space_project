@@ -95,13 +95,13 @@ void RenderedObject::GenerateMeshGrid(const vec3& size, int subdivisions){
 
 }
 
-void RenderedObject::renderGrid(float cameraTranslate[3], float rotation, float pitch, float roll, float fovDeg, int fbWidth, int fbHeight){
+void RenderedObject::renderGrid(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(vec3), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, roll, fovDeg, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_LINE_STRIP, 0, bufferSize);
   hasBeenRendered=true;
 }
@@ -274,14 +274,14 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
   }
 }
 
-void RenderedObject::renderMesh(float cameraTranslate[3], float rotation, float pitch, float roll, float fovDeg, int fbWidth, int fbHeight)
+void RenderedObject::renderMesh(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight)
 {
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, roll, fovDeg, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
   hasBeenRendered=true;
 }
@@ -289,7 +289,7 @@ void RenderedObject::renderMesh(float cameraTranslate[3], float rotation, float 
 //Plane is also a raytracer screen
 void RenderedObject::renderPlane(float cameraTranslate[3],
                                  const std::vector<RayTracerObject>& rayTracedObjectList,
-                                 float rotation, float pitch, float roll, float fovDeg,
+                                 const float viewRot[9], float fovDeg,
                                  int fbWidth, int fbHeight)
 {
   if(!hasBeenRendered) { setupRender(); }
@@ -311,7 +311,7 @@ void RenderedObject::renderPlane(float cameraTranslate[3],
   if (objectCountUniform != (unsigned int)-1)
     glUniform1i(objectCountUniform, (int)rayTracedObjectList.size());
 
-  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, roll, fovDeg, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
   hasBeenRendered=true;
 }
@@ -336,9 +336,7 @@ void RenderedObject::setupRender()
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1, ssboObjects);
 
   cameraTranslateUniform  = glGetUniformLocation(program, "uCamera");
-  rotationUniform         = glGetUniformLocation(program, "uRotation");
-  pitchUniform            = glGetUniformLocation(program, "uPitch");
-  rollUniform             = glGetUniformLocation(program, "uRoll");
+  viewRotUniform          = glGetUniformLocation(program, "uViewRot");
   pointCountUniform       = glGetUniformLocation(program, "uPointCount");
   objectCoordinateUniform = glGetUniformLocation(program, "uPointCoordinates");
   objectCountUniform      = glGetUniformLocation(program, "uObjectCount");
@@ -467,9 +465,9 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   hasBeenRendered = false;
 }
 
-void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTranslate[3], float rotation,
-                                               float pitch, float roll, float fovDeg,
-                                               int fbWidth, int fbHeight)
+void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTranslate[3], const float viewRot[9],
+                                                float fovDeg,
+                                                int fbWidth, int fbHeight)
 {
   //we bind the uniforms
   GLuint projectionMatrixBuffer = glGetUniformLocation(program, "uProj");
@@ -500,11 +498,8 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTransl
   };
 
   glUniform3fv(objectCoordinateUniform, 1, tempCoords);
-  glUniform1f(rotationUniform, rotation);
-  if (pitchUniform != (unsigned int)-1)
-    glUniform1f(pitchUniform, pitch);
-  if (rollUniform != (unsigned int)-1)
-    glUniform1f(rollUniform, roll);
+  if (viewRotUniform != (unsigned int)-1)
+    glUniformMatrix3fv(viewRotUniform, 1, GL_TRUE, viewRot);
 
   // Upload resolution if uniform exists (raytracer plane uses this)
   if (resolutionUniform != (unsigned int)-1) {
@@ -548,25 +543,25 @@ void RenderedObject::TrimLinePoints(size_t maxPoints){
 }
 
 
-void RenderedObject::renderLine(float cameraTranslate[3], float rotation, float pitch, float roll, float fovDeg, int fbWidth, int fbHeight){
+void RenderedObject::renderLine(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, linePoints.size()*sizeof(vec3), &linePoints[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, roll, fovDeg, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_LINE_STRIP, 0, bufferSize);
   hasBeenRendered=true;
 }
 
-void RenderedObject::renderCloud(float cameraTranslate[3], float rotation, float pitch, float roll, float fovDeg, int fbWidth, int fbHeight){
+void RenderedObject::renderCloud(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   if(bufferSize == 0 || UVObjectMeshBuffer.empty()) return;
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
-  transformPerspectiveMesh(program, cameraTranslate, rotation, pitch, roll, fovDeg, fbWidth, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
   // Check render mode: if nebula, enable blending and larger point sprites
   GLint curRenderMode = 0;

@@ -309,6 +309,7 @@ int main(int argc, char** argv) {
           renderer.pitch    = before->pitch;
           renderer.roll     = before->roll;
           renderer.zoom     = before->zoom;
+          renderer.syncMatrixFromEuler();
         } else {
           // Linear interpolation
           float t = (float)(curFrame - before->frame) / (float)(after->frame - before->frame);
@@ -319,6 +320,7 @@ int main(int argc, char** argv) {
           renderer.pitch    = before->pitch    + t * (after->pitch    - before->pitch);
           renderer.roll     = before->roll     + t * (after->roll     - before->roll);
           renderer.zoom     = before->zoom     + t * (after->zoom     - before->zoom);
+          renderer.syncMatrixFromEuler();
         }
       }
     }
