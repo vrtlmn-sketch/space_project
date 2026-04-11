@@ -392,6 +392,11 @@ void Renderer::syncMatrixFromEuler() {
 // V = Rx(p) * Ry(y) * Rz(r)  →  m[5] = -sin(p), m[2] = sy*cp, m[8] = cy*cp,
 //                                 m[3] = cp*sr,   m[4] = cp*cr
 void Renderer::syncEulerFromMatrix() {
+  // Save previous angles so we can unwrap for continuity
+  float prevRotation = rotation;
+  float prevPitch    = pitch;
+  float prevRoll     = roll;
+
   // Clamp to avoid NaN from asin
   float sp = -camMatrix[5];
   if (sp >  1.0f) sp =  1.0f;
@@ -407,6 +412,20 @@ void Renderer::syncEulerFromMatrix() {
     rotation = std::atan2(-camMatrix[6], camMatrix[0]);
     roll     = 0.0f;
   }
+
+  // Unwrap angles to stay continuous with previous values.
+  // atan2 returns [-π, +π]; without this, crossing ±π causes a 2π jump
+  // that breaks keyframe interpolation for rotations beyond 360°.
+  constexpr float TWO_PI = 2.0f * (float)M_PI;
+  auto unwrap = [](float cur, float prev) {
+    float d = cur - prev;
+    if (d >  (float)M_PI) cur -= TWO_PI * std::ceil((d - (float)M_PI) / TWO_PI);
+    if (d < -(float)M_PI) cur += TWO_PI * std::ceil((-d - (float)M_PI) / TWO_PI);
+    return cur;
+  };
+  rotation = unwrap(rotation, prevRotation);
+  pitch    = unwrap(pitch,    prevPitch);
+  roll     = unwrap(roll,     prevRoll);
 }
 
 // Apply a camera-local incremental rotation.
