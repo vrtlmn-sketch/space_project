@@ -52,8 +52,9 @@ bool ProjectSerializer::Save(const std::string& path,
     {"formationFile",  cloud.formationFile},
     {"computeMethod",  cloud.computeMethod},
     {"theta",          cloud.theta},
-    {"temperature",    cloud.temperature},
-    {"renderMode",     cloud.renderMode}
+    {"temperature",         cloud.temperature},
+    {"renderMode",          cloud.renderMode},
+    {"nebulaScatterScale",  cloud.nebulaScatterScale}
   };
 
   std::ofstream f(path);
@@ -116,8 +117,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     data.cloud.formationFile = c.value("formationFile", std::string{});
     data.cloud.computeMethod = c.value("computeMethod", 0);
     data.cloud.theta         = c.value("theta",         0.5f);
-    data.cloud.temperature   = c.value("temperature",   4500.f);
-    data.cloud.renderMode    = c.value("renderMode",    0);
+    data.cloud.temperature        = c.value("temperature",        4500.f);
+    data.cloud.renderMode         = c.value("renderMode",         0);
+    data.cloud.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
   }
 
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()

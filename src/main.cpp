@@ -71,10 +71,11 @@ static void buildScene(
       );
     }
     // Apply compute method settings
-    cloud->computeMethod = static_cast<CloudComputeMethod>(data.cloud.computeMethod);
-    cloud->barnesHutTheta = data.cloud.theta;
-    cloud->temperature = data.cloud.temperature;
-    cloud->renderMode = data.cloud.renderMode;
+    cloud->computeMethod       = static_cast<CloudComputeMethod>(data.cloud.computeMethod);
+    cloud->barnesHutTheta      = data.cloud.theta;
+    cloud->temperature         = data.cloud.temperature;
+    cloud->renderMode          = data.cloud.renderMode;
+    cloud->nebulaScatterScale  = data.cloud.nebulaScatterScale;
   }
 }
 
@@ -270,8 +271,10 @@ int main(int argc, char** argv) {
     for (auto& g : grids)
       g.Update(renderer, physData);
 
-    if (cloud)
+    if (cloud) {
       cloud->Update(renderer, physData);
+      renderer.nebulaScatterScale = cloud->nebulaScatterScale;
+    }
 
     // ── Propagate RAM budget to all FrameStores ───────────────────────────
     {

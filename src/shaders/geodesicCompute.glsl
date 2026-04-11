@@ -5,7 +5,8 @@ layout(local_size_x = 16, local_size_y = 16) in;
 layout(rgba8, binding = 0) uniform writeonly image2D outputImage;
 
 // counts
-uniform int uObjectCount;
+uniform int   uObjectCount;
+uniform float uNebulaScatterScale;
 
 // camera / transform
 uniform mat4 uProj;
@@ -137,7 +138,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
-        if (otype == 2) continue;
+        if (otype == 2 || otype == 4) continue;
 
         vec3  cen = objects[i].position.xyz;
         float rad = objects[i].radius;
@@ -294,7 +295,9 @@ void main()
     vec3  hitNorm  = vec3(0.0);
 
     // Accumulated glow from the curved portion of the ray
-    vec3 curvedGlow = vec3(0.0);
+    vec3  curvedGlow          = vec3(0.0);
+    float cloudTransmittance  = 1.0;
+    vec3  nebulaScatter       = vec3(0.0);
 
     for (int step = 0; step < uMaxSteps; step++)
     {
@@ -345,7 +348,7 @@ void main()
             for (int i = 0; i < uObjectCount; i++)
             {
                 int otype = int(objects[i].objectType + 0.5);
-                if (otype == 2) continue; // skip clouds for solid hit test
+                if (otype == 2 || otype == 4) continue; // skip clouds for solid hit test
 
                 vec3  cen = objects[i].position.xyz;
                 float rad = objects[i].radius;
@@ -396,14 +399,23 @@ void main()
                     {
                         float coreS = max(objects[i].radius * 2.0, 0.001);
                         float core  = exp(-d2 / (coreS * coreS)) * 6.0;
-
                         float haloS = coreS * 4.0;
                         float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
-
                         vec3 gcol = (objects[i].temperature > 100.0)
                                      ? blackbody(objects[i].temperature)
                                      : vec3(0.55, 0.65, 1.0);
                         curvedGlow += gcol * (core + halo);
+                    }
+                    else if (otype == 4)
+                    {
+                        float coreS  = max(objects[i].radius * 2.0, 0.001);
+                        float density = exp(-d2 / (coreS * coreS));
+                        float dTau    = density * uNebulaScatterScale;
+                        vec3 gcol = (objects[i].temperature > 100.0)
+                                     ? blackbody(objects[i].temperature)
+                                     : vec3(0.55, 0.65, 1.0);
+                        nebulaScatter      += cloudTransmittance * gcol * dTau;
+                        cloudTransmittance *= exp(-dTau);
                     }
                 }
                 break;
@@ -453,14 +465,23 @@ void main()
             {
                 float coreS = max(objects[i].radius * 2.0, 0.001);
                 float core  = exp(-sd2 / (coreS * coreS)) * 6.0;
-
                 float haloS = coreS * 4.0;
                 float halo  = exp(-sd2 / (haloS * haloS)) * 0.8;
-
                 vec3 gcol = (objects[i].temperature > 100.0)
                              ? blackbody(objects[i].temperature)
                              : vec3(0.55, 0.65, 1.0);
                 curvedGlow += gcol * (core + halo);
+            }
+            else if (otype == 4)
+            {
+                float coreS   = max(objects[i].radius * 2.0, 0.001);
+                float density  = exp(-sd2 / (coreS * coreS));
+                float dTau     = density * uNebulaScatterScale;
+                vec3 gcol = (objects[i].temperature > 100.0)
+                             ? blackbody(objects[i].temperature)
+                             : vec3(0.55, 0.65, 1.0);
+                nebulaScatter      += cloudTransmittance * gcol * dTau;
+                cloudTransmittance *= exp(-dTau);
             }
         }
     }
@@ -473,7 +494,7 @@ void main()
         for (int i = 0; i < uObjectCount; i++)
         {
             int otype = int(objects[i].objectType + 0.5);
-            if (otype == 2) continue;
+            if (otype == 2 || otype == 4) continue;
 
             vec3  cen = objects[i].position.xyz;
             float rad = objects[i].radius;
@@ -520,14 +541,23 @@ void main()
             {
                 float coreS = max(objects[i].radius * 2.0, 0.001);
                 float core  = exp(-d2 / (coreS * coreS)) * 6.0;
-
                 float haloS = coreS * 4.0;
                 float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
-
                 vec3 gcol = (objects[i].temperature > 100.0)
                              ? blackbody(objects[i].temperature)
                              : vec3(0.55, 0.65, 1.0);
                 curvedGlow += gcol * (core + halo);
+            }
+            else if (otype == 4)
+            {
+                float coreS   = max(objects[i].radius * 2.0, 0.001);
+                float density  = exp(-d2 / (coreS * coreS));
+                float dTau     = density * uNebulaScatterScale;
+                vec3 gcol = (objects[i].temperature > 100.0)
+                             ? blackbody(objects[i].temperature)
+                             : vec3(0.55, 0.65, 1.0);
+                nebulaScatter      += cloudTransmittance * gcol * dTau;
+                cloudTransmittance *= exp(-dTau);
             }
         }
     }
@@ -564,6 +594,7 @@ void main()
     // Add accumulated glow (only if not captured by BH)
     if (!captured)
     {
+        color  = color * cloudTransmittance + nebulaScatter;
         color += curvedGlow;
     }
 

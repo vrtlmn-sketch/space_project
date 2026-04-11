@@ -59,6 +59,7 @@ public:
   MeshType meshType{MeshType::sphere};
   vec3 coordinates;
   float cachedTemperature{0.f};  // set by uploadTemperature(), used by renderCloudRaytraced()
+  int   cachedRenderMode{0};    // set by uploadRenderMode(), used by renderCloudRaytraced()
 
   void setupRender();
 

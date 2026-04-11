@@ -33,6 +33,7 @@ struct CloudData {
   float theta{0.5f};           // Barnes-Hut opening angle
   float temperature{4500.f};   // Kelvin — blackbody colour for particles
   int   renderMode{0};         // 0=Points, 1=Nebula
+  float nebulaScatterScale{0.4f};
 };
 
 struct ProjectData {

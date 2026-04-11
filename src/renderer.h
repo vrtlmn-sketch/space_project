@@ -63,6 +63,7 @@ struct CloudFormState {
   float theta       = 0.5f; // Barnes-Hut opening angle
   float temperature = 4500.f; // Kelvin — blackbody colour for particles
   int   renderMode  = 0; // 0=Points, 1=Nebula (soft glow)
+  float nebulaScatterScale = 0.4f;
 };
 
 // ---- Callbacks from Renderer back to main ----
@@ -143,6 +144,7 @@ private:
   GLint rtLocViewRot{-1};
   GLint rtLocResolution{-1};
   GLint rtLocMaxBounces{-1};
+  GLint rtLocNebulaScatter{-1};
 
   // ── Geodesic compute shader raytracer ──
   GLuint geodesicComputeProgram{0};
@@ -157,6 +159,7 @@ private:
   GLint geoLocMaxSteps{-1};
   GLint geoLocBHPos{-1};
   GLint geoLocBHRS{-1};
+  GLint geoLocNebulaScatter{-1};
 
   // ── Acyclic geodesic compute shader raytracer ──
   GLuint acyclicComputeProgram{0};
@@ -171,6 +174,7 @@ private:
   GLint acyLocMaxSteps{-1};
   GLint acyLocBHPos{-1};
   GLint acyLocBHRS{-1};
+  GLint acyLocNebulaScatter{-1};
 
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
@@ -264,6 +268,7 @@ public:
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
+  float nebulaScatterScale{0.4f};     // Beer-Lambert dTau scale sent to all raytracers
   bool paused{true};
   bool playingForward{true};
 

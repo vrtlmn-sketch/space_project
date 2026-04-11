@@ -263,14 +263,15 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
   for(int i = 0; i < particleCount; i++)
   {
     int fi = i * 3;
-    // radius 0.008: small dots matching rasterizer appearance
+    float pRadius   = (cachedRenderMode == 1) ? 0.08f  : 0.001f;
+    float pObjType  = (cachedRenderMode == 1) ? 4.0f   : 2.0f;
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
         UVObjectMeshBuffer[fi  ] + coordinates.x,
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      0.001f, 0.001f, cachedTemperature, 2.0f}); // objectType=2 cloud particle
+      0.001f, pRadius, cachedTemperature, pObjType});
   }
 }
 
@@ -386,6 +387,7 @@ void RenderedObject::uploadTemperature(float kelvin)
 
 void RenderedObject::uploadRenderMode(int mode)
 {
+  cachedRenderMode = mode;
   glUseProgram(program);
   if (renderModeUniform != (unsigned int)-1)
     glUniform1i(renderModeUniform, mode);

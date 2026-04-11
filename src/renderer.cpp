@@ -1612,6 +1612,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
       cloud->renderMode = cloudForm.renderMode;
     }
 
+    if (cloudForm.renderMode == 1) {
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::SliderFloat("Density##ci_nebula", &cloudForm.nebulaScatterScale, 0.01f, 2.0f, "%.2f")) {
+        cloud->nebulaScatterScale = cloudForm.nebulaScatterScale;
+      }
+    }
+
     // Temperature slider with colour preview
     ImGui::SetNextItemWidth(-30);
     if (ImGui::SliderFloat("##ci_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K")) {
@@ -1904,12 +1911,13 @@ void Renderer::InitComputeShader() {
 
   // Cache uniform locations
   if (rtComputeProgram) {
-    rtLocObjectCount = glGetUniformLocation(rtComputeProgram, "uObjectCount");
-    rtLocProj        = glGetUniformLocation(rtComputeProgram, "uProj");
-    rtLocCamera      = glGetUniformLocation(rtComputeProgram, "uCamera");
-    rtLocViewRot     = glGetUniformLocation(rtComputeProgram, "uViewRot");
-    rtLocResolution  = glGetUniformLocation(rtComputeProgram, "uResolution");
-    rtLocMaxBounces  = glGetUniformLocation(rtComputeProgram, "uMaxBounces");
+    rtLocObjectCount   = glGetUniformLocation(rtComputeProgram, "uObjectCount");
+    rtLocProj          = glGetUniformLocation(rtComputeProgram, "uProj");
+    rtLocCamera        = glGetUniformLocation(rtComputeProgram, "uCamera");
+    rtLocViewRot       = glGetUniformLocation(rtComputeProgram, "uViewRot");
+    rtLocResolution    = glGetUniformLocation(rtComputeProgram, "uResolution");
+    rtLocMaxBounces    = glGetUniformLocation(rtComputeProgram, "uMaxBounces");
+    rtLocNebulaScatter = glGetUniformLocation(rtComputeProgram, "uNebulaScatterScale");
   }
 
   // ── 1b. Compile geodesic compute shader ──
@@ -1931,15 +1939,16 @@ void Renderer::InitComputeShader() {
 
     // Cache geodesic uniform locations
     if (geodesicComputeProgram) {
-      geoLocObjectCount = glGetUniformLocation(geodesicComputeProgram, "uObjectCount");
-      geoLocProj        = glGetUniformLocation(geodesicComputeProgram, "uProj");
-      geoLocCamera      = glGetUniformLocation(geodesicComputeProgram, "uCamera");
-      geoLocViewRot     = glGetUniformLocation(geodesicComputeProgram, "uViewRot");
-      geoLocResolution  = glGetUniformLocation(geodesicComputeProgram, "uResolution");
-      geoLocMaxBounces  = glGetUniformLocation(geodesicComputeProgram, "uMaxBounces");
-      geoLocMaxSteps    = glGetUniformLocation(geodesicComputeProgram, "uMaxSteps");
-      geoLocBHPos       = glGetUniformLocation(geodesicComputeProgram, "uBHPos");
-      geoLocBHRS        = glGetUniformLocation(geodesicComputeProgram, "uBH_RS");
+      geoLocObjectCount   = glGetUniformLocation(geodesicComputeProgram, "uObjectCount");
+      geoLocProj          = glGetUniformLocation(geodesicComputeProgram, "uProj");
+      geoLocCamera        = glGetUniformLocation(geodesicComputeProgram, "uCamera");
+      geoLocViewRot       = glGetUniformLocation(geodesicComputeProgram, "uViewRot");
+      geoLocResolution    = glGetUniformLocation(geodesicComputeProgram, "uResolution");
+      geoLocMaxBounces    = glGetUniformLocation(geodesicComputeProgram, "uMaxBounces");
+      geoLocMaxSteps      = glGetUniformLocation(geodesicComputeProgram, "uMaxSteps");
+      geoLocBHPos         = glGetUniformLocation(geodesicComputeProgram, "uBHPos");
+      geoLocBHRS          = glGetUniformLocation(geodesicComputeProgram, "uBH_RS");
+      geoLocNebulaScatter = glGetUniformLocation(geodesicComputeProgram, "uNebulaScatterScale");
     }
   }
 
@@ -1962,15 +1971,16 @@ void Renderer::InitComputeShader() {
 
     // Cache acyclic uniform locations
     if (acyclicComputeProgram) {
-      acyLocObjectCount = glGetUniformLocation(acyclicComputeProgram, "uObjectCount");
-      acyLocProj        = glGetUniformLocation(acyclicComputeProgram, "uProj");
-      acyLocCamera      = glGetUniformLocation(acyclicComputeProgram, "uCamera");
-      acyLocViewRot     = glGetUniformLocation(acyclicComputeProgram, "uViewRot");
-      acyLocResolution  = glGetUniformLocation(acyclicComputeProgram, "uResolution");
-      acyLocMaxBounces  = glGetUniformLocation(acyclicComputeProgram, "uMaxBounces");
-      acyLocMaxSteps    = glGetUniformLocation(acyclicComputeProgram, "uMaxSteps");
-      acyLocBHPos       = glGetUniformLocation(acyclicComputeProgram, "uBHPos");
-      acyLocBHRS        = glGetUniformLocation(acyclicComputeProgram, "uBH_RS");
+      acyLocObjectCount   = glGetUniformLocation(acyclicComputeProgram, "uObjectCount");
+      acyLocProj          = glGetUniformLocation(acyclicComputeProgram, "uProj");
+      acyLocCamera        = glGetUniformLocation(acyclicComputeProgram, "uCamera");
+      acyLocViewRot       = glGetUniformLocation(acyclicComputeProgram, "uViewRot");
+      acyLocResolution    = glGetUniformLocation(acyclicComputeProgram, "uResolution");
+      acyLocMaxBounces    = glGetUniformLocation(acyclicComputeProgram, "uMaxBounces");
+      acyLocMaxSteps      = glGetUniformLocation(acyclicComputeProgram, "uMaxSteps");
+      acyLocBHPos         = glGetUniformLocation(acyclicComputeProgram, "uBHPos");
+      acyLocBHRS          = glGetUniformLocation(acyclicComputeProgram, "uBH_RS");
+      acyLocNebulaScatter = glGetUniformLocation(acyclicComputeProgram, "uNebulaScatterScale");
     }
   }
 
@@ -2084,47 +2094,51 @@ void Renderer::DispatchRaytracer(int width, int height) {
   // Select program and uniform locations based on effective method
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1, locNebulaScatter = -1;
 
   if (effectiveMethod == 2) {
-    activeProgram  = acyclicComputeProgram;
-    locObjectCount = acyLocObjectCount;
-    locProj        = acyLocProj;
-    locCamera      = acyLocCamera;
-    locViewRot     = acyLocViewRot;
-    locResolution  = acyLocResolution;
-    locMaxBounces  = acyLocMaxBounces;
-    locMaxSteps    = acyLocMaxSteps;
-    locBHPos       = acyLocBHPos;
-    locBHRS        = acyLocBHRS;
+    activeProgram    = acyclicComputeProgram;
+    locObjectCount   = acyLocObjectCount;
+    locProj          = acyLocProj;
+    locCamera        = acyLocCamera;
+    locViewRot       = acyLocViewRot;
+    locResolution    = acyLocResolution;
+    locMaxBounces    = acyLocMaxBounces;
+    locMaxSteps      = acyLocMaxSteps;
+    locBHPos         = acyLocBHPos;
+    locBHRS          = acyLocBHRS;
+    locNebulaScatter = acyLocNebulaScatter;
   } else if (effectiveMethod == 1) {
-    activeProgram  = geodesicComputeProgram;
-    locObjectCount = geoLocObjectCount;
-    locProj        = geoLocProj;
-    locCamera      = geoLocCamera;
-    locViewRot     = geoLocViewRot;
-    locResolution  = geoLocResolution;
-    locMaxBounces  = geoLocMaxBounces;
-    locMaxSteps    = geoLocMaxSteps;
-    locBHPos       = geoLocBHPos;
-    locBHRS        = geoLocBHRS;
+    activeProgram    = geodesicComputeProgram;
+    locObjectCount   = geoLocObjectCount;
+    locProj          = geoLocProj;
+    locCamera        = geoLocCamera;
+    locViewRot       = geoLocViewRot;
+    locResolution    = geoLocResolution;
+    locMaxBounces    = geoLocMaxBounces;
+    locMaxSteps      = geoLocMaxSteps;
+    locBHPos         = geoLocBHPos;
+    locBHRS          = geoLocBHRS;
+    locNebulaScatter = geoLocNebulaScatter;
   } else {
-    activeProgram  = rtComputeProgram;
-    locObjectCount = rtLocObjectCount;
-    locProj        = rtLocProj;
-    locCamera      = rtLocCamera;
-    locViewRot     = rtLocViewRot;
-    locResolution  = rtLocResolution;
-    locMaxBounces  = rtLocMaxBounces;
+    activeProgram    = rtComputeProgram;
+    locObjectCount   = rtLocObjectCount;
+    locProj          = rtLocProj;
+    locCamera        = rtLocCamera;
+    locViewRot       = rtLocViewRot;
+    locResolution    = rtLocResolution;
+    locMaxBounces    = rtLocMaxBounces;
+    locNebulaScatter = rtLocNebulaScatter;
   }
 
   if (!activeProgram) return;
 
   // ── Dirty check: skip dispatch if nothing changed since last frame ──
   // Always dispatch when recording (need every frame captured).
-  static int lastMethod = -1;
-  static int lastSteps  = -1;
-  static float lastBHRS = -1.0f;
+  static int lastMethod          = -1;
+  static int lastSteps           = -1;
+  static float lastBHRS          = -1.0f;
+  static float lastNebulaScatter = -1.0f;
   bool dirty = rtDirty || recording;
   if (!dirty) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
@@ -2138,6 +2152,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
              raytracerMethod != lastMethod ||
              rtMaxSteps != lastSteps ||
              bhSchwarzschildRadius != lastBHRS ||
+             nebulaScatterScale != lastNebulaScatter ||
              rayTracedObjects.size() != rtLastObjectCount);
   }
   if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
@@ -2203,6 +2218,9 @@ void Renderer::DispatchRaytracer(int width, int height) {
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
 
+  if (locNebulaScatter >= 0)
+    glUniform1f(locNebulaScatter, nebulaScatterScale);
+
   // Dispatch
   GLuint gx = (width  + 15) / 16;
   GLuint gy = (height + 15) / 16;
@@ -2222,7 +2240,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
   rtLastHeight    = height;
   lastMethod      = raytracerMethod;
   lastSteps       = rtMaxSteps;
-  lastBHRS        = bhSchwarzschildRadius;
+  lastBHRS          = bhSchwarzschildRadius;
+  lastNebulaScatter = nebulaScatterScale;
   rtLastObjectCount = rayTracedObjects.size();
   rtLastObjects     = rayTracedObjects;   // deep copy for memcmp
   rtDirty           = false;
@@ -2359,38 +2378,41 @@ void Renderer::CaptureImage() {
 
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1, locNebulaScatter = -1;
 
   if (effectiveMethod == 2) {
-    activeProgram  = acyclicComputeProgram;
-    locObjectCount = acyLocObjectCount;
-    locProj        = acyLocProj;
-    locCamera      = acyLocCamera;
-    locViewRot     = acyLocViewRot;
-    locResolution  = acyLocResolution;
-    locMaxBounces  = acyLocMaxBounces;
-    locMaxSteps    = acyLocMaxSteps;
-    locBHPos       = acyLocBHPos;
-    locBHRS        = acyLocBHRS;
+    activeProgram    = acyclicComputeProgram;
+    locObjectCount   = acyLocObjectCount;
+    locProj          = acyLocProj;
+    locCamera        = acyLocCamera;
+    locViewRot       = acyLocViewRot;
+    locResolution    = acyLocResolution;
+    locMaxBounces    = acyLocMaxBounces;
+    locMaxSteps      = acyLocMaxSteps;
+    locBHPos         = acyLocBHPos;
+    locBHRS          = acyLocBHRS;
+    locNebulaScatter = acyLocNebulaScatter;
   } else if (effectiveMethod == 1) {
-    activeProgram  = geodesicComputeProgram;
-    locObjectCount = geoLocObjectCount;
-    locProj        = geoLocProj;
-    locCamera      = geoLocCamera;
-    locViewRot     = geoLocViewRot;
-    locResolution  = geoLocResolution;
-    locMaxBounces  = geoLocMaxBounces;
-    locMaxSteps    = geoLocMaxSteps;
-    locBHPos       = geoLocBHPos;
-    locBHRS        = geoLocBHRS;
+    activeProgram    = geodesicComputeProgram;
+    locObjectCount   = geoLocObjectCount;
+    locProj          = geoLocProj;
+    locCamera        = geoLocCamera;
+    locViewRot       = geoLocViewRot;
+    locResolution    = geoLocResolution;
+    locMaxBounces    = geoLocMaxBounces;
+    locMaxSteps      = geoLocMaxSteps;
+    locBHPos         = geoLocBHPos;
+    locBHRS          = geoLocBHRS;
+    locNebulaScatter = geoLocNebulaScatter;
   } else {
-    activeProgram  = rtComputeProgram;
-    locObjectCount = rtLocObjectCount;
-    locProj        = rtLocProj;
-    locCamera      = rtLocCamera;
-    locViewRot     = rtLocViewRot;
-    locResolution  = rtLocResolution;
-    locMaxBounces  = rtLocMaxBounces;
+    activeProgram    = rtComputeProgram;
+    locObjectCount   = rtLocObjectCount;
+    locProj          = rtLocProj;
+    locCamera        = rtLocCamera;
+    locViewRot       = rtLocViewRot;
+    locResolution    = rtLocResolution;
+    locMaxBounces    = rtLocMaxBounces;
+    locNebulaScatter = rtLocNebulaScatter;
   }
   if (!activeProgram) return;
 
@@ -2437,6 +2459,9 @@ void Renderer::CaptureImage() {
     glUniform3fv(locBHPos, 1, bhPos);
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
+
+  if (locNebulaScatter >= 0)
+    glUniform1f(locNebulaScatter, nebulaScatterScale);
 
   GLuint gx = (w + 15) / 16;
   GLuint gy = (h + 15) / 16;
@@ -2540,38 +2565,41 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
 
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1, locNebulaScatter = -1;
 
   if (effectiveMethod == 2) {
-    activeProgram  = acyclicComputeProgram;
-    locObjectCount = acyLocObjectCount;
-    locProj        = acyLocProj;
-    locCamera      = acyLocCamera;
-    locViewRot     = acyLocViewRot;
-    locResolution  = acyLocResolution;
-    locMaxBounces  = acyLocMaxBounces;
-    locMaxSteps    = acyLocMaxSteps;
-    locBHPos       = acyLocBHPos;
-    locBHRS        = acyLocBHRS;
+    activeProgram    = acyclicComputeProgram;
+    locObjectCount   = acyLocObjectCount;
+    locProj          = acyLocProj;
+    locCamera        = acyLocCamera;
+    locViewRot       = acyLocViewRot;
+    locResolution    = acyLocResolution;
+    locMaxBounces    = acyLocMaxBounces;
+    locMaxSteps      = acyLocMaxSteps;
+    locBHPos         = acyLocBHPos;
+    locBHRS          = acyLocBHRS;
+    locNebulaScatter = acyLocNebulaScatter;
   } else if (effectiveMethod == 1) {
-    activeProgram  = geodesicComputeProgram;
-    locObjectCount = geoLocObjectCount;
-    locProj        = geoLocProj;
-    locCamera      = geoLocCamera;
-    locViewRot     = geoLocViewRot;
-    locResolution  = geoLocResolution;
-    locMaxBounces  = geoLocMaxBounces;
-    locMaxSteps    = geoLocMaxSteps;
-    locBHPos       = geoLocBHPos;
-    locBHRS        = geoLocBHRS;
+    activeProgram    = geodesicComputeProgram;
+    locObjectCount   = geoLocObjectCount;
+    locProj          = geoLocProj;
+    locCamera        = geoLocCamera;
+    locViewRot       = geoLocViewRot;
+    locResolution    = geoLocResolution;
+    locMaxBounces    = geoLocMaxBounces;
+    locMaxSteps      = geoLocMaxSteps;
+    locBHPos         = geoLocBHPos;
+    locBHRS          = geoLocBHRS;
+    locNebulaScatter = geoLocNebulaScatter;
   } else {
     activeProgram  = rtComputeProgram;
-    locObjectCount = rtLocObjectCount;
-    locProj        = rtLocProj;
-    locCamera      = rtLocCamera;
-    locViewRot     = rtLocViewRot;
-    locResolution  = rtLocResolution;
-    locMaxBounces  = rtLocMaxBounces;
+    locObjectCount   = rtLocObjectCount;
+    locProj          = rtLocProj;
+    locCamera        = rtLocCamera;
+    locViewRot       = rtLocViewRot;
+    locResolution    = rtLocResolution;
+    locMaxBounces    = rtLocMaxBounces;
+    locNebulaScatter = rtLocNebulaScatter;
   }
   if (!activeProgram) return;
 
@@ -2612,6 +2640,9 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     glUniform3fv(locBHPos, 1, bhPos);
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
+
+  if (locNebulaScatter >= 0)
+    glUniform1f(locNebulaScatter, nebulaScatterScale);
 
   GLuint gx = (rw + 15) / 16;
   GLuint gy = (rh + 15) / 16;

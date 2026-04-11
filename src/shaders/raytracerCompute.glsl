@@ -5,7 +5,8 @@ layout(local_size_x = 16, local_size_y = 16) in;
 layout(rgba8, binding = 0) uniform writeonly image2D outputImage;
 
 // counts
-uniform int uObjectCount;
+uniform int   uObjectCount;
+uniform float uNebulaScatterScale;
 
 // camera / transform
 uniform mat4 uProj;
@@ -189,7 +190,7 @@ void main()
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
-        if (otype == 2) continue; // skip clouds — they're volumetric
+        if (otype == 2 || otype == 4) continue; // skip clouds — they're volumetric
 
         vec3  cen = objects[i].position.xyz;
         float rad = objects[i].radius;
@@ -272,34 +273,44 @@ void main()
     }
 
     // -----------------------------------------------------------------------
-    // Volumetric cloud glow — only for clouds in front of nearest solid hit
+    // Cloud — points mode (additive glow) and nebula mode (Beer-Lambert)
     // -----------------------------------------------------------------------
-    vec3 cloudGlow = vec3(0.0);
+    vec3  cloudGlow          = vec3(0.0);
+    float cloudTransmittance = 1.0;
+    vec3  nebulaScatter      = vec3(0.0);
+
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
-        if (otype != 2) continue;
+        if (otype != 2 && otype != 4) continue;
 
-        vec3  cen   = objects[i].position.xyz;
-
-        // Distance of cloud along the ray (for occlusion check)
+        vec3  cen    = objects[i].position.xyz;
         float tCloud = dot(cen - ro, rd);
         if (hitIdx >= 0 && tCloud > tMin) continue;
 
         float d2    = closestApproachDist2(ro, rd, cen);
-
-        float coreS  = max(objects[i].radius * 2.0, 0.001);
-        float core   = exp(-d2 / (coreS * coreS)) * 6.0;
-
-        float haloS  = coreS * 4.0;
-        float halo   = exp(-d2 / (haloS * haloS)) * 0.8;
-
+        float coreS = max(objects[i].radius * 2.0, 0.001);
         vec3  gcol  = (objects[i].temperature > 100.0)
                        ? blackbody(objects[i].temperature)
                        : vec3(0.55, 0.65, 1.0);
-        cloudGlow += gcol * (core + halo);
+
+        if (otype == 2)
+        {
+            float core  = exp(-d2 / (coreS * coreS)) * 6.0;
+            float haloS = coreS * 4.0;
+            float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
+            cloudGlow  += gcol * (core + halo);
+        }
+        else // otype == 4: nebula — Beer-Lambert transmittance
+        {
+            float density = exp(-d2 / (coreS * coreS));
+            float dTau    = density * uNebulaScatterScale;
+            nebulaScatter      += cloudTransmittance * gcol * dTau;
+            cloudTransmittance *= exp(-dTau);
+        }
     }
-    color += cloudGlow;
+    color  += cloudGlow;
+    color   = color * cloudTransmittance + nebulaScatter;
 
     // Clamp to [0,1] for rgba8 output
     color = clamp(color, 0.0, 1.0);
