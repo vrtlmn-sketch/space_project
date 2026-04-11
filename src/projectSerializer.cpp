@@ -30,6 +30,7 @@ bool ProjectSerializer::Save(const std::string& path,
     o["velocity"]    = vec3ToJson(obj.data.velocity);
     o["shaderType"]  = static_cast<int>(obj.shaderType);
     o["temperature"] = obj.temperature;
+    o["schwarzschildRadius"] = obj.schwarzschildRadius;
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -91,6 +92,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.velocity    = jsonToVec3(o["velocity"]);
       pod.shaderType  = o.value("shaderType",   0);
       pod.temperature = o.value("temperature",  0.0f);
+      pod.schwarzschildRadius = o.value("schwarzschildRadius", 2.0f * 0.0001f * pod.mass);
       data.objects.push_back(pod);
     }
   }
@@ -130,12 +132,12 @@ ProjectData ProjectSerializer::MilkyWayTemplate()
   ProjectData data;
 
   data.objects = {
-    //  name               mass    position (x,y,z)              velocity (x,y,z)             shader  temp(K)
-    { "Sagittarius A*", 250.f,  { 0.0f,   0.0f,  -3.0f  },   { 0.0f,   0.01f,  0.0f   },  2,     0.f },
-    { "Sol",             15.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  1,  5778.f },
-    { "Mars",           10.f,   {-0.7f,   0.0f,  -3.7f  },   {-0.18f,  0.002f,-0.10f  },  0,     0.f },
-    { "Planet4",         2.f,   { 0.7f,   0.0f,  -3.7f  },   {-0.13f,  0.004f, 0.0f   },  0,     0.f },
-    { "Planet5",        10.f,   {-0.6f,  -0.6f,  -3.1f  },   { 0.18f,  0.022f,-0.10f  },  0,     0.f },
+    //  name               mass    position (x,y,z)              velocity (x,y,z)             shader  temp(K)  rs
+    { "Sagittarius A*", 250.f,  { 0.0f,   0.0f,  -3.0f  },   { 0.0f,   0.01f,  0.0f   },  2,     0.f,   0.05f },
+    { "Sol",             15.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  1,  5778.f,  0.003f },
+    { "Mars",           10.f,   {-0.7f,   0.0f,  -3.7f  },   {-0.18f,  0.002f,-0.10f  },  0,     0.f,  0.002f },
+    { "Planet4",         2.f,   { 0.7f,   0.0f,  -3.7f  },   {-0.13f,  0.004f, 0.0f   },  0,     0.f,  0.0004f },
+    { "Planet5",        10.f,   {-0.6f,  -0.6f,  -3.1f  },   { 0.18f,  0.022f,-0.10f  },  0,     0.f,  0.002f },
   };
 
   // 4 grids, spacing=2, size 10x10x10, 30 subdivisions

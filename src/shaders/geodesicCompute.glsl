@@ -36,9 +36,9 @@ layout(std430, binding = 1) buffer Objects {
 // Black hole parameters — position is now a uniform set from C++
 // ---------------------------------------------------------------------------
 uniform vec3  uBHPos;                          // world-space black hole position
-const float BH_RS  = 0.05;                    // Schwarzschild radius — small enough that
-                                               // the star (r~0.07) is outside the event horizon
-const float BH_PHOTON_SPHERE = 1.5 * BH_RS;   // r = 1.5 * r_s
+uniform float uBH_RS;                         // Schwarzschild radius (set from C++)
+#define BH_RS           uBH_RS
+#define BH_PHOTON_SPHERE (1.5 * uBH_RS)
 const float BH_ESCAPE_ACCEL = 1e-5;           // acceleration threshold for escape
 
 // ---------------------------------------------------------------------------

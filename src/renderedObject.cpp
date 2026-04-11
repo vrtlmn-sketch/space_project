@@ -250,11 +250,11 @@ void RenderedObject::GenerateMeshSphere(float radius,
 }
 
 void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
-                                          float temperature, float objectType)
+                                          float mass, float temperature, float objectType)
 {
   raytracerObjectList.push_back(RayTracerObject{
     vec4{coordinates.x, coordinates.y, coordinates.z, 0},
-    radius, radius, temperature, objectType});
+    mass, radius, temperature, objectType});
 }
 void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {

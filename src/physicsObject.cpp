@@ -19,6 +19,8 @@ PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position, float m
   this->name=objName;
   this->shaderType=sType;
   this->temperature=temp;
+  // Default Schwarzschild radius: rs = 2*G*mass (G = 0.0001)
+  this->schwarzschildRadius = 2.0f * 0.0001f * mass;
   renderedObject.GenerateMeshSphere(.014f*std::pow(data.mass, 0.3f), 32, 32);
   if(sType == ObjectShaderType::Star)
   {
@@ -101,5 +103,5 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
   float objectType = 0.0f; // default: planet
   if (shaderType == ObjectShaderType::Star)      objectType = 1.0f;
   else if (shaderType == ObjectShaderType::BlackHole) objectType = 3.0f;
-  renderer.DrawPhysicsObject(renderedObject, temperature, objectType);
+  renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType);
 }

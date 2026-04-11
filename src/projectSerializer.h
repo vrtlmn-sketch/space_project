@@ -14,6 +14,7 @@ struct PhysicsObjectData {
   vec3  velocity{};
   int   shaderType{}; // 0=Planet, 1=Star, 2=BlackHole
   float temperature{0.0f}; // Kelvin
+  float schwarzschildRadius{0.0f}; // 0 = compute from mass (2*G*m)
 };
 
 struct GridData {

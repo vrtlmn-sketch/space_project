@@ -23,6 +23,7 @@ public:
   PhysicsObjectStructure data;
 
   float temperature{0.0f}; // Kelvin — 0 for planets; e.g. 5778 for Sun
+  float schwarzschildRadius{0.05f}; // event horizon radius (editable, default = 2*G*250)
 
   void SetVelocity(const vec3& velocity);
   void Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);

@@ -156,6 +156,7 @@ private:
   GLint geoLocMaxBounces{-1};
   GLint geoLocMaxSteps{-1};
   GLint geoLocBHPos{-1};
+  GLint geoLocBHRS{-1};
 
   // ── Acyclic geodesic compute shader raytracer ──
   GLuint acyclicComputeProgram{0};
@@ -169,6 +170,7 @@ private:
   GLint acyLocMaxBounces{-1};
   GLint acyLocMaxSteps{-1};
   GLint acyLocBHPos{-1};
+  GLint acyLocBHRS{-1};
 
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
@@ -261,6 +263,7 @@ public:
   bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
+  float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   bool paused{true};
   bool playingForward{true};
 
@@ -302,8 +305,8 @@ public:
   bool InitWindow(const char* wName, int wheight, int wwidth);
   bool BeginFrame();
   void Draw(RenderedObject& ro);
-  // Draw a physics object with temperature+objectType forwarded to the raytracer SSBO
-  void DrawPhysicsObject(RenderedObject& ro, float temperature, float objectType);
+  // Draw a physics object with mass+temperature+objectType forwarded to the raytracer SSBO
+  void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType);
   // Upload star light positions+colours to all planet (non-star) rendered objects
   void UploadStarLights(std::vector<RenderedObject*>& planetShaders,
                         const std::vector<vec3>& positions,

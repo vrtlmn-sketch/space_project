@@ -232,7 +232,7 @@ void Renderer::Draw(RenderedObject& ro) {
   }
 }
 
-void Renderer::DrawPhysicsObject(RenderedObject& ro, float temperature, float objectType) {
+void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -240,7 +240,7 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float temperature, float ob
   }
   if (rayTracerView) {
     if (ro.meshType == MeshType::sphere)
-      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, temperature, objectType);
+      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType);
     // Plane: no-op — compute shader dispatch from main
   }
 }
@@ -1447,6 +1447,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
       if (obj.shaderType == ObjectShaderType::Star)
         obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
                                          "src/shaders/brightStartFragShader.glsl");
+      else if (obj.shaderType == ObjectShaderType::BlackHole)
+        obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
+                                         "src/shaders/blackHoleFrag.glsl");
       else
         obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
                                          "src/shaders/defaultFrag.glsl");
@@ -1480,13 +1483,20 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
     ImGui::Spacing();
     ImGui::SeparatorText("Appearance");
 
-    // Temperature
-    ImGui::SetNextItemWidth(-30);
-    ImGui::SliderFloat("##itemp", &obj.temperature, 0.f, 50000.f, "%.0f K");
-    float r, g, b;
-    BlackbodyColor(obj.temperature, r, g, b);
-    ImGui::SameLine();
-    ImGui::ColorButton("##ibb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+    if (obj.shaderType == ObjectShaderType::BlackHole) {
+      // Schwarzschild radius (editable override)
+      ImGui::SetNextItemWidth(-1);
+      ImGui::DragFloat("Rs##irs", &obj.schwarzschildRadius, 0.001f, 0.001f, 10.0f, "%.4f");
+      ImGui::TextDisabled("Photon sphere: %.4f", 1.5f * obj.schwarzschildRadius);
+    } else {
+      // Temperature
+      ImGui::SetNextItemWidth(-30);
+      ImGui::SliderFloat("##itemp", &obj.temperature, 0.f, 50000.f, "%.0f K");
+      float r, g, b;
+      BlackbodyColor(obj.temperature, r, g, b);
+      ImGui::SameLine();
+      ImGui::ColorButton("##ibb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+    }
 
     ImGui::Spacing();
     ImGui::TextDisabled("Frame: %u / %u", obj.getTimeframe(), obj.getBufferSize());
@@ -1910,6 +1920,7 @@ void Renderer::InitComputeShader() {
       geoLocMaxBounces  = glGetUniformLocation(geodesicComputeProgram, "uMaxBounces");
       geoLocMaxSteps    = glGetUniformLocation(geodesicComputeProgram, "uMaxSteps");
       geoLocBHPos       = glGetUniformLocation(geodesicComputeProgram, "uBHPos");
+      geoLocBHRS        = glGetUniformLocation(geodesicComputeProgram, "uBH_RS");
     }
   }
 
@@ -1940,6 +1951,7 @@ void Renderer::InitComputeShader() {
       acyLocMaxBounces  = glGetUniformLocation(acyclicComputeProgram, "uMaxBounces");
       acyLocMaxSteps    = glGetUniformLocation(acyclicComputeProgram, "uMaxSteps");
       acyLocBHPos       = glGetUniformLocation(acyclicComputeProgram, "uBHPos");
+      acyLocBHRS        = glGetUniformLocation(acyclicComputeProgram, "uBH_RS");
     }
   }
 
@@ -2053,7 +2065,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   // Select program and uniform locations based on effective method
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
   if (effectiveMethod == 2) {
     activeProgram  = acyclicComputeProgram;
@@ -2065,6 +2077,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locMaxBounces  = acyLocMaxBounces;
     locMaxSteps    = acyLocMaxSteps;
     locBHPos       = acyLocBHPos;
+    locBHRS        = acyLocBHRS;
   } else if (effectiveMethod == 1) {
     activeProgram  = geodesicComputeProgram;
     locObjectCount = geoLocObjectCount;
@@ -2075,6 +2088,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locMaxBounces  = geoLocMaxBounces;
     locMaxSteps    = geoLocMaxSteps;
     locBHPos       = geoLocBHPos;
+    locBHRS        = geoLocBHRS;
   } else {
     activeProgram  = rtComputeProgram;
     locObjectCount = rtLocObjectCount;
@@ -2091,6 +2105,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   // Always dispatch when recording (need every frame captured).
   static int lastMethod = -1;
   static int lastSteps  = -1;
+  static float lastBHRS = -1.0f;
   bool dirty = rtDirty || recording;
   if (!dirty) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
@@ -2103,6 +2118,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
              height != rtLastHeight ||
              raytracerMethod != lastMethod ||
              rtMaxSteps != lastSteps ||
+             bhSchwarzschildRadius != lastBHRS ||
              rayTracedObjects.size() != rtLastObjectCount);
   }
   if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
@@ -2164,6 +2180,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
   if (effectiveMethod >= 1 && locBHPos >= 0)
     glUniform3fv(locBHPos, 1, bhPos);
 
+  // Geodesic/Acyclic-only uniform: black hole Schwarzschild radius
+  if (effectiveMethod >= 1 && locBHRS >= 0)
+    glUniform1f(locBHRS, bhSchwarzschildRadius);
+
   // Dispatch
   GLuint gx = (width  + 15) / 16;
   GLuint gy = (height + 15) / 16;
@@ -2183,6 +2203,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   rtLastHeight    = height;
   lastMethod      = raytracerMethod;
   lastSteps       = rtMaxSteps;
+  lastBHRS        = bhSchwarzschildRadius;
   rtLastObjectCount = rayTracedObjects.size();
   rtLastObjects     = rayTracedObjects;   // deep copy for memcmp
   rtDirty           = false;
@@ -2319,7 +2340,7 @@ void Renderer::CaptureImage() {
 
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
   if (effectiveMethod == 2) {
     activeProgram  = acyclicComputeProgram;
@@ -2331,6 +2352,7 @@ void Renderer::CaptureImage() {
     locMaxBounces  = acyLocMaxBounces;
     locMaxSteps    = acyLocMaxSteps;
     locBHPos       = acyLocBHPos;
+    locBHRS        = acyLocBHRS;
   } else if (effectiveMethod == 1) {
     activeProgram  = geodesicComputeProgram;
     locObjectCount = geoLocObjectCount;
@@ -2341,6 +2363,7 @@ void Renderer::CaptureImage() {
     locMaxBounces  = geoLocMaxBounces;
     locMaxSteps    = geoLocMaxSteps;
     locBHPos       = geoLocBHPos;
+    locBHRS        = geoLocBHRS;
   } else {
     activeProgram  = rtComputeProgram;
     locObjectCount = rtLocObjectCount;
@@ -2393,6 +2416,8 @@ void Renderer::CaptureImage() {
     glUniform1i(locMaxSteps, rtMaxSteps);
   if (effectiveMethod >= 1 && locBHPos >= 0)
     glUniform3fv(locBHPos, 1, bhPos);
+  if (effectiveMethod >= 1 && locBHRS >= 0)
+    glUniform1f(locBHRS, bhSchwarzschildRadius);
 
   GLuint gx = (w + 15) / 16;
   GLuint gy = (h + 15) / 16;
@@ -2496,7 +2521,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
 
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
   if (effectiveMethod == 2) {
     activeProgram  = acyclicComputeProgram;
@@ -2508,6 +2533,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locMaxBounces  = acyLocMaxBounces;
     locMaxSteps    = acyLocMaxSteps;
     locBHPos       = acyLocBHPos;
+    locBHRS        = acyLocBHRS;
   } else if (effectiveMethod == 1) {
     activeProgram  = geodesicComputeProgram;
     locObjectCount = geoLocObjectCount;
@@ -2518,6 +2544,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locMaxBounces  = geoLocMaxBounces;
     locMaxSteps    = geoLocMaxSteps;
     locBHPos       = geoLocBHPos;
+    locBHRS        = geoLocBHRS;
   } else {
     activeProgram  = rtComputeProgram;
     locObjectCount = rtLocObjectCount;
@@ -2564,6 +2591,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     glUniform1i(locMaxSteps, rtMaxSteps);
   if (effectiveMethod >= 1 && locBHPos >= 0)
     glUniform3fv(locBHPos, 1, bhPos);
+  if (effectiveMethod >= 1 && locBHRS >= 0)
+    glUniform1f(locBHRS, bhSchwarzschildRadius);
 
   GLuint gx = (rw + 15) / 16;
   GLuint gy = (rh + 15) / 16;

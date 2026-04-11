@@ -39,6 +39,9 @@ static void buildScene(
       vec3{pod.velocity.x, pod.velocity.y, pod.velocity.z},
       vec3{pod.position.x, pod.position.y, pod.position.z},
       pod.mass, pod.name, st, pod.temperature);
+    // Override schwarzschildRadius from serialised data (if non-zero)
+    if (pod.schwarzschildRadius > 0.0f)
+      physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
   }
   for (auto& obj : physicsObjects)
     lineObjects.emplace_back(vec3{obj.data.position});
@@ -252,6 +255,10 @@ int main(int argc, char** argv) {
       if (!renderer.paused && renderer.playingForward) {
         lineObjects[i].AddPoint(physicsObjects[i].data.position);
       }
+      // Propagate black hole Schwarzschild radius to the renderer
+      if (physicsObjects[i].shaderType == ObjectShaderType::BlackHole) {
+        renderer.bhSchwarzschildRadius = physicsObjects[i].schwarzschildRadius;
+      }
     }
 
     // Gather physics data for grid/cloud
@@ -357,6 +364,7 @@ int main(int argc, char** argv) {
       if (physicsObjects[i].shaderType == ObjectShaderType::Star)      objType = 1.0f;
       else if (physicsObjects[i].shaderType == ObjectShaderType::BlackHole) objType = 3.0f;
       renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
+                                 physicsObjects[i].data.mass,
                                  physicsObjects[i].temperature,
                                  objType);
       lineObjects[i].Update(renderer);
