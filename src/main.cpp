@@ -149,10 +149,11 @@ int main(int argc, char** argv) {
           vec3{0, 0, -3}, cf.count, randomDistribution,
           vec3{cf.sizeX, cf.sizeY, cf.sizeZ});
       }
-      cloud->computeMethod = static_cast<CloudComputeMethod>(cf.computeMethod);
-      cloud->barnesHutTheta = cf.theta;
-      cloud->temperature = cf.temperature;
-      cloud->renderMode = cf.renderMode;
+      cloud->computeMethod      = static_cast<CloudComputeMethod>(cf.computeMethod);
+      cloud->barnesHutTheta     = cf.theta;
+      cloud->temperature        = cf.temperature;
+      cloud->renderMode         = cf.renderMode;
+      cloud->nebulaScatterScale = cf.nebulaScatterScale;
     }
   };
 

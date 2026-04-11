@@ -14,3 +14,7 @@ obj/
 
 .DS_Store
 Thumbs.db
+
+# Large formation files (>50MB)
+templates/formations/milky_way_500k.json
+templates/formations/milky_way_1m.json

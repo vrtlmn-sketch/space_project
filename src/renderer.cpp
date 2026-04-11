@@ -1614,7 +1614,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
 
     if (cloudForm.renderMode == 1) {
       ImGui::SetNextItemWidth(-1);
-      if (ImGui::SliderFloat("Density##ci_nebula", &cloudForm.nebulaScatterScale, 0.01f, 2.0f, "%.2f")) {
+      if (ImGui::SliderFloat("Density##ci_nebula", &cloudForm.nebulaScatterScale, 0.001f, 2.0f, "%.3f")) {
         cloud->nebulaScatterScale = cloudForm.nebulaScatterScale;
       }
     }
