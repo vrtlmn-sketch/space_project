@@ -29,6 +29,7 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
       vec3{0, 0, -3}, cd.count, randomDistribution,
       vec3{cd.sizeX, cd.sizeY, cd.sizeZ});
   }
+  cloud->formationFile      = cd.formationFile;   // keep bare filename, not full path
   cloud->computeMethod      = static_cast<CloudComputeMethod>(cd.computeMethod);
   cloud->barnesHutTheta     = cd.theta;
   cloud->temperature        = cd.temperature;
