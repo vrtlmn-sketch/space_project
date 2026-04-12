@@ -45,7 +45,7 @@ private:
   void destroyGPU();
   void uploadParticlesToGPU();
   void readbackParticlesFromGPU();
-  void dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& bigBodies);
+  void dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed = 1.0f);
 
 public:
   unsigned int timeframe{};

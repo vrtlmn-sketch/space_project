@@ -84,7 +84,7 @@ public:
 void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
                  const float viewRot[9], float fovDeg = 45.f,
                  int fbWidth = 800, int fbHeight = 600);
-void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
+void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed = 1.0f);
 void UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 
 

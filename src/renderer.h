@@ -268,6 +268,7 @@ public:
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
+  float simSpeed{1.0f};               // simulation speed multiplier (1 = default, <1 = slower, >1 = faster)
   bool paused{true};
   bool playingForward{true};
 

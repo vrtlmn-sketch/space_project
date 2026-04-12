@@ -595,10 +595,10 @@ void RenderedObject::renderCloud(float cameraTranslate[3], const float viewRot[9
 
 //this is really bad. Needs to be refactored. Also must write a compute shader for this 
 void RenderedObject::UpdateCloudPhysics
-(const std::vector<PhysicsObjectStructure>& bigBodies)
+(const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed)
 {
   float G = 0.0001f;
-  float dt{1/10.f};
+  float dt = 0.1f * simSpeed;
 
   for(int i = 0; i < (int)cloudParticles.size(); i++)
   {

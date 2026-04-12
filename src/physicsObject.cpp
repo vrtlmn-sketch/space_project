@@ -70,7 +70,7 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
       }
       else{
         float G = 0.0001f;
-        float dt{1/10.f};
+        float dt = 0.1f * renderer.simSpeed;
         for (size_t i = 0; i < physicsObjetcs.size(); ++i) {
           const auto& other = physicsObjetcs[i];
           if (&other == this) continue;

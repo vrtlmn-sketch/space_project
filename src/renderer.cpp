@@ -817,6 +817,17 @@ void Renderer::DrawControlsPanel() {
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
+  // Sim speed
+  ImGui::Text("Speed");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(70);
+  ImGui::DragFloat("##simspeed", &simSpeed, 0.01f, 0.01f, 10.0f, "%.2fx");
+  ImGui::SameLine();
+
+  // Separator
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+
   // Quit
   ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
   ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));

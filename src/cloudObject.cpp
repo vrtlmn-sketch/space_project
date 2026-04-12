@@ -171,7 +171,7 @@ void CloudObject::readbackParticlesFromGPU() {
 }
 
 // ── Dispatch Barnes-Hut compute ─────────────────────────────────────────────
-void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& bigBodies) {
+void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed) {
   const auto& particles = renderedObject.cloudParticles;
   int particleCount_ = (int)particles.size();
   if (particleCount_ <= 0) return;
@@ -231,7 +231,7 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   glUniform1i(locNodeCount, nodeCount_);
   glUniform1i(locBigBodyCount, bbCount);
   glUniform1f(locG, 0.0001f);
-  glUniform1f(locDt, 0.1f);
+  glUniform1f(locDt, 0.1f * simSpeed);
   glUniform1f(locTheta, barnesHutTheta);
 
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
@@ -278,13 +278,13 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
         if (computeMethod == CloudComputeMethod::BarnesHutGPU) {
           if (!gpuInitialized) initGPU();
           if (gpuInitialized) {
-            dispatchBarnesHut(physicsObjects);
+            dispatchBarnesHut(physicsObjects, renderer.simSpeed);
           } else {
             // Fallback to CPU if init failed
-            renderedObject.UpdateCloudPhysics(physicsObjects);
+            renderedObject.UpdateCloudPhysics(physicsObjects, renderer.simSpeed);
           }
         } else {
-          renderedObject.UpdateCloudPhysics(physicsObjects);
+          renderedObject.UpdateCloudPhysics(physicsObjects, renderer.simSpeed);
         }
         // Record the frame
         if (frameStore) {
