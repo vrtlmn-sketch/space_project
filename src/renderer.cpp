@@ -1335,6 +1335,11 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         if (ImGui::DragFloat3("##csz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
           cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
         }
+      } else {
+        ImGui::Text("Scale");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::DragFloat("##cf_scale", &cloudForm.scale, 0.05f, 0.1f, 20.f, "%.2fx");
+        ImGui::TextDisabled("Velocities adjusted for correct orbits");
       }
 
       ImGui::Spacing();
@@ -1556,7 +1561,8 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         cloudForm.temperature        = cloud->temperature;
         cloudForm.computeMethod      = static_cast<int>(cloud->computeMethod);
         cloudForm.theta              = cloud->barnesHutTheta;
-        cloudForm.formationFile      = "";
+        cloudForm.formationFile      = cloud->formationFile;
+        cloudForm.scale              = cloud->scale;
         lastCloudIdx = cloudIdx;
       }
 
@@ -1610,6 +1616,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         if (ImGui::DragFloat3("##cisz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
           cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
         }
+        ImGui::Spacing();
+      } else {
+        ImGui::Text("Scale");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::DragFloat("##ci_scale", &cloudForm.scale, 0.05f, 0.1f, 20.f, "%.2fx");
+        ImGui::TextDisabled("Velocities adjusted for correct orbits");
+        ImGui::TextDisabled("(Needs Respawn to apply)");
         ImGui::Spacing();
       }
 

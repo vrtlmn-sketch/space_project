@@ -65,6 +65,7 @@ struct CloudFormState {
   float temperature = 4500.f; // Kelvin — blackbody colour for particles
   int   renderMode  = 0; // 0=Points, 1=Nebula (soft glow)
   float nebulaScatterScale = 0.4f;
+  float scale = 1.0f;
 };
 
 // ---- Callbacks from Renderer back to main ----

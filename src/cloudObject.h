@@ -57,7 +57,9 @@ public:
   float temperature{4500.f};   // Kelvin — blackbody colour for particles
   int   renderMode{0};         // 0=Points, 1=Nebula
   float nebulaScatterScale{0.4f}; // Beer-Lambert dTau multiplier (nebula mode)
+  float scale{1.0f};              // virial scale applied at spawn time (stored for inspector sync)
 
+  void applyVirialScale(float s); // scale positions by s, velocities by 1/sqrt(s)
   void Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects);
 
   // Procedural generation constructor (existing)

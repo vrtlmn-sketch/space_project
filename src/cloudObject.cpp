@@ -54,6 +54,27 @@ static GLuint compileComputeShader(const std::string& path) {
   return prog;
 }
 
+// ── Virial scaling ──────────────────────────────────────────────────────────
+void CloudObject::applyVirialScale(float s) {
+  if (s <= 0.0f || s == 1.0f) return;
+  auto& particles = renderedObject.cloudParticles;
+  auto& mesh = renderedObject.UVObjectMeshBuffer;
+  float invSqrtS = 1.0f / std::sqrt(s);
+  for (int i = 0; i < (int)particles.size(); i++) {
+    particles[i].position.x *= s;
+    particles[i].position.y *= s;
+    particles[i].position.z *= s;
+    particles[i].velocity.x *= invSqrtS;
+    particles[i].velocity.y *= invSqrtS;
+    particles[i].velocity.z *= invSqrtS;
+    if (i * 3 + 2 < (int)mesh.size()) {
+      mesh[i*3]   = particles[i].position.x;
+      mesh[i*3+1] = particles[i].position.y;
+      mesh[i*3+2] = particles[i].position.z;
+    }
+  }
+}
+
 // ── FrameStore lazy initialisation ──────────────────────────────────────────
 void CloudObject::ensureFrameStore() {
   if (frameStore) return;
