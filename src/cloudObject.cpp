@@ -317,6 +317,7 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
   // Upload cloud appearance settings before rendering
   renderedObject.uploadTemperature(temperature);
   renderedObject.uploadRenderMode(renderMode);
+  renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
 
   renderer.Draw(renderedObject);
 }

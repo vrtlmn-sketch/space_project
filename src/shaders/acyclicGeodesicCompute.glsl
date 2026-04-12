@@ -6,7 +6,6 @@ layout(rgba8, binding = 0) uniform writeonly image2D outputImage;
 
 // counts
 uniform int   uObjectCount;
-uniform float uNebulaScatterScale;
 
 // camera / transform
 uniform mat4 uProj;
@@ -56,26 +55,26 @@ const float PI             = 3.14159265358979323846;
 vec3 blackbody(float T)
 {
     T = clamp(T, 1000.0, 40000.0);
-    float t = T / 1000.0;
+    float t = T / 100.0;
 
     float r, g, b;
 
     if (T <= 6600.0)
         r = 1.0;
     else
-        r = clamp(1.2929362 * pow(t - 6.0, -0.1332047592), 0.0, 1.0);
+        r = clamp(1.2929362 * pow(t - 60.0, -0.1332047592), 0.0, 1.0);
 
     if (T <= 6600.0)
         g = clamp(0.39008157876 * log(t) - 0.63184144378, 0.0, 1.0);
     else
-        g = clamp(1.1298908609 * pow(t - 6.0, -0.0755148492), 0.0, 1.0);
+        g = clamp(1.1298908609 * pow(t - 60.0, -0.0755148492), 0.0, 1.0);
 
     if (T >= 6600.0)
         b = 1.0;
     else if (T <= 1900.0)
         b = 0.0;
     else
-        b = clamp(0.54320678911 * log(t - 1.0) - 1.19625408914, 0.0, 1.0);
+        b = clamp(0.54320678911 * log(t - 10.0) - 1.19625408914, 0.0, 1.0);
 
     return vec3(r, g, b);
 }
@@ -623,7 +622,7 @@ void main()
                         {
                             float coreS   = max(objects[i].radius * 2.0, 0.001);
                             float density  = exp(-d2 / (coreS * coreS));
-                            float dTau     = density * uNebulaScatterScale;
+                            float dTau     = density * objects[i].mass;
                             vec3 gcol = (objects[i].temperature > 100.0)
                                          ? blackbody(objects[i].temperature)
                                          : vec3(0.55, 0.65, 1.0);
@@ -687,7 +686,7 @@ void main()
                     {
                         float coreS   = max(objects[i].radius * 2.0, 0.001);
                         float density  = exp(-sd2 / (coreS * coreS));
-                        float dTau     = density * uNebulaScatterScale;
+                        float dTau     = density * objects[i].mass;
                         vec3 gcol = (objects[i].temperature > 100.0)
                                      ? blackbody(objects[i].temperature)
                                      : vec3(0.55, 0.65, 1.0);
@@ -804,7 +803,7 @@ void main()
             {
                 float coreS   = max(objects[i].radius * 2.0, 0.001);
                 float density  = exp(-d2 / (coreS * coreS));
-                float dTau     = density * uNebulaScatterScale;
+                float dTau     = density * objects[i].mass;
                 vec3 gcol = (objects[i].temperature > 100.0)
                              ? blackbody(objects[i].temperature)
                              : vec3(0.55, 0.65, 1.0);

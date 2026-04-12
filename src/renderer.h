@@ -6,6 +6,7 @@
 #include <GLFW/glfw3.h>
 #include <iostream>
 #include <vector>
+#include <memory>
 #include <fstream>
 #include <string>
 #include <functional>
@@ -68,12 +69,14 @@ struct CloudFormState {
 
 // ---- Callbacks from Renderer back to main ----
 struct SceneCallbacks {
-  std::function<void(const SpawnFormState&)>   spawnPhysicsObject;
-  std::function<void(const GridFormState&)>    applyGrid;
-  std::function<void(const CloudFormState&)>   applyCloud;
-  std::function<void(int index)>               deleteObject;
-  std::function<void()>                        saveProject;
-  std::function<void(const std::string& path)> loadProject;
+  std::function<void(const SpawnFormState&)>              spawnPhysicsObject;
+  std::function<void(const GridFormState&)>               applyGrid;
+  std::function<void(const CloudFormState&)>              applyCloud;
+  std::function<void(int index)>                          deleteObject;
+  std::function<void(int cloudIdx)>                       deleteCloud;
+  std::function<void(int cloudIdx, const CloudFormState&)> respawnCloud;
+  std::function<void()>                                   saveProject;
+  std::function<void(const std::string& path)>            loadProject;
 };
 
 class Renderer{
@@ -123,7 +126,7 @@ private:
   GridFormState  gridForm{};
   CloudFormState cloudForm{};
   int            spawnTab{0};  // 0=Physics, 1=Grid, 2=Cloud
-  int            selectedIdx{-1}; // -1=none, -2=cloud
+  int            selectedIdx{-1}; // -1=none, -(2+i)=clouds[i]
 
   // Dock layout
   bool           dockLayoutInitialized{false};
@@ -144,7 +147,6 @@ private:
   GLint rtLocViewRot{-1};
   GLint rtLocResolution{-1};
   GLint rtLocMaxBounces{-1};
-  GLint rtLocNebulaScatter{-1};
 
   // ── Geodesic compute shader raytracer ──
   GLuint geodesicComputeProgram{0};
@@ -159,7 +161,6 @@ private:
   GLint geoLocMaxSteps{-1};
   GLint geoLocBHPos{-1};
   GLint geoLocBHRS{-1};
-  GLint geoLocNebulaScatter{-1};
 
   // ── Acyclic geodesic compute shader raytracer ──
   GLuint acyclicComputeProgram{0};
@@ -174,7 +175,6 @@ private:
   GLint acyLocMaxSteps{-1};
   GLint acyLocBHPos{-1};
   GLint acyLocBHRS{-1};
-  GLint acyLocNebulaScatter{-1};
 
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
@@ -243,10 +243,10 @@ private:
 
   // ImGui helpers
   void DrawControlsPanel();
-  void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud);
+  void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds);
   void DrawSpawnPanel(const SceneCallbacks& cb);
-  void DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
-  void DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
+  void DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
+  void DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
   void DrawGhostObject();
   void DrawQuitDialog(const SceneCallbacks& cb);
   void DrawRenderingSettings();  // rendering method + RT quality settings
@@ -268,7 +268,6 @@ public:
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
-  float nebulaScatterScale{0.4f};     // Beer-Lambert dTau scale sent to all raytracers
   bool paused{true};
   bool playingForward{true};
 
@@ -339,7 +338,7 @@ public:
   char           savePathBuf[256] = "project.json";
 
   // Draw ALL UI for one frame — call after all scene rendering
-  void DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb);
+  void DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
 
   // Draw startup modal — returns true while modal is still open
   bool DrawStartupModal();

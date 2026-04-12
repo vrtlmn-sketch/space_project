@@ -607,7 +607,7 @@ static std::vector<std::string> ScanFormationFiles() {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawUI  — master call: fullscreen dockspace + programmatic layout + all panels
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb) {
+void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
   // ── Fullscreen DockSpace ──
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -679,10 +679,10 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, CloudObject* c
 
   // ── Draw all panels ──
   DrawControlsPanel();
-  DrawTimeline(physicsObjects, cloud);
+  DrawTimeline(physicsObjects, clouds);
   DrawSpawnPanel(cb);
-  DrawSceneHierarchy(physicsObjects, cloud, cb);
-  DrawInspector(physicsObjects, cloud, cb);
+  DrawSceneHierarchy(physicsObjects, clouds, cb);
+  DrawInspector(physicsObjects, clouds, cb);
   DrawRenderingSettings();
   DrawPipWindow();
   if (ghostDragActive) DrawGhostObject();
@@ -965,7 +965,7 @@ void Renderer::DrawRenderingSettings() {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawTimeline  (docked bottom-left — timeline slider + stats)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud) {
+void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Timeline", nullptr, flags);
 
@@ -982,7 +982,8 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
     if (obj.getBufferSize() > maxBuf) maxBuf = obj.getBufferSize();
     curFrame = obj.getTimeframe();
   }
-  if (cloud && cloud->getBufferSize() > maxBuf) maxBuf = cloud->getBufferSize();
+  for (auto& c : clouds)
+    if (c && c->getBufferSize() > maxBuf) maxBuf = c->getBufferSize();
 
   if (maxBuf == 0) {
     ImGui::TextDisabled("No recorded frames yet.");
@@ -1011,7 +1012,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
       if (ImGui::IsMouseClicked(0)) {
         paused = true;
         for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(kp.frame);
-        if (cloud) cloud->setTimeframeAndRestore(kp.frame);
+        for (auto& c : clouds) if (c) c->setTimeframeAndRestore(kp.frame);
       }
     }
   }
@@ -1022,7 +1023,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
   if (ImGui::SliderInt("##tl", &frameInt, 0, (int)(maxBuf - 1))) {
     paused = true;
     for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)frameInt);
-    if (cloud) cloud->setTimeframeAndRestore((unsigned int)frameInt);
+    for (auto& c : clouds) if (c) c->setTimeframeAndRestore((unsigned int)frameInt);
   }
   ImGui::SameLine();
   ImGui::Text("%d/%u", frameInt, maxBuf - 1);
@@ -1093,7 +1094,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
         if (ImGui::IsMouseClicked(0)) {
           paused = true;
           for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(ck.frame);
-          if (cloud) cloud->setTimeframeAndRestore(ck.frame);
+          for (auto& c : clouds) c->setTimeframeAndRestore(ck.frame);
           cameraTranslate[0] = ck.pos[0];
           cameraTranslate[1] = ck.pos[1];
           cameraTranslate[2] = ck.pos[2];
@@ -1172,7 +1173,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
         if (ImGui::IsMouseClicked(0)) {
           paused = true;
           for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)recStartFrame);
-          if (cloud) cloud->setTimeframeAndRestore((unsigned int)recStartFrame);
+          for (auto& c : clouds) c->setTimeframeAndRestore((unsigned int)recStartFrame);
         }
         if (ImGui::IsMouseClicked(1)) recStartFrame = -1;
       }
@@ -1195,7 +1196,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, CloudObj
         if (ImGui::IsMouseClicked(0)) {
           paused = true;
           for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)recStopFrame);
-          if (cloud) cloud->setTimeframeAndRestore((unsigned int)recStopFrame);
+          for (auto& c : clouds) c->setTimeframeAndRestore((unsigned int)recStopFrame);
         }
         if (ImGui::IsMouseClicked(1)) recStopFrame = -1;
       }
@@ -1348,10 +1349,6 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         cloudForm.enabled = true;
         if (cb.applyCloud) cb.applyCloud(cloudForm);
       }
-      if (ImGui::Button("Remove Cloud", ImVec2(-1, 28))) {
-        cloudForm.enabled = false;
-        if (cb.applyCloud) cb.applyCloud(cloudForm);
-      }
       ImGui::EndTabItem();
     }
 
@@ -1363,7 +1360,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawSceneHierarchy  (docked left-bottom — object list + save/load)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb) {
+void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Hierarchy", nullptr, flags);
 
@@ -1395,14 +1392,16 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, Cl
 
   ImGui::Separator();
 
-  // Cloud entry
-  if (cloud) {
-    bool cloudSel = (selectedIdx == -2);
+  // Cloud entries
+  for (int i = 0; i < (int)clouds.size(); i++) {
+    int sentinel = -(2 + i);
+    bool cloudSel = (selectedIdx == sentinel);
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.08f, 0.18f, 0.12f, 1.f));
     char cloudLabel[80];
-    snprintf(cloudLabel, sizeof(cloudLabel), "[~] Asteroid Belt  (%d)", cloud->particleCount());
+    snprintf(cloudLabel, sizeof(cloudLabel), "[~] Cloud %d  (%d)##cloud%d",
+             i, clouds[i]->particleCount(), i);
     if (ImGui::Selectable(cloudLabel, cloudSel))
-      selectedIdx = cloudSel ? -1 : -2;
+      selectedIdx = cloudSel ? -1 : sentinel;
     ImGui::PopStyleColor();
   }
 
@@ -1432,7 +1431,7 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, Cl
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawInspector  (docked right — properties of selected object)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudObject* cloud, const SceneCallbacks& cb) {
+void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Inspector", nullptr, flags);
 
@@ -1534,118 +1533,135 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, CloudOb
   }
 
   // ── Cloud ──
-  else if (selectedIdx == -2 && cloud != nullptr) {
-    ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.40f, 1.00f), "Particle Cloud");
-    ImGui::Separator();
-
-    ImGui::Text("Active: %d particles", cloud->particleCount());
-    ImGui::TextDisabled("Frame: %u / %u", cloud->getTimeframe(), cloud->getBufferSize());
-    ImGui::Spacing();
-
-    // ── Formation file selector ──
-    ImGui::SeparatorText("Formation");
-
-    // Rescan + file list (reuse the same static list as spawn panel)
-    static std::vector<std::string> inspFormFiles;
-    static bool inspScanned = false;
-    if (!inspScanned) { inspFormFiles = ScanFormationFiles(); inspScanned = true; }
-    if (ImGui::Button("Rescan##ci_rescan")) { inspFormFiles = ScanFormationFiles(); }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%zu files)", inspFormFiles.size());
-
-    int formIdx = -1;
-    for (int i = 0; i < (int)inspFormFiles.size(); i++) {
-      if (inspFormFiles[i] == cloudForm.formationFile) { formIdx = i; break; }
-    }
-    const char* previewStr = (formIdx >= 0) ? inspFormFiles[formIdx].c_str() : "Procedural";
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::BeginCombo("##ci_form", previewStr)) {
-      if (ImGui::Selectable("Procedural", formIdx < 0)) {
-        cloudForm.formationFile.clear();
-        formIdx = -1;
+  else if (selectedIdx <= -2) {
+    int cloudIdx = -(selectedIdx + 2);
+    CloudObject* cloud = (cloudIdx >= 0 && cloudIdx < (int)clouds.size()) ? clouds[cloudIdx].get() : nullptr;
+    if (cloud) {
+      // Sync cloudForm when the selected cloud changes
+      static int lastCloudIdx = -99;
+      if (cloudIdx != lastCloudIdx) {
+        cloudForm.renderMode         = cloud->renderMode;
+        cloudForm.nebulaScatterScale = cloud->nebulaScatterScale;
+        cloudForm.temperature        = cloud->temperature;
+        cloudForm.computeMethod      = static_cast<int>(cloud->computeMethod);
+        cloudForm.theta              = cloud->barnesHutTheta;
+        cloudForm.formationFile      = "";
+        lastCloudIdx = cloudIdx;
       }
+
+      ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.40f, 1.00f), "Cloud %d", cloudIdx);
+      ImGui::Separator();
+
+      ImGui::Text("Active: %d particles", cloud->particleCount());
+      ImGui::TextDisabled("Frame: %u / %u", cloud->getTimeframe(), cloud->getBufferSize());
+      ImGui::Spacing();
+
+      // ── Formation file selector ──
+      ImGui::SeparatorText("Formation");
+
+      static std::vector<std::string> inspFormFiles;
+      static bool inspScanned = false;
+      if (!inspScanned) { inspFormFiles = ScanFormationFiles(); inspScanned = true; }
+      if (ImGui::Button("Rescan##ci_rescan")) { inspFormFiles = ScanFormationFiles(); }
+      ImGui::SameLine();
+      ImGui::TextDisabled("(%zu files)", inspFormFiles.size());
+
+      int formIdx = -1;
       for (int i = 0; i < (int)inspFormFiles.size(); i++) {
-        bool sel = (formIdx == i);
-        if (ImGui::Selectable(inspFormFiles[i].c_str(), sel)) {
-          cloudForm.formationFile = inspFormFiles[i];
-          formIdx = i;
+        if (inspFormFiles[i] == cloudForm.formationFile) { formIdx = i; break; }
+      }
+      const char* previewStr = (formIdx >= 0) ? inspFormFiles[formIdx].c_str() : "Procedural";
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::BeginCombo("##ci_form", previewStr)) {
+        if (ImGui::Selectable("Procedural", formIdx < 0)) {
+          cloudForm.formationFile.clear();
+          formIdx = -1;
+        }
+        for (int i = 0; i < (int)inspFormFiles.size(); i++) {
+          bool sel = (formIdx == i);
+          if (ImGui::Selectable(inspFormFiles[i].c_str(), sel)) {
+            cloudForm.formationFile = inspFormFiles[i];
+            formIdx = i;
+          }
+        }
+        ImGui::EndCombo();
+      }
+
+      ImGui::Spacing();
+
+      // ── Procedural-only controls ──
+      if (cloudForm.formationFile.empty()) {
+        ImGui::SliderInt("Count##ci", &cloudForm.count, 100, 5000);
+        ImGui::Spacing();
+        ImGui::Text("Spawn Radius");
+        ImGui::SetNextItemWidth(-1);
+        float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
+        if (ImGui::DragFloat3("##cisz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
+          cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
+        }
+        ImGui::Spacing();
+      }
+
+      // ── Compute method ──
+      ImGui::SeparatorText("Physics");
+      const char* methodItems[] = { "CPU", "Barnes-Hut GPU" };
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::Combo("##ci_method", &cloudForm.computeMethod, methodItems, 2)) {
+        cloud->computeMethod = static_cast<CloudComputeMethod>(cloudForm.computeMethod);
+      }
+
+      if (cloudForm.computeMethod == 1) {
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat("Theta##ci", &cloudForm.theta, 0.1f, 1.5f, "%.2f")) {
+          cloud->barnesHutTheta = cloudForm.theta;
+        }
+        ImGui::TextDisabled("Lower = more accurate, slower");
+      }
+
+      // ── Appearance ──
+      ImGui::SeparatorText("Appearance");
+
+      const char* renderModeItems[] = { "Points", "Nebula" };
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::Combo("##ci_rendermode", &cloudForm.renderMode, renderModeItems, 2)) {
+        cloud->renderMode = cloudForm.renderMode;
+      }
+
+      if (cloudForm.renderMode == 1) {
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat("Density##ci_nebula", &cloudForm.nebulaScatterScale, 0.001f, 2.0f, "%.3f")) {
+          cloud->nebulaScatterScale = cloudForm.nebulaScatterScale;
         }
       }
-      ImGui::EndCombo();
-    }
 
-    ImGui::Spacing();
-
-    // ── Procedural-only controls ──
-    if (cloudForm.formationFile.empty()) {
-      ImGui::SliderInt("Count##ci", &cloudForm.count, 100, 5000);
-      ImGui::Spacing();
-      ImGui::Text("Spawn Radius");
-      ImGui::SetNextItemWidth(-1);
-      float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
-      if (ImGui::DragFloat3("##cisz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
-        cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
+      ImGui::SetNextItemWidth(-30);
+      if (ImGui::SliderFloat("##ci_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K")) {
+        cloud->temperature = cloudForm.temperature;
       }
+      float cr, cg, cb_;
+      BlackbodyColor(cloudForm.temperature, cr, cg, cb_);
+      ImGui::SameLine();
+      ImGui::ColorButton("##ci_bb", ImVec4(cr, cg, cb_, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+
       ImGui::Spacing();
-    }
+      ImGui::Separator();
+      ImGui::Spacing();
 
-    // ── Compute method ──
-    ImGui::SeparatorText("Physics");
-    const char* methodItems[] = { "CPU", "Barnes-Hut GPU" };
-    ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##ci_method", &cloudForm.computeMethod, methodItems, 2);
-
-    // Theta slider (only for Barnes-Hut)
-    if (cloudForm.computeMethod == 1) {
-      ImGui::SetNextItemWidth(-1);
-      ImGui::SliderFloat("Theta##ci", &cloudForm.theta, 0.1f, 1.5f, "%.2f");
-      ImGui::TextDisabled("Lower = more accurate, slower");
-    }
-
-    // ── Appearance ──
-    ImGui::SeparatorText("Appearance");
-
-    // Render mode
-    const char* renderModeItems[] = { "Points", "Nebula" };
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##ci_rendermode", &cloudForm.renderMode, renderModeItems, 2)) {
-      cloud->renderMode = cloudForm.renderMode;
-    }
-
-    if (cloudForm.renderMode == 1) {
-      ImGui::SetNextItemWidth(-1);
-      if (ImGui::SliderFloat("Density##ci_nebula", &cloudForm.nebulaScatterScale, 0.001f, 2.0f, "%.3f")) {
-        cloud->nebulaScatterScale = cloudForm.nebulaScatterScale;
+      if (ImGui::Button("Respawn", ImVec2(-1, 28))) {
+        cloudForm.enabled = true;
+        if (cb.respawnCloud) cb.respawnCloud(cloudIdx, cloudForm);
+        lastCloudIdx = -99; // force re-sync after respawn
       }
+      ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
+      if (ImGui::Button("Remove", ImVec2(-1, 28))) {
+        if (cb.deleteCloud) cb.deleteCloud(cloudIdx);
+        selectedIdx = -1;
+        lastCloudIdx = -99;
+      }
+      ImGui::PopStyleColor(3);
     }
-
-    // Temperature slider with colour preview
-    ImGui::SetNextItemWidth(-30);
-    if (ImGui::SliderFloat("##ci_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K")) {
-      cloud->temperature = cloudForm.temperature;
-    }
-    float cr, cg, cb_;
-    BlackbodyColor(cloudForm.temperature, cr, cg, cb_);
-    ImGui::SameLine();
-    ImGui::ColorButton("##ci_bb", ImVec4(cr, cg, cb_, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (ImGui::Button("Respawn", ImVec2(-1, 28))) {
-      cloudForm.enabled = true;
-      if (cb.applyCloud) cb.applyCloud(cloudForm);
-    }
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
-    if (ImGui::Button("Remove", ImVec2(-1, 28))) {
-      cloudForm.enabled = false;
-      if (cb.applyCloud) cb.applyCloud(cloudForm);
-      selectedIdx = -1;
-    }
-    ImGui::PopStyleColor(3);
   }
 
   // ── Nothing selected ──
@@ -1917,7 +1933,6 @@ void Renderer::InitComputeShader() {
     rtLocViewRot       = glGetUniformLocation(rtComputeProgram, "uViewRot");
     rtLocResolution    = glGetUniformLocation(rtComputeProgram, "uResolution");
     rtLocMaxBounces    = glGetUniformLocation(rtComputeProgram, "uMaxBounces");
-    rtLocNebulaScatter = glGetUniformLocation(rtComputeProgram, "uNebulaScatterScale");
   }
 
   // ── 1b. Compile geodesic compute shader ──
@@ -1948,7 +1963,6 @@ void Renderer::InitComputeShader() {
       geoLocMaxSteps      = glGetUniformLocation(geodesicComputeProgram, "uMaxSteps");
       geoLocBHPos         = glGetUniformLocation(geodesicComputeProgram, "uBHPos");
       geoLocBHRS          = glGetUniformLocation(geodesicComputeProgram, "uBH_RS");
-      geoLocNebulaScatter = glGetUniformLocation(geodesicComputeProgram, "uNebulaScatterScale");
     }
   }
 
@@ -1980,7 +1994,6 @@ void Renderer::InitComputeShader() {
       acyLocMaxSteps      = glGetUniformLocation(acyclicComputeProgram, "uMaxSteps");
       acyLocBHPos         = glGetUniformLocation(acyclicComputeProgram, "uBHPos");
       acyLocBHRS          = glGetUniformLocation(acyclicComputeProgram, "uBH_RS");
-      acyLocNebulaScatter = glGetUniformLocation(acyclicComputeProgram, "uNebulaScatterScale");
     }
   }
 
@@ -2094,7 +2107,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   // Select program and uniform locations based on effective method
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1, locNebulaScatter = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
   if (effectiveMethod == 2) {
     activeProgram    = acyclicComputeProgram;
@@ -2107,7 +2120,6 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locMaxSteps      = acyLocMaxSteps;
     locBHPos         = acyLocBHPos;
     locBHRS          = acyLocBHRS;
-    locNebulaScatter = acyLocNebulaScatter;
   } else if (effectiveMethod == 1) {
     activeProgram    = geodesicComputeProgram;
     locObjectCount   = geoLocObjectCount;
@@ -2119,7 +2131,6 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locMaxSteps      = geoLocMaxSteps;
     locBHPos         = geoLocBHPos;
     locBHRS          = geoLocBHRS;
-    locNebulaScatter = geoLocNebulaScatter;
   } else {
     activeProgram    = rtComputeProgram;
     locObjectCount   = rtLocObjectCount;
@@ -2128,7 +2139,6 @@ void Renderer::DispatchRaytracer(int width, int height) {
     locViewRot       = rtLocViewRot;
     locResolution    = rtLocResolution;
     locMaxBounces    = rtLocMaxBounces;
-    locNebulaScatter = rtLocNebulaScatter;
   }
 
   if (!activeProgram) return;
@@ -2138,7 +2148,6 @@ void Renderer::DispatchRaytracer(int width, int height) {
   static int lastMethod          = -1;
   static int lastSteps           = -1;
   static float lastBHRS          = -1.0f;
-  static float lastNebulaScatter = -1.0f;
   bool dirty = rtDirty || recording;
   if (!dirty) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
@@ -2152,7 +2161,6 @@ void Renderer::DispatchRaytracer(int width, int height) {
              raytracerMethod != lastMethod ||
              rtMaxSteps != lastSteps ||
              bhSchwarzschildRadius != lastBHRS ||
-             nebulaScatterScale != lastNebulaScatter ||
              rayTracedObjects.size() != rtLastObjectCount);
   }
   if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
@@ -2218,9 +2226,6 @@ void Renderer::DispatchRaytracer(int width, int height) {
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
 
-  if (locNebulaScatter >= 0)
-    glUniform1f(locNebulaScatter, nebulaScatterScale);
-
   // Dispatch
   GLuint gx = (width  + 15) / 16;
   GLuint gy = (height + 15) / 16;
@@ -2241,7 +2246,6 @@ void Renderer::DispatchRaytracer(int width, int height) {
   lastMethod      = raytracerMethod;
   lastSteps       = rtMaxSteps;
   lastBHRS          = bhSchwarzschildRadius;
-  lastNebulaScatter = nebulaScatterScale;
   rtLastObjectCount = rayTracedObjects.size();
   rtLastObjects     = rayTracedObjects;   // deep copy for memcmp
   rtDirty           = false;
@@ -2378,7 +2382,7 @@ void Renderer::CaptureImage() {
 
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1, locNebulaScatter = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
   if (effectiveMethod == 2) {
     activeProgram    = acyclicComputeProgram;
@@ -2391,7 +2395,6 @@ void Renderer::CaptureImage() {
     locMaxSteps      = acyLocMaxSteps;
     locBHPos         = acyLocBHPos;
     locBHRS          = acyLocBHRS;
-    locNebulaScatter = acyLocNebulaScatter;
   } else if (effectiveMethod == 1) {
     activeProgram    = geodesicComputeProgram;
     locObjectCount   = geoLocObjectCount;
@@ -2403,7 +2406,6 @@ void Renderer::CaptureImage() {
     locMaxSteps      = geoLocMaxSteps;
     locBHPos         = geoLocBHPos;
     locBHRS          = geoLocBHRS;
-    locNebulaScatter = geoLocNebulaScatter;
   } else {
     activeProgram    = rtComputeProgram;
     locObjectCount   = rtLocObjectCount;
@@ -2412,7 +2414,6 @@ void Renderer::CaptureImage() {
     locViewRot       = rtLocViewRot;
     locResolution    = rtLocResolution;
     locMaxBounces    = rtLocMaxBounces;
-    locNebulaScatter = rtLocNebulaScatter;
   }
   if (!activeProgram) return;
 
@@ -2459,9 +2460,6 @@ void Renderer::CaptureImage() {
     glUniform3fv(locBHPos, 1, bhPos);
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
-
-  if (locNebulaScatter >= 0)
-    glUniform1f(locNebulaScatter, nebulaScatterScale);
 
   GLuint gx = (w + 15) / 16;
   GLuint gy = (h + 15) / 16;
@@ -2565,7 +2563,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
 
   GLuint activeProgram;
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
-  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1, locNebulaScatter = -1;
+  GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
   if (effectiveMethod == 2) {
     activeProgram    = acyclicComputeProgram;
@@ -2578,7 +2576,6 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locMaxSteps      = acyLocMaxSteps;
     locBHPos         = acyLocBHPos;
     locBHRS          = acyLocBHRS;
-    locNebulaScatter = acyLocNebulaScatter;
   } else if (effectiveMethod == 1) {
     activeProgram    = geodesicComputeProgram;
     locObjectCount   = geoLocObjectCount;
@@ -2590,7 +2587,6 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locMaxSteps      = geoLocMaxSteps;
     locBHPos         = geoLocBHPos;
     locBHRS          = geoLocBHRS;
-    locNebulaScatter = geoLocNebulaScatter;
   } else {
     activeProgram  = rtComputeProgram;
     locObjectCount   = rtLocObjectCount;
@@ -2599,7 +2595,6 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     locViewRot       = rtLocViewRot;
     locResolution    = rtLocResolution;
     locMaxBounces    = rtLocMaxBounces;
-    locNebulaScatter = rtLocNebulaScatter;
   }
   if (!activeProgram) return;
 
@@ -2640,9 +2635,6 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     glUniform3fv(locBHPos, 1, bhPos);
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
-
-  if (locNebulaScatter >= 0)
-    glUniform1f(locNebulaScatter, nebulaScatterScale);
 
   GLuint gx = (rw + 15) / 16;
   GLuint gy = (rh + 15) / 16;

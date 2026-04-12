@@ -271,7 +271,7 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      0.001f, pRadius, cachedTemperature, pObjType});
+      cachedNebulaScatterScale, pRadius, cachedTemperature, pObjType});
   }
 }
 
@@ -391,6 +391,11 @@ void RenderedObject::uploadRenderMode(int mode)
   glUseProgram(program);
   if (renderModeUniform != (unsigned int)-1)
     glUniform1i(renderModeUniform, mode);
+}
+
+void RenderedObject::uploadNebulaScatterScale(float scale)
+{
+  cachedNebulaScatterScale = scale;
 }
 
 void RenderedObject::uploadResolution(int w, int h)

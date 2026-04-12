@@ -17,7 +17,7 @@ static vec3 jsonToVec3(const json& j) {
 bool ProjectSerializer::Save(const std::string& path,
                              const std::vector<PhysicsObject>& physicsObjects,
                              const GridData& grid,
-                             const CloudData& cloud)
+                             const std::vector<CloudData>& clouds)
 {
   json root;
 
@@ -43,19 +43,23 @@ bool ProjectSerializer::Save(const std::string& path,
     {"ySpacing",    grid.ySpacing}
   };
 
-  root["cloud"] = {
-    {"enabled", cloud.enabled},
-    {"count",   cloud.count},
-    {"sizeX",   cloud.sizeX},
-    {"sizeY",   cloud.sizeY},
-    {"sizeZ",   cloud.sizeZ},
-    {"formationFile",  cloud.formationFile},
-    {"computeMethod",  cloud.computeMethod},
-    {"theta",          cloud.theta},
-    {"temperature",         cloud.temperature},
-    {"renderMode",          cloud.renderMode},
-    {"nebulaScatterScale",  cloud.nebulaScatterScale}
-  };
+  json cloudsArr = json::array();
+  for (const auto& cloud : clouds) {
+    cloudsArr.push_back({
+      {"enabled", cloud.enabled},
+      {"count",   cloud.count},
+      {"sizeX",   cloud.sizeX},
+      {"sizeY",   cloud.sizeY},
+      {"sizeZ",   cloud.sizeZ},
+      {"formationFile",  cloud.formationFile},
+      {"computeMethod",  cloud.computeMethod},
+      {"theta",          cloud.theta},
+      {"temperature",         cloud.temperature},
+      {"renderMode",          cloud.renderMode},
+      {"nebulaScatterScale",  cloud.nebulaScatterScale}
+    });
+  }
+  root["clouds"] = cloudsArr;
 
   std::ofstream f(path);
   if (!f.is_open()) {
@@ -107,19 +111,29 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     data.grid.ySpacing    = g.value("ySpacing",     2.f);
   }
 
-  if (root.contains("cloud")) {
-    const auto& c    = root["cloud"];
-    data.cloud.enabled       = c.value("enabled", false);
-    data.cloud.count         = c.value("count",   40000);
-    data.cloud.sizeX         = c.value("sizeX",   5.f);
-    data.cloud.sizeY         = c.value("sizeY",   5.f);
-    data.cloud.sizeZ         = c.value("sizeZ",   5.f);
-    data.cloud.formationFile = c.value("formationFile", std::string{});
-    data.cloud.computeMethod = c.value("computeMethod", 0);
-    data.cloud.theta         = c.value("theta",         0.5f);
-    data.cloud.temperature        = c.value("temperature",        4500.f);
-    data.cloud.renderMode         = c.value("renderMode",         0);
-    data.cloud.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
+  auto parseCloudJson = [](const json& c) -> CloudData {
+    CloudData cd;
+    cd.enabled       = c.value("enabled", false);
+    cd.count         = c.value("count",   40000);
+    cd.sizeX         = c.value("sizeX",   5.f);
+    cd.sizeY         = c.value("sizeY",   5.f);
+    cd.sizeZ         = c.value("sizeZ",   5.f);
+    cd.formationFile = c.value("formationFile", std::string{});
+    cd.computeMethod = c.value("computeMethod", 0);
+    cd.theta         = c.value("theta",         0.5f);
+    cd.temperature        = c.value("temperature",        4500.f);
+    cd.renderMode         = c.value("renderMode",         0);
+    cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
+    return cd;
+  };
+
+  if (root.contains("clouds") && root["clouds"].is_array()) {
+    for (const auto& c : root["clouds"])
+      data.clouds.push_back(parseCloudJson(c));
+  } else if (root.contains("cloud")) {
+    // Backward compat: old single-cloud format
+    CloudData cd = parseCloudJson(root["cloud"]);
+    if (cd.enabled) data.clouds.push_back(cd);
   }
 
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()
@@ -146,7 +160,7 @@ ProjectData ProjectSerializer::MilkyWayTemplate()
   data.grid = GridData{4, 10.f, 10.f, 30, 2.f};
 
   // Cloud from milky_way_5k.json formation by default (CPU mode for now)
-  data.cloud = CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f, 4500.f, 0};
+  data.clouds.push_back(CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f, 4500.f, 0});
 
   return data;
 }

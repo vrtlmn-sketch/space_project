@@ -19,17 +19,35 @@
 
 // ─── Helper: build scene from ProjectData ────────────────────────────────────
 
+static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
+  std::unique_ptr<CloudObject> cloud;
+  if (!cd.formationFile.empty()) {
+    std::string formPath = "templates/formations/" + cd.formationFile;
+    cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, formPath);
+  } else {
+    cloud = std::make_unique<CloudObject>(
+      vec3{0, 0, -3}, cd.count, randomDistribution,
+      vec3{cd.sizeX, cd.sizeY, cd.sizeZ});
+  }
+  cloud->computeMethod      = static_cast<CloudComputeMethod>(cd.computeMethod);
+  cloud->barnesHutTheta     = cd.theta;
+  cloud->temperature        = cd.temperature;
+  cloud->renderMode         = cd.renderMode;
+  cloud->nebulaScatterScale = cd.nebulaScatterScale;
+  return cloud;
+}
+
 static void buildScene(
-  const ProjectData&            data,
-  std::vector<PhysicsObject>&   physicsObjects,
-  std::vector<LineObject>&      lineObjects,
-  std::vector<GridObject>&      grids,
-  std::unique_ptr<CloudObject>& cloud)
+  const ProjectData&                        data,
+  std::vector<PhysicsObject>&               physicsObjects,
+  std::vector<LineObject>&                  lineObjects,
+  std::vector<GridObject>&                  grids,
+  std::vector<std::unique_ptr<CloudObject>>& clouds)
 {
   physicsObjects.clear();
   lineObjects.clear();
   grids.clear();
-  cloud.reset();
+  clouds.clear();
 
   for (const auto& pod : data.objects) {
     ObjectShaderType st = ObjectShaderType::Planet;
@@ -39,7 +57,6 @@ static void buildScene(
       vec3{pod.velocity.x, pod.velocity.y, pod.velocity.z},
       vec3{pod.position.x, pod.position.y, pod.position.z},
       pod.mass, pod.name, st, pod.temperature);
-    // Override schwarzschildRadius from serialised data (if non-zero)
     if (pod.schwarzschildRadius > 0.0f)
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
   }
@@ -56,26 +73,9 @@ static void buildScene(
     });
   }
 
-  if (data.cloud.enabled) {
-    if (!data.cloud.formationFile.empty()) {
-      // Load from formation file
-      std::string formPath = "templates/formations/" + data.cloud.formationFile;
-      cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, formPath);
-    } else {
-      // Legacy procedural generation
-      cloud = std::make_unique<CloudObject>(
-        vec3{0, 0, -3},
-        data.cloud.count,
-        randomDistribution,
-        vec3{data.cloud.sizeX, data.cloud.sizeY, data.cloud.sizeZ}
-      );
-    }
-    // Apply compute method settings
-    cloud->computeMethod       = static_cast<CloudComputeMethod>(data.cloud.computeMethod);
-    cloud->barnesHutTheta      = data.cloud.theta;
-    cloud->temperature         = data.cloud.temperature;
-    cloud->renderMode          = data.cloud.renderMode;
-    cloud->nebulaScatterScale  = data.cloud.nebulaScatterScale;
+  for (const auto& cd : data.clouds) {
+    if (cd.enabled)
+      clouds.push_back(buildCloudFromData(cd));
   }
 }
 
@@ -92,18 +92,17 @@ int main(int argc, char** argv) {
     renderer.startupChoice = Renderer::StartupChoice::Template;
   }
 
-  std::vector<PhysicsObject>   physicsObjects;
-  std::vector<LineObject>      lineObjects;
-  std::vector<GridObject>      grids;
-  std::unique_ptr<CloudObject> cloud;
+  std::vector<PhysicsObject>               physicsObjects;
+  std::vector<LineObject>                  lineObjects;
+  std::vector<GridObject>                  grids;
+  std::vector<std::unique_ptr<CloudObject>> clouds;
   // Pre-reserve to avoid reallocation (PhysicsObject holds OpenGL handles —
   // reallocation would copy/move them and corrupt GPU state)
   physicsObjects.reserve(256);
   lineObjects.reserve(256);
   grids.reserve(256); // GridObject holds OpenGL handles; reallocation would corrupt them
 
-  GridData  currentGrid  = GridData{4, 10.f, 10.f, 30, 2.f};
-  CloudData currentCloud = CloudData{};
+  GridData currentGrid = GridData{4, 10.f, 10.f, 30, 2.f};
 
   PlaneObject background{vec3{0, 0, -3}, 1, 1};
   background.SetShaders("src/shaders/raytracerVertex.glsl",
@@ -136,25 +135,24 @@ int main(int argc, char** argv) {
   };
 
   cb.applyCloud = [&](const CloudFormState& cf) {
-    currentCloud = CloudData{cf.enabled, cf.count,
-                             cf.sizeX, cf.sizeY, cf.sizeZ,
-                             cf.formationFile, cf.computeMethod, cf.theta};
-    cloud.reset();
-    if (cf.enabled) {
-      if (!cf.formationFile.empty()) {
-        std::string formPath = "templates/formations/" + cf.formationFile;
-        cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, formPath);
-      } else {
-        cloud = std::make_unique<CloudObject>(
-          vec3{0, 0, -3}, cf.count, randomDistribution,
-          vec3{cf.sizeX, cf.sizeY, cf.sizeZ});
-      }
-      cloud->computeMethod      = static_cast<CloudComputeMethod>(cf.computeMethod);
-      cloud->barnesHutTheta     = cf.theta;
-      cloud->temperature        = cf.temperature;
-      cloud->renderMode         = cf.renderMode;
-      cloud->nebulaScatterScale = cf.nebulaScatterScale;
-    }
+    if (!cf.enabled) return;
+    CloudData cd{true, cf.count, cf.sizeX, cf.sizeY, cf.sizeZ,
+                 cf.formationFile, cf.computeMethod, cf.theta,
+                 cf.temperature, cf.renderMode, cf.nebulaScatterScale};
+    clouds.push_back(buildCloudFromData(cd));
+  };
+
+  cb.deleteCloud = [&](int cloudIdx) {
+    if (cloudIdx < 0 || cloudIdx >= (int)clouds.size()) return;
+    clouds.erase(clouds.begin() + cloudIdx);
+  };
+
+  cb.respawnCloud = [&](int cloudIdx, const CloudFormState& cf) {
+    if (cloudIdx < 0 || cloudIdx >= (int)clouds.size()) return;
+    CloudData cd{true, cf.count, cf.sizeX, cf.sizeY, cf.sizeZ,
+                 cf.formationFile, cf.computeMethod, cf.theta,
+                 cf.temperature, cf.renderMode, cf.nebulaScatterScale};
+    clouds[cloudIdx] = buildCloudFromData(cd);
   };
 
   cb.deleteObject = [&](int index) {
@@ -167,14 +165,21 @@ int main(int argc, char** argv) {
   cb.saveProject = [&]() {
     std::string path(renderer.savePathBuf);
     if (path.empty()) path = "project.json";
-    ProjectSerializer::Save(path, physicsObjects, currentGrid, currentCloud);
+    std::vector<CloudData> cloudDatas;
+    for (const auto& c : clouds) {
+      cloudDatas.push_back(CloudData{
+        true, c->particleCount(),
+        3.f, 3.f, 3.f, "", static_cast<int>(c->computeMethod),
+        c->barnesHutTheta, c->temperature, c->renderMode, c->nebulaScatterScale
+      });
+    }
+    ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas);
   };
 
   cb.loadProject = [&](const std::string& path) {
     ProjectData data = ProjectSerializer::Load(path);
-    currentGrid  = data.grid;
-    currentCloud = data.cloud;
-    buildScene(data, physicsObjects, lineObjects, grids, cloud);
+    currentGrid = data.grid;
+    buildScene(data, physicsObjects, lineObjects, grids, clouds);
   };
 
   // ── Startup modal loop ────────────────────────────────────────────────────
@@ -190,15 +195,13 @@ int main(int argc, char** argv) {
     using SC = Renderer::StartupChoice;
     if (renderer.startupChoice == SC::Template) {
       ProjectData tmpl = ProjectSerializer::MilkyWayTemplate();
-      currentGrid  = tmpl.grid;
-      currentCloud = tmpl.cloud;
-      buildScene(tmpl, physicsObjects, lineObjects, grids, cloud);
+      currentGrid = tmpl.grid;
+      buildScene(tmpl, physicsObjects, lineObjects, grids, clouds);
     } else if (renderer.startupChoice == SC::Load) {
       ProjectData data = ProjectSerializer::Load(
         std::string(renderer.startupLoadPath));
-      currentGrid  = data.grid;
-      currentCloud = data.cloud;
-      buildScene(data, physicsObjects, lineObjects, grids, cloud);
+      currentGrid = data.grid;
+      buildScene(data, physicsObjects, lineObjects, grids, clouds);
     }
     // SC::Empty → start blank
   }
@@ -272,21 +275,19 @@ int main(int argc, char** argv) {
     for (auto& g : grids)
       g.Update(renderer, physData);
 
-    if (cloud) {
-      cloud->Update(renderer, physData);
-      renderer.nebulaScatterScale = cloud->nebulaScatterScale;
-    }
+    for (auto& c : clouds)
+      c->Update(renderer, physData);
 
     // ── Propagate RAM budget to all FrameStores ───────────────────────────
     {
       size_t totalBudget = static_cast<size_t>(renderer.ramBudgetGB * (1024.0 * 1024.0 * 1024.0));
-      int storeCount = (int)physicsObjects.size() + (cloud ? 1 : 0);
+      int storeCount = (int)physicsObjects.size() + (int)clouds.size();
       if (storeCount > 0) {
         size_t perStore = totalBudget / (size_t)storeCount;
         for (auto& obj : physicsObjects)
           obj.setRamBudget(perStore);
-        if (cloud)
-          cloud->setRamBudget(perStore);
+        for (auto& c : clouds)
+          c->setRamBudget(perStore);
       }
       // Trim trail lines to match the physics buffer frame count
       // (use first physics object's frame count as the reference)
@@ -375,10 +376,10 @@ int main(int argc, char** argv) {
     }
     for (auto& g : grids)
       renderer.Draw(g.renderedObject);
-    if (cloud) {
-      cloud->renderedObject.uploadTemperature(cloud->temperature);
-      cloud->renderedObject.uploadRenderMode(cloud->renderMode);
-      renderer.Draw(cloud->renderedObject);
+    for (auto& c : clouds) {
+      c->renderedObject.uploadTemperature(c->temperature);
+      c->renderedObject.uploadRenderMode(c->renderMode);
+      renderer.Draw(c->renderedObject);
     }
     background.Update(renderer);
 
@@ -398,7 +399,7 @@ int main(int argc, char** argv) {
     // ── End secondary pass ──────────────────────────────────────────────────
 
     // Draw all UI panels
-    renderer.DrawUI(physicsObjects, cloud.get(), cb);
+    renderer.DrawUI(physicsObjects, clouds, cb);
 
     if (!renderer.UpdateInputs()) {
       std::cout << "Exiting\n";
@@ -444,8 +445,8 @@ int main(int argc, char** argv) {
         // Jump to start frame
         for (auto& obj : physicsObjects)
           obj.setTimeframeAndRestore((unsigned int)renderer.recStartFrame);
-        if (cloud)
-          cloud->setTimeframeAndRestore((unsigned int)renderer.recStartFrame);
+        for (auto& c : clouds)
+          c->setTimeframeAndRestore((unsigned int)renderer.recStartFrame);
         // Start recording, unpause, ensure forward playback
         renderer.StartRecording();
         renderer.paused = false;

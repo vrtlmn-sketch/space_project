@@ -39,7 +39,7 @@ struct CloudData {
 struct ProjectData {
   std::vector<PhysicsObjectData> objects;
   GridData  grid;
-  CloudData cloud;
+  std::vector<CloudData> clouds;
 };
 
 // ─── Serializer ──────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ public:
   static bool Save(const std::string& path,
                    const std::vector<PhysicsObject>& physicsObjects,
                    const GridData& grid,
-                   const CloudData& cloud);
+                   const std::vector<CloudData>& clouds);
 
   // Load a JSON file; returns populated ProjectData or empty on error
   static ProjectData Load(const std::string& path);
