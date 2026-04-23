@@ -590,12 +590,8 @@ void main()
         }
     }
 
-    // Add accumulated glow (only if not captured by BH)
-    if (!captured)
-    {
-        color  = color * cloudTransmittance + nebulaScatter;
-        color += curvedGlow;
-    }
+    color  = color * cloudTransmittance + nebulaScatter;
+    color += curvedGlow;
 
     // -----------------------------------------------------------------------
     // Black hole shadow edge glow (photon ring)

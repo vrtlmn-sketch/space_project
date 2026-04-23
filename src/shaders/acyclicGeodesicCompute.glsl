@@ -947,12 +947,8 @@ void main()
         }
     }
 
-    // Add accumulated glow (only if not captured)
-    if (!captured)
-    {
-        color  = color * cloudTransmittance + nebulaScatter;
-        color += curvedGlow;
-    }
+    color  = color * cloudTransmittance + nebulaScatter;
+    color += curvedGlow;
 
     // -----------------------------------------------------------------------
     // Photon ring (identical to geodesic shader)
