@@ -1361,6 +1361,9 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::ColorButton("##sp_bb", ImVec4(sr, sg, sb, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
 
       ImGui::Spacing();
+      if (ImGui::Button("Procedural Generator...", ImVec2(-1, 0)))
+        showProceduralGen = true;
+      ImGui::Spacing();
       if (ImGui::Button("Spawn Cloud", ImVec2(-1, 28))) {
         cloudForm.enabled = true;
         if (cb.applyCloud) cb.applyCloud(cloudForm);

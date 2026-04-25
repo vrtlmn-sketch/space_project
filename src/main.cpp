@@ -16,6 +16,7 @@
 #include "cloudObject.h"
 #include "gridObject.h"
 #include "projectSerializer.h"
+#include "proceduralGen.h"
 
 // ─── Helper: build scene from ProjectData ────────────────────────────────────
 
@@ -108,6 +109,8 @@ int main(int argc, char** argv) {
 
   GridData currentGrid = GridData{4, 10.f, 10.f, 30, 2.f};
 
+  ProceduralGenWindow procGen;
+
   PlaneObject background{vec3{0, 0, -3}, 1, 1};
   background.SetShaders("src/shaders/raytracerVertex.glsl",
                         "src/shaders/spaceBackgroundFrag.glsl");
@@ -157,6 +160,13 @@ int main(int argc, char** argv) {
                  cf.formationFile, cf.computeMethod, cf.theta,
                  cf.temperature, cf.renderMode, cf.nebulaScatterScale, cf.scale};
     clouds[cloudIdx] = buildCloudFromData(cd);
+  };
+
+  procGen.onGenerate = [&](std::vector<CloudParticle> pts, int cm, float temp) {
+    auto cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, std::move(pts));
+    cloud->computeMethod = static_cast<CloudComputeMethod>(cm);
+    cloud->temperature   = temp;
+    clouds.push_back(std::move(cloud));
   };
 
   cb.deleteObject = [&](int index) {
@@ -404,6 +414,11 @@ int main(int argc, char** argv) {
 
     // Draw all UI panels
     renderer.DrawUI(physicsObjects, clouds, cb);
+
+    // Procedural cloud generator (standalone window, opened from Cloud spawn tab)
+    if (renderer.showProceduralGen) procGen.open = true;
+    procGen.draw();
+    renderer.showProceduralGen = procGen.open;
 
     if (!renderer.UpdateInputs()) {
       std::cout << "Exiting\n";

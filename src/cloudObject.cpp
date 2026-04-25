@@ -417,6 +417,12 @@ CloudObject::CloudObject(const vec3& position, const std::string& formationPath)
   // frameStore is lazy-init'd in ensureFrameStore() once particle count is known
 }
 
+CloudObject::CloudObject(const vec3& pos, std::vector<CloudParticle> pts) {
+  this->position = pos;
+  renderedObject.LoadCloudFromFormation(pts);
+  renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
+}
+
 CloudObject::~CloudObject() {
   destroyGPU();
 }

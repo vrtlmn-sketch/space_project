@@ -345,6 +345,9 @@ public:
   // Draw startup modal — returns true while modal is still open
   bool DrawStartupModal();
 
+  // Set to true to open the procedural cloud generator window
+  bool showProceduralGen{false};
+
   bool UpdateInputs();
 
   // Ghost drag: call each frame while active; returns true when placement confirmed

@@ -65,8 +65,11 @@ public:
   // Procedural generation constructor (existing)
   CloudObject(const vec3& position, int objectCount, float (*distributionFunc)(float x, float y, float z), const vec3& size);
 
-  // Formation file constructor (new)
+  // Formation file constructor
   CloudObject(const vec3& position, const std::string& formationPath);
+
+  // Direct particle constructor (procedural generation)
+  CloudObject(const vec3& position, std::vector<CloudParticle> particles);
 
   ~CloudObject();
 
