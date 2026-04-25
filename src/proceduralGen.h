@@ -97,6 +97,7 @@ private:
   // ── Preview camera (orbit around origin) ────────────────────────────────────
   float previewYaw{0.5f};
   float previewPitch{0.4f};
+  float previewZoom{1.0f};   // multiplier on camera distance (scroll to zoom)
 
   // ── Preview FBO ──────────────────────────────────────────────────────────────
   GLuint fbo{0};

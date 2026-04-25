@@ -112,7 +112,7 @@ static float fbm(float x, float y, float z, int octaves, float contrast) {
 // ─── Camera math ──────────────────────────────────────────────────────────────
 
 void ProceduralGenWindow::getCameraPos(float out[3]) const {
-  float camDist = 5.0f + radius * 1.2f;
+  float camDist = (5.0f + radius * 1.2f) * previewZoom;
   float cy = std::cos(previewYaw),   sy = std::sin(previewYaw);
   float cp = std::cos(previewPitch), sp = std::sin(previewPitch);
   out[0] = camDist * sy * cp;
@@ -786,6 +786,14 @@ void ProceduralGenWindow::draw() {
     previewYaw   += delta.x * 0.012f;
     previewPitch += delta.y * 0.012f;
     previewPitch  = std::clamp(previewPitch, -1.4f, 1.4f);
+  }
+
+  if (ImGui::IsItemHovered()) {
+    float wheel = ImGui::GetIO().MouseWheel;
+    if (wheel != 0.0f) {
+      previewZoom *= std::pow(0.9f, wheel);
+      previewZoom  = std::clamp(previewZoom, 0.05f, 20.0f);
+    }
   }
 
   ImGui::TextDisabled("Drag to orbit  |  Preview capped at %dk particles",
