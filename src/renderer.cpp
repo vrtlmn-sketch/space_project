@@ -708,18 +708,23 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     int newH = (int)avail.y;
 
     if (newW > 0 && newH > 0) {
-      // Update stored size for next frame's BindViewportFBO call
       vpWidth  = newW;
       vpHeight = newH;
 
-      if (vpColorTex) {
-        ImVec2 cursor = ImGui::GetCursorScreenPos();
-        ImGui::InvisibleButton("##vp_img", avail);
+      // Fill the content area with a click-absorbing button (no scroll/drag interference)
+      ImVec2 cursor = ImGui::GetCursorScreenPos();
+      ImGui::InvisibleButton("##vp_img", avail);
+
+      if (vpColorTex && vpFboW > 0 && vpFboH > 0) {
+        // Center the FBO image (which maintains the screen aspect) within the available area
+        float offX = (avail.x - (float)vpFboW) * 0.5f;
+        float offY = (avail.y - (float)vpFboH) * 0.5f;
+        ImVec2 imgMin(cursor.x + offX, cursor.y + offY);
+        ImVec2 imgMax(imgMin.x + (float)vpFboW, imgMin.y + (float)vpFboH);
         ImGui::GetWindowDrawList()->AddImage(
           (ImTextureID)(intptr_t)vpColorTex,
-          cursor,
-          ImVec2(cursor.x + avail.x, cursor.y + avail.y),
-          ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f)); // flip Y for GL origin
+          imgMin, imgMax,
+          ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
       }
     }
     ImGui::End();
@@ -1896,11 +1901,11 @@ void Renderer::DestroyPipFBO() {
 // Editor viewport FBO
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::EnsureViewportFBO(int w, int h) {
-  if (w == vpWidth && h == vpHeight && vpFBO != 0) return;
+  if (w == vpFboW && h == vpFboH && vpFBO != 0) return;
 
   DestroyViewportFBO();
 
-  vpWidth = w; vpHeight = h;
+  vpFboW = w; vpFboH = h;
 
   glGenFramebuffers(1, &vpFBO);
   glBindFramebuffer(GL_FRAMEBUFFER, vpFBO);
@@ -1924,25 +1929,40 @@ void Renderer::DestroyViewportFBO() {
   if (vpFBO)       { glDeleteFramebuffers(1, &vpFBO);       vpFBO = 0; }
   if (vpColorTex)  { glDeleteTextures(1, &vpColorTex);      vpColorTex = 0; }
   if (vpDepthRBO)  { glDeleteRenderbuffers(1, &vpDepthRBO); vpDepthRBO = 0; }
-  vpWidth = vpHeight = 0;
+  vpFboW = vpFboH = 0;
 }
 
 void Renderer::BindViewportFBO() {
   if (!editorViewport || vpWidth <= 0 || vpHeight <= 0) return;
-  EnsureViewportFBO(vpWidth, vpHeight);
+
+  // Compute the largest sub-rect of the central area that matches the full window's aspect ratio.
+  // This keeps the scene proportions identical to the fullscreen view.
+  int winW = 0, winH = 0;
+  glfwGetFramebufferSize(window, &winW, &winH);
+  if (winH <= 0) { winW = 1920; winH = 1080; }
+  float windowAspect = (float)winW / (float)winH;
+
+  int renderW, renderH;
+  if ((float)vpWidth / (float)vpHeight > windowAspect) {
+    renderH = vpHeight;
+    renderW = std::max(1, (int)(vpHeight * windowAspect));
+  } else {
+    renderW = vpWidth;
+    renderH = std::max(1, (int)(vpWidth  / windowAspect));
+  }
+
+  EnsureViewportFBO(renderW, renderH);
   glBindFramebuffer(GL_FRAMEBUFFER, vpFBO);
-  glViewport(0, 0, vpWidth, vpHeight);
+  glViewport(0, 0, renderW, renderH);
   glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  // Override so all Draw() calls compute the correct aspect ratio for this FBO
-  fbWidth  = vpWidth;
-  fbHeight = vpHeight;
+  fbWidth  = renderW;
+  fbHeight = renderH;
 }
 
 void Renderer::UnbindViewportFBO() {
   if (!editorViewport) return;
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  // Restore actual framebuffer dimensions
   int w = 0, h = 0;
   glfwGetFramebufferSize(window, &w, &h);
   fbWidth  = w;

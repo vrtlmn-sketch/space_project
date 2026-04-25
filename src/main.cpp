@@ -362,14 +362,8 @@ int main(int argc, char** argv) {
       int rtw = renderer.GetRtLiveWidth();
       int rth = renderer.GetRtLiveHeight();
       if (rtw <= 0 || rth <= 0) {
-        // In editor viewport mode use the central-area size; else use the framebuffer
-        if (renderer.editorViewport && renderer.GetVpWidth() > 0) {
-          rtw = renderer.GetVpWidth();
-          rth = renderer.GetVpHeight();
-        } else {
-          rtw = renderer.GetFbWidth();
-          rth = renderer.GetFbHeight();
-        }
+        rtw = renderer.GetFbWidth();
+        rth = renderer.GetFbHeight();
       }
       renderer.DispatchRaytracer(rtw, rth);
       renderer.BlitRaytracerToScreen();

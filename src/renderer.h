@@ -247,7 +247,8 @@ private:
   GLuint vpFBO{0};
   GLuint vpColorTex{0};
   GLuint vpDepthRBO{0};
-  int    vpWidth{0}, vpHeight{0};   // central-area size from last frame
+  int    vpWidth{0}, vpHeight{0};   // central-area available size (from last frame's DrawUI)
+  int    vpFboW{0}, vpFboH{0};      // actual FBO dimensions (screen-aspect sub-rect of central area)
   bool   prevEditorViewport{false};
 
   void   EnsureViewportFBO(int w, int h);
@@ -291,8 +292,6 @@ public:
   bool editorViewport{false};  // true = render scene to FBO, show in central docked window
   void BindViewportFBO();      // call before primary 3D draw; no-op when editorViewport=false
   void UnbindViewportFBO();    // call after primary 3D draw; no-op when editorViewport=false
-  int  GetVpWidth()  const { return vpWidth; }
-  int  GetVpHeight() const { return vpHeight; }
 
   // ---- Secondary (PiP) render pass ----
   // Call these from main.cpp to bracket the secondary draw pass
