@@ -168,9 +168,9 @@ ProceduralGenWindow::~ProceduralGenWindow() {
 void ProceduralGenWindow::ensureGPU() {
   if (gpuReady) return;
 
-  // Same shader files the rasterized cloud view uses
+  // Exact shader files the rasterized view uses for clouds and grid
   particleProgram = linkProgram("src/shaders/defaultVert.glsl",
-                                "src/shaders/cloudFrag.glsl");
+                                "src/shaders/lineShaders.glsl");
   gridProgram     = linkProgram("src/shaders/defaultVert.glsl",
                                 "src/shaders/gridShader.glsl");
 
@@ -340,12 +340,7 @@ void ProceduralGenWindow::renderToFBO() {
     glUseProgram(particleProgram);
     uploadCameraUniforms(particleProgram, proj, world, uCam, viewRot);
 
-    GLint locTemp  = glGetUniformLocation(particleProgram, "uTemperature");
-    GLint locRMode = glGetUniformLocation(particleProgram, "uRenderMode");
-    if (locTemp  >= 0) glUniform1f(locTemp,  temperature);
-    if (locRMode >= 0) glUniform1i(locRMode, 0); // points mode
-
-    glPointSize(2.0f); // matches renderCloud mode 0
+    glPointSize(2.0f);
     glBindVertexArray(ptVAO);
     glDrawArrays(GL_POINTS, 0, (GLsizei)particles.size());
     glPointSize(1.0f);
