@@ -20,7 +20,7 @@ private:
   int   count{2000};
   float radius{2.0f};
   float spin{0.3f};
-  float tiltDeg{0.0f};   // spin-axis tilt from Y toward X (degrees)
+  float tiltDeg{0.0f};
   float particleMass{0.02f};
   float temperature{4500.0f};
   int   computeMethod{0};
@@ -38,11 +38,16 @@ private:
   bool fboReady{false};
 
   // ── Preview GL resources ──
-  GLuint program{0};
+  // Two programs using the exact same shaders as the rasterized view:
+  //   particleProgram: defaultVert.glsl + cloudFrag.glsl
+  //   gridProgram:     defaultVert.glsl + gridShader.glsl
+  GLuint particleProgram{0};
+  GLuint gridProgram{0};
+
   GLuint ptVAO{0}, ptVBO{0};   // cloud particles
   GLuint grVAO{0}, grVBO{0};   // grid lines
   int    gridVertCount{0};
-  bool gpuReady{false};
+  bool   gpuReady{false};
 
   // ── Generated particle data ──
   std::vector<CloudParticle> particles;
@@ -53,6 +58,9 @@ private:
   void regenerate();
   void uploadPreviewGeom();
   void renderToFBO();
-  void buildMVP(float out[16]) const;
+
+  // Compute the three camera-related uniforms used by defaultVert.glsl
   void getCameraPos(float out[3]) const;
+  void buildViewRot(float out[9]) const;   // row-major 3x3, for GL_TRUE upload
+  void buildProj(float out[16]) const;     // column-major 4x4
 };
