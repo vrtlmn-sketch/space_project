@@ -2388,7 +2388,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   // long-running frames at higher resolutions or with many objects.
   GLuint gx             = (width + 15) / 16;
   GLint  locTileOffsetY = glGetUniformLocation(activeProgram, "uTileOffsetY");
-  constexpr int STRIP_H = 64; // rows per strip
+  constexpr int STRIP_H = 16; // rows per strip — small enough to stay under any watchdog timeout
 
   for (int y0 = 0; y0 < height; y0 += STRIP_H) {
     if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, y0);
@@ -2396,7 +2396,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
     GLuint gy_strip = (rows + 15) / 16;
     glDispatchCompute(gx, gy_strip, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    glFlush();
+    glFinish(); // block CPU until GPU is truly idle — resets the watchdog timer between strips
   }
 
   // Final barrier so subsequent texture reads see the compute results
@@ -2632,7 +2632,7 @@ void Renderer::CaptureImage() {
   // Split dispatch into horizontal strips (same watchdog fix as DispatchRaytracer)
   GLuint gx_rec         = (w + 15) / 16;
   GLint  locTileOffY_rec = glGetUniformLocation(activeProgram, "uTileOffsetY");
-  constexpr int REC_STRIP_H = 64;
+  constexpr int REC_STRIP_H = 16;
 
   for (int y0 = 0; y0 < h; y0 += REC_STRIP_H) {
     if (locTileOffY_rec >= 0) glUniform1i(locTileOffY_rec, y0);
@@ -2640,7 +2640,7 @@ void Renderer::CaptureImage() {
     GLuint gy_strip = (rows + 15) / 16;
     glDispatchCompute(gx_rec, gy_strip, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    glFlush();
+    glFinish(); // block CPU until GPU is truly idle — resets the watchdog timer between strips
   }
 
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
