@@ -229,6 +229,10 @@ int main(int argc, char** argv) {
     // raytracerIsMain=true  → raytracer fullscreen (primary), rasterizer PiP (secondary)
     renderer.rayTracerView = renderer.raytracerIsMain;
 
+    // In editor viewport mode, redirect all primary drawing into the viewport FBO.
+    // Must happen before any draw calls so every object ends up in the FBO.
+    renderer.BindViewportFBO();
+
     // Ghost-drag: confirm placement on click
     if (renderer.UpdateGhostDrag(renderer.spawnForm)) {
       cb.spawnPhysicsObject(renderer.spawnForm);
@@ -350,9 +354,6 @@ int main(int argc, char** argv) {
         }
       }
     }
-
-    // Bind the editor viewport FBO if that mode is active (no-op otherwise)
-    renderer.BindViewportFBO();
 
     background.Update(renderer);
 

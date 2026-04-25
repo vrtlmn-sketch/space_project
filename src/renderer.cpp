@@ -271,7 +271,7 @@ bool Renderer::UpdateInputs() {
     showQuitDialog = true;
   }
 
-  if (!io.WantCaptureKeyboard) {
+  if (!io.WantTextInput) {
     // WASD = position movement (yaw-aware, horizontal plane)
     if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  cameraSpeed});
     if (glfwGetKey(window, GLFW_KEY_S)          == GLFW_PRESS) move(vec3{0,  0, -cameraSpeed});
@@ -1934,11 +1934,19 @@ void Renderer::BindViewportFBO() {
   glViewport(0, 0, vpWidth, vpHeight);
   glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  // Override so all Draw() calls compute the correct aspect ratio for this FBO
+  fbWidth  = vpWidth;
+  fbHeight = vpHeight;
 }
 
 void Renderer::UnbindViewportFBO() {
   if (!editorViewport) return;
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  // Restore actual framebuffer dimensions
+  int w = 0, h = 0;
+  glfwGetFramebufferSize(window, &w, &h);
+  fbWidth  = w;
+  fbHeight = h;
   glViewport(0, 0, fbWidth, fbHeight);
 }
 
