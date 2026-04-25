@@ -16,7 +16,8 @@ uniform mat3 uViewRot;
 uniform vec2 uResolution;
 
 // quality settings
-uniform int uMaxBounces; // 0 = no reflections, 1+ = bounce count
+uniform int uMaxBounces;  // 0 = no reflections, 1+ = bounce count
+uniform int uTileOffsetY; // strip Y offset for split dispatch
 
 struct spaceObject
 {
@@ -158,7 +159,8 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
 
 void main()
 {
-    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.x,
+                             gl_GlobalInvocationID.y + uTileOffsetY);
     ivec2 imgSize    = imageSize(outputImage);
 
     // Skip threads outside the image

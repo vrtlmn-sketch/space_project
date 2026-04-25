@@ -16,8 +16,9 @@ uniform mat3 uViewRot;
 uniform vec2 uResolution;
 
 // quality settings
-uniform int uMaxBounces; // 0 = no reflections, 1+ = bounce count
-uniform int uMaxSteps;   // geodesic integration steps per ray
+uniform int uMaxBounces;  // 0 = no reflections, 1+ = bounce count
+uniform int uMaxSteps;    // geodesic integration steps per ray
+uniform int uTileOffsetY; // strip Y offset for split dispatch
 
 struct spaceObject
 {
@@ -249,7 +250,8 @@ RayState rk4Step(vec3 pos, vec3 vel, float dt)
 
 void main()
 {
-    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.x,
+                             gl_GlobalInvocationID.y + uTileOffsetY);
     ivec2 imgSize    = imageSize(outputImage);
 
     // Skip threads outside the image

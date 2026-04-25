@@ -2253,12 +2253,22 @@ void Renderer::DispatchRaytracer(int width, int height) {
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
 
-  // Dispatch
-  GLuint gx = (width  + 15) / 16;
-  GLuint gy = (height + 15) / 16;
-  glDispatchCompute(gx, gy, 1);
+  // Split dispatch into horizontal strips so the GPU watchdog doesn't kill
+  // long-running frames at higher resolutions or with many objects.
+  GLuint gx             = (width + 15) / 16;
+  GLint  locTileOffsetY = glGetUniformLocation(activeProgram, "uTileOffsetY");
+  constexpr int STRIP_H = 64; // rows per strip
 
-  // Memory barrier so subsequent texture reads see the compute results
+  for (int y0 = 0; y0 < height; y0 += STRIP_H) {
+    if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, y0);
+    int   rows     = std::min(STRIP_H, height - y0);
+    GLuint gy_strip = (rows + 15) / 16;
+    glDispatchCompute(gx, gy_strip, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    glFlush();
+  }
+
+  // Final barrier so subsequent texture reads see the compute results
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
   // ── Snapshot state for dirty check next frame ──
@@ -2488,9 +2498,20 @@ void Renderer::CaptureImage() {
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
 
-  GLuint gx = (w + 15) / 16;
-  GLuint gy = (h + 15) / 16;
-  glDispatchCompute(gx, gy, 1);
+  // Split dispatch into horizontal strips (same watchdog fix as DispatchRaytracer)
+  GLuint gx_rec         = (w + 15) / 16;
+  GLint  locTileOffY_rec = glGetUniformLocation(activeProgram, "uTileOffsetY");
+  constexpr int REC_STRIP_H = 64;
+
+  for (int y0 = 0; y0 < h; y0 += REC_STRIP_H) {
+    if (locTileOffY_rec >= 0) glUniform1i(locTileOffY_rec, y0);
+    int    rows     = std::min(REC_STRIP_H, h - y0);
+    GLuint gy_strip = (rows + 15) / 16;
+    glDispatchCompute(gx_rec, gy_strip, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    glFlush();
+  }
+
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
   // Ensure compute shader is done before CPU readback

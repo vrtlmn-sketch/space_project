@@ -16,8 +16,9 @@ uniform mat3 uViewRot;
 uniform vec2 uResolution;
 
 // quality settings
-uniform int uMaxBounces; // 0 = no reflections, 1+ = bounce count
-uniform int uMaxSteps;   // geodesic integration steps per ray (capped to 512 for acyclic)
+uniform int uMaxBounces;  // 0 = no reflections, 1+ = bounce count
+uniform int uMaxSteps;    // geodesic integration steps per ray (capped to 512 for acyclic)
+uniform int uTileOffsetY; // strip Y offset for split dispatch
 
 struct spaceObject
 {
@@ -402,7 +403,8 @@ vec3 computeGlow(vec3 rayPos, vec3 rayDir, float maxDist)
 
 void main()
 {
-    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.x,
+                             gl_GlobalInvocationID.y + uTileOffsetY);
     ivec2 imgSize    = imageSize(outputImage);
 
     if (pixelCoord.x >= imgSize.x || pixelCoord.y >= imgSize.y) return;
