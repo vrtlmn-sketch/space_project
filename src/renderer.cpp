@@ -308,6 +308,10 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)  rtToggleKeyPressed = true;
     else { if (rtToggleKeyPressed) raytracerEnabled = !raytracerEnabled; rtToggleKeyPressed = false; }
 
+    // V = toggle editor viewport mode (edge-triggered)
+    if (glfwGetKey(window, GLFW_KEY_V) == GLFW_PRESS)  viewportKeyPressed = true;
+    else { if (viewportKeyPressed) editorViewport = !editorViewport; viewportKeyPressed = false; }
+
     // R = toggle recording (edge-triggered)
     // If both rec markers are set and not currently recording, trigger marker-based recording.
     // Otherwise, toggle recording immediately (legacy behaviour).
@@ -624,9 +628,19 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   ImGui::PopStyleVar(3);
 
   ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
-  ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
 
-  // ── Build programmatic layout on first frame ──
+  // Rebuild layout when editor viewport mode is toggled
+  if (editorViewport != prevEditorViewport) {
+    prevEditorViewport  = editorViewport;
+    dockLayoutInitialized = false;
+  }
+
+  ImGuiDockNodeFlags dsFlags = editorViewport
+    ? ImGuiDockNodeFlags_None
+    : ImGuiDockNodeFlags_PassthruCentralNode;
+  ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dsFlags);
+
+  // ── Build programmatic layout on first frame (or after mode toggle) ──
   if (!dockLayoutInitialized) {
     dockLayoutInitialized = true;
 
@@ -634,44 +648,38 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
 
-    // Split: bottom strip (timeline + stats) ~12% height
     ImGuiID dock_main, dock_bottom;
     ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.12f, &dock_bottom, &dock_main);
 
-    // Split: top strip (controls bar) ~6% height from the remaining main area
     ImGuiID dock_top;
     ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Up, 0.065f, &dock_top, &dock_main);
 
-    // Split: left sidebar ~18% width
     ImGuiID dock_left;
     ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.20f, &dock_left, &dock_main);
 
-    // Split: right sidebar (inspector) ~20% width
     ImGuiID dock_right;
     ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.22f, &dock_right, &dock_main);
 
-    // Split right sidebar: top=inspector, bottom=rendering settings (60/40)
     ImGuiID dock_right_top, dock_right_bottom;
     ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.40f, &dock_right_bottom, &dock_right_top);
 
-    // Split bottom: PiP on the right side ~30% width
     ImGuiID dock_bottom_left, dock_bottom_right;
     ImGui::DockBuilderSplitNode(dock_bottom, ImGuiDir_Right, 0.30f, &dock_bottom_right, &dock_bottom_left);
 
-    // Split left sidebar: top=spawn, bottom=hierarchy (50/50)
     ImGuiID dock_left_top, dock_left_bottom;
     ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.50f, &dock_left_bottom, &dock_left_top);
 
-    // Dock windows to nodes
-    ImGui::DockBuilderDockWindow("Controls",       dock_top);
-    ImGui::DockBuilderDockWindow("Spawn",           dock_left_top);
-    ImGui::DockBuilderDockWindow("Hierarchy",       dock_left_bottom);
-    ImGui::DockBuilderDockWindow("Inspector",       dock_right_top);
-    ImGui::DockBuilderDockWindow("Rendering Settings", dock_right_bottom);
-    ImGui::DockBuilderDockWindow("Timeline",        dock_bottom_left);
-    ImGui::DockBuilderDockWindow("Secondary View",  dock_bottom_right);
+    ImGui::DockBuilderDockWindow("Controls",           dock_top);
+    ImGui::DockBuilderDockWindow("Spawn",               dock_left_top);
+    ImGui::DockBuilderDockWindow("Hierarchy",           dock_left_bottom);
+    ImGui::DockBuilderDockWindow("Inspector",           dock_right_top);
+    ImGui::DockBuilderDockWindow("Rendering Settings",  dock_right_bottom);
+    ImGui::DockBuilderDockWindow("Timeline",            dock_bottom_left);
+    ImGui::DockBuilderDockWindow("Secondary View",      dock_bottom_right);
 
-    // Center viewport = passthrough (no window docked there)
+    if (editorViewport)
+      ImGui::DockBuilderDockWindow("Viewport", dock_main);
+
     ImGui::DockBuilderFinish(dockspace_id);
   }
 
@@ -687,6 +695,35 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawPipWindow();
   if (ghostDragActive) DrawGhostObject();
   DrawQuitDialog(cb);
+
+  // ── Editor viewport window ──────────────────────────────────────────────────
+  if (editorViewport) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("Viewport", nullptr,
+                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    int newW = (int)avail.x;
+    int newH = (int)avail.y;
+
+    if (newW > 0 && newH > 0) {
+      // Update stored size for next frame's BindViewportFBO call
+      vpWidth  = newW;
+      vpHeight = newH;
+
+      if (vpColorTex) {
+        ImVec2 cursor = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##vp_img", avail);
+        ImGui::GetWindowDrawList()->AddImage(
+          (ImTextureID)(intptr_t)vpColorTex,
+          cursor,
+          ImVec2(cursor.x + avail.x, cursor.y + avail.y),
+          ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f)); // flip Y for GL origin
+      }
+    }
+    ImGui::End();
+  }
 
   // ── "Image saved" dialog (same style as quit dialog) ──
   if (showImgSavedDialog) {
@@ -822,6 +859,22 @@ void Renderer::DrawControlsPanel() {
   ImGui::SameLine();
   ImGui::SetNextItemWidth(70);
   ImGui::DragFloat("##simspeed", &simSpeed, 0.01f, 0.01f, 10.0f, "%.2fx");
+  ImGui::SameLine();
+
+  // Separator
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+
+  // Editor viewport toggle
+  if (editorViewport) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.15f, 0.45f, 0.15f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.60f, 0.25f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.10f, 0.35f, 0.10f, 1.00f));
+    if (ImGui::Button("Viewport [V]", ImVec2(95, 0))) editorViewport = false;
+    ImGui::PopStyleColor(3);
+  } else {
+    if (ImGui::Button("Viewport [V]", ImVec2(95, 0))) editorViewport = true;
+  }
   ImGui::SameLine();
 
   // Separator
@@ -1840,6 +1893,56 @@ void Renderer::DestroyPipFBO() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Editor viewport FBO
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::EnsureViewportFBO(int w, int h) {
+  if (w == vpWidth && h == vpHeight && vpFBO != 0) return;
+
+  DestroyViewportFBO();
+
+  vpWidth = w; vpHeight = h;
+
+  glGenFramebuffers(1, &vpFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, vpFBO);
+
+  glGenTextures(1, &vpColorTex);
+  glBindTexture(GL_TEXTURE_2D, vpColorTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, vpColorTex, 0);
+
+  glGenRenderbuffers(1, &vpDepthRBO);
+  glBindRenderbuffer(GL_RENDERBUFFER, vpDepthRBO);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, vpDepthRBO);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void Renderer::DestroyViewportFBO() {
+  if (vpFBO)       { glDeleteFramebuffers(1, &vpFBO);       vpFBO = 0; }
+  if (vpColorTex)  { glDeleteTextures(1, &vpColorTex);      vpColorTex = 0; }
+  if (vpDepthRBO)  { glDeleteRenderbuffers(1, &vpDepthRBO); vpDepthRBO = 0; }
+  vpWidth = vpHeight = 0;
+}
+
+void Renderer::BindViewportFBO() {
+  if (!editorViewport || vpWidth <= 0 || vpHeight <= 0) return;
+  EnsureViewportFBO(vpWidth, vpHeight);
+  glBindFramebuffer(GL_FRAMEBUFFER, vpFBO);
+  glViewport(0, 0, vpWidth, vpHeight);
+  glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+void Renderer::UnbindViewportFBO() {
+  if (!editorViewport) return;
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glViewport(0, 0, fbWidth, fbHeight);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // BeginSecondaryPass / EndSecondaryPass — bracket the PiP draw pass
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::BeginSecondaryPass() {
@@ -2749,6 +2852,7 @@ Renderer::~Renderer() {
   DestroyComputeResources();
   DestroyRecOutputTex();
   DestroyPipFBO();
+  DestroyViewportFBO();
   if (initialised) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

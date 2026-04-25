@@ -351,26 +351,34 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Bind the editor viewport FBO if that mode is active (no-op otherwise)
+    renderer.BindViewportFBO();
+
     background.Update(renderer);
 
     // If primary view is raytraced, dispatch compute shader + blit to screen
     if (renderer.rayTracerView && renderer.raytracerEnabled) {
       int rtw = renderer.GetRtLiveWidth();
       int rth = renderer.GetRtLiveHeight();
-      // If 0 (Native), use framebuffer size
       if (rtw <= 0 || rth <= 0) {
-        rtw = renderer.GetFbWidth();
-        rth = renderer.GetFbHeight();
+        // In editor viewport mode use the central-area size; else use the framebuffer
+        if (renderer.editorViewport && renderer.GetVpWidth() > 0) {
+          rtw = renderer.GetVpWidth();
+          rth = renderer.GetVpHeight();
+        } else {
+          rtw = renderer.GetFbWidth();
+          rth = renderer.GetFbHeight();
+        }
       }
       renderer.DispatchRaytracer(rtw, rth);
       renderer.BlitRaytracerToScreen();
 
-      // If recording, do a separate dispatch at recording resolution + capture
-      if (renderer.IsRecording()) {
+      if (renderer.IsRecording())
         renderer.DispatchAndCaptureRecordingFrame();
-        // Re-bind the display texture so BlitRaytracerToScreen still works for PiP etc.
-      }
     }
+
+    // Unbind the editor viewport FBO before the secondary pass and UI
+    renderer.UnbindViewportFBO();
 
     // ── Secondary (PiP) render pass ─────────────────────────────────────────
     // Renders the OTHER view (rasterizer or raytracer) into the PiP FBO.
