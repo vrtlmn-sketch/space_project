@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
+#include <chrono>
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -254,6 +255,33 @@ private:
   void   EnsureViewportFBO(int w, int h);
   void   DestroyViewportFBO();
 
+  // ── Benchmarking ──
+  struct BenchStats {
+    // Live per-frame (updated every dispatched frame)
+    double  dispatchMs{0};        // GPU strip-loop time for the live view
+    double  frameMs{0};           // full frame wall time (BeginFrame → EndFrame)
+    double  fps{0};               // smoothed fps (rolling 60-frame average)
+    double  frameTimes[60]{};
+    int     bufIdx{0};
+    int     bufCount{0};
+    // Recording accumulators (reset on StartRecording)
+    double  recDispatchTotal{0};  // sum of per-frame recording dispatch times
+    double  recLastFrameMs{0};    // most recent recording frame dispatch time
+    std::chrono::steady_clock::time_point recWallStart{};
+    // Summary shown after StopRecording
+    bool    showSummary{false};
+    double  sumWallSecs{0};
+    double  sumAvgDispatchMs{0};
+    double  sumAvgFps{0};
+    int     sumFrames{0};
+    char    sumFile[256]{};
+    int     sumWidth{0}, sumHeight{0};
+    int     sumMethod{0};
+    int     sumObjects{0};
+  };
+  BenchStats bench{};
+  std::chrono::steady_clock::time_point frameStartTP{};
+
   // ImGui helpers
   void DrawControlsPanel();
   void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds);
@@ -263,6 +291,7 @@ private:
   void DrawGhostObject();
   void DrawQuitDialog(const SceneCallbacks& cb);
   void DrawRenderingSettings();  // rendering method + RT quality settings
+  void DrawBenchmarkPanel();     // performance stats section (called from DrawRenderingSettings)
   void DrawPipWindow();   // show secondary view FBO as ImGui image
 
 public:

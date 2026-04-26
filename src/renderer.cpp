@@ -182,6 +182,8 @@ bool Renderer::InitWindow(
 // BeginFrame
 // ─────────────────────────────────────────────────────────────────────────────
 bool Renderer::BeginFrame() {
+  frameStartTP = std::chrono::steady_clock::now();
+
   glfwPollEvents();
   int fbw = 0, fbh = 0;
   glfwGetFramebufferSize(window, &fbw, &fbh);
@@ -212,6 +214,20 @@ void Renderer::EndFrame() {
   glfwSwapBuffers(window);
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
+
+  // ── Frame timing ──
+  auto now = std::chrono::steady_clock::now();
+  double ms = std::chrono::duration<double, std::milli>(now - frameStartTP).count();
+  bench.frameMs = ms;
+
+  // Rolling 60-frame fps average
+  bench.frameTimes[bench.bufIdx] = ms;
+  bench.bufIdx = (bench.bufIdx + 1) % 60;
+  if (bench.bufCount < 60) bench.bufCount++;
+  double sum = 0.0;
+  for (int i = 0; i < bench.bufCount; i++) sum += bench.frameTimes[i];
+  double avgMs = (bench.bufCount > 0) ? sum / bench.bufCount : ms;
+  bench.fps = (avgMs > 0.0) ? 1000.0 / avgMs : 0.0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -756,6 +772,45 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
 
     ImGui::End();
   }
+
+  // ── Recording summary modal ──
+  if (bench.showSummary) {
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+    ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Always);
+
+    ImGuiWindowFlags mflags = ImGuiWindowFlags_NoMove   | ImGuiWindowFlags_NoResize
+                            | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking
+                            | ImGuiWindowFlags_AlwaysAutoResize;
+    ImGui::Begin("Recording Complete##benchsummary", nullptr, mflags);
+
+    const char* methodLabel[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
+    const char* mLabel = (bench.sumMethod >= 0 && bench.sumMethod <= 2)
+                          ? methodLabel[bench.sumMethod] : "?";
+
+    ImGui::TextDisabled("File");        ImGui::SameLine(110); ImGui::TextWrapped("%s", bench.sumFile);
+    ImGui::TextDisabled("Resolution");  ImGui::SameLine(110); ImGui::Text("%dx%d", bench.sumWidth, bench.sumHeight);
+    ImGui::TextDisabled("Method");      ImGui::SameLine(110); ImGui::Text("%s", mLabel);
+    ImGui::TextDisabled("Objects (RT)");ImGui::SameLine(110); ImGui::Text("%d", bench.sumObjects);
+    ImGui::Separator();
+    ImGui::TextDisabled("Frames");      ImGui::SameLine(110);
+    ImGui::Text("%d  (%.1fs @ %d fps)", bench.sumFrames,
+                bench.sumFrames / (double)(recordFps > 0 ? recordFps : 30), recordFps);
+    ImGui::TextDisabled("Wall time");   ImGui::SameLine(110); ImGui::Text("%.1fs", bench.sumWallSecs);
+    ImGui::TextDisabled("Avg dispatch");ImGui::SameLine(110); ImGui::Text("%.1f ms/frame", bench.sumAvgDispatchMs);
+    ImGui::TextDisabled("Avg fps");     ImGui::SameLine(110); ImGui::Text("%.2f", bench.sumAvgFps);
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    float bw2 = 95.f;
+    ImGui::SetCursorPosX((ImGui::GetWindowSize().x - bw2) * 0.5f);
+    if (ImGui::Button("OK##benchok", ImVec2(bw2, 28)))
+      bench.showSummary = false;
+
+    ImGui::End();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -850,8 +905,14 @@ void Renderer::DrawControlsPanel() {
   if (ImGui::Button("Reset##cam", ImVec2(45, 0))) resetCamera();
   ImGui::SameLine();
 
-  if (recording)
-    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "REC %d", recordedFrames);
+  if (recording) {
+    double elapsedSecs = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - bench.recWallStart).count();
+    int em = (int)(elapsedSecs / 60);
+    int es = (int)elapsedSecs % 60;
+    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+        "REC %d | %d:%02d | %.0fms/f", recordedFrames, em, es, bench.recLastFrameMs);
+  }
 
   ImGui::SameLine();
 
@@ -1028,7 +1089,89 @@ void Renderer::DrawRenderingSettings() {
   ImGui::SetNextItemWidth(-1);
   ImGui::SliderFloat("##ram2", &ramBudgetGB, 1.0f, 128.0f, "%.0f GB");
 
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // ── Performance ──
+  if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen))
+    DrawBenchmarkPanel();
+
   ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawBenchmarkPanel — called from DrawRenderingSettings
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawBenchmarkPanel() {
+  const char* methodLabel[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
+  const char* mLabel = (raytracerMethod >= 0 && raytracerMethod <= 2)
+                        ? methodLabel[raytracerMethod] : "?";
+
+  // ── Live stats ──
+  ImGui::TextDisabled("Method");  ImGui::SameLine(90); ImGui::Text("%s", mLabel);
+  ImGui::TextDisabled("Objects"); ImGui::SameLine(90);
+  ImGui::Text("%d RT", (int)rtLastObjectCount);
+
+  if (raytracerEnabled) {
+    int lw = (rtLiveWidth  > 0) ? rtLiveWidth  : fbWidth;
+    int lh = (rtLiveHeight > 0) ? rtLiveHeight : fbHeight;
+    ImGui::TextDisabled("Live res"); ImGui::SameLine(90);
+    ImGui::Text("%dx%d", lw, lh);
+
+    ImGui::TextDisabled("Dispatch"); ImGui::SameLine(90);
+    if (bench.dispatchMs > 0)
+      ImGui::Text("%.1f ms", bench.dispatchMs);
+    else
+      ImGui::TextDisabled("--");
+
+    ImGui::TextDisabled("Frame");    ImGui::SameLine(90);
+    ImGui::Text("%.1f ms", bench.frameMs);
+
+    ImGui::TextDisabled("FPS");      ImGui::SameLine(90);
+    ImGui::Text("%.1f", bench.fps);
+  } else {
+    ImGui::TextDisabled("(raytracer off)");
+  }
+
+  // ── Recording live stats ──
+  if (recording) {
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    double elapsedSecs = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - bench.recWallStart).count();
+    double avgDisp = (recordedFrames > 0)
+                      ? bench.recDispatchTotal / recordedFrames : 0.0;
+    double recFps  = (elapsedSecs > 0.0) ? recordedFrames / elapsedSecs : 0.0;
+
+    ImGui::TextDisabled("Rec res");  ImGui::SameLine(90);
+    ImGui::Text("%dx%d", recordWidth, recordHeight);
+
+    ImGui::TextDisabled("Rec disp"); ImGui::SameLine(90);
+    if (bench.recLastFrameMs > 0)
+      ImGui::Text("%.1f ms", bench.recLastFrameMs);
+    else
+      ImGui::TextDisabled("--");
+
+    ImGui::TextDisabled("Frames");   ImGui::SameLine(90);
+    ImGui::Text("%d", recordedFrames);
+
+    ImGui::TextDisabled("Elapsed");  ImGui::SameLine(90);
+    int em = (int)(elapsedSecs / 60);
+    int es = (int)elapsedSecs % 60;
+    ImGui::Text("%d:%02d", em, es);
+
+    ImGui::TextDisabled("Avg disp"); ImGui::SameLine(90);
+    if (avgDisp > 0)
+      ImGui::Text("%.1f ms", avgDisp);
+    else
+      ImGui::TextDisabled("--");
+
+    ImGui::TextDisabled("Avg fps");  ImGui::SameLine(90);
+    ImGui::Text("%.2f", recFps);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2390,6 +2533,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   GLint  locTileOffsetY = glGetUniformLocation(activeProgram, "uTileOffsetY");
   constexpr int STRIP_H = 16; // rows per strip — small enough to stay under any watchdog timeout
 
+  auto dispatchT0 = std::chrono::steady_clock::now();
   for (int y0 = 0; y0 < height; y0 += STRIP_H) {
     if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, y0);
     int   rows     = std::min(STRIP_H, height - y0);
@@ -2398,6 +2542,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     glFinish(); // block CPU until GPU is truly idle — resets the watchdog timer between strips
   }
+  bench.dispatchMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - dispatchT0).count();
 
   // Final barrier so subsequent texture reads see the compute results
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -2471,6 +2617,12 @@ void Renderer::StartRecording() {
   recording = true;
   recordedFrames = 0;
   pixelBuffer.resize((size_t)w * h * 4);
+
+  // Reset bench recording accumulators
+  bench.recDispatchTotal = 0.0;
+  bench.recLastFrameMs   = 0.0;
+  bench.recWallStart     = std::chrono::steady_clock::now();
+
   std::cout << "[REC] Recording started: " << recordPathBuf
             << " (" << w << "x" << h << " @ " << recordFps << " fps)\n";
 }
@@ -2482,8 +2634,37 @@ void Renderer::StopRecording() {
     ffmpegPipe = nullptr;
   }
   recording = false;
-  std::cout << "[REC] Recording stopped: " << recordedFrames << " frames written to "
-            << recordPathBuf << "\n";
+
+  // Finalise bench summary
+  double wallSecs = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - bench.recWallStart).count();
+  bench.sumFrames          = recordedFrames;
+  bench.sumWallSecs        = wallSecs;
+  bench.sumAvgDispatchMs   = (recordedFrames > 0)
+                              ? bench.recDispatchTotal / recordedFrames : 0.0;
+  bench.sumAvgFps          = (wallSecs > 0.0) ? recordedFrames / wallSecs : 0.0;
+  bench.sumWidth           = recordWidth;
+  bench.sumHeight          = recordHeight;
+  bench.sumMethod          = raytracerMethod;
+  bench.sumObjects         = (int)rtLastObjectCount;
+  std::snprintf(bench.sumFile, sizeof(bench.sumFile), "%s", recordPathBuf);
+  bench.showSummary        = true;
+
+  const char* methodName[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
+  const char* mName = (raytracerMethod >= 0 && raytracerMethod <= 2)
+                       ? methodName[raytracerMethod] : "?";
+  std::cout << "[BENCH] Recording complete\n"
+            << "  File:         " << recordPathBuf << "\n"
+            << "  Resolution:   " << recordWidth << "x" << recordHeight << "\n"
+            << "  Method:       " << mName << "\n"
+            << "  Objects (RT): " << rtLastObjectCount << "\n"
+            << "  Frames:       " << recordedFrames
+                                  << "  (" << (recordedFrames / (double)recordFps) << "s @ "
+                                  << recordFps << " fps)\n"
+            << "  Wall time:    " << wallSecs << "s\n"
+            << "  Avg dispatch: " << bench.sumAvgDispatchMs << " ms/frame\n"
+            << "  Avg fps:      " << bench.sumAvgFps << "\n";
+
   recordedFrames = 0;
 }
 
@@ -2819,6 +3000,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   GLint  locTileOffY_rec2 = glGetUniformLocation(activeProgram, "uTileOffsetY");
   constexpr int REC2_STRIP_H = 16;
 
+  auto recDispT0 = std::chrono::steady_clock::now();
   for (int y0 = 0; y0 < rh; y0 += REC2_STRIP_H) {
     if (locTileOffY_rec2 >= 0) glUniform1i(locTileOffY_rec2, y0);
     int    rows      = std::min(REC2_STRIP_H, rh - y0);
@@ -2827,6 +3009,9 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     glFinish();
   }
+  bench.recLastFrameMs = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - recDispT0).count();
+  bench.recDispatchTotal += bench.recLastFrameMs;
 
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
