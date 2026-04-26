@@ -256,6 +256,48 @@ void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<R
     vec4{coordinates.x, coordinates.y, coordinates.z, 0},
     mass, radius, temperature, objectType});
 }
+void RenderedObject::renderMeshRaytracedDoppler(float cameraTranslate[3],
+                                                std::vector<RayTracerObjectDoppler>& list,
+                                                vec3 velocity, float mass, float temperature, float objectType)
+{
+  list.push_back(RayTracerObjectDoppler{
+    vec4{coordinates.x, coordinates.y, coordinates.z, 0},
+    mass, radius, temperature, objectType,
+    vec4{velocity.x, velocity.y, velocity.z, 0}});
+}
+
+void RenderedObject::renderCloudRaytracedDoppler(float cameraTranslate[3],
+                                                 std::vector<RayTracerObjectDoppler>& list)
+{
+  int particleCount = (int)UVObjectMeshBuffer.size() / 3;
+  if (particleCount <= 0) return;
+
+  constexpr int RT_CLOUD_CAP = 2000;
+  int stride = (particleCount > RT_CLOUD_CAP) ? (particleCount / RT_CLOUD_CAP) : 1;
+
+  float pRadius  = (cachedRenderMode == 1) ? 0.08f : 0.001f;
+  float pObjType = (cachedRenderMode == 1) ? 4.0f  : 2.0f;
+
+  if (cachedRenderMode == 0 && stride > 1)
+    pRadius *= std::sqrt((float)stride);
+
+  for (int i = 0; i < particleCount; i += stride)
+  {
+    int   fi           = i * 3;
+    float adjustedMass = cachedNebulaScatterScale * (float)stride;
+    if (cachedRenderMode == 0) adjustedMass = cachedNebulaScatterScale;
+    vec3 vel = (i < (int)cloudParticles.size()) ? cloudParticles[i].velocity : vec3{0,0,0};
+    list.push_back(RayTracerObjectDoppler{
+      vec4{
+        UVObjectMeshBuffer[fi  ] + coordinates.x,
+        UVObjectMeshBuffer[fi+1] + coordinates.y,
+        UVObjectMeshBuffer[fi+2] + coordinates.z,
+        0},
+      adjustedMass, pRadius, cachedTemperature, pObjType,
+      vec4{vel.x, vel.y, vel.z, 0}});
+  }
+}
+
 void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;

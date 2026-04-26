@@ -388,7 +388,8 @@ int main(int argc, char** argv) {
       renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
                                  physicsObjects[i].data.mass,
                                  physicsObjects[i].temperature,
-                                 objType);
+                                 objType,
+                                 physicsObjects[i].data.velocity);
       lineObjects[i].Update(renderer);
     }
     for (auto& g : grids)

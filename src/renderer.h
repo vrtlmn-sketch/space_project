@@ -179,6 +179,31 @@ private:
   GLint acyLocBHPos{-1};
   GLint acyLocBHRS{-1};
 
+  // ── Doppler compute shader variants ──
+  GLuint rtDopplerComputeProgram{0};
+  GLuint geodesicDopplerComputeProgram{0};
+  GLuint acyclicDopplerComputeProgram{0};
+
+  // Simple Doppler uniform locations
+  GLint rtdLocObjectCount{-1}, rtdLocProj{-1}, rtdLocCamera{-1};
+  GLint rtdLocViewRot{-1}, rtdLocResolution{-1}, rtdLocMaxBounces{-1};
+  GLint rtdLocVelScale{-1}, rtdLocBrightStr{-1}, rtdLocColorStr{-1};
+
+  // Geodesic Doppler uniform locations
+  GLint gdLocObjectCount{-1}, gdLocProj{-1}, gdLocCamera{-1};
+  GLint gdLocViewRot{-1}, gdLocResolution{-1}, gdLocMaxBounces{-1};
+  GLint gdLocMaxSteps{-1}, gdLocBHPos{-1}, gdLocBHRS{-1};
+  GLint gdLocVelScale{-1}, gdLocBrightStr{-1}, gdLocColorStr{-1};
+
+  // Acyclic Doppler uniform locations
+  GLint adLocObjectCount{-1}, adLocProj{-1}, adLocCamera{-1};
+  GLint adLocViewRot{-1}, adLocResolution{-1}, adLocMaxBounces{-1};
+  GLint adLocMaxSteps{-1}, adLocBHPos{-1}, adLocBHRS{-1};
+  GLint adLocVelScale{-1}, adLocBrightStr{-1}, adLocColorStr{-1};
+
+  // Doppler SSBO (separate from rtSSBO — uses RayTracerObjectDoppler struct)
+  GLuint rtDopplerSSBO{0};
+
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
   GLuint blitVAO{0}, blitVBO{0};
@@ -224,8 +249,9 @@ private:
   int    rtLastWidth{};
   int    rtLastHeight{};
   size_t rtLastObjectCount{};
-  std::vector<RayTracerObject> rtLastObjects;  // snapshot for memcmp
-  bool   rtDirty{true};                        // force first frame
+  std::vector<RayTracerObject>        rtLastObjects;        // snapshot for memcmp
+  std::vector<RayTracerObjectDoppler> rtLastDopplerObjects; // Doppler snapshot for CaptureImage
+  bool   rtDirty{true};                                     // force first frame
 
   // Separate output texture for recording (avoids resizing the display texture)
   GLuint recOutputTex{0};
@@ -304,11 +330,16 @@ public:
   void syncMatrixFromEuler();   // rebuild camMatrix from rotation/pitch/roll
 
   // ---- Simulation state ----
-  std::vector<RayTracerObject> rayTracedObjects{};
+  std::vector<RayTracerObject>        rayTracedObjects{};
+  std::vector<RayTracerObjectDoppler> rtDopplerObjects{};   // populated when dopplerMode is on
   bool rayTracerView{false};
   bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
+  bool dopplerMode{false};       // true = use Doppler shader variants
+  float dopplerVelScale{0.5f};   // maps simulation velocity to v/c (tune to scene scale)
+  float dopplerBrightnessStr{2.0f}; // brightness exponent: brightness *= D^this
+  float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   float simSpeed{1.0f};               // simulation speed multiplier (1 = default, <1 = slower, >1 = faster)
   bool paused{true};
@@ -357,8 +388,9 @@ public:
   bool InitWindow(const char* wName, int wheight, int wwidth);
   bool BeginFrame();
   void Draw(RenderedObject& ro);
-  // Draw a physics object with mass+temperature+objectType forwarded to the raytracer SSBO
-  void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType);
+  // Draw a physics object with mass+temperature+objectType (+optional velocity for Doppler)
+  void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
+                         vec3 velocity = {0,0,0});
   // Upload star light positions+colours to all planet (non-star) rendered objects
   void UploadStarLights(std::vector<RenderedObject*>& planetShaders,
                         const std::vector<vec3>& positions,

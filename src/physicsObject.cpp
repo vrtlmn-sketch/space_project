@@ -103,5 +103,5 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
   float objectType = 0.0f; // default: planet
   if (shaderType == ObjectShaderType::Star)      objectType = 1.0f;
   else if (shaderType == ObjectShaderType::BlackHole) objectType = 3.0f;
-  renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType);
+  renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType, data.velocity);
 }

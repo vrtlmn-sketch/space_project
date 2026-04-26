@@ -97,6 +97,9 @@ void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, 
 void GenerateMeshGrid(const vec3& size, int subdivisions);
 
   void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
+  void renderMeshRaytracedDoppler(float cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
+                                  vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f);
+  void renderCloudRaytracedDoppler(float cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);
   void TrimLinePoints(size_t maxPoints);

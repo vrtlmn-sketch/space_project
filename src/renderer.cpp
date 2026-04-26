@@ -214,6 +214,8 @@ void Renderer::EndFrame() {
   glfwSwapBuffers(window);
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
+  rtDopplerObjects.clear();
+  rtDopplerObjects.reserve(20);
 
   // ── Frame timing ──
   auto now = std::chrono::steady_clock::now();
@@ -241,23 +243,30 @@ void Renderer::Draw(RenderedObject& ro) {
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
-    // Plane: compute shader handles rendering — just accumulate objects, don't render
     if      (ro.meshType == MeshType::plane)  { /* no-op: DispatchRaytracer called from main */ }
-    else if (ro.meshType == MeshType::sphere) ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);
-    else if (ro.meshType == MeshType::cloud)  ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
+    else if (ro.meshType == MeshType::sphere) {
+      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);
+      if (dopplerMode) ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, {0,0,0});
+    }
+    else if (ro.meshType == MeshType::cloud) {
+      ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
+      if (dopplerMode) ro.renderCloudRaytracedDoppler(cameraTranslate, rtDopplerObjects);
+    }
   }
 }
 
-void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType) {
+void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
+                                  vec3 velocity) {
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere) {
+    if (ro.meshType == MeshType::sphere)
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    }
   }
   if (rayTracerView) {
-    if (ro.meshType == MeshType::sphere)
+    if (ro.meshType == MeshType::sphere) {
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType);
-    // Plane: no-op — compute shader dispatch from main
+      if (dopplerMode)
+        ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, velocity, mass, temperature, objectType);
+    }
   }
 }
 
@@ -969,6 +978,29 @@ void Renderer::DrawRenderingSettings() {
   ImGui::SetNextItemWidth(-1);
   const char* methodItems[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
   ImGui::Combo("##rtmethod", &raytracerMethod, methodItems, 3);
+
+  ImGui::Spacing();
+
+  // ── Doppler effect toggle + parameters ──
+  if (ImGui::Checkbox("Doppler Effect", &dopplerMode))
+    rtDirty = true;
+
+  if (dopplerMode) {
+    ImGui::Indent(8.0f);
+    ImGui::Text("Vel Scale (1/c)");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##dvel", &dopplerVelScale, 0.001f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
+      rtDirty = true;
+    ImGui::Text("Brightness Str");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##dbrightness", &dopplerBrightnessStr, 0.0f, 6.0f, "%.2f"))
+      rtDirty = true;
+    ImGui::Text("Color Str");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##dcolor", &dopplerColorStr, 0.0f, 4.0f, "%.2f"))
+      rtDirty = true;
+    ImGui::Unindent(8.0f);
+  }
 
   ImGui::Spacing();
   ImGui::Separator();
@@ -2131,6 +2163,8 @@ void Renderer::BeginSecondaryPass() {
   // (they belong to the primary view; the secondary pass will re-accumulate)
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
+  rtDopplerObjects.clear();
+  rtDopplerObjects.reserve(20);
 
   glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
   glViewport(0, 0, pw, ph);
@@ -2159,6 +2193,8 @@ void Renderer::EndSecondaryPass() {
   // Clear secondary raytracer objects (EndFrame will clear primary ones)
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
+  rtDopplerObjects.clear();
+  rtDopplerObjects.reserve(20);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2298,8 +2334,63 @@ void Renderer::InitComputeShader() {
     }
   }
 
-  // ── 2. Create SSBO for raytracer objects ──
+  // ── 1d. Compile Doppler compute shader variants ──
+  auto loadDopplerProgram = [&](const char* path, GLuint& prog,
+                                GLint& locOC, GLint& locP, GLint& locC, GLint& locVR,
+                                GLint& locRes, GLint& locMB,
+                                GLint* locMS, GLint* locBHP, GLint* locRS,
+                                GLint& locVS, GLint& locBS, GLint& locCS,
+                                const char* tag)
+  {
+    GLuint s = compileShaderFromFile(path, GL_COMPUTE_SHADER);
+    if (!s) { std::cerr << "[" << tag << "] compilation failed\n"; return; }
+    prog = glCreateProgram();
+    glAttachShader(prog, s);
+    glLinkProgram(prog);
+    { GLint ok = 0; glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+      if (!ok) { char buf[1024]; glGetProgramInfoLog(prog, 1024, nullptr, buf);
+                 std::cerr << "[" << tag << "] link: " << buf << "\n";
+                 glDeleteProgram(prog); prog = 0; } }
+    glDeleteShader(s);
+    if (!prog) return;
+    locOC  = glGetUniformLocation(prog, "uObjectCount");
+    locP   = glGetUniformLocation(prog, "uProj");
+    locC   = glGetUniformLocation(prog, "uCamera");
+    locVR  = glGetUniformLocation(prog, "uViewRot");
+    locRes = glGetUniformLocation(prog, "uResolution");
+    locMB  = glGetUniformLocation(prog, "uMaxBounces");
+    if (locMS)  *locMS  = glGetUniformLocation(prog, "uMaxSteps");
+    if (locBHP) *locBHP = glGetUniformLocation(prog, "uBHPos");
+    if (locRS)  *locRS  = glGetUniformLocation(prog, "uBH_RS");
+    locVS  = glGetUniformLocation(prog, "uDopplerVelScale");
+    locBS  = glGetUniformLocation(prog, "uDopplerBrightnessStr");
+    locCS  = glGetUniformLocation(prog, "uDopplerColorStr");
+  };
+
+  loadDopplerProgram("src/shaders/raytracerDopplerCompute.glsl",
+                     rtDopplerComputeProgram,
+                     rtdLocObjectCount, rtdLocProj, rtdLocCamera, rtdLocViewRot,
+                     rtdLocResolution, rtdLocMaxBounces,
+                     nullptr, nullptr, nullptr,
+                     rtdLocVelScale, rtdLocBrightStr, rtdLocColorStr, "RTD");
+
+  loadDopplerProgram("src/shaders/geodesicDopplerCompute.glsl",
+                     geodesicDopplerComputeProgram,
+                     gdLocObjectCount, gdLocProj, gdLocCamera, gdLocViewRot,
+                     gdLocResolution, gdLocMaxBounces,
+                     &gdLocMaxSteps, &gdLocBHPos, &gdLocBHRS,
+                     gdLocVelScale, gdLocBrightStr, gdLocColorStr, "GD");
+
+  loadDopplerProgram("src/shaders/acyclicGeodesicDopplerCompute.glsl",
+                     acyclicDopplerComputeProgram,
+                     adLocObjectCount, adLocProj, adLocCamera, adLocViewRot,
+                     adLocResolution, adLocMaxBounces,
+                     &adLocMaxSteps, &adLocBHPos, &adLocBHRS,
+                     adLocVelScale, adLocBrightStr, adLocColorStr, "AD");
+
+  // ── 2. Create SSBOs for raytracer objects ──
   glGenBuffers(1, &rtSSBO);
+  glGenBuffers(1, &rtDopplerSSBO);
 
   // ── 3. Compile blit shaders (vert + frag) ──
   GLuint bv = compileShaderFromFile("src/shaders/blitVert.glsl", GL_VERTEX_SHADER);
@@ -2364,11 +2455,15 @@ void Renderer::EnsureRtOutputTex(int w, int h) {
 }
 
 void Renderer::DestroyComputeResources() {
-  if (rtComputeProgram)      { glDeleteProgram(rtComputeProgram);      rtComputeProgram = 0; }
-  if (geodesicComputeProgram){ glDeleteProgram(geodesicComputeProgram);geodesicComputeProgram = 0; }
-  if (acyclicComputeProgram) { glDeleteProgram(acyclicComputeProgram); acyclicComputeProgram = 0; }
+  if (rtComputeProgram)              { glDeleteProgram(rtComputeProgram);              rtComputeProgram = 0; }
+  if (geodesicComputeProgram)        { glDeleteProgram(geodesicComputeProgram);        geodesicComputeProgram = 0; }
+  if (acyclicComputeProgram)         { glDeleteProgram(acyclicComputeProgram);         acyclicComputeProgram = 0; }
+  if (rtDopplerComputeProgram)       { glDeleteProgram(rtDopplerComputeProgram);       rtDopplerComputeProgram = 0; }
+  if (geodesicDopplerComputeProgram) { glDeleteProgram(geodesicDopplerComputeProgram); geodesicDopplerComputeProgram = 0; }
+  if (acyclicDopplerComputeProgram)  { glDeleteProgram(acyclicDopplerComputeProgram);  acyclicDopplerComputeProgram = 0; }
   if (rtOutputTex)      { glDeleteTextures(1, &rtOutputTex); rtOutputTex = 0; }
-  if (rtSSBO)           { glDeleteBuffers(1, &rtSSBO);       rtSSBO = 0; }
+  if (rtSSBO)           { glDeleteBuffers(1, &rtSSBO);        rtSSBO = 0; }
+  if (rtDopplerSSBO)    { glDeleteBuffers(1, &rtDopplerSSBO); rtDopplerSSBO = 0; }
   if (blitProgram)      { glDeleteProgram(blitProgram);      blitProgram = 0; }
   if (blitVAO)          { glDeleteVertexArrays(1, &blitVAO); blitVAO = 0; }
   if (blitVBO)          { glDeleteBuffers(1, &blitVBO);      blitVBO = 0; }
@@ -2410,45 +2505,68 @@ void Renderer::DispatchRaytracer(int width, int height) {
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
   GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
-  if (effectiveMethod == 2) {
-    activeProgram    = acyclicComputeProgram;
-    locObjectCount   = acyLocObjectCount;
-    locProj          = acyLocProj;
-    locCamera        = acyLocCamera;
-    locViewRot       = acyLocViewRot;
-    locResolution    = acyLocResolution;
-    locMaxBounces    = acyLocMaxBounces;
-    locMaxSteps      = acyLocMaxSteps;
-    locBHPos         = acyLocBHPos;
-    locBHRS          = acyLocBHRS;
-  } else if (effectiveMethod == 1) {
-    activeProgram    = geodesicComputeProgram;
-    locObjectCount   = geoLocObjectCount;
-    locProj          = geoLocProj;
-    locCamera        = geoLocCamera;
-    locViewRot       = geoLocViewRot;
-    locResolution    = geoLocResolution;
-    locMaxBounces    = geoLocMaxBounces;
-    locMaxSteps      = geoLocMaxSteps;
-    locBHPos         = geoLocBHPos;
-    locBHRS          = geoLocBHRS;
+  if (dopplerMode) {
+    // Doppler variants use the extended SSBO struct with velocity
+    if (effectiveMethod == 2) {
+      activeProgram = acyclicDopplerComputeProgram;
+      locObjectCount = adLocObjectCount; locProj = adLocProj; locCamera = adLocCamera;
+      locViewRot = adLocViewRot; locResolution = adLocResolution; locMaxBounces = adLocMaxBounces;
+      locMaxSteps = adLocMaxSteps; locBHPos = adLocBHPos; locBHRS = adLocBHRS;
+    } else if (effectiveMethod == 1) {
+      activeProgram = geodesicDopplerComputeProgram;
+      locObjectCount = gdLocObjectCount; locProj = gdLocProj; locCamera = gdLocCamera;
+      locViewRot = gdLocViewRot; locResolution = gdLocResolution; locMaxBounces = gdLocMaxBounces;
+      locMaxSteps = gdLocMaxSteps; locBHPos = gdLocBHPos; locBHRS = gdLocBHRS;
+    } else {
+      activeProgram = rtDopplerComputeProgram;
+      locObjectCount = rtdLocObjectCount; locProj = rtdLocProj; locCamera = rtdLocCamera;
+      locViewRot = rtdLocViewRot; locResolution = rtdLocResolution; locMaxBounces = rtdLocMaxBounces;
+    }
   } else {
-    activeProgram    = rtComputeProgram;
-    locObjectCount   = rtLocObjectCount;
-    locProj          = rtLocProj;
-    locCamera        = rtLocCamera;
-    locViewRot       = rtLocViewRot;
-    locResolution    = rtLocResolution;
-    locMaxBounces    = rtLocMaxBounces;
+    if (effectiveMethod == 2) {
+      activeProgram    = acyclicComputeProgram;
+      locObjectCount   = acyLocObjectCount;
+      locProj          = acyLocProj;
+      locCamera        = acyLocCamera;
+      locViewRot       = acyLocViewRot;
+      locResolution    = acyLocResolution;
+      locMaxBounces    = acyLocMaxBounces;
+      locMaxSteps      = acyLocMaxSteps;
+      locBHPos         = acyLocBHPos;
+      locBHRS          = acyLocBHRS;
+    } else if (effectiveMethod == 1) {
+      activeProgram    = geodesicComputeProgram;
+      locObjectCount   = geoLocObjectCount;
+      locProj          = geoLocProj;
+      locCamera        = geoLocCamera;
+      locViewRot       = geoLocViewRot;
+      locResolution    = geoLocResolution;
+      locMaxBounces    = geoLocMaxBounces;
+      locMaxSteps      = geoLocMaxSteps;
+      locBHPos         = geoLocBHPos;
+      locBHRS          = geoLocBHRS;
+    } else {
+      activeProgram    = rtComputeProgram;
+      locObjectCount   = rtLocObjectCount;
+      locProj          = rtLocProj;
+      locCamera        = rtLocCamera;
+      locViewRot       = rtLocViewRot;
+      locResolution    = rtLocResolution;
+      locMaxBounces    = rtLocMaxBounces;
+    }
   }
 
   if (!activeProgram) return;
 
   // ── Dirty check: skip dispatch if nothing changed since last frame ──
   // Always dispatch when recording (need every frame captured).
-  static int lastMethod          = -1;
-  static int lastSteps           = -1;
-  static float lastBHRS          = -1.0f;
+  static int   lastMethod     = -1;
+  static int   lastSteps      = -1;
+  static float lastBHRS       = -1.0f;
+  static bool  lastDoppler    = false;
+  static float lastVelScale   = -1.0f;
+  static float lastBrightStr  = -1.0f;
+  static float lastColorStr   = -1.0f;
   bool dirty = rtDirty || recording;
   if (!dirty) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
@@ -2462,6 +2580,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
              raytracerMethod != lastMethod ||
              rtMaxSteps != lastSteps ||
              bhSchwarzschildRadius != lastBHRS ||
+             dopplerMode  != lastDoppler   ||
+             dopplerVelScale != lastVelScale ||
+             dopplerBrightnessStr != lastBrightStr ||
+             dopplerColorStr != lastColorStr ||
              rayTracedObjects.size() != rtLastObjectCount);
   }
   if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
@@ -2478,21 +2600,30 @@ void Renderer::DispatchRaytracer(int width, int height) {
 
   EnsureRtOutputTex(width, height);
 
-  // Upload SSBO
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtSSBO);
-  glBufferData(GL_SHADER_STORAGE_BUFFER,
-               rayTracedObjects.size() * sizeof(RayTracerObject),
-               rayTracedObjects.data(),
-               GL_DYNAMIC_DRAW);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+  // Upload SSBO — Doppler mode uses a different struct (48 bytes instead of 32)
+  if (dopplerMode) {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtDopplerSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 rtDopplerObjects.size() * sizeof(RayTracerObjectDoppler),
+                 rtDopplerObjects.data(),
+                 GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtDopplerSSBO);
+  } else {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 rayTracedObjects.size() * sizeof(RayTracerObject),
+                 rayTracedObjects.data(),
+                 GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+  }
 
   // Bind output image
   glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
   glUseProgram(activeProgram);
 
-  // Uniforms — location set was already selected above
-  glUniform1i(locObjectCount, (int)rayTracedObjects.size());
+  int activeObjectCount = dopplerMode ? (int)rtDopplerObjects.size() : (int)rayTracedObjects.size();
+  glUniform1i(locObjectCount, activeObjectCount);
 
   // Build projection matrix (same as transformPerspectiveMesh)
   float aspect = (height > 0) ? (float)width / (float)height : 1.0f;
@@ -2527,6 +2658,16 @@ void Renderer::DispatchRaytracer(int width, int height) {
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
 
+  // Doppler uniforms (when dopplerMode is on — all three Doppler program types use them)
+  if (dopplerMode) {
+    GLint locVS = glGetUniformLocation(activeProgram, "uDopplerVelScale");
+    GLint locBS = glGetUniformLocation(activeProgram, "uDopplerBrightnessStr");
+    GLint locCS = glGetUniformLocation(activeProgram, "uDopplerColorStr");
+    if (locVS >= 0) glUniform1f(locVS, dopplerVelScale);
+    if (locBS >= 0) glUniform1f(locBS, dopplerBrightnessStr);
+    if (locCS >= 0) glUniform1f(locCS, dopplerColorStr);
+  }
+
   // Split dispatch into horizontal strips so the GPU watchdog doesn't kill
   // long-running frames at higher resolutions or with many objects.
   GLuint gx             = (width + 15) / 16;
@@ -2559,10 +2700,15 @@ void Renderer::DispatchRaytracer(int width, int height) {
   rtLastHeight    = height;
   lastMethod      = raytracerMethod;
   lastSteps       = rtMaxSteps;
-  lastBHRS          = bhSchwarzschildRadius;
-  rtLastObjectCount = rayTracedObjects.size();
-  rtLastObjects     = rayTracedObjects;   // deep copy for memcmp
-  rtDirty           = false;
+  lastBHRS             = bhSchwarzschildRadius;
+  lastDoppler          = dopplerMode;
+  lastVelScale         = dopplerVelScale;
+  lastBrightStr        = dopplerBrightnessStr;
+  lastColorStr         = dopplerColorStr;
+  rtLastObjectCount    = rayTracedObjects.size();
+  rtLastObjects        = rayTracedObjects;         // snapshot for memcmp
+  rtLastDopplerObjects = rtDopplerObjects;         // snapshot for CaptureImage
+  rtDirty              = false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2733,36 +2879,38 @@ void Renderer::CaptureImage() {
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
   GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
-  if (effectiveMethod == 2) {
-    activeProgram    = acyclicComputeProgram;
-    locObjectCount   = acyLocObjectCount;
-    locProj          = acyLocProj;
-    locCamera        = acyLocCamera;
-    locViewRot       = acyLocViewRot;
-    locResolution    = acyLocResolution;
-    locMaxBounces    = acyLocMaxBounces;
-    locMaxSteps      = acyLocMaxSteps;
-    locBHPos         = acyLocBHPos;
-    locBHRS          = acyLocBHRS;
-  } else if (effectiveMethod == 1) {
-    activeProgram    = geodesicComputeProgram;
-    locObjectCount   = geoLocObjectCount;
-    locProj          = geoLocProj;
-    locCamera        = geoLocCamera;
-    locViewRot       = geoLocViewRot;
-    locResolution    = geoLocResolution;
-    locMaxBounces    = geoLocMaxBounces;
-    locMaxSteps      = geoLocMaxSteps;
-    locBHPos         = geoLocBHPos;
-    locBHRS          = geoLocBHRS;
+  if (dopplerMode) {
+    if (effectiveMethod == 2) {
+      activeProgram = acyclicDopplerComputeProgram;
+      locObjectCount = adLocObjectCount; locProj = adLocProj; locCamera = adLocCamera;
+      locViewRot = adLocViewRot; locResolution = adLocResolution; locMaxBounces = adLocMaxBounces;
+      locMaxSteps = adLocMaxSteps; locBHPos = adLocBHPos; locBHRS = adLocBHRS;
+    } else if (effectiveMethod == 1) {
+      activeProgram = geodesicDopplerComputeProgram;
+      locObjectCount = gdLocObjectCount; locProj = gdLocProj; locCamera = gdLocCamera;
+      locViewRot = gdLocViewRot; locResolution = gdLocResolution; locMaxBounces = gdLocMaxBounces;
+      locMaxSteps = gdLocMaxSteps; locBHPos = gdLocBHPos; locBHRS = gdLocBHRS;
+    } else {
+      activeProgram = rtDopplerComputeProgram;
+      locObjectCount = rtdLocObjectCount; locProj = rtdLocProj; locCamera = rtdLocCamera;
+      locViewRot = rtdLocViewRot; locResolution = rtdLocResolution; locMaxBounces = rtdLocMaxBounces;
+    }
   } else {
-    activeProgram    = rtComputeProgram;
-    locObjectCount   = rtLocObjectCount;
-    locProj          = rtLocProj;
-    locCamera        = rtLocCamera;
-    locViewRot       = rtLocViewRot;
-    locResolution    = rtLocResolution;
-    locMaxBounces    = rtLocMaxBounces;
+    if (effectiveMethod == 2) {
+      activeProgram    = acyclicComputeProgram;
+      locObjectCount   = acyLocObjectCount; locProj = acyLocProj; locCamera = acyLocCamera;
+      locViewRot = acyLocViewRot; locResolution = acyLocResolution; locMaxBounces = acyLocMaxBounces;
+      locMaxSteps = acyLocMaxSteps; locBHPos = acyLocBHPos; locBHRS = acyLocBHRS;
+    } else if (effectiveMethod == 1) {
+      activeProgram    = geodesicComputeProgram;
+      locObjectCount   = geoLocObjectCount; locProj = geoLocProj; locCamera = geoLocCamera;
+      locViewRot = geoLocViewRot; locResolution = geoLocResolution; locMaxBounces = geoLocMaxBounces;
+      locMaxSteps = geoLocMaxSteps; locBHPos = geoLocBHPos; locBHRS = geoLocBHRS;
+    } else {
+      activeProgram    = rtComputeProgram;
+      locObjectCount   = rtLocObjectCount; locProj = rtLocProj; locCamera = rtLocCamera;
+      locViewRot = rtLocViewRot; locResolution = rtLocResolution; locMaxBounces = rtLocMaxBounces;
+    }
   }
   if (!activeProgram) return;
 
@@ -2770,18 +2918,26 @@ void Renderer::CaptureImage() {
   EnsureRecOutputTex(w, h);
   glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
-  // Upload SSBO with object data.  rayTracedObjects is cleared by
-  // EndSecondaryPass before DrawUI runs, so use rtLastObjects which is
-  // a snapshot taken during the most recent DispatchRaytracer call.
-  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtSSBO);
-  glBufferData(GL_SHADER_STORAGE_BUFFER,
-               rtLastObjects.size() * sizeof(RayTracerObject),
-               rtLastObjects.data(),
-               GL_DYNAMIC_DRAW);
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+  // Upload SSBO — use snapshot from last DispatchRaytracer call
+  if (dopplerMode) {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtDopplerSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 rtLastDopplerObjects.size() * sizeof(RayTracerObjectDoppler),
+                 rtLastDopplerObjects.data(),
+                 GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtDopplerSSBO);
+  } else {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 rtLastObjects.size() * sizeof(RayTracerObject),
+                 rtLastObjects.data(),
+                 GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+  }
 
   glUseProgram(activeProgram);
-  glUniform1i(locObjectCount, (int)rtLastObjects.size());
+  int capObjCount = dopplerMode ? (int)rtLastDopplerObjects.size() : (int)rtLastObjects.size();
+  glUniform1i(locObjectCount, capObjCount);
 
   float aspect = (h > 0) ? (float)w / (float)h : 1.0f;
   float fovy   = zoom * M_PI / 180.0f;
@@ -2809,6 +2965,15 @@ void Renderer::CaptureImage() {
     glUniform3fv(locBHPos, 1, bhPos);
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
+
+  if (dopplerMode) {
+    GLint locVS = glGetUniformLocation(activeProgram, "uDopplerVelScale");
+    GLint locBS = glGetUniformLocation(activeProgram, "uDopplerBrightnessStr");
+    GLint locCS = glGetUniformLocation(activeProgram, "uDopplerColorStr");
+    if (locVS >= 0) glUniform1f(locVS, dopplerVelScale);
+    if (locBS >= 0) glUniform1f(locBS, dopplerBrightnessStr);
+    if (locCS >= 0) glUniform1f(locCS, dopplerColorStr);
+  }
 
   // Split dispatch into horizontal strips (same watchdog fix as DispatchRaytracer)
   GLuint gx_rec         = (w + 15) / 16;
@@ -2925,49 +3090,60 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   GLint locObjectCount, locProj, locCamera, locViewRot, locResolution, locMaxBounces;
   GLint locMaxSteps = -1, locBHPos = -1, locBHRS = -1;
 
-  if (effectiveMethod == 2) {
-    activeProgram    = acyclicComputeProgram;
-    locObjectCount   = acyLocObjectCount;
-    locProj          = acyLocProj;
-    locCamera        = acyLocCamera;
-    locViewRot       = acyLocViewRot;
-    locResolution    = acyLocResolution;
-    locMaxBounces    = acyLocMaxBounces;
-    locMaxSteps      = acyLocMaxSteps;
-    locBHPos         = acyLocBHPos;
-    locBHRS          = acyLocBHRS;
-  } else if (effectiveMethod == 1) {
-    activeProgram    = geodesicComputeProgram;
-    locObjectCount   = geoLocObjectCount;
-    locProj          = geoLocProj;
-    locCamera        = geoLocCamera;
-    locViewRot       = geoLocViewRot;
-    locResolution    = geoLocResolution;
-    locMaxBounces    = geoLocMaxBounces;
-    locMaxSteps      = geoLocMaxSteps;
-    locBHPos         = geoLocBHPos;
-    locBHRS          = geoLocBHRS;
+  if (dopplerMode) {
+    if (effectiveMethod == 2) {
+      activeProgram = acyclicDopplerComputeProgram;
+      locObjectCount = adLocObjectCount; locProj = adLocProj; locCamera = adLocCamera;
+      locViewRot = adLocViewRot; locResolution = adLocResolution; locMaxBounces = adLocMaxBounces;
+      locMaxSteps = adLocMaxSteps; locBHPos = adLocBHPos; locBHRS = adLocBHRS;
+    } else if (effectiveMethod == 1) {
+      activeProgram = geodesicDopplerComputeProgram;
+      locObjectCount = gdLocObjectCount; locProj = gdLocProj; locCamera = gdLocCamera;
+      locViewRot = gdLocViewRot; locResolution = gdLocResolution; locMaxBounces = gdLocMaxBounces;
+      locMaxSteps = gdLocMaxSteps; locBHPos = gdLocBHPos; locBHRS = gdLocBHRS;
+    } else {
+      activeProgram = rtDopplerComputeProgram;
+      locObjectCount = rtdLocObjectCount; locProj = rtdLocProj; locCamera = rtdLocCamera;
+      locViewRot = rtdLocViewRot; locResolution = rtdLocResolution; locMaxBounces = rtdLocMaxBounces;
+    }
   } else {
-    activeProgram  = rtComputeProgram;
-    locObjectCount   = rtLocObjectCount;
-    locProj          = rtLocProj;
-    locCamera        = rtLocCamera;
-    locViewRot       = rtLocViewRot;
-    locResolution    = rtLocResolution;
-    locMaxBounces    = rtLocMaxBounces;
+    if (effectiveMethod == 2) {
+      activeProgram    = acyclicComputeProgram;
+      locObjectCount   = acyLocObjectCount; locProj = acyLocProj; locCamera = acyLocCamera;
+      locViewRot = acyLocViewRot; locResolution = acyLocResolution; locMaxBounces = acyLocMaxBounces;
+      locMaxSteps = acyLocMaxSteps; locBHPos = acyLocBHPos; locBHRS = acyLocBHRS;
+    } else if (effectiveMethod == 1) {
+      activeProgram    = geodesicComputeProgram;
+      locObjectCount   = geoLocObjectCount; locProj = geoLocProj; locCamera = geoLocCamera;
+      locViewRot = geoLocViewRot; locResolution = geoLocResolution; locMaxBounces = geoLocMaxBounces;
+      locMaxSteps = geoLocMaxSteps; locBHPos = geoLocBHPos; locBHRS = geoLocBHRS;
+    } else {
+      activeProgram  = rtComputeProgram;
+      locObjectCount = rtLocObjectCount; locProj = rtLocProj; locCamera = rtLocCamera;
+      locViewRot = rtLocViewRot; locResolution = rtLocResolution; locMaxBounces = rtLocMaxBounces;
+    }
   }
   if (!activeProgram) return;
 
   // Bind the RECORDING texture as the compute output (not the display texture)
   glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
-  // SSBO is already uploaded by the primary DispatchRaytracer call — rebind for safety
-  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+  // Bind SSBO — rtDopplerObjects is still populated here (called before EndFrame)
+  if (dopplerMode) {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtDopplerSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 rtDopplerObjects.size() * sizeof(RayTracerObjectDoppler),
+                 rtDopplerObjects.data(),
+                 GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtDopplerSSBO);
+  } else {
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
+  }
 
   glUseProgram(activeProgram);
 
-  // Uniforms — same camera, but with recording resolution
-  glUniform1i(locObjectCount, (int)rayTracedObjects.size());
+  int recObjCount = dopplerMode ? (int)rtDopplerObjects.size() : (int)rayTracedObjects.size();
+  glUniform1i(locObjectCount, recObjCount);
   if (locMaxBounces >= 0)
     glUniform1i(locMaxBounces, rtMaxBounces);
 
@@ -2995,6 +3171,15 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     glUniform3fv(locBHPos, 1, bhPos);
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
+
+  if (dopplerMode) {
+    GLint locVS = glGetUniformLocation(activeProgram, "uDopplerVelScale");
+    GLint locBS = glGetUniformLocation(activeProgram, "uDopplerBrightnessStr");
+    GLint locCS = glGetUniformLocation(activeProgram, "uDopplerColorStr");
+    if (locVS >= 0) glUniform1f(locVS, dopplerVelScale);
+    if (locBS >= 0) glUniform1f(locBS, dopplerBrightnessStr);
+    if (locCS >= 0) glUniform1f(locCS, dopplerColorStr);
+  }
 
   GLuint gx_rec2          = (rw + 15) / 16;
   GLint  locTileOffY_rec2 = glGetUniformLocation(activeProgram, "uTileOffsetY");
