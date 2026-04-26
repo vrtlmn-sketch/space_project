@@ -45,7 +45,7 @@ const float BH_ESCAPE_ACCEL = 1e-5;           // acceleration threshold for esca
 // ---------------------------------------------------------------------------
 // Acyclic algorithm constants
 // ---------------------------------------------------------------------------
-const int   MAX_SAMPLES    = 512;  // maximum Phase 1 samples (6KB local memory)
+const int   MAX_SAMPLES    = 64;   // maximum Phase 1 samples (768 bytes local memory — was 512/6KB, caused register spill)
 const int   NEWTON_ITERS   = 4;    // Newton's method iterations per object in Phase 2
 const float PI             = 3.14159265358979323846;
 

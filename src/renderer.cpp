@@ -2815,9 +2815,19 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   if (effectiveMethod >= 1 && locBHRS >= 0)
     glUniform1f(locBHRS, bhSchwarzschildRadius);
 
-  GLuint gx = (rw + 15) / 16;
-  GLuint gy = (rh + 15) / 16;
-  glDispatchCompute(gx, gy, 1);
+  GLuint gx_rec2          = (rw + 15) / 16;
+  GLint  locTileOffY_rec2 = glGetUniformLocation(activeProgram, "uTileOffsetY");
+  constexpr int REC2_STRIP_H = 16;
+
+  for (int y0 = 0; y0 < rh; y0 += REC2_STRIP_H) {
+    if (locTileOffY_rec2 >= 0) glUniform1i(locTileOffY_rec2, y0);
+    int    rows      = std::min(REC2_STRIP_H, rh - y0);
+    GLuint gy_strip  = (rows + 15) / 16;
+    glDispatchCompute(gx_rec2, gy_strip, 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    glFinish();
+  }
+
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
   // Capture frame from the recording texture

@@ -258,20 +258,38 @@ void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<R
 }
 void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
-  // bufferSize = UVObjectMeshBuffer.size() (float count), each particle = 3 floats
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
-  for(int i = 0; i < particleCount; i++)
+  if (particleCount <= 0) return;
+
+  // Cap the number of particles sent to the GPU SSBO.  Each particle becomes a
+  // separate object the shader iterates at every integration step, so large
+  // clouds (50k+) in geodesic/acyclic mode cause per-strip work that exceeds
+  // the GPU watchdog even with glFinish between strips.  We uniformly subsample
+  // to at most RT_CLOUD_CAP representative particles.  For nebula (Beer-Lambert)
+  // mode the mass is scaled by the stride so total optical depth is preserved.
+  constexpr int RT_CLOUD_CAP = 2000;
+  int stride = (particleCount > RT_CLOUD_CAP) ? (particleCount / RT_CLOUD_CAP) : 1;
+
+  float pRadius  = (cachedRenderMode == 1) ? 0.08f : 0.001f;
+  float pObjType = (cachedRenderMode == 1) ? 4.0f  : 2.0f;
+
+  // For points mode, widen each representative particle so the total projected
+  // coverage (∝ radius²) stays the same after subsampling.
+  if (cachedRenderMode == 0 && stride > 1)
+    pRadius *= std::sqrt((float)stride);
+
+  for (int i = 0; i < particleCount; i += stride)
   {
-    int fi = i * 3;
-    float pRadius   = (cachedRenderMode == 1) ? 0.08f  : 0.001f;
-    float pObjType  = (cachedRenderMode == 1) ? 4.0f   : 2.0f;
+    int   fi           = i * 3;
+    float adjustedMass = cachedNebulaScatterScale * (float)stride; // scale for nebula mode
+    if (cachedRenderMode == 0) adjustedMass = cachedNebulaScatterScale; // points mode: no mass scaling
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
         UVObjectMeshBuffer[fi  ] + coordinates.x,
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      cachedNebulaScatterScale, pRadius, cachedTemperature, pObjType});
+      adjustedMass, pRadius, cachedTemperature, pObjType});
   }
 }
 
