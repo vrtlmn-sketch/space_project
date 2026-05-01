@@ -9,6 +9,7 @@ uniform vec3  uCamera;
 uniform mat3  uViewRot;
 uniform vec2  uResolution;
 uniform int   uMaxBounces;
+uniform float uNebulaDetail;
 uniform int   uMaxSteps;
 uniform int   uTileOffsetY;
 
@@ -62,6 +63,12 @@ vec3 dopplerTint(vec3 col, float D)
 }
 
 // ---------------------------------------------------------------------------
+float hash1(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
 // Blackbody
 // ---------------------------------------------------------------------------
 
@@ -308,12 +315,19 @@ void main()
                     else if (otype == 4)
                     {
                         float coreS   = max(objects[i].radius * 2.0, 0.001);
-                        float density  = exp(-d2 / (coreS * coreS));
-                        float dTau     = density * objects[i].mass;
-                        vec3 gcol = (objects[i].temperature > 100.0)
-                                     ? blackbody(dopplerT(objects[i].temperature, D))
-                                     : dopplerTint(vec3(0.55, 0.65, 1.0), D);
-                        gcol *= dopplerB(D);
+                        float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                        float density = exp(-d2 / (coreS * coreS)) * jitter;
+                        float dTau    = density * objects[i].mass;
+                        float T       = objects[i].temperature;
+                        vec3 gcol;
+                        if (T > 100.0) {
+                            float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                            gcol = blackbody(dopplerT(T * clamp(tVar, 0.5, 2.0), D)) * dopplerB(D);
+                        } else {
+                            vec3 baseCol = dopplerTint(vec3(0.55, 0.65, 1.0), D);
+                            vec3 warmCol = dopplerTint(vec3(1.0, 0.55, 0.7), D);
+                            gcol = mix(baseCol, warmCol, hash1(cen * 5.1) * uNebulaDetail * 0.7) * dopplerB(D);
+                        }
                         nebulaScatter      += cloudTransmittance * gcol * dTau;
                         cloudTransmittance *= exp(-dTau);
                     }
@@ -372,12 +386,19 @@ void main()
             else if (otype == 4)
             {
                 float coreS   = max(objects[i].radius * 2.0, 0.001);
-                float density  = exp(-sd2 / (coreS * coreS));
-                float dTau     = density * objects[i].mass;
-                vec3 gcol = (objects[i].temperature > 100.0)
-                             ? blackbody(dopplerT(objects[i].temperature, D))
-                             : dopplerTint(vec3(0.55, 0.65, 1.0), D);
-                gcol *= dopplerB(D);
+                float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                float density = exp(-sd2 / (coreS * coreS)) * jitter;
+                float dTau    = density * objects[i].mass;
+                float T       = objects[i].temperature;
+                vec3 gcol;
+                if (T > 100.0) {
+                    float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                    gcol = blackbody(dopplerT(T * clamp(tVar, 0.5, 2.0), D)) * dopplerB(D);
+                } else {
+                    vec3 baseCol = dopplerTint(vec3(0.55, 0.65, 1.0), D);
+                    vec3 warmCol = dopplerTint(vec3(1.0, 0.55, 0.7), D);
+                    gcol = mix(baseCol, warmCol, hash1(cen * 5.1) * uNebulaDetail * 0.7) * dopplerB(D);
+                }
                 nebulaScatter      += cloudTransmittance * gcol * dTau;
                 cloudTransmittance *= exp(-dTau);
             }
@@ -441,12 +462,19 @@ void main()
             else if (otype == 4)
             {
                 float coreS   = max(objects[i].radius * 2.0, 0.001);
-                float density  = exp(-d2 / (coreS * coreS));
-                float dTau     = density * objects[i].mass;
-                vec3 gcol = (objects[i].temperature > 100.0)
-                             ? blackbody(dopplerT(objects[i].temperature, D))
-                             : dopplerTint(vec3(0.55, 0.65, 1.0), D);
-                gcol *= dopplerB(D);
+                float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                float density = exp(-d2 / (coreS * coreS)) * jitter;
+                float dTau    = density * objects[i].mass;
+                float T       = objects[i].temperature;
+                vec3 gcol;
+                if (T > 100.0) {
+                    float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                    gcol = blackbody(dopplerT(T * clamp(tVar, 0.5, 2.0), D)) * dopplerB(D);
+                } else {
+                    vec3 baseCol = dopplerTint(vec3(0.55, 0.65, 1.0), D);
+                    vec3 warmCol = dopplerTint(vec3(1.0, 0.55, 0.7), D);
+                    gcol = mix(baseCol, warmCol, hash1(cen * 5.1) * uNebulaDetail * 0.7) * dopplerB(D);
+                }
                 nebulaScatter      += cloudTransmittance * gcol * dTau;
                 cloudTransmittance *= exp(-dTau);
             }

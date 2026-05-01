@@ -36,6 +36,7 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   cloud->temperature        = cd.temperature;
   cloud->renderMode         = cd.renderMode;
   cloud->nebulaScatterScale = cd.nebulaScatterScale;
+  cloud->particleSizeSpread = cd.particleSizeSpread;
   cloud->scale              = cd.scale;
   if (cd.scale != 1.0f)
     cloud->applyVirialScale(cd.scale);
@@ -145,7 +146,7 @@ int main(int argc, char** argv) {
     if (!cf.enabled) return;
     CloudData cd{true, cf.count, cf.sizeX, cf.sizeY, cf.sizeZ,
                  cf.formationFile, cf.computeMethod, cf.theta,
-                 cf.temperature, cf.renderMode, cf.nebulaScatterScale, cf.scale};
+                 cf.temperature, cf.renderMode, cf.nebulaScatterScale, cf.particleSizeSpread, cf.scale};
     clouds.push_back(buildCloudFromData(cd));
   };
 
@@ -158,7 +159,7 @@ int main(int argc, char** argv) {
     if (cloudIdx < 0 || cloudIdx >= (int)clouds.size()) return;
     CloudData cd{true, cf.count, cf.sizeX, cf.sizeY, cf.sizeZ,
                  cf.formationFile, cf.computeMethod, cf.theta,
-                 cf.temperature, cf.renderMode, cf.nebulaScatterScale, cf.scale};
+                 cf.temperature, cf.renderMode, cf.nebulaScatterScale, cf.particleSizeSpread, cf.scale};
     clouds[cloudIdx] = buildCloudFromData(cd);
   };
 
@@ -184,7 +185,7 @@ int main(int argc, char** argv) {
       cloudDatas.push_back(CloudData{
         true, c->particleCount(),
         3.f, 3.f, 3.f, "", static_cast<int>(c->computeMethod),
-        c->barnesHutTheta, c->temperature, c->renderMode, c->nebulaScatterScale, c->scale
+        c->barnesHutTheta, c->temperature, c->renderMode, c->nebulaScatterScale, c->particleSizeSpread, c->scale
       });
     }
     ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas);

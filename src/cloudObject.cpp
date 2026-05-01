@@ -339,6 +339,7 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
   renderedObject.uploadTemperature(temperature);
   renderedObject.uploadRenderMode(renderMode);
   renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
+  renderedObject.uploadParticleSizeSpread(particleSizeSpread);
 
   renderer.Draw(renderedObject);
 }

@@ -57,6 +57,7 @@ bool ProjectSerializer::Save(const std::string& path,
       {"temperature",         cloud.temperature},
       {"renderMode",          cloud.renderMode},
       {"nebulaScatterScale",  cloud.nebulaScatterScale},
+      {"particleSizeSpread",  cloud.particleSizeSpread},
       {"scale",               cloud.scale}
     });
   }
@@ -125,6 +126,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.temperature        = c.value("temperature",        4500.f);
     cd.renderMode         = c.value("renderMode",         0);
     cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
+    cd.particleSizeSpread = c.value("particleSizeSpread", 0.0f);
     cd.scale              = c.value("scale",              1.0f);
     return cd;
   };

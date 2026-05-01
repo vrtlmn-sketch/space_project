@@ -66,6 +66,7 @@ struct CloudFormState {
   float temperature = 4500.f; // Kelvin — blackbody colour for particles
   int   renderMode  = 0; // 0=Points, 1=Nebula (soft glow)
   float nebulaScatterScale = 0.4f;
+  float particleSizeSpread = 0.0f;
   float scale = 1.0f;
 };
 
@@ -200,6 +201,14 @@ private:
   GLint adLocViewRot{-1}, adLocResolution{-1}, adLocMaxBounces{-1};
   GLint adLocMaxSteps{-1}, adLocBHPos{-1}, adLocBHRS{-1};
   GLint adLocVelScale{-1}, adLocBrightStr{-1}, adLocColorStr{-1};
+
+  // Nebula detail uniform locations (one per program)
+  GLint rtLocNebulaDetail{-1};
+  GLint geoLocNebulaDetail{-1};
+  GLint acyLocNebulaDetail{-1};
+  GLint rtdLocNebulaDetail{-1};
+  GLint gdLocNebulaDetail{-1};
+  GLint adLocNebulaDetail{-1};
 
   // Doppler SSBO (separate from rtSSBO — uses RayTracerObjectDoppler struct)
   GLuint rtDopplerSSBO{0};
@@ -340,6 +349,7 @@ public:
   float dopplerVelScale{0.5f};   // maps simulation velocity to v/c (tune to scene scale)
   float dopplerBrightnessStr{2.0f}; // brightness exponent: brightness *= D^this
   float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
+  float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   float simSpeed{1.0f};               // simulation speed multiplier (1 = default, <1 = slower, >1 = faster)
   bool paused{true};

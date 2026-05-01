@@ -1003,6 +1003,14 @@ void Renderer::DrawRenderingSettings() {
   }
 
   ImGui::Spacing();
+
+  ImGui::Text("Nebula Detail");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##nebuladetail", &nebulaDetail, 0.0f, 1.0f, "%.2f"))
+    rtDirty = true;
+  ImGui::TextDisabled("Density + color variation per particle");
+
+  ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
 
@@ -1794,6 +1802,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       if (cloudIdx != lastCloudIdx) {
         cloudForm.renderMode         = cloud->renderMode;
         cloudForm.nebulaScatterScale = cloud->nebulaScatterScale;
+        cloudForm.particleSizeSpread = cloud->particleSizeSpread;
         cloudForm.temperature        = cloud->temperature;
         cloudForm.computeMethod      = static_cast<int>(cloud->computeMethod);
         cloudForm.theta              = cloud->barnesHutTheta;
@@ -1891,6 +1900,11 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         ImGui::SetNextItemWidth(-1);
         if (ImGui::SliderFloat("Density##ci_nebula", &cloudForm.nebulaScatterScale, 0.001f, 2.0f, "%.3f")) {
           cloud->nebulaScatterScale = cloudForm.nebulaScatterScale;
+        }
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat("Clumpiness##ci_spread", &cloudForm.particleSizeSpread, 0.0f, 1.0f, "%.2f")) {
+          cloud->particleSizeSpread = cloudForm.particleSizeSpread;
+          rtDirty = true;
         }
       }
 
@@ -2270,6 +2284,7 @@ void Renderer::InitComputeShader() {
     rtLocViewRot       = glGetUniformLocation(rtComputeProgram, "uViewRot");
     rtLocResolution    = glGetUniformLocation(rtComputeProgram, "uResolution");
     rtLocMaxBounces    = glGetUniformLocation(rtComputeProgram, "uMaxBounces");
+    rtLocNebulaDetail  = glGetUniformLocation(rtComputeProgram, "uNebulaDetail");
   }
 
   // ── 1b. Compile geodesic compute shader ──
@@ -2300,6 +2315,7 @@ void Renderer::InitComputeShader() {
       geoLocMaxSteps      = glGetUniformLocation(geodesicComputeProgram, "uMaxSteps");
       geoLocBHPos         = glGetUniformLocation(geodesicComputeProgram, "uBHPos");
       geoLocBHRS          = glGetUniformLocation(geodesicComputeProgram, "uBH_RS");
+      geoLocNebulaDetail  = glGetUniformLocation(geodesicComputeProgram, "uNebulaDetail");
     }
   }
 
@@ -2331,6 +2347,7 @@ void Renderer::InitComputeShader() {
       acyLocMaxSteps      = glGetUniformLocation(acyclicComputeProgram, "uMaxSteps");
       acyLocBHPos         = glGetUniformLocation(acyclicComputeProgram, "uBHPos");
       acyLocBHRS          = glGetUniformLocation(acyclicComputeProgram, "uBH_RS");
+      acyLocNebulaDetail  = glGetUniformLocation(acyclicComputeProgram, "uNebulaDetail");
     }
   }
 
@@ -2340,6 +2357,7 @@ void Renderer::InitComputeShader() {
                                 GLint& locRes, GLint& locMB,
                                 GLint* locMS, GLint* locBHP, GLint* locRS,
                                 GLint& locVS, GLint& locBS, GLint& locCS,
+                                GLint& locND,
                                 const char* tag)
   {
     GLuint s = compileShaderFromFile(path, GL_COMPUTE_SHADER);
@@ -2365,6 +2383,7 @@ void Renderer::InitComputeShader() {
     locVS  = glGetUniformLocation(prog, "uDopplerVelScale");
     locBS  = glGetUniformLocation(prog, "uDopplerBrightnessStr");
     locCS  = glGetUniformLocation(prog, "uDopplerColorStr");
+    locND  = glGetUniformLocation(prog, "uNebulaDetail");
   };
 
   loadDopplerProgram("src/shaders/raytracerDopplerCompute.glsl",
@@ -2372,21 +2391,24 @@ void Renderer::InitComputeShader() {
                      rtdLocObjectCount, rtdLocProj, rtdLocCamera, rtdLocViewRot,
                      rtdLocResolution, rtdLocMaxBounces,
                      nullptr, nullptr, nullptr,
-                     rtdLocVelScale, rtdLocBrightStr, rtdLocColorStr, "RTD");
+                     rtdLocVelScale, rtdLocBrightStr, rtdLocColorStr,
+                     rtdLocNebulaDetail, "RTD");
 
   loadDopplerProgram("src/shaders/geodesicDopplerCompute.glsl",
                      geodesicDopplerComputeProgram,
                      gdLocObjectCount, gdLocProj, gdLocCamera, gdLocViewRot,
                      gdLocResolution, gdLocMaxBounces,
                      &gdLocMaxSteps, &gdLocBHPos, &gdLocBHRS,
-                     gdLocVelScale, gdLocBrightStr, gdLocColorStr, "GD");
+                     gdLocVelScale, gdLocBrightStr, gdLocColorStr,
+                     gdLocNebulaDetail, "GD");
 
   loadDopplerProgram("src/shaders/acyclicGeodesicDopplerCompute.glsl",
                      acyclicDopplerComputeProgram,
                      adLocObjectCount, adLocProj, adLocCamera, adLocViewRot,
                      adLocResolution, adLocMaxBounces,
                      &adLocMaxSteps, &adLocBHPos, &adLocBHRS,
-                     adLocVelScale, adLocBrightStr, adLocColorStr, "AD");
+                     adLocVelScale, adLocBrightStr, adLocColorStr,
+                     adLocNebulaDetail, "AD");
 
   // ── 2. Create SSBOs for raytracer objects ──
   glGenBuffers(1, &rtSSBO);
@@ -2567,6 +2589,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   static float lastVelScale   = -1.0f;
   static float lastBrightStr  = -1.0f;
   static float lastColorStr   = -1.0f;
+  static float lastNebulaDetail = -1.0f;
   bool dirty = rtDirty || recording;
   if (!dirty) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
@@ -2584,6 +2607,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
              dopplerVelScale != lastVelScale ||
              dopplerBrightnessStr != lastBrightStr ||
              dopplerColorStr != lastColorStr ||
+             nebulaDetail != lastNebulaDetail ||
              rayTracedObjects.size() != rtLastObjectCount);
   }
   if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
@@ -2668,6 +2692,12 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locCS >= 0) glUniform1f(locCS, dopplerColorStr);
   }
 
+  // Nebula detail — applies to all 6 programs
+  {
+    GLint locND = glGetUniformLocation(activeProgram, "uNebulaDetail");
+    if (locND >= 0) glUniform1f(locND, nebulaDetail);
+  }
+
   // Split dispatch into horizontal strips so the GPU watchdog doesn't kill
   // long-running frames at higher resolutions or with many objects.
   GLuint gx             = (width + 15) / 16;
@@ -2705,6 +2735,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   lastVelScale         = dopplerVelScale;
   lastBrightStr        = dopplerBrightnessStr;
   lastColorStr         = dopplerColorStr;
+  lastNebulaDetail     = nebulaDetail;
   rtLastObjectCount    = rayTracedObjects.size();
   rtLastObjects        = rayTracedObjects;         // snapshot for memcmp
   rtLastDopplerObjects = rtDopplerObjects;         // snapshot for CaptureImage
@@ -2974,6 +3005,10 @@ void Renderer::CaptureImage() {
     if (locBS >= 0) glUniform1f(locBS, dopplerBrightnessStr);
     if (locCS >= 0) glUniform1f(locCS, dopplerColorStr);
   }
+  {
+    GLint locND = glGetUniformLocation(activeProgram, "uNebulaDetail");
+    if (locND >= 0) glUniform1f(locND, nebulaDetail);
+  }
 
   // Split dispatch into horizontal strips (same watchdog fix as DispatchRaytracer)
   GLuint gx_rec         = (w + 15) / 16;
@@ -3179,6 +3214,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locVS >= 0) glUniform1f(locVS, dopplerVelScale);
     if (locBS >= 0) glUniform1f(locBS, dopplerBrightnessStr);
     if (locCS >= 0) glUniform1f(locCS, dopplerColorStr);
+  }
+  {
+    GLint locND = glGetUniformLocation(activeProgram, "uNebulaDetail");
+    if (locND >= 0) glUniform1f(locND, nebulaDetail);
   }
 
   GLuint gx_rec2          = (rw + 15) / 16;

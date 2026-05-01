@@ -2,6 +2,7 @@
 #include "physicsObject.h"
 #include "renderedObject.h"
 #include <cmath>
+#include <cstdint>
 
 void RenderedObject::translateMesh(vec3 v)
 {
@@ -286,6 +287,18 @@ void RenderedObject::renderCloudRaytracedDoppler(float cameraTranslate[3],
     int   fi           = i * 3;
     float adjustedMass = cachedNebulaScatterScale * (float)stride;
     if (cachedRenderMode == 0) adjustedMass = cachedNebulaScatterScale;
+
+    float pRad = pRadius;
+    if (cachedRenderMode == 1 && cachedParticleSizeSpread > 0.0f) {
+      uint32_t h = static_cast<uint32_t>(i) * 2654435761u;
+      float t = static_cast<float>(h) / 4294967295.0f;
+      float varied;
+      if      (t < 0.65f) varied = 0.025f + 0.035f * (t / 0.65f);
+      else if (t < 0.90f) varied = 0.060f + 0.040f * ((t - 0.65f) / 0.25f);
+      else                varied = 0.100f + 0.120f * ((t - 0.90f) / 0.10f);
+      pRad = 0.08f * (1.0f - cachedParticleSizeSpread) + varied * cachedParticleSizeSpread;
+    }
+
     vec3 vel = (i < (int)cloudParticles.size()) ? cloudParticles[i].velocity : vec3{0,0,0};
     list.push_back(RayTracerObjectDoppler{
       vec4{
@@ -293,7 +306,7 @@ void RenderedObject::renderCloudRaytracedDoppler(float cameraTranslate[3],
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      adjustedMass, pRadius, cachedTemperature, pObjType,
+      adjustedMass, pRad, cachedTemperature, pObjType,
       vec4{vel.x, vel.y, vel.z, 0}});
   }
 }
@@ -325,13 +338,25 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
     int   fi           = i * 3;
     float adjustedMass = cachedNebulaScatterScale * (float)stride; // scale for nebula mode
     if (cachedRenderMode == 0) adjustedMass = cachedNebulaScatterScale; // points mode: no mass scaling
+
+    float pRad = pRadius;
+    if (cachedRenderMode == 1 && cachedParticleSizeSpread > 0.0f) {
+      uint32_t h = static_cast<uint32_t>(i) * 2654435761u;
+      float t = static_cast<float>(h) / 4294967295.0f;
+      float varied;
+      if      (t < 0.65f) varied = 0.025f + 0.035f * (t / 0.65f);
+      else if (t < 0.90f) varied = 0.060f + 0.040f * ((t - 0.65f) / 0.25f);
+      else                varied = 0.100f + 0.120f * ((t - 0.90f) / 0.10f);
+      pRad = 0.08f * (1.0f - cachedParticleSizeSpread) + varied * cachedParticleSizeSpread;
+    }
+
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
         UVObjectMeshBuffer[fi  ] + coordinates.x,
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      adjustedMass, pRadius, cachedTemperature, pObjType});
+      adjustedMass, pRad, cachedTemperature, pObjType});
   }
 }
 
@@ -456,6 +481,11 @@ void RenderedObject::uploadRenderMode(int mode)
 void RenderedObject::uploadNebulaScatterScale(float scale)
 {
   cachedNebulaScatterScale = scale;
+}
+
+void RenderedObject::uploadParticleSizeSpread(float spread)
+{
+  cachedParticleSizeSpread = spread;
 }
 
 void RenderedObject::uploadResolution(int w, int h)

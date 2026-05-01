@@ -16,9 +16,10 @@ uniform mat3 uViewRot;
 uniform vec2 uResolution;
 
 // quality settings
-uniform int uMaxBounces;  // 0 = no reflections, 1+ = bounce count
-uniform int uMaxSteps;    // geodesic integration steps per ray (capped to 512 for acyclic)
-uniform int uTileOffsetY; // strip Y offset for split dispatch
+uniform int   uMaxBounces;   // 0 = no reflections, 1+ = bounce count
+uniform int   uMaxSteps;     // geodesic integration steps per ray (capped to 512 for acyclic)
+uniform int   uTileOffsetY;  // strip Y offset for split dispatch
+uniform float uNebulaDetail; // 0 = uniform look, 1 = max per-particle variation
 
 struct spaceObject
 {
@@ -52,6 +53,12 @@ const float PI             = 3.14159265358979323846;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+float hash1(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
 
 vec3 blackbody(float T)
 {
@@ -623,11 +630,18 @@ void main()
                         else if (otype == 4)
                         {
                             float coreS   = max(objects[i].radius * 2.0, 0.001);
-                            float density  = exp(-d2 / (coreS * coreS));
-                            float dTau     = density * objects[i].mass;
-                            vec3 gcol = (objects[i].temperature > 100.0)
-                                         ? blackbody(objects[i].temperature)
-                                         : vec3(0.55, 0.65, 1.0);
+                            float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                            float density = exp(-d2 / (coreS * coreS)) * jitter;
+                            float dTau    = density * objects[i].mass;
+                            float T       = objects[i].temperature;
+                            vec3 gcol;
+                            if (T > 100.0) {
+                                float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                                gcol = blackbody(T * clamp(tVar, 0.5, 2.0));
+                            } else {
+                                gcol = mix(vec3(0.55, 0.65, 1.0), vec3(1.0, 0.55, 0.7),
+                                           hash1(cen * 5.1) * uNebulaDetail * 0.7);
+                            }
                             nebulaScatter      += cloudTransmittance * gcol * dTau;
                             cloudTransmittance *= exp(-dTau);
                         }
@@ -687,11 +701,18 @@ void main()
                     else if (otype == 4)
                     {
                         float coreS   = max(objects[i].radius * 2.0, 0.001);
-                        float density  = exp(-sd2 / (coreS * coreS));
-                        float dTau     = density * objects[i].mass;
-                        vec3 gcol = (objects[i].temperature > 100.0)
-                                     ? blackbody(objects[i].temperature)
-                                     : vec3(0.55, 0.65, 1.0);
+                        float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                        float density = exp(-sd2 / (coreS * coreS)) * jitter;
+                        float dTau    = density * objects[i].mass;
+                        float T       = objects[i].temperature;
+                        vec3 gcol;
+                        if (T > 100.0) {
+                            float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                            gcol = blackbody(T * clamp(tVar, 0.5, 2.0));
+                        } else {
+                            gcol = mix(vec3(0.55, 0.65, 1.0), vec3(1.0, 0.55, 0.7),
+                                       hash1(cen * 5.1) * uNebulaDetail * 0.7);
+                        }
                         nebulaScatter      += cloudTransmittance * gcol * dTau;
                         cloudTransmittance *= exp(-dTau);
                     }
@@ -804,11 +825,18 @@ void main()
             else if (otype == 4)
             {
                 float coreS   = max(objects[i].radius * 2.0, 0.001);
-                float density  = exp(-d2 / (coreS * coreS));
-                float dTau     = density * objects[i].mass;
-                vec3 gcol = (objects[i].temperature > 100.0)
-                             ? blackbody(objects[i].temperature)
-                             : vec3(0.55, 0.65, 1.0);
+                float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                float density = exp(-d2 / (coreS * coreS)) * jitter;
+                float dTau    = density * objects[i].mass;
+                float T       = objects[i].temperature;
+                vec3 gcol;
+                if (T > 100.0) {
+                    float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                    gcol = blackbody(T * clamp(tVar, 0.5, 2.0));
+                } else {
+                    gcol = mix(vec3(0.55, 0.65, 1.0), vec3(1.0, 0.55, 0.7),
+                               hash1(cen * 5.1) * uNebulaDetail * 0.7);
+                }
                 nebulaScatter      += cloudTransmittance * gcol * dTau;
                 cloudTransmittance *= exp(-dTau);
             }

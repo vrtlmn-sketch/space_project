@@ -58,9 +58,10 @@ private:
 public:
   MeshType meshType{MeshType::sphere};
   vec3 coordinates;
-  float cachedTemperature{0.f};         // set by uploadTemperature(), used by renderCloudRaytraced()
-  int   cachedRenderMode{0};           // set by uploadRenderMode(), used by renderCloudRaytraced()
+  float cachedTemperature{0.f};          // set by uploadTemperature(), used by renderCloudRaytraced()
+  int   cachedRenderMode{0};            // set by uploadRenderMode(), used by renderCloudRaytraced()
   float cachedNebulaScatterScale{0.4f}; // set by uploadNebulaScatterScale(), used by renderCloudRaytraced()
+  float cachedParticleSizeSpread{0.0f}; // set by uploadParticleSizeSpread(), used by renderCloudRaytraced()
 
   void setupRender();
 
@@ -73,6 +74,7 @@ public:
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadNebulaScatterScale(float scale);
+  void uploadParticleSizeSpread(float spread);
   void uploadResolution(int w, int h);
   void renderMesh(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderLine(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
