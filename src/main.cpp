@@ -338,6 +338,11 @@ int main(int argc, char** argv) {
       }
     }
 
+    // Freeze simulation while a recording frame is being assembled across strips
+    bool recOverridePause = renderer.IsRecording() && renderer.recFrameActive;
+    bool savedPaused = renderer.paused;
+    if (recOverridePause) renderer.paused = true;
+
     // Physics objects + trail lines
     for (int i = 0; i < (int)physicsObjects.size(); i++) {
       physicsObjects[i].Update(physicsObjects, renderer);
@@ -363,6 +368,8 @@ int main(int argc, char** argv) {
 
     for (auto& c : clouds)
       c->Update(renderer, physData);
+
+    if (recOverridePause) renderer.paused = savedPaused;
 
     // ── Propagate RAM budget to all FrameStores ───────────────────────────
     {

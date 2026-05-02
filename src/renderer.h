@@ -266,6 +266,7 @@ private:
   // Separate output texture for recording (avoids resizing the display texture)
   GLuint recOutputTex{0};
   int    recTexWidth{0}, recTexHeight{0};
+  int    recFrameStripY{-1};  // current strip row during multi-frame recording (-1 = idle)
   void   EnsureRecOutputTex(int w, int h);
   void   DestroyRecOutputTex();
 
@@ -387,6 +388,7 @@ public:
   bool recStartRequested{false};
   bool recStopRequested{false};
   bool recMarkerRecordRequested{false}; // R key when both markers set: jump to start + record
+  bool recFrameActive{false};  // true while a recording frame is being assembled across strips
 
   // ---- Startup modal state ----
   // Set to false once user has chosen a project

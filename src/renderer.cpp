@@ -2811,6 +2811,8 @@ void Renderer::StartRecording() {
   recording = true;
   recordedFrames = 0;
   pixelBuffer.resize((size_t)w * h * 4);
+  recFrameStripY = -1;
+  recFrameActive = false;
 
   // Reset bench recording accumulators
   bench.recDispatchTotal = 0.0;
@@ -2828,6 +2830,8 @@ void Renderer::StopRecording() {
     ffmpegPipe = nullptr;
   }
   recording = false;
+  recFrameStripY = -1;
+  recFrameActive = false;
 
   // Finalise bench summary
   double wallSecs = std::chrono::duration<double>(
@@ -3241,23 +3245,34 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   GLint  locTileOffY_rec2 = glGetUniformLocation(activeProgram, "uTileOffsetY");
   constexpr int REC2_STRIP_H = 4;
 
-  auto recDispT0 = std::chrono::steady_clock::now();
-  for (int y0 = 0; y0 < rh; y0 += REC2_STRIP_H) {
-    if (locTileOffY_rec2 >= 0) glUniform1i(locTileOffY_rec2, y0);
-    int    rows      = std::min(REC2_STRIP_H, rh - y0);
-    GLuint gy_strip  = (rows + 3) / 4;
-    glDispatchCompute(gx_rec2, gy_strip, 1);
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    glFinish();
+  // Start a new frame assembly if not already in progress
+  if (recFrameStripY < 0) {
+    recFrameStripY = 0;
+    recFrameActive = true;
+    bench.recLastFrameMs = 0.0;
   }
-  bench.recLastFrameMs = std::chrono::duration<double, std::milli>(
-      std::chrono::steady_clock::now() - recDispT0).count();
-  bench.recDispatchTotal += bench.recLastFrameMs;
 
-  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+  // Dispatch ONE strip this app tick
+  if (locTileOffY_rec2 >= 0) glUniform1i(locTileOffY_rec2, recFrameStripY);
+  int    rows     = std::min(REC2_STRIP_H, rh - recFrameStripY);
+  GLuint gy_strip = (rows + 3) / 4;
+  auto t0 = std::chrono::steady_clock::now();
+  glDispatchCompute(gx_rec2, gy_strip, 1);
+  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+  glFinish();
+  bench.recLastFrameMs += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - t0).count();
 
-  // Capture frame from the recording texture
-  CaptureFrame(rw, rh);
+  recFrameStripY += REC2_STRIP_H;
+
+  // Frame complete — all strips rendered
+  if (recFrameStripY >= rh) {
+    bench.recDispatchTotal += bench.recLastFrameMs;
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+    CaptureFrame(rw, rh);
+    recFrameStripY = -1;
+    recFrameActive = false;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
