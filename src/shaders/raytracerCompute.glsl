@@ -27,6 +27,7 @@ struct spaceObject
     float radius;
     float temperature; // Kelvin  (0 = planet/cloud)
     float objectType;  // 0=planet, 1=star, 2=cloud, 3=black hole
+    vec4  color;       // xyz = RGB planet color, w unused
 };
 
 layout(std430, binding = 1) buffer Objects {
@@ -116,9 +117,8 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 // Shading
 // ---------------------------------------------------------------------------
 
-vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal)
+vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor)
 {
-    vec3 baseColor = vec3(0.3, 0.5, 0.7);
     vec3 ambient   = baseColor * 0.04;
     vec3 result    = ambient;
     vec3 viewDir   = normalize(ro - hitPos);
@@ -172,7 +172,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
             }
             else
             {
-                reflCol = shadePlanet(ro, rHit, rNorm);
+                reflCol = shadePlanet(ro, rHit, rNorm, objects[i].color.xyz);
             }
             break;
         }
@@ -257,7 +257,7 @@ void main()
             vec3  cen    = objects[hitIdx].position.xyz;
             vec3  hitPos = ro + rd * tMin;
             vec3  normal = normalize(hitPos - cen);
-            vec3  lit    = shadePlanet(ro, hitPos, normal);
+            vec3  lit    = shadePlanet(ro, hitPos, normal, objects[hitIdx].color.xyz);
             vec3  refl   = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, rd, hitPos, normal);

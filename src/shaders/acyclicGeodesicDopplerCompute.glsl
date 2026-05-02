@@ -25,6 +25,7 @@ struct spaceObject
     float radius;
     float temperature;
     float objectType;
+    vec4  color;        // xyz = RGB planet color, w unused
     vec4  velocity;     // xyz = world-space velocity, w unused
 };
 
@@ -133,9 +134,8 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
     return dot(closest, closest);
 }
 
-vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal)
+vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor)
 {
-    vec3 baseColor = vec3(0.3, 0.5, 0.7);
     vec3 ambient   = baseColor * 0.04;
     vec3 result    = ambient;
     vec3 viewDir   = normalize(ro - hitPos);
@@ -179,7 +179,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
                 float limb = pow(max(cosA, 0.0), 0.5);
                 reflCol = blackbody(objects[i].temperature) * limb;
             }
-            else reflCol = shadePlanet(ro, rHit, rNorm);
+            else reflCol = shadePlanet(ro, rHit, rNorm, objects[i].color.xyz);
             break;
         }
     }
@@ -728,7 +728,7 @@ void main()
         }
         else
         {
-            vec3 lit  = shadePlanet(ro, hitPos, hitNorm);
+            vec3 lit  = shadePlanet(ro, hitPos, hitNorm, objects[hitIdx].color.xyz);
             vec3 refl = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, finalVel, hitPos, hitNorm);

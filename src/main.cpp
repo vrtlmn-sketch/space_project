@@ -65,6 +65,7 @@ static void buildScene(
       pod.mass, pod.name, st, pod.temperature);
     if (pod.schwarzschildRadius > 0.0f)
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
+    physicsObjects.back().data.color = pod.color;
   }
   for (auto& obj : physicsObjects)
     lineObjects.emplace_back(vec3{obj.data.position});
@@ -390,7 +391,8 @@ int main(int argc, char** argv) {
                                  physicsObjects[i].data.mass,
                                  physicsObjects[i].temperature,
                                  objType,
-                                 physicsObjects[i].data.velocity);
+                                 physicsObjects[i].data.velocity,
+                                 physicsObjects[i].data.color);
       lineObjects[i].Update(renderer);
     }
     for (auto& g : grids)

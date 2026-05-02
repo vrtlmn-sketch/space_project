@@ -400,7 +400,7 @@ public:
   void Draw(RenderedObject& ro);
   // Draw a physics object with mass+temperature+objectType (+optional velocity for Doppler)
   void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
-                         vec3 velocity = {0,0,0});
+                         vec3 velocity = {0,0,0}, vec3 color = {0.55f,0.25f,0.15f});
   // Upload star light positions+colours to all planet (non-star) rendered objects
   void UploadStarLights(std::vector<RenderedObject*>& planetShaders,
                         const std::vector<vec3>& positions,

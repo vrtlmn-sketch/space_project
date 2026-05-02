@@ -10,6 +10,8 @@ uniform int   uLightCount;
 uniform vec3  uLightPositions[8];
 uniform vec3  uLightColors[8];
 
+uniform vec3  uPlanetColor;
+
 // Charity/Krystek blackbody approximation
 vec3 blackbody(float tempK) {
   float t = clamp(tempK, 1000.0, 40000.0);
@@ -34,8 +36,8 @@ void main() {
   vec3 cameraPos = -uCamera;
   vec3 viewDir   = normalize(cameraPos - vPos);
 
-  // Base rocky planet colour
-  vec3 baseColor = vec3(0.55, 0.25, 0.15);
+  // Per-planet colour (set from inspector; falls back to orange-brown if uniform not found)
+  vec3 baseColor = uPlanetColor;
 
   vec3 totalLight = vec3(0.0);
 

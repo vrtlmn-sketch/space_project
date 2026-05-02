@@ -251,19 +251,21 @@ void RenderedObject::GenerateMeshSphere(float radius,
 }
 
 void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
-                                          float mass, float temperature, float objectType)
+                                          float mass, float temperature, float objectType, vec3 color)
 {
   raytracerObjectList.push_back(RayTracerObject{
     vec4{coordinates.x, coordinates.y, coordinates.z, 0},
-    mass, radius, temperature, objectType});
+    mass, radius, temperature, objectType,
+    vec4{color.x, color.y, color.z, 0}});
 }
 void RenderedObject::renderMeshRaytracedDoppler(float cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
-                                                vec3 velocity, float mass, float temperature, float objectType)
+                                                vec3 velocity, float mass, float temperature, float objectType, vec3 color)
 {
   list.push_back(RayTracerObjectDoppler{
     vec4{coordinates.x, coordinates.y, coordinates.z, 0},
     mass, radius, temperature, objectType,
+    vec4{color.x, color.y, color.z, 0},
     vec4{velocity.x, velocity.y, velocity.z, 0}});
 }
 
@@ -307,6 +309,7 @@ void RenderedObject::renderCloudRaytracedDoppler(float cameraTranslate[3],
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
       adjustedMass, pRad, cachedTemperature, pObjType,
+      vec4{0,0,0,0},
       vec4{vel.x, vel.y, vel.z, 0}});
   }
 }
@@ -356,7 +359,7 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
         UVObjectMeshBuffer[fi+1] + coordinates.y,
         UVObjectMeshBuffer[fi+2] + coordinates.z,
         0},
-      adjustedMass, pRad, cachedTemperature, pObjType});
+      adjustedMass, pRad, cachedTemperature, pObjType, vec4{0,0,0,0}});
   }
 }
 
@@ -432,6 +435,7 @@ void RenderedObject::setupRender()
   lightCountUniform       = glGetUniformLocation(program, "uLightCount");
   lightPositionsUniform   = glGetUniformLocation(program, "uLightPositions");
   lightColorsUniform      = glGetUniformLocation(program, "uLightColors");
+  planetColorUniform      = glGetUniformLocation(program, "uPlanetColor");
 }
 
 void RenderedObject::UploadSSBOParticles(const std::vector<vec4>& points){
@@ -447,6 +451,13 @@ void RenderedObject::UploadSSBOObjects(const std::vector<RayTracerObject>& objec
   glBufferData(GL_SHADER_STORAGE_BUFFER, objects.size()*sizeof(RayTracerObject), objects.data(), GL_STATIC_DRAW);
 
   glUniform1i(objectCountUniform,objects.size());
+}
+
+void RenderedObject::uploadPlanetColor(const vec3& color)
+{
+  glUseProgram(program);
+  if (planetColorUniform != (unsigned int)-1)
+    glUniform3f(planetColorUniform, color.x, color.y, color.z);
 }
 
 void RenderedObject::uploadStarLighting(const std::vector<vec3>& positions,

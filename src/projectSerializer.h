@@ -15,6 +15,7 @@ struct PhysicsObjectData {
   int   shaderType{}; // 0=Planet, 1=Star, 2=BlackHole
   float temperature{0.0f}; // Kelvin
   float schwarzschildRadius{0.0f}; // 0 = compute from mass (2*G*m)
+  vec3  color{0.55f, 0.25f, 0.15f}; // planet RGB color
 };
 
 struct GridData {

@@ -42,6 +42,7 @@ private:
   unsigned int lightCountUniform{};
   unsigned int lightPositionsUniform{};
   unsigned int lightColorsUniform{};
+  unsigned int planetColorUniform{};
 
   //rendering stuff
   unsigned int vao{};
@@ -71,6 +72,7 @@ public:
                                 int fbWidth = 800, int fbHeight = 600);
   void uploadStarLighting(const std::vector<vec3>& positions,
                           const std::vector<vec3>& colors);
+  void uploadPlanetColor(const vec3& color);
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadNebulaScatterScale(float scale);
@@ -81,7 +83,8 @@ public:
   void renderCloud(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderGrid(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
-                           float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f);
+                           float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
+                           vec3 color = {0.55f, 0.25f, 0.15f});
 
 void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
                  const float viewRot[9], float fovDeg = 45.f,
@@ -100,7 +103,8 @@ void GenerateMeshGrid(const vec3& size, int subdivisions);
 
   void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
   void renderMeshRaytracedDoppler(float cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
-                                  vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f);
+                                  vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
+                                  vec3 color = {0.55f, 0.25f, 0.15f});
   void renderCloudRaytracedDoppler(float cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);

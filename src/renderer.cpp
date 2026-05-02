@@ -256,16 +256,18 @@ void Renderer::Draw(RenderedObject& ro) {
 }
 
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
-                                  vec3 velocity) {
+                                  vec3 velocity, vec3 color) {
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere)
+    if (ro.meshType == MeshType::sphere) {
+      ro.uploadPlanetColor(color);
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+    }
   }
   if (rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
-      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType);
+      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType, color);
       if (dopplerMode)
-        ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, velocity, mass, temperature, objectType);
+        ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, velocity, mass, temperature, objectType, color);
     }
   }
 }
@@ -1774,6 +1776,19 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       BlackbodyColor(obj.temperature, r, g, b);
       ImGui::SameLine();
       ImGui::ColorButton("##ibb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+
+      if (obj.shaderType == ObjectShaderType::Planet) {
+        ImGui::Spacing();
+        ImGui::Text("Color");
+        float col[3] = { obj.data.color.x, obj.data.color.y, obj.data.color.z };
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::ColorEdit3("##icolor", col, ImGuiColorEditFlags_Float))
+        {
+          obj.data.color.x = col[0];
+          obj.data.color.y = col[1];
+          obj.data.color.z = col[2];
+        }
+      }
     }
 
     ImGui::Spacing();
