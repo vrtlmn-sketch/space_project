@@ -74,6 +74,14 @@ float hash1(vec3 p) {
     return fract((p.x + p.y) * p.z);
 }
 
+float nebulaFBM(vec3 pOff, float coreS) {
+    vec3 p = pOff * (3.0 / max(coreS, 0.001)) + vec3(1.23, 4.56, 7.89);
+    float v  = 0.500 * (hash1(p)        * 2.0 - 1.0);
+    v       += 0.250 * (hash1(p * 2.09) * 2.0 - 1.0);
+    v       += 0.125 * (hash1(p * 4.37) * 2.0 - 1.0);
+    return v;
+}
+
 // ---------------------------------------------------------------------------
 // Blackbody
 // ---------------------------------------------------------------------------
@@ -348,8 +356,10 @@ void main()
         }
         else // otype == 4: nebula Beer-Lambert
         {
+            vec3  pOff    = ro + rd * max(dot(cen - ro, rd), 0.0) - cen;
+            float noiseM  = max(1.0 + nebulaFBM(pOff, coreS) * uNebulaDetail, 0.0);
             float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
-            float density = exp(-d2 / (coreS * coreS)) * jitter;
+            float density = exp(-d2 / (coreS * coreS)) * jitter * noiseM;
             float dTau    = density * objects[i].mass;
             float T       = objects[i].temperature;
             if (T > 100.0) {
@@ -362,6 +372,13 @@ void main()
             }
             nebulaScatter      += cloudTransmittance * gcol * dTau;
             cloudTransmittance *= exp(-dTau);
+            float haloS   = coreS * 3.5;
+            float haloTau = exp(-d2 / (haloS * haloS)) * objects[i].mass * 0.08;
+            vec3  haloCol = (T > 100.0)
+                ? blackbody(dopplerT(max(T * 0.6, 1000.0), D)) * dopplerB(D)
+                : dopplerTint(vec3(0.25, 0.45, 1.0), D) * dopplerB(D);
+            nebulaScatter      += cloudTransmittance * haloCol * haloTau;
+            cloudTransmittance *= exp(-haloTau);
         }
     }
     color  += cloudGlow;
