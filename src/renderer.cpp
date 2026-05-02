@@ -2719,13 +2719,13 @@ void Renderer::DispatchRaytracer(int width, int height) {
   // long-running frames at higher resolutions or with many objects.
   GLuint gx             = (width + 15) / 16;
   GLint  locTileOffsetY = glGetUniformLocation(activeProgram, "uTileOffsetY");
-  constexpr int STRIP_H = 16; // rows per strip — small enough to stay under any watchdog timeout
+  constexpr int STRIP_H = 4; // rows per strip — 4 rows keeps each dispatch well under watchdog
 
   auto dispatchT0 = std::chrono::steady_clock::now();
   for (int y0 = 0; y0 < height; y0 += STRIP_H) {
     if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, y0);
     int   rows     = std::min(STRIP_H, height - y0);
-    GLuint gy_strip = (rows + 15) / 16;
+    GLuint gy_strip = (rows + 3) / 4;
     glDispatchCompute(gx, gy_strip, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     glFinish(); // block CPU until GPU is truly idle — resets the watchdog timer between strips
@@ -3030,12 +3030,12 @@ void Renderer::CaptureImage() {
   // Split dispatch into horizontal strips (same watchdog fix as DispatchRaytracer)
   GLuint gx_rec         = (w + 15) / 16;
   GLint  locTileOffY_rec = glGetUniformLocation(activeProgram, "uTileOffsetY");
-  constexpr int REC_STRIP_H = 16;
+  constexpr int REC_STRIP_H = 4;
 
   for (int y0 = 0; y0 < h; y0 += REC_STRIP_H) {
     if (locTileOffY_rec >= 0) glUniform1i(locTileOffY_rec, y0);
     int    rows     = std::min(REC_STRIP_H, h - y0);
-    GLuint gy_strip = (rows + 15) / 16;
+    GLuint gy_strip = (rows + 3) / 4;
     glDispatchCompute(gx_rec, gy_strip, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     glFinish(); // block CPU until GPU is truly idle — resets the watchdog timer between strips
@@ -3239,13 +3239,13 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
 
   GLuint gx_rec2          = (rw + 15) / 16;
   GLint  locTileOffY_rec2 = glGetUniformLocation(activeProgram, "uTileOffsetY");
-  constexpr int REC2_STRIP_H = 16;
+  constexpr int REC2_STRIP_H = 4;
 
   auto recDispT0 = std::chrono::steady_clock::now();
   for (int y0 = 0; y0 < rh; y0 += REC2_STRIP_H) {
     if (locTileOffY_rec2 >= 0) glUniform1i(locTileOffY_rec2, y0);
     int    rows      = std::min(REC2_STRIP_H, rh - y0);
-    GLuint gy_strip  = (rows + 15) / 16;
+    GLuint gy_strip  = (rows + 3) / 4;
     glDispatchCompute(gx_rec2, gy_strip, 1);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     glFinish();
