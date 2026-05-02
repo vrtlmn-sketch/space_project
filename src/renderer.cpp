@@ -1897,12 +1897,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
 
       if (cloudForm.renderMode == 1) {
+        ImGui::Text("Density");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat("Density##ci_nebula", &cloudForm.nebulaScatterScale, 0.001f, 2.0f, "%.3f")) {
+        if (ImGui::SliderFloat("##ci_nebula", &cloudForm.nebulaScatterScale, 0.001f, 2.0f, "%.3f")) {
           cloud->nebulaScatterScale = cloudForm.nebulaScatterScale;
         }
+        ImGui::Text("Clumpiness");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat("Clumpiness##ci_spread", &cloudForm.particleSizeSpread, 0.0f, 1.0f, "%.2f")) {
+        if (ImGui::SliderFloat("##ci_spread", &cloudForm.particleSizeSpread, 0.0f, 1.0f, "%.2f")) {
           cloud->particleSizeSpread = cloudForm.particleSizeSpread;
           rtDirty = true;
         }

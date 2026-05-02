@@ -53,11 +53,23 @@ float hash1(vec3 p) {
     return fract((p.x + p.y) * p.z);
 }
 
+float valueNoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    return mix(
+        mix(mix(hash1(i), hash1(i + vec3(1,0,0)), u.x),
+            mix(hash1(i + vec3(0,1,0)), hash1(i + vec3(1,1,0)), u.x), u.y),
+        mix(mix(hash1(i + vec3(0,0,1)), hash1(i + vec3(1,0,1)), u.x),
+            mix(hash1(i + vec3(0,1,1)), hash1(i + vec3(1,1,1)), u.x), u.y),
+        u.z);
+}
+
 float nebulaFBM(vec3 pOff, float coreS) {
     vec3 p = pOff * (3.0 / max(coreS, 0.001)) + vec3(1.23, 4.56, 7.89);
-    float v  = 0.500 * (hash1(p)        * 2.0 - 1.0);
-    v       += 0.250 * (hash1(p * 2.09) * 2.0 - 1.0);
-    v       += 0.125 * (hash1(p * 4.37) * 2.0 - 1.0);
+    float v  = 0.500 * (valueNoise(p)        * 2.0 - 1.0);
+    v       += 0.250 * (valueNoise(p * 2.09) * 2.0 - 1.0);
+    v       += 0.125 * (valueNoise(p * 4.37) * 2.0 - 1.0);
     return v;
 }
 
@@ -427,17 +439,17 @@ void main()
                         float coreS   = max(objects[i].radius * 2.0, 0.001);
                         vec3  pOff    = prevPos + subDir * max(dot(cen - prevPos, subDir), 0.0) - cen;
                         float noiseM  = max(1.0 + nebulaFBM(pOff, coreS) * uNebulaDetail, 0.0);
-                        float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                        float jitter  = mix(1.0, 0.15 + 1.7 * hash1(vec3(float(i) * 127.1, float(i) * 311.7, float(i) * 74.7)), uNebulaDetail);
                         float density = exp(-d2 / (coreS * coreS)) * jitter * noiseM;
                         float dTau    = density * objects[i].mass;
                         float T       = objects[i].temperature;
                         vec3 gcol;
                         if (T > 100.0) {
-                            float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                            float tVar = 1.0 + (hash1(vec3(float(i) * 269.5, float(i) * 183.3, float(i) * 314.2)) - 0.5) * 0.4 * uNebulaDetail;
                             gcol = blackbody(T * clamp(tVar, 0.5, 2.0));
                         } else {
                             gcol = mix(vec3(0.55, 0.65, 1.0), vec3(1.0, 0.55, 0.7),
-                                       hash1(cen * 5.1) * uNebulaDetail * 0.7);
+                                       hash1(vec3(float(i) * 419.2, float(i) * 371.9, float(i) * 251.3)) * uNebulaDetail * 0.7);
                         }
                         nebulaScatter      += cloudTransmittance * gcol * dTau;
                         cloudTransmittance *= exp(-dTau);
@@ -513,17 +525,17 @@ void main()
                     pOff = prevPos + seg * t2 - cen;
                 }
                 float noiseM  = max(1.0 + nebulaFBM(pOff, coreS) * uNebulaDetail, 0.0);
-                float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                float jitter  = mix(1.0, 0.15 + 1.7 * hash1(vec3(float(i) * 127.1, float(i) * 311.7, float(i) * 74.7)), uNebulaDetail);
                 float density = exp(-sd2 / (coreS * coreS)) * jitter * noiseM;
                 float dTau    = density * objects[i].mass;
                 float T       = objects[i].temperature;
                 vec3 gcol;
                 if (T > 100.0) {
-                    float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                    float tVar = 1.0 + (hash1(vec3(float(i) * 269.5, float(i) * 183.3, float(i) * 314.2)) - 0.5) * 0.4 * uNebulaDetail;
                     gcol = blackbody(T * clamp(tVar, 0.5, 2.0));
                 } else {
                     gcol = mix(vec3(0.55, 0.65, 1.0), vec3(1.0, 0.55, 0.7),
-                               hash1(cen * 5.1) * uNebulaDetail * 0.7);
+                               hash1(vec3(float(i) * 419.2, float(i) * 371.9, float(i) * 251.3)) * uNebulaDetail * 0.7);
                 }
                 nebulaScatter      += cloudTransmittance * gcol * dTau;
                 cloudTransmittance *= exp(-dTau);
@@ -603,17 +615,17 @@ void main()
                 float coreS   = max(objects[i].radius * 2.0, 0.001);
                 vec3  pOff    = pos + vel * max(dot(cen - pos, vel), 0.0) - cen;
                 float noiseM  = max(1.0 + nebulaFBM(pOff, coreS) * uNebulaDetail, 0.0);
-                float jitter  = mix(1.0, 0.15 + 1.7 * hash1(cen * 8.3), uNebulaDetail);
+                float jitter  = mix(1.0, 0.15 + 1.7 * hash1(vec3(float(i) * 127.1, float(i) * 311.7, float(i) * 74.7)), uNebulaDetail);
                 float density = exp(-d2 / (coreS * coreS)) * jitter * noiseM;
                 float dTau    = density * objects[i].mass;
                 float T       = objects[i].temperature;
                 vec3 gcol;
                 if (T > 100.0) {
-                    float tVar = 1.0 + (hash1(cen * 3.7) - 0.5) * 0.4 * uNebulaDetail;
+                    float tVar = 1.0 + (hash1(vec3(float(i) * 269.5, float(i) * 183.3, float(i) * 314.2)) - 0.5) * 0.4 * uNebulaDetail;
                     gcol = blackbody(T * clamp(tVar, 0.5, 2.0));
                 } else {
                     gcol = mix(vec3(0.55, 0.65, 1.0), vec3(1.0, 0.55, 0.7),
-                               hash1(cen * 5.1) * uNebulaDetail * 0.7);
+                               hash1(vec3(float(i) * 419.2, float(i) * 371.9, float(i) * 251.3)) * uNebulaDetail * 0.7);
                 }
                 nebulaScatter      += cloudTransmittance * gcol * dTau;
                 cloudTransmittance *= exp(-dTau);
