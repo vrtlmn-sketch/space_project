@@ -17,10 +17,12 @@ static vec3 jsonToVec3(const json& j) {
 bool ProjectSerializer::Save(const std::string& path,
                              const std::vector<PhysicsObject>& physicsObjects,
                              const GridData& grid,
-                             const std::vector<CloudData>& clouds)
+                             const std::vector<CloudData>& clouds,
+                             const SceneSettings& settings)
 {
   json root;
 
+  // ── Physics objects ──
   json objsArr = json::array();
   for (const auto& obj : physicsObjects) {
     json o;
@@ -36,6 +38,7 @@ bool ProjectSerializer::Save(const std::string& path,
   }
   root["physicsObjects"] = objsArr;
 
+  // ── Grid ──
   root["grid"] = {
     {"count",       grid.count},
     {"sizeX",       grid.sizeX},
@@ -44,25 +47,92 @@ bool ProjectSerializer::Save(const std::string& path,
     {"ySpacing",    grid.ySpacing}
   };
 
+  // ── Clouds ──
   json cloudsArr = json::array();
   for (const auto& cloud : clouds) {
     cloudsArr.push_back({
-      {"enabled", cloud.enabled},
-      {"count",   cloud.count},
-      {"sizeX",   cloud.sizeX},
-      {"sizeY",   cloud.sizeY},
-      {"sizeZ",   cloud.sizeZ},
-      {"formationFile",  cloud.formationFile},
-      {"computeMethod",  cloud.computeMethod},
-      {"theta",          cloud.theta},
-      {"temperature",         cloud.temperature},
-      {"renderMode",          cloud.renderMode},
-      {"nebulaScatterScale",  cloud.nebulaScatterScale},
-      {"particleSizeSpread",  cloud.particleSizeSpread},
-      {"scale",               cloud.scale}
+      {"enabled",           cloud.enabled},
+      {"count",             cloud.count},
+      {"sizeX",             cloud.sizeX},
+      {"sizeY",             cloud.sizeY},
+      {"sizeZ",             cloud.sizeZ},
+      {"formationFile",     cloud.formationFile},
+      {"computeMethod",     cloud.computeMethod},
+      {"theta",             cloud.theta},
+      {"temperature",       cloud.temperature},
+      {"renderMode",        cloud.renderMode},
+      {"nebulaScatterScale",cloud.nebulaScatterScale},
+      {"particleSizeSpread",cloud.particleSizeSpread},
+      {"scale",             cloud.scale}
     });
   }
   root["clouds"] = cloudsArr;
+
+  // ── Scene settings ──
+  {
+    json s;
+    // Camera
+    s["camX"]        = settings.camX;
+    s["camY"]        = settings.camY;
+    s["camZ"]        = settings.camZ;
+    s["camRotation"] = settings.camRotation;
+    s["camPitch"]    = settings.camPitch;
+    s["camRoll"]     = settings.camRoll;
+    s["camZoom"]     = settings.camZoom;
+
+    // Render mode
+    s["raytracerMethod"]  = settings.raytracerMethod;
+    s["raytracerIsMain"]  = settings.raytracerIsMain;
+    s["raytracerEnabled"] = settings.raytracerEnabled;
+
+    // Doppler
+    s["dopplerMode"]         = settings.dopplerMode;
+    s["dopplerVelScale"]     = settings.dopplerVelScale;
+    s["dopplerBrightnessStr"]= settings.dopplerBrightnessStr;
+    s["dopplerColorStr"]     = settings.dopplerColorStr;
+
+    // Quality
+    s["nebulaDetail"]    = settings.nebulaDetail;
+    s["rtMaxBounces"]    = settings.rtMaxBounces;
+    s["rtMaxSteps"]      = settings.rtMaxSteps;
+    s["rtLiveResPreset"] = settings.rtLiveResPreset;
+    s["rtLiveWidth"]     = settings.rtLiveWidth;
+    s["rtLiveHeight"]    = settings.rtLiveHeight;
+
+    // Simulation
+    s["simSpeed"]    = settings.simSpeed;
+    s["ramBudgetGB"] = settings.ramBudgetGB;
+
+    // Recording
+    s["recordResPreset"] = settings.recordResPreset;
+    s["recordWidth"]     = settings.recordWidth;
+    s["recordHeight"]    = settings.recordHeight;
+    s["recordFps"]       = settings.recordFps;
+    s["recordPath"]      = settings.recordPath;
+
+    // Timeline markers
+    s["recStartFrame"] = settings.recStartFrame;
+    s["recStopFrame"]  = settings.recStopFrame;
+
+    json kpArr = json::array();
+    for (const auto& kp : settings.keypoints)
+      kpArr.push_back({{"frame", kp.frame}, {"label", kp.label}});
+    s["keypoints"] = kpArr;
+
+    json kfArr = json::array();
+    for (const auto& kf : settings.cameraKeyframes)
+      kfArr.push_back({
+        {"frame",    kf.frame},
+        {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
+        {"rotation", kf.rotation},
+        {"pitch",    kf.pitch},
+        {"roll",     kf.roll},
+        {"zoom",     kf.zoom}
+      });
+    s["cameraKeyframes"] = kfArr;
+
+    root["settings"] = s;
+  }
 
   std::ofstream f(path);
   if (!f.is_open()) {
@@ -91,6 +161,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     return data;
   }
 
+  // ── Physics objects ──
   if (root.contains("physicsObjects")) {
     for (const auto& o : root["physicsObjects"]) {
       PhysicsObjectData pod;
@@ -101,11 +172,12 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.shaderType  = o.value("shaderType",   0);
       pod.temperature = o.value("temperature",  0.0f);
       pod.schwarzschildRadius = o.value("schwarzschildRadius", 2.0f * 0.0001f * pod.mass);
-      pod.color       = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
+      pod.color = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
       data.objects.push_back(pod);
     }
   }
 
+  // ── Grid ──
   if (root.contains("grid")) {
     const auto& g    = root["grid"];
     data.grid.count       = g.value("count",        4);
@@ -115,13 +187,14 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     data.grid.ySpacing    = g.value("ySpacing",     2.f);
   }
 
+  // ── Clouds ──
   auto parseCloudJson = [](const json& c) -> CloudData {
     CloudData cd;
-    cd.enabled       = c.value("enabled", false);
-    cd.count         = c.value("count",   40000);
-    cd.sizeX         = c.value("sizeX",   5.f);
-    cd.sizeY         = c.value("sizeY",   5.f);
-    cd.sizeZ         = c.value("sizeZ",   5.f);
+    cd.enabled       = c.value("enabled",      false);
+    cd.count         = c.value("count",        40000);
+    cd.sizeX         = c.value("sizeX",         5.f);
+    cd.sizeY         = c.value("sizeY",         5.f);
+    cd.sizeZ         = c.value("sizeZ",         5.f);
     cd.formationFile = c.value("formationFile", std::string{});
     cd.computeMethod = c.value("computeMethod", 0);
     cd.theta         = c.value("theta",         0.5f);
@@ -142,13 +215,87 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     if (cd.enabled) data.clouds.push_back(cd);
   }
 
+  // ── Scene settings ──
+  if (root.contains("settings")) {
+    const auto& s = root["settings"];
+    SceneSettings& st = data.settings;
+
+    // Camera
+    st.camX        = s.value("camX",        0.0f);
+    st.camY        = s.value("camY",        0.0f);
+    st.camZ        = s.value("camZ",        0.0f);
+    st.camRotation = s.value("camRotation", 0.0f);
+    st.camPitch    = s.value("camPitch",    0.0f);
+    st.camRoll     = s.value("camRoll",     0.0f);
+    st.camZoom     = s.value("camZoom",    45.0f);
+
+    // Render mode
+    st.raytracerMethod  = s.value("raytracerMethod",  0);
+    st.raytracerIsMain  = s.value("raytracerIsMain",  false);
+    st.raytracerEnabled = s.value("raytracerEnabled", false);
+
+    // Doppler
+    st.dopplerMode         = s.value("dopplerMode",         false);
+    st.dopplerVelScale     = s.value("dopplerVelScale",     0.5f);
+    st.dopplerBrightnessStr= s.value("dopplerBrightnessStr",2.0f);
+    st.dopplerColorStr     = s.value("dopplerColorStr",     1.0f);
+
+    // Quality
+    st.nebulaDetail    = s.value("nebulaDetail",    0.0f);
+    st.rtMaxBounces    = s.value("rtMaxBounces",    1);
+    st.rtMaxSteps      = s.value("rtMaxSteps",      256);
+    st.rtLiveResPreset = s.value("rtLiveResPreset", 1);
+    st.rtLiveWidth     = s.value("rtLiveWidth",     142);
+    st.rtLiveHeight    = s.value("rtLiveHeight",    80);
+
+    // Simulation
+    st.simSpeed    = s.value("simSpeed",    1.0f);
+    st.ramBudgetGB = s.value("ramBudgetGB", 1.0f);
+
+    // Recording
+    st.recordResPreset = s.value("recordResPreset", 6);
+    st.recordWidth     = s.value("recordWidth",  1920);
+    st.recordHeight    = s.value("recordHeight", 1080);
+    st.recordFps       = s.value("recordFps",    30);
+    st.recordPath      = s.value("recordPath",   std::string{"output.mp4"});
+
+    // Timeline markers
+    st.recStartFrame = s.value("recStartFrame", -1);
+    st.recStopFrame  = s.value("recStopFrame",  -1);
+
+    if (s.contains("keypoints") && s["keypoints"].is_array()) {
+      for (const auto& kp : s["keypoints"]) {
+        Keypoint k;
+        k.frame = kp.value("frame", 0u);
+        k.label = kp.value("label", std::string{"Key"});
+        st.keypoints.push_back(k);
+      }
+    }
+
+    if (s.contains("cameraKeyframes") && s["cameraKeyframes"].is_array()) {
+      for (const auto& kf : s["cameraKeyframes"]) {
+        CameraKeyframe cf;
+        cf.frame    = kf.value("frame", 0u);
+        cf.rotation = kf.value("rotation", 0.0f);
+        cf.pitch    = kf.value("pitch",    0.0f);
+        cf.roll     = kf.value("roll",     0.0f);
+        cf.zoom     = kf.value("zoom",    45.0f);
+        if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
+          cf.pos[0] = kf["pos"][0].get<float>();
+          cf.pos[1] = kf["pos"][1].get<float>();
+          cf.pos[2] = kf["pos"][2].get<float>();
+        }
+        st.cameraKeyframes.push_back(cf);
+      }
+    }
+  }
+
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()
             << " objects from " << path << "\n";
   return data;
 }
 
 // ─── Milky Way Template ──────────────────────────────────────────────────────
-// Central black hole + orbiting star + planets + cloud.
 ProjectData ProjectSerializer::MilkyWayTemplate()
 {
   ProjectData data;
@@ -162,10 +309,7 @@ ProjectData ProjectSerializer::MilkyWayTemplate()
     { "Planet5",        10.f,   {-0.6f,  -0.6f,  -3.1f  },   { 0.18f,  0.022f,-0.10f  },  0,     0.f,  0.002f },
   };
 
-  // 4 grids, spacing=2, size 10x10x10, 30 subdivisions
   data.grid = GridData{4, 10.f, 10.f, 30, 2.f};
-
-  // Cloud from milky_way_5k.json formation by default (CPU mode for now)
   data.clouds.push_back(CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f, 4500.f, 0});
 
   return data;

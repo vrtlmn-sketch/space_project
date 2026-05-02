@@ -11,6 +11,7 @@
 #include <fstream>
 #include <string>
 #include <functional>
+#include <cstring>
 
 #include "renderedObject.h"
 #include "mathStructs.h"
@@ -410,17 +411,32 @@ public:
   // ── Compute shader raytracer public API ──
   void DispatchRaytracer(int width, int height);
   void BlitRaytracerToScreen();
-  GLuint GetRtOutputTex() const { return rtOutputTex; }
-  int  GetRtLiveWidth()  const { return rtLiveWidth; }
-  int  GetRtLiveHeight() const { return rtLiveHeight; }
-  int  GetRtMaxBounces() const { return rtMaxBounces; }
+  GLuint GetRtOutputTex()    const { return rtOutputTex; }
+  int  GetRtLiveWidth()      const { return rtLiveWidth; }
+  int  GetRtLiveHeight()     const { return rtLiveHeight; }
+  int  GetRtMaxBounces()     const { return rtMaxBounces; }
+  int  GetRtMaxSteps()       const { return rtMaxSteps; }
+  int  GetRtLiveResPreset()  const { return rtLiveResPreset; }
+  int  GetRecordResPreset()  const { return recordResPreset; }
+  int  GetRecordWidth()      const { return recordWidth; }
+  int  GetRecordHeight()     const { return recordHeight; }
+  int  GetRecordFps()        const { return recordFps; }
+  std::string GetRecordPath() const { return std::string(recordPathBuf); }
+
+  void SetRtMaxBounces(int v)  { rtMaxBounces = v; rtDirty = true; }
+  void SetRtMaxSteps(int v)    { rtMaxSteps = v;   rtDirty = true; }
+  void SetRtLiveRes(int preset, int w, int h) { rtLiveResPreset = preset; rtLiveWidth = w; rtLiveHeight = h; }
+  void SetRecordRes(int preset, int w, int h) { recordResPreset = preset; recordWidth = w; recordHeight = h; }
+  void SetRecordFps(int v)     { recordFps = v; }
+  void SetRecordPath(const std::string& p) {
+    std::strncpy(recordPathBuf, p.c_str(), sizeof(recordPathBuf) - 1);
+    recordPathBuf[sizeof(recordPathBuf) - 1] = '\0';
+  }
 
   // ── Recording public API ──
   void StartRecording();
   void StopRecording();
   bool IsRecording() const { return recording; }
-  int  GetRecordWidth()  const { return recordWidth; }
-  int  GetRecordHeight() const { return recordHeight; }
   void DispatchAndCaptureRecordingFrame();   // dispatch compute at recording resolution + capture
 
   // Public spawn form and save path (accessed from main.cpp)

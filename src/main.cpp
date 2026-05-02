@@ -178,6 +178,37 @@ int main(int argc, char** argv) {
       lineObjects.erase(lineObjects.begin() + index);
   };
 
+  auto applySettingsToRenderer = [&](const SceneSettings& s) {
+    renderer.cameraTranslate[0] = s.camX;
+    renderer.cameraTranslate[1] = s.camY;
+    renderer.cameraTranslate[2] = s.camZ;
+    renderer.rotation = s.camRotation;
+    renderer.pitch    = s.camPitch;
+    renderer.roll     = s.camRoll;
+    renderer.zoom     = s.camZoom;
+    renderer.syncMatrixFromEuler();
+    renderer.raytracerMethod  = s.raytracerMethod;
+    renderer.raytracerIsMain  = s.raytracerIsMain;
+    renderer.raytracerEnabled = s.raytracerEnabled;
+    renderer.dopplerMode          = s.dopplerMode;
+    renderer.dopplerVelScale      = s.dopplerVelScale;
+    renderer.dopplerBrightnessStr = s.dopplerBrightnessStr;
+    renderer.dopplerColorStr      = s.dopplerColorStr;
+    renderer.nebulaDetail  = s.nebulaDetail;
+    renderer.simSpeed      = s.simSpeed;
+    renderer.ramBudgetGB   = s.ramBudgetGB;
+    renderer.recStartFrame = s.recStartFrame;
+    renderer.recStopFrame  = s.recStopFrame;
+    renderer.keypoints       = s.keypoints;
+    renderer.cameraKeyframes = s.cameraKeyframes;
+    renderer.SetRtMaxBounces(s.rtMaxBounces);
+    renderer.SetRtMaxSteps(s.rtMaxSteps);
+    renderer.SetRtLiveRes(s.rtLiveResPreset, s.rtLiveWidth, s.rtLiveHeight);
+    renderer.SetRecordRes(s.recordResPreset, s.recordWidth, s.recordHeight);
+    renderer.SetRecordFps(s.recordFps);
+    renderer.SetRecordPath(s.recordPath);
+  };
+
   cb.saveProject = [&]() {
     std::string path(renderer.savePathBuf);
     if (path.empty()) path = "project.json";
@@ -185,17 +216,51 @@ int main(int argc, char** argv) {
     for (const auto& c : clouds) {
       cloudDatas.push_back(CloudData{
         true, c->particleCount(),
-        3.f, 3.f, 3.f, "", static_cast<int>(c->computeMethod),
-        c->barnesHutTheta, c->temperature, c->renderMode, c->nebulaScatterScale, c->particleSizeSpread, c->scale
+        3.f, 3.f, 3.f, c->formationFile, static_cast<int>(c->computeMethod),
+        c->barnesHutTheta, c->temperature, c->renderMode,
+        c->nebulaScatterScale, c->particleSizeSpread, c->scale
       });
     }
-    ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas);
+    SceneSettings s;
+    s.camX        = renderer.cameraTranslate[0];
+    s.camY        = renderer.cameraTranslate[1];
+    s.camZ        = renderer.cameraTranslate[2];
+    s.camRotation = renderer.rotation;
+    s.camPitch    = renderer.pitch;
+    s.camRoll     = renderer.roll;
+    s.camZoom     = renderer.zoom;
+    s.raytracerMethod  = renderer.raytracerMethod;
+    s.raytracerIsMain  = renderer.raytracerIsMain;
+    s.raytracerEnabled = renderer.raytracerEnabled;
+    s.dopplerMode          = renderer.dopplerMode;
+    s.dopplerVelScale      = renderer.dopplerVelScale;
+    s.dopplerBrightnessStr = renderer.dopplerBrightnessStr;
+    s.dopplerColorStr      = renderer.dopplerColorStr;
+    s.nebulaDetail    = renderer.nebulaDetail;
+    s.rtMaxBounces    = renderer.GetRtMaxBounces();
+    s.rtMaxSteps      = renderer.GetRtMaxSteps();
+    s.rtLiveResPreset = renderer.GetRtLiveResPreset();
+    s.rtLiveWidth     = renderer.GetRtLiveWidth();
+    s.rtLiveHeight    = renderer.GetRtLiveHeight();
+    s.simSpeed        = renderer.simSpeed;
+    s.ramBudgetGB     = renderer.ramBudgetGB;
+    s.recordResPreset = renderer.GetRecordResPreset();
+    s.recordWidth     = renderer.GetRecordWidth();
+    s.recordHeight    = renderer.GetRecordHeight();
+    s.recordFps       = renderer.GetRecordFps();
+    s.recordPath      = renderer.GetRecordPath();
+    s.recStartFrame   = renderer.recStartFrame;
+    s.recStopFrame    = renderer.recStopFrame;
+    s.keypoints       = renderer.keypoints;
+    s.cameraKeyframes = renderer.cameraKeyframes;
+    ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas, s);
   };
 
   cb.loadProject = [&](const std::string& path) {
     ProjectData data = ProjectSerializer::Load(path);
     currentGrid = data.grid;
     buildScene(data, physicsObjects, lineObjects, grids, clouds);
+    applySettingsToRenderer(data.settings);
   };
 
   // ── Startup modal loop ────────────────────────────────────────────────────
@@ -218,6 +283,7 @@ int main(int argc, char** argv) {
         std::string(renderer.startupLoadPath));
       currentGrid = data.grid;
       buildScene(data, physicsObjects, lineObjects, grids, clouds);
+      applySettingsToRenderer(data.settings);
     }
     // SC::Empty → start blank
   }
