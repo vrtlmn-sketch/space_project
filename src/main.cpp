@@ -440,8 +440,13 @@ int main(int argc, char** argv) {
         rtw = renderer.GetFbWidth();
         rth = renderer.GetFbHeight();
       }
-      renderer.DispatchRaytracer(rtw, rth);
-      renderer.BlitRaytracerToScreen();
+      // Skip live display update while assembling a recording frame — the scene
+      // is frozen during strip assembly so the display wouldn't change anyway,
+      // and dispatching here on every strip tick caused ~180x slowdown at 720p.
+      if (!renderer.recFrameActive) {
+        renderer.DispatchRaytracer(rtw, rth);
+        renderer.BlitRaytracerToScreen();
+      }
 
       if (renderer.IsRecording())
         renderer.DispatchAndCaptureRecordingFrame();
@@ -478,7 +483,7 @@ int main(int argc, char** argv) {
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO
-    if (renderer.rayTracerView && renderer.raytracerEnabled) {
+    if (renderer.rayTracerView && renderer.raytracerEnabled && !renderer.recFrameActive) {
       int pw = renderer.GetRtLiveWidth();
       int ph = renderer.GetRtLiveHeight();
       if (pw <= 0 || ph <= 0) {
