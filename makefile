@@ -69,7 +69,11 @@ TEST_BIN  := $(TBLD)/run_tests
 
 .PHONY: test
 test: $(TEST_BIN)
-	@$(TEST_BIN)
+	@tmp=$$(mktemp); \
+	 $(TEST_BIN) 2>/dev/null > "$$tmp"; status=$$?; \
+	 grep -v '^\[ProjectSerializer\]' "$$tmp"; \
+	 rm -f "$$tmp"; \
+	 exit $$status
 
 $(TEST_BIN): $(TEST_SRCS) $(TBLD)/mathStructs.o $(TBLD)/projectSerializer.o
 	$(CXX) $(TFLAGS) $^ -o $@
