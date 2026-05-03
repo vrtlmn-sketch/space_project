@@ -2607,7 +2607,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   static float lastBrightStr  = -1.0f;
   static float lastColorStr   = -1.0f;
   static float lastNebulaDetail = -1.0f;
-  bool dirty = rtDirty || recording;
+  bool dirty = rtDirty;
   if (!dirty) {
     dirty = (cameraTranslate[0] != rtLastCamera[0] ||
              cameraTranslate[1] != rtLastCamera[1] ||
@@ -2715,25 +2715,20 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locND >= 0) glUniform1f(locND, nebulaDetail);
   }
 
-  // Split dispatch into horizontal strips so the GPU watchdog doesn't kill
-  // long-running frames at higher resolutions or with many objects.
-  GLuint gx             = (width + 15) / 16;
+  // Dispatch the full live-preview image in a single call — no strip loop.
+  // Watchdog protection is only needed for recording (DispatchAndCaptureRecordingFrame
+  // handles that by spreading strips across app ticks). The live preview at small
+  // resolutions (80p, 240p, etc.) completes in milliseconds regardless of scene complexity.
+  GLuint gx             = (width  + 15) / 16;
+  GLuint gy             = (height +  3) /  4;  // local_size_y = 4 in all compute shaders
   GLint  locTileOffsetY = glGetUniformLocation(activeProgram, "uTileOffsetY");
-  constexpr int STRIP_H = 4; // rows per strip — 4 rows keeps each dispatch well under watchdog
+  if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, 0);  // full image, no row offset
 
   auto dispatchT0 = std::chrono::steady_clock::now();
-  for (int y0 = 0; y0 < height; y0 += STRIP_H) {
-    if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, y0);
-    int   rows     = std::min(STRIP_H, height - y0);
-    GLuint gy_strip = (rows + 3) / 4;
-    glDispatchCompute(gx, gy_strip, 1);
-    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    glFinish(); // block CPU until GPU is truly idle — resets the watchdog timer between strips
-  }
+  glDispatchCompute(gx, gy, 1);
   bench.dispatchMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - dispatchT0).count();
 
-  // Final barrier so subsequent texture reads see the compute results
   glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
   // ── Snapshot state for dirty check next frame ──
