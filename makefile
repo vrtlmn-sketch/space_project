@@ -51,3 +51,34 @@ run: build
 
 clean:
 	rm -rf $(BIN_DIR) $(OBJS) $(IMGUI_SRC_DIR)/*.o
+
+# ─── Unit tests ──────────────────────────────────────────────────────────────
+# Compiled with minimal GL/GLFW stubs so no GPU context is needed.
+# Covers: vec3 math, particle distributions, project serializer load/save.
+TEST_DIR  := tests
+STUB_DIR  := $(TEST_DIR)/stubs
+CATCH_DIR := $(TEST_DIR)/vendor
+TBLD      := $(TEST_DIR)/build
+# Stubs must come before vendor/include so they shadow real glad/GLFW headers.
+TFLAGS    := -std=c++20 -I$(STUB_DIR) -I./src -I./vendor/include/nlohmann -I$(CATCH_DIR) -O0
+TEST_SRCS := $(TEST_DIR)/test_main.cpp \
+             $(TEST_DIR)/test_math.cpp \
+             $(TEST_DIR)/test_serializer.cpp \
+             $(TEST_DIR)/test_distributions.cpp
+TEST_BIN  := $(TBLD)/run_tests
+
+.PHONY: test
+test: $(TEST_BIN)
+	@$(TEST_BIN)
+
+$(TEST_BIN): $(TEST_SRCS) $(TBLD)/mathStructs.o $(TBLD)/projectSerializer.o
+	$(CXX) $(TFLAGS) $^ -o $@
+
+$(TBLD)/mathStructs.o: src/mathStructs.cpp | $(TBLD)
+	$(CXX) $(TFLAGS) -c $< -o $@
+
+$(TBLD)/projectSerializer.o: src/projectSerializer.cpp | $(TBLD)
+	$(CXX) $(TFLAGS) -c $< -o $@
+
+$(TBLD):
+	@mkdir -p $@

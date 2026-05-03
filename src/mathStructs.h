@@ -21,8 +21,8 @@ struct vec3{
   vec3 operator-(const vec3& other) const;
   vec3 operator-(const vec4& other) const;
   vec3& operator-=(const vec3& other);
-  bool operator==(const vec3& other);
-  bool operator==(const vec4& other);
+  bool operator==(const vec3& other) const;
+  bool operator==(const vec4& other) const;
   vec3 operator*(float other) const;
   vec3 operator/(float other) const;
   vec3& operator*=(float other);

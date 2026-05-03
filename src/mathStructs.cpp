@@ -63,13 +63,13 @@ vec3 vec3::operator/(float other) const
   };
 }
 
-bool vec3::operator==(const vec3& other){
+bool vec3::operator==(const vec3& other) const {
   return other.x==this->x
     && other.y==this->y
     && other.z==this->z;
 }
 
-bool vec3::operator==(const vec4& other){
+bool vec3::operator==(const vec4& other) const {
   return other.x==this->x
     && other.y==this->y
     && other.z==this->z;
