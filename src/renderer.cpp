@@ -2809,6 +2809,11 @@ void Renderer::StartRecording() {
   recFrameStripY = -1;
   recFrameActive = false;
 
+  // Disable vsync during recording — each recording frame spans many app ticks
+  // (one strip per tick) and vsync would add 16.7ms per tick at 60Hz, making a
+  // 270-strip 1080p frame ~4.5 seconds slower from waiting alone.
+  glfwSwapInterval(0);
+
   // Reset bench recording accumulators
   bench.recDispatchTotal = 0.0;
   bench.recLastFrameMs   = 0.0;
@@ -2827,6 +2832,9 @@ void Renderer::StopRecording() {
   recording = false;
   recFrameStripY = -1;
   recFrameActive = false;
+
+  // Restore vsync
+  glfwSwapInterval(1);
 
   // Finalise bench summary
   double wallSecs = std::chrono::duration<double>(
