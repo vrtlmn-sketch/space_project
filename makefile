@@ -1,6 +1,9 @@
 APP      := blackholesim
 CXX      := g++
-CXXFLAGS := -std=c++20 -Wall -Wextra \
+WARN_FLAGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 \
+              -Wnull-dereference -Wduplicated-cond -Wduplicated-branches \
+              -Wlogical-op -Wuseless-cast -Wnon-virtual-dtor -Woverloaded-virtual
+CXXFLAGS := -std=c++20 $(WARN_FLAGS) \
             -I./vendor/include \
             -I./vendor/include/imgui \
             -I./vendor/include/nlohmann
@@ -60,7 +63,7 @@ STUB_DIR  := $(TEST_DIR)/stubs
 CATCH_DIR := $(TEST_DIR)/vendor
 TBLD      := $(TEST_DIR)/build
 # Stubs must come before vendor/include so they shadow real glad/GLFW headers.
-TFLAGS    := -std=c++20 -I$(STUB_DIR) -I./src -I./vendor/include/nlohmann -I$(CATCH_DIR) -O0
+TFLAGS    := -std=c++20 $(WARN_FLAGS) -Werror -I$(STUB_DIR) -I./src -I./vendor/include/nlohmann -I$(CATCH_DIR) -O0
 TEST_SRCS := $(TEST_DIR)/test_main.cpp \
              $(TEST_DIR)/test_math.cpp \
              $(TEST_DIR)/test_serializer.cpp \

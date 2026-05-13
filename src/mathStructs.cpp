@@ -88,7 +88,7 @@ void rotate(vec3& v, float DegY)
 {
 
 
-  const double rad = DegY * M_PI / 180.0; 
+  const float rad = static_cast<float>(DegY * M_PI / 180.0);
   const float c = std::cos(rad);
   const float s = std::sin(rad);
 
@@ -96,9 +96,9 @@ void rotate(vec3& v, float DegY)
   const float y = v.y;
   const float z = v.z;
 
-  v.x =  c * x + 0.0 * y +  s * z;
-  v.y =  0.0 * x + 1.0 * y + 0.0 * z;
-  v.z = -s * x + 0.0 * y +  c * z;
+  v.x =  c * x + 0.0f * y +  s * z;
+  v.y =  0.0f * x + 1.0f * y + 0.0f * z;
+  v.z = -s * x + 0.0f * y +  c * z;
 
 }
 
@@ -107,7 +107,7 @@ vec3 translate(const vec3& v, const vec3& d)
   return vec3{v.x+d.x, v.y+d.y, v.z+d.z};
 }
 
-void perspectiveTransform(vec3& v, float angle)
+void perspectiveTransform(vec3& v, [[maybe_unused]] float angle)
 {
   float tempx = v.x;
   float tempy = v.y;
@@ -121,9 +121,9 @@ void perspectiveTransform(vec3& v, float angle)
 
 float distance(const vec3& v1, const vec3& v2){
   return std::sqrt(
-    std::pow(v1.x-v2.x,2)+
-    std::pow(v1.y-v2.y,2)+
-    std::pow(v1.z-v2.z,2)
+    std::pow(v1.x-v2.x, 2.0f)+
+    std::pow(v1.y-v2.y, 2.0f)+
+    std::pow(v1.z-v2.z, 2.0f)
   );
 }
 
@@ -143,15 +143,15 @@ vec3 normalize(const vec3& v){
   };
 }
 float randomDistribution(float x, float y, float z){
-  x+=sin(x*4.f);
-  y+=cos(y*4.f);
-  z+=sin(z*4.f);
+  x+=std::sin(x*4.f);
+  y+=std::cos(y*4.f);
+  z+=std::sin(z*4.f);
 
   return 1-distance(vec3{0,0,0},vec3{x,y,z});
 };
 
 // Keep asteroidBeltDistribution for backwards compatibility with saved projects.
-float asteroidBeltDistribution(float x, float y, float z) {
+float asteroidBeltDistribution(float x, [[maybe_unused]] float y, float z) {
   float r = std::sqrt(x * x + z * z);
   return (r >= 0.45f && r <= 0.95f) ? 1.0f : 0.0f;
 }

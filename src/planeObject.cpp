@@ -11,9 +11,9 @@ void PlaneObject::Update(Renderer& renderer){
   renderer.Draw(renderedObject);
 }
 
-PlaneObject::PlaneObject(const vec3& position,float height, float width){
+PlaneObject::PlaneObject(const vec3& pos,float height, float width){
   renderedObject.GenerateMeshPlane(height,width);
-  this->position=position;
+  this->position=pos;
 }
 
 void PlaneObject::SetShaders(const std::string& vertShaderPath,const std::string& fragShaderPath){

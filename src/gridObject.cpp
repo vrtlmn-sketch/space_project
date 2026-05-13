@@ -9,9 +9,9 @@ void GridObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStruc
   //std::cerr<<"grid rendered";
 }
 
-  GridObject::GridObject(vec3&& position,const vec3& size,int subdivisions){
+  GridObject::GridObject(vec3&& pos,const vec3& size,int subdivisions){
   renderedObject.GenerateMeshGrid(size,subdivisions);
-  this->position=position;
+  this->position=pos;
     renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/gridShader.glsl");
 }
 

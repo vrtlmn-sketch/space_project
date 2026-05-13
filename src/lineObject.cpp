@@ -9,9 +9,9 @@ void LineObject::Update(Renderer& renderer){
   }
 }
 
-LineObject::LineObject(vec3&& position){
-  renderedObject.GenerateMeshLine(std::move(position));
-  this->position=position;
+LineObject::LineObject(vec3&& pos){
+  renderedObject.GenerateMeshLine(std::move(pos));
+  this->position=pos;
     renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/lineShaders.glsl");
 }
 
