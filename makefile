@@ -89,3 +89,17 @@ $(TBLD)/projectSerializer.o: src/projectSerializer.cpp | $(TBLD)
 
 $(TBLD):
 	@mkdir -p $@
+
+.PHONY: mango
+
+mango: build
+	mangohud ./$(OUT)
+
+.PHONY: all build debug run mango mango-log clean
+
+mango: build
+	mangohud ./$(OUT)
+
+mango-log: build
+	@mkdir -p mango_logs
+	MANGOHUD_CONFIG=output_folder=./mango_logs,log_duration=60 mangohud ./$(OUT)
