@@ -34,6 +34,7 @@ bool ProjectSerializer::Save(const std::string& path,
     o["temperature"] = obj.temperature;
     o["schwarzschildRadius"] = obj.schwarzschildRadius;
     o["color"]       = vec3ToJson(obj.data.color);
+    o["texturePath"] = obj.texturePath;
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -172,7 +173,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.shaderType  = o.value("shaderType",   0);
       pod.temperature = o.value("temperature",  0.0f);
       pod.schwarzschildRadius = o.value("schwarzschildRadius", 2.0f * 0.0001f * pod.mass);
-      pod.color = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
+      pod.color       = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
+      pod.texturePath = o.value("texturePath", std::string{});
       data.objects.push_back(pod);
     }
   }
@@ -304,9 +306,9 @@ ProjectData ProjectSerializer::MilkyWayTemplate()
     //  name               mass    position (x,y,z)              velocity (x,y,z)             shader  temp(K)  rs
     { "Sagittarius A*", 250.f,  { 0.0f,   0.0f,  -3.0f  },   { 0.0f,   0.01f,  0.0f   },  2,     0.f,   0.05f },
     { "Sol",             15.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  1,  5778.f,  0.003f },
-    { "Mars",           10.f,   {-0.7f,   0.0f,  -3.7f  },   {-0.18f,  0.002f,-0.10f  },  0,     0.f,  0.002f },
-    { "Planet4",         2.f,   { 0.7f,   0.0f,  -3.7f  },   {-0.13f,  0.004f, 0.0f   },  0,     0.f,  0.0004f },
-    { "Planet5",        10.f,   {-0.6f,  -0.6f,  -3.1f  },   { 0.18f,  0.022f,-0.10f  },  0,     0.f,  0.002f },
+    { .name="Mars",    .mass=10.f, .position={-0.7f, 0.0f,  -3.7f},  .velocity={-0.18f, 0.002f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/mars.jpg"    },
+    { .name="Mercury", .mass=2.f,  .position={ 0.7f, 0.0f,  -3.7f},  .velocity={-0.13f, 0.004f,  0.0f }, .shaderType=0, .schwarzschildRadius=0.0004f, .texturePath="assets/mercury.jpg" },
+    { .name="Earth",   .mass=10.f, .position={-0.6f,-0.6f,  -3.1f},  .velocity={ 0.18f, 0.022f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/earth.jpg"   },
   };
 
   data.grid = GridData{4, 10.f, 10.f, 30, 2.f};

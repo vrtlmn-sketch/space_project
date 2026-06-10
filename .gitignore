@@ -1,4 +1,5 @@
 *.o
+*.**.o
 
 *.out
 *.exe
@@ -20,3 +21,6 @@ templates/formations/milky_way_500k.json
 templates/formations/milky_way_1m.json
 
 tests/build/
+
+*.mp4
+*.gcov

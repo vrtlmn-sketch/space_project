@@ -66,6 +66,10 @@ static void buildScene(
     if (pod.schwarzschildRadius > 0.0f)
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
     physicsObjects.back().data.color = pod.color;
+    if (!pod.texturePath.empty()) {
+      physicsObjects.back().texturePath = pod.texturePath;
+      physicsObjects.back().renderedObject.loadTexture(pod.texturePath);
+    }
   }
   for (auto& obj : physicsObjects)
     lineObjects.emplace_back(vec3{obj.data.position});

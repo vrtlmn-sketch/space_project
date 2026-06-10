@@ -1,8 +1,12 @@
 #version 460 core
 out vec4 FragColor;
+
 in vec3 vPos;
-uniform vec3 uCamera;
-uniform vec3 uPointCoordinates;
+in vec3 vNormal;
+in vec2 vTexCoord;
+
+uniform vec3  uCamera;
+uniform vec3  uPointCoordinates;
 uniform float uTemperature; // Kelvin — default 5778 (Sun)
 
 // Charity/Krystek polynomial blackbody → linear RGB approximation
@@ -23,19 +27,16 @@ vec3 blackbody(float tempK) {
 }
 
 void main() {
-  float temp = (uTemperature > 0.0) ? uTemperature : 5778.0;
-  vec3 starColor = blackbody(temp);
+  float temp      = (uTemperature > 0.0) ? uTemperature : 5778.0;
+  vec3  starColor = blackbody(temp);
 
-  // Surface normal (outward from sphere centre)
-  vec3 norm    = normalize(vPos - uPointCoordinates);
-  // View direction (camera is at -uCamera in world space)
-  vec3 viewDir = normalize(-uCamera - vPos);
+  vec3  norm    = normalize(vNormal);
+  vec3  viewDir = normalize(-uCamera - vPos);
 
   // Limb-darkening: edges slightly dimmer
   float cosTheta = max(dot(norm, viewDir), 0.0);
-  float limb = 0.4 + 0.6 * cosTheta;
+  float limb     = 0.4 + 0.6 * cosTheta;
 
-  // Scale by distance so it doesn't wash out up close
   float dist  = max(distance(-uCamera, vPos), 0.05);
   float scale = 2.0 / dist;
 

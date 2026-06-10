@@ -1,21 +1,11 @@
 // object.cpp
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 #include "physicsObject.h"
 #include "renderedObject.h"
 #include <cmath>
 #include <cstdint>
 
-void RenderedObject::translateMesh(vec3 v)
-{
-  for(int i=0;i<bufferSize*3;i+=3)
-  {
-    vec3 before = (vec3){UVObjectMeshBuffer[i],UVObjectMeshBuffer[i+1],UVObjectMeshBuffer[i+2]};
-    before = translate(before, v);
-
-    UVObjectMeshBuffer[i+0]=before.x;
-    UVObjectMeshBuffer[i+1]=before.y;
-    UVObjectMeshBuffer[i+2]=before.z;
-  }
-}
 
 void RenderedObject::GenerateMeshGrid(const vec3& size, int subdivisions){
   meshType=MeshType::grid;
@@ -196,58 +186,69 @@ void RenderedObject::GenerateMeshPlane(float width, float height)
 void RenderedObject::GenerateMeshSphere(float radius,
                                         int horizontalSubdivisions, int verticalSubdivisions)
 {
-  this->coordinates=(vec3){0.0f,0.0f,0.0f};
+  this->coordinates            = {0.0f, 0.0f, 0.0f};
   this->horizontalSubdivisions = horizontalSubdivisions;
   this->verticalSubdivisions   = verticalSubdivisions;
-  this->radius = radius;
-  this->hasBeenRendered=false;
+  this->radius                 = radius;
+  this->hasBeenRendered        = false;
 
-  diameter     = radius * 2.0f;
-  verticalStep = diameter / verticalSubdivisions;
-  Polycount    = horizontalSubdivisions * verticalSubdivisions * 2;
-  bufferSize   = Polycount * 3; 
+  const int stacks  = verticalSubdivisions;
+  const int sectors = horizontalSubdivisions;
 
-  UVObjectMeshPoints.assign(verticalSubdivisions + 1, std::vector<vec3>(horizontalSubdivisions));
-  UVObjectMesh.resize(bufferSize);
-  UVObjectMeshBuffer.resize(bufferSize * 3);
+  // Each quad → 2 triangles → 3 vertices each → 6 vertices per quad.
+  // Each vertex: pos(3) + normal(3) + uv(2) = 8 floats.
+  bufferSize = stacks * sectors * 6;
+  UVObjectMeshBuffer.clear();
+  UVObjectMeshBuffer.resize(bufferSize * 8);
 
-  int u = 0;
-  for (float y = -radius; u <= verticalSubdivisions; y += verticalStep, ++u) {
-    float ringRadius = std::sqrt(std::max(0.0f, radius*radius - y*y));
-    vec3 point{ringRadius, y, 0.0f};
+  int idx = 0;
 
-    for (int j = 0; j < horizontalSubdivisions; ++j) {
-      vec3 p = point;
-      rotate(p, 360.0f / horizontalSubdivisions * j);
-      UVObjectMeshPoints[u][j] = p;
+  // Emit one vertex: position, outward unit normal, UV.
+  // theta ∈ [0, π]: 0 = north pole, π = south pole.
+  // phi   ∈ [0, 2π]: longitude around Y axis.
+  // Mapping: u = phi/(2π) → [0,1], v = theta/π → [0,1].
+  auto emit = [&](float theta, float phi, float u, float v) {
+    const float st = std::sin(theta), ct = std::cos(theta);
+    const float sp = std::sin(phi),   cp = std::cos(phi);
+    const float nx = st * cp, ny = ct, nz = st * sp;
+    UVObjectMeshBuffer[idx    ] = nx * radius;  // position x
+    UVObjectMeshBuffer[idx + 1] = ny * radius;  // position y
+    UVObjectMeshBuffer[idx + 2] = nz * radius;  // position z
+    UVObjectMeshBuffer[idx + 3] = nx;            // normal x
+    UVObjectMeshBuffer[idx + 4] = ny;            // normal y
+    UVObjectMeshBuffer[idx + 5] = nz;            // normal z
+    UVObjectMeshBuffer[idx + 6] = u;             // texcoord u
+    UVObjectMeshBuffer[idx + 7] = v;             // texcoord v
+    idx += 8;
+  };
+
+  constexpr float kPi  = static_cast<float>(M_PI);
+  constexpr float k2Pi = 2.0f * kPi;
+
+  for (int i = 0; i < stacks; ++i) {
+    const float theta0 = kPi  * (float)i       / (float)stacks;
+    const float theta1 = kPi  * (float)(i + 1) / (float)stacks;
+    const float v0     = (float)i       / (float)stacks;
+    const float v1     = (float)(i + 1) / (float)stacks;
+
+    for (int j = 0; j < sectors; ++j) {
+      const float phi0 = k2Pi * (float)j       / (float)sectors;
+      const float phi1 = k2Pi * (float)(j + 1) / (float)sectors;
+      const float u0   = (float)j       / (float)sectors;
+      const float u1   = (float)(j + 1) / (float)sectors;
+
+      // CCW winding when viewed from outside the sphere.
+      // Triangle 1: top-left, bottom-right, bottom-left
+      emit(theta0, phi0, u0, v0);
+      emit(theta1, phi1, u1, v1);
+      emit(theta1, phi0, u0, v1);
+
+      // Triangle 2: top-left, top-right, bottom-right
+      emit(theta0, phi0, u0, v0);
+      emit(theta0, phi1, u1, v0);
+      emit(theta1, phi1, u1, v1);
     }
   }
-
-  int tri = 0;
-  for (int uu = 0; uu < verticalSubdivisions; ++uu) {
-    for (int vv = 0; vv < horizontalSubdivisions; ++vv) {
-      int wrap = (vv + 1) % horizontalSubdivisions;
-      vec3 LT = UVObjectMeshPoints[uu][vv];
-      vec3 RT = UVObjectMeshPoints[uu][wrap];
-      vec3 LB = UVObjectMeshPoints[uu + 1][vv];
-      vec3 RB = UVObjectMeshPoints[uu + 1][wrap];
-
-      UVObjectMesh[tri*3 + 0] = LT;
-      UVObjectMesh[tri*3 + 1] = LB;
-      UVObjectMesh[tri*3 + 2] = RB; ++tri;
-
-      UVObjectMesh[tri*3 + 0] = LT;
-      UVObjectMesh[tri*3 + 1] = RT;
-      UVObjectMesh[tri*3 + 2] = RB; ++tri;
-    }
-  }
-
-  for (int i = 0; i < bufferSize; ++i) {
-    UVObjectMeshBuffer[i*3 + 0] = UVObjectMesh[i].x;
-    UVObjectMeshBuffer[i*3 + 1] = UVObjectMesh[i].y;
-    UVObjectMeshBuffer[i*3 + 2] = UVObjectMesh[i].z;
-  }
-
 }
 
 void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
@@ -365,14 +366,27 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
 
 void RenderedObject::renderMesh(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight)
 {
-  if(!hasBeenRendered) { setupRender(); }
+  if (!hasBeenRendered) {
+    setupRender();
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size() * sizeof(float),
+                 UVObjectMeshBuffer.data(), GL_STATIC_DRAW);
+    hasBeenRendered = true;
+  }
   glBindVertexArray(vao);
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
+
+  if (hasTexture && hasTextureUniform != (unsigned int)-1) {
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    glUniform1i(textureSamplerUniform, 0);
+    glUniform1i(hasTextureUniform, 1);
+  } else if (hasTextureUniform != (unsigned int)-1) {
+    glUniform1i(hasTextureUniform, 0);
+  }
+
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
-  hasBeenRendered=true;
 }
 
 //Plane is also a raytracer screen
@@ -407,14 +421,25 @@ void RenderedObject::renderPlane(float cameraTranslate[3],
 
 void RenderedObject::setupRender()
 {
-  glGenVertexArrays(1,&vao);
+  glGenVertexArrays(1, &vao);
   glBindVertexArray(vao);
 
   glGenBuffers(1, &vbo);
-  glBindBuffer(GL_ARRAY_BUFFER,vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-  glVertexAttribPointer(0,3, GL_FLOAT, GL_FALSE,3*sizeof(float),(void*)0);
-  glEnableVertexAttribArray(0);
+  if (meshType == MeshType::sphere) {
+    // pos(3) + normal(3) + uv(2) = 8 floats per vertex
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+  } else {
+    // All other mesh types: position-only, 3 floats per vertex
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+  }
 
   glGenBuffers(1, &ssboParticles);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
@@ -436,6 +461,8 @@ void RenderedObject::setupRender()
   lightPositionsUniform   = glGetUniformLocation(program, "uLightPositions");
   lightColorsUniform      = glGetUniformLocation(program, "uLightColors");
   planetColorUniform      = glGetUniformLocation(program, "uPlanetColor");
+  hasTextureUniform       = glGetUniformLocation(program, "uHasTexture");
+  textureSamplerUniform   = glGetUniformLocation(program, "uTexture");
 }
 
 void RenderedObject::UploadSSBOParticles(const std::vector<vec4>& points){
@@ -458,6 +485,44 @@ void RenderedObject::uploadPlanetColor(const vec3& color)
   glUseProgram(program);
   if (planetColorUniform != (unsigned int)-1)
     glUniform3f(planetColorUniform, color.x, color.y, color.z);
+}
+
+bool RenderedObject::loadTexture(const std::string& path)
+{
+  // Release any previously loaded texture
+  clearTexture();
+
+  int w, h, channels;
+  // Do not flip: v=0 in our UV is the north pole (top row of an equirectangular map)
+  stbi_set_flip_vertically_on_load(false);
+  unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+  if (!data) {
+    std::cerr << "[texture] failed to load '" << path << "': " << stbi_failure_reason() << "\n";
+    return false;
+  }
+
+  glGenTextures(1, &textureID);
+  glBindTexture(GL_TEXTURE_2D, textureID);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  // Longitude wraps, latitude clamps (avoids pole seam artefacts)
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  stbi_image_free(data);
+
+  hasTexture = true;
+  return true;
+}
+
+void RenderedObject::clearTexture()
+{
+  if (textureID) {
+    glDeleteTextures(1, &textureID);
+    textureID = 0;
+  }
+  hasTexture = false;
 }
 
 void RenderedObject::uploadStarLighting(const std::vector<vec3>& positions,

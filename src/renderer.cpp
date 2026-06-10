@@ -1788,6 +1788,29 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
           obj.data.color.y = col[1];
           obj.data.color.z = col[2];
         }
+
+        ImGui::Spacing();
+        ImGui::Text("Texture");
+        static const char* kTexLabels[] = {
+          "None", "Earth", "Earth (Night)", "Jupiter", "Mars", "Mercury", "Venus"
+        };
+        static const char* kTexPaths[] = {
+          "", "assets/earth.jpg", "assets/earth_nightmap.jpg",
+          "assets/jupiter.jpg", "assets/mars.jpg", "assets/mercury.jpg", "assets/venus.jpg"
+        };
+        constexpr int kTexCount = 7;
+        int texComboIdx = 0;
+        for (int k = 1; k < kTexCount; ++k) {
+          if (obj.texturePath == kTexPaths[k]) { texComboIdx = k; break; }
+        }
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##itexcombo", &texComboIdx, kTexLabels, kTexCount)) {
+          obj.texturePath = kTexPaths[texComboIdx];
+          if (texComboIdx == 0)
+            obj.renderedObject.clearTexture();
+          else
+            obj.renderedObject.loadTexture(obj.texturePath);
+        }
       }
     }
 

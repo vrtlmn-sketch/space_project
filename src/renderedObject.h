@@ -43,6 +43,12 @@ private:
   unsigned int lightPositionsUniform{};
   unsigned int lightColorsUniform{};
   unsigned int planetColorUniform{};
+  unsigned int hasTextureUniform{};
+  unsigned int textureSamplerUniform{};
+
+  // texture
+  GLuint textureID{0};
+  bool   hasTexture{false};
 
   //rendering stuff
   unsigned int vao{};
@@ -51,11 +57,9 @@ private:
   unsigned int ssboObjects{};
 
   std::vector<float> UVObjectMeshBuffer{};
-  std::vector<vec3>  UVObjectMesh{};
   std::vector<vec3>  linePoints{};
   std::vector<CloudParticle> cloudParticles;
   std::vector<PhysicsObjectStructure> gridPoints;
-  std::vector<std::vector<vec3>> UVObjectMeshPoints{};
 public:
   MeshType meshType{MeshType::sphere};
   vec3 coordinates;
@@ -65,14 +69,15 @@ public:
   float cachedParticleSizeSpread{0.0f}; // set by uploadParticleSizeSpread(), used by renderCloudRaytraced()
 
   void setupRender();
-
-  void translateMesh(vec3 v);
   void transformPerspectiveMesh(GLuint program, float cameraTranslate[3], const float viewRot[9],
                                 float fovDeg = 45.f,
                                 int fbWidth = 800, int fbHeight = 600);
   void uploadStarLighting(const std::vector<vec3>& positions,
                           const std::vector<vec3>& colors);
   void uploadPlanetColor(const vec3& color);
+  bool loadTexture(const std::string& path);
+  void clearTexture();
+  bool textureLoaded() const { return hasTexture; }
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadNebulaScatterScale(float scale);

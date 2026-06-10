@@ -1,0 +1,185 @@
+{{define "title"}}Saul's Sim — Celestial Body Simulation{{end}}
+
+{{define "content"}}
+
+<nav class="nav">
+    <span class="nav__logo">Saul's Sim</span>
+    <button class="btn btn--wishlist-sm" type="button">Add to Wishlist</button>
+</nav>
+
+<!-- Hero ───────────────────────────────────────────────────────────────── -->
+<section class="hero">
+    <video class="hero__video" autoplay muted loop playsinline>
+        <source src="/static/media/hero.mp4" type="video/mp4">
+    </video>
+    <div class="hero__overlay"></div>
+
+    <div class="hero__content">
+        <p class="hero__eyebrow">Interactive &middot; Educational &middot; Beautiful</p>
+        <h1 class="hero__title">Saul's Sim</h1>
+        <p class="hero__subtitle">
+            Place a star. Add a planet. Watch what happens.
+            A hands-on simulation for exploring how gravity shapes the universe.
+        </p>
+        <div class="hero__actions">
+            <button class="btn btn--wishlist" type="button">Add to Wishlist</button>
+            <button class="btn btn--ghost" type="button">See it in action ↓</button>
+        </div>
+    </div>
+
+    <div class="hero__scroll">
+        <div class="hero__scroll-line"></div>
+        scroll
+    </div>
+</section>
+
+<!-- Tagline ────────────────────────────────────────────────────────────── -->
+<section class="tagline reveal">
+    <p class="tagline__text">
+        The universe, in your hands.
+    </p>
+    <p class="tagline__sub">
+        Saul's Sim lets you build and explore star systems from scratch —
+        no textbook required. Just curiosity.
+    </p>
+</section>
+
+<!-- Blue star — full-width ──────────────────────────────────────────────── -->
+<div class="full-image reveal">
+    <img src="/static/media/screenshot_blue.jpg"
+         alt="A glowing blue-white star surrounded by particle clouds">
+    <div class="full-image__caption">
+        <div>
+            <p class="full-image__label">Every body is alive</p>
+            <h2 class="full-image__title">
+                Stars that look the part
+            </h2>
+        </div>
+        <p class="full-image__desc">
+            Mass, temperature, and luminosity all rendered visually —
+            so you can see the physics, not just read it.
+        </p>
+    </div>
+</div>
+
+<!-- Features ───────────────────────────────────────────────────────────── -->
+<section class="features reveal">
+    <div class="features__header">
+        <p class="features__label">What you can do</p>
+        <h2 class="features__title">Explore. Experiment. Understand.</h2>
+    </div>
+
+    <div class="features__grid">
+        <div class="feature-card">
+            <div class="feature-card__icon">✦</div>
+            <div class="feature-card__name">Build any system</div>
+            <p class="feature-card__desc">
+                Drop in stars, planets, and black holes. Set their mass and
+                starting velocity, then let gravity take over.
+            </p>
+        </div>
+
+        <div class="feature-card">
+            <div class="feature-card__icon">🔭</div>
+            <div class="feature-card__name">Watch orbits form</div>
+            <p class="feature-card__desc">
+                Stable rings, chaotic spirals, collisions, captures — every
+                run plays out differently based on what you put in.
+            </p>
+        </div>
+
+        <div class="feature-card">
+            <div class="feature-card__icon">⚡</div>
+            <div class="feature-card__name">Smooth and real-time</div>
+            <p class="feature-card__desc">
+                The simulation runs fast enough to feel alive. Adjust
+                parameters mid-run and see the consequences immediately.
+            </p>
+        </div>
+
+        <div class="feature-card">
+            <div class="feature-card__icon">🪐</div>
+            <div class="feature-card__name">Actually beautiful</div>
+            <p class="feature-card__desc">
+                Not a diagram. Stars glow, particles swirl, black holes
+                warp the space around them — rendered live.
+            </p>
+        </div>
+    </div>
+</section>
+
+<!-- Orange star — split ─────────────────────────────────────────────────── -->
+<div class="split reveal">
+    <div class="split__image">
+        <img src="/static/media/screenshot_full.jpg"
+             alt="An orange-red star with a swirling accretion disk">
+    </div>
+    <div class="split__content">
+        <p class="split__label">Gravity at work</p>
+        <h2 class="split__title">
+            See what happens<br>when mass meets mass
+        </h2>
+        <p class="split__body">
+            Two bodies attract. Three become unpredictable. Add enough and
+            you get a galaxy. Saul's Sim lets you run these experiments
+            and watch the outcomes unfold in real time.
+        </p>
+        <div class="split__tags">
+            <span class="tag">Stars</span>
+            <span class="tag">Planets</span>
+            <span class="tag">Black holes</span>
+            <span class="tag">Collisions</span>
+        </div>
+    </div>
+</div>
+
+<!-- Black hole — full-width quote ──────────────────────────────────────── -->
+<div class="blackhole reveal">
+    <img src="/static/media/screenshot_ui.jpg"
+         alt="A black hole with an accretion disk and surrounding galaxy">
+    <div class="blackhole__overlay"></div>
+    <div class="blackhole__text">
+        <p class="blackhole__quote">
+            This isn't a render.<br>
+            It's running live.
+        </p>
+        <p class="blackhole__attr">Saul's Sim — interactive celestial simulation</p>
+    </div>
+</div>
+
+<!-- CTA ────────────────────────────────────────────────────────────────── -->
+<section class="cta reveal">
+    <p class="cta__label">Coming soon</p>
+    <h2 class="cta__title">Be first to know.</h2>
+    <p class="cta__sub">
+        Add to your wishlist and get notified when Saul's Sim launches.
+    </p>
+    <button class="btn btn--wishlist" type="button">Add to Wishlist</button>
+</section>
+
+<!-- Footer ─────────────────────────────────────────────────────────────── -->
+<footer class="footer">
+    <span class="footer__copy">&copy; 2026 Saul's Sim. All rights reserved.</span>
+    <span class="footer__copy">KTU IFF&nbsp;&middot;&nbsp;Saulius Ogenskas</span>
+</footer>
+
+<script>
+(function () {
+    var els = document.querySelectorAll('.reveal');
+    if (!('IntersectionObserver' in window)) {
+        els.forEach(function (el) { el.classList.add('visible'); });
+        return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+            if (e.isIntersecting) {
+                e.target.classList.add('visible');
+                io.unobserve(e.target);
+            }
+        });
+    }, { threshold: 0.12 });
+    els.forEach(function (el) { io.observe(el); });
+}());
+</script>
+
+{{end}}
