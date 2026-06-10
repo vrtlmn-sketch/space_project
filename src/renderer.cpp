@@ -195,6 +195,13 @@ bool Renderer::BeginFrame() {
 
   fbWidth = fbw; fbHeight = fbh;
 
+  // For non-editor-viewport mode the scene renders to the full framebuffer.
+  // BindViewportFBO overrides these when editor viewport is active.
+  sceneRenderW   = fbw;
+  sceneRenderH   = fbh;
+  sceneImageOffX = 0.0f;
+  sceneImageOffY = 0.0f;
+
   // Start ImGui frame
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
@@ -748,6 +755,9 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
         float offY = (avail.y - (float)vpFboH) * 0.5f;
         ImVec2 imgMin(cursor.x + offX, cursor.y + offY);
         ImVec2 imgMax(imgMin.x + (float)vpFboW, imgMin.y + (float)vpFboH);
+        // Save for WorldToScreen / gizmo overlay
+        sceneImageOffX = imgMin.x;
+        sceneImageOffY = imgMin.y;
         ImGui::GetWindowDrawList()->AddImage(
           (ImTextureID)(intptr_t)vpColorTex,
           imgMin, imgMax,
@@ -821,6 +831,212 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
       bench.showSummary = false;
 
     ImGui::End();
+  }
+
+  DrawGizmoAndPick(physicsObjects);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WorldToScreen / gizmo helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Point-to-line-segment distance in 2D (screen space).
+static float pointToSegDist(ImVec2 p, ImVec2 a, ImVec2 b) {
+  float dx = b.x - a.x, dy = b.y - a.y;
+  float len2 = dx*dx + dy*dy;
+  if (len2 < 1.0f) {
+    float ex = p.x - a.x, ey = p.y - a.y;
+    return std::sqrt(ex*ex + ey*ey);
+  }
+  float t = ((p.x - a.x)*dx + (p.y - a.y)*dy) / len2;
+  if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
+  float cx = a.x + t*dx, cy = a.y + t*dy;
+  float ex = p.x - cx, ey = p.y - cy;
+  return std::sqrt(ex*ex + ey*ey);
+}
+
+// Draw a coloured line with a filled arrowhead at the tip.
+static void drawGizmoArrow(ImDrawList* dl, ImVec2 base, ImVec2 tip, ImU32 col, float lineW) {
+  dl->AddLine(base, tip, col, lineW);
+  float dx = tip.x - base.x, dy = tip.y - base.y;
+  float len = std::sqrt(dx*dx + dy*dy);
+  if (len < 2.0f) return;
+  dx /= len; dy /= len;
+  float px = -dy, py = dx;
+  const float hL = 10.0f, hW = 5.0f;
+  ImVec2 p0 = tip;
+  ImVec2 p1 = {tip.x - hL*dx + hW*px, tip.y - hL*dy + hW*py};
+  ImVec2 p2 = {tip.x - hL*dx - hW*px, tip.y - hL*dy - hW*py};
+  dl->AddTriangleFilled(p0, p1, p2, col);
+}
+
+// Project a world-space point to absolute screen coordinates.
+// Returns false if the point is behind the camera.
+bool Renderer::WorldToScreen(vec3 pos, float& sx, float& sy) {
+  if (sceneRenderW <= 0 || sceneRenderH <= 0) return false;
+
+  float px = pos.x + cameraTranslate[0];
+  float py = pos.y + cameraTranslate[1];
+  float pz = pos.z + cameraTranslate[2];
+
+  // Apply view rotation: each row of camMatrix dotted with p gives camera-space coords.
+  float vx = camMatrix[0]*px + camMatrix[1]*py + camMatrix[2]*pz;
+  float vy = camMatrix[3]*px + camMatrix[4]*py + camMatrix[5]*pz;
+  float vz = camMatrix[6]*px + camMatrix[7]*py + camMatrix[8]*pz;
+
+  float clipW = -vz;
+  if (clipW <= 0.001f) return false;
+
+  float fovy   = zoom * (float)M_PI / 180.0f;
+  float f      = 1.0f / std::tan(fovy * 0.5f);
+  float aspect = (float)sceneRenderW / (float)sceneRenderH;
+
+  float ndcX = (f / aspect) * vx / clipW;
+  float ndcY = f * vy / clipW;
+
+  sx = (ndcX + 1.0f) * 0.5f * (float)sceneRenderW + sceneImageOffX;
+  sy = (1.0f - ndcY) * 0.5f * (float)sceneRenderH + sceneImageOffY;
+  return true;
+}
+
+// Draw the translate gizmo for the selected object and handle click-to-select.
+void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
+  if (sceneRenderW <= 0 || sceneRenderH <= 0) return;
+
+  ImGuiIO&   io = ImGui::GetIO();
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+  // Release drag when mouse button is up
+  if (gizmoDragging && !ImGui::IsMouseDown(0))
+    gizmoDragging = false;
+
+  bool gizmoConsumedClick = false;
+
+  if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
+    auto& obj = physicsObjects[selectedIdx];
+    vec3  pos = obj.data.position;
+
+    // Compute view-space depth for this object (needed for sizing and drag scale)
+    float px_ = pos.x + cameraTranslate[0];
+    float py_ = pos.y + cameraTranslate[1];
+    float pz_ = pos.z + cameraTranslate[2];
+    float vz_ = camMatrix[6]*px_ + camMatrix[7]*py_ + camMatrix[8]*pz_;
+    float clipW = -vz_;
+
+    if (clipW > 0.01f) {
+      float fovy = zoom * (float)M_PI / 180.0f;
+      float f    = 1.0f / std::tan(fovy * 0.5f);
+
+      // Arrow world-space length: targets ~70 screen pixels regardless of distance
+      float arrowLen  = 70.0f * 2.0f * clipW / (f * (float)sceneRenderH);
+      // World units per screen pixel (for body drag)
+      float dragScale = 2.0f * clipW / (f * (float)sceneRenderH);
+
+      // Project base and all three tips
+      float bx, by, txX, tyX, txY, tyY, txZ, tyZ;
+      bool baseOk = WorldToScreen(pos, bx, by);
+      bool okX    = WorldToScreen({pos.x + arrowLen, pos.y,            pos.z           }, txX, tyX);
+      bool okY    = WorldToScreen({pos.x,            pos.y + arrowLen, pos.z           }, txY, tyY);
+      bool okZ    = WorldToScreen({pos.x,            pos.y,            pos.z + arrowLen}, txZ, tyZ);
+
+      if (baseOk) {
+        // ── Hover detection ──────────────────────────────────────────────────
+        ImVec2 mp = io.MousePos;
+        const float kHover  = 9.0f;
+        const float kCenter = 9.0f;
+
+        int hovAxis = gizmoDragging ? gizmoDragAxis : -1;
+        if (!gizmoDragging) {
+          float dC = std::sqrt((mp.x-bx)*(mp.x-bx) + (mp.y-by)*(mp.y-by));
+          float dX = okX ? pointToSegDist(mp, {bx,by}, {txX,tyX}) : 1e9f;
+          float dY = okY ? pointToSegDist(mp, {bx,by}, {txY,tyY}) : 1e9f;
+          float dZ = okZ ? pointToSegDist(mp, {bx,by}, {txZ,tyZ}) : 1e9f;
+          if      (dC < kCenter) hovAxis = 3;
+          else if (dX < kHover)  hovAxis = 0;
+          else if (dY < kHover)  hovAxis = 1;
+          else if (dZ < kHover)  hovAxis = 2;
+        }
+
+        // ── Start drag on click ──────────────────────────────────────────────
+        if (!gizmoDragging && hovAxis >= 0 && ImGui::IsMouseClicked(0)) {
+          gizmoDragging      = true;
+          gizmoDragAxis      = hovAxis;
+          gizmoConsumedClick = true;
+        }
+
+        // ── Apply drag ───────────────────────────────────────────────────────
+        if (gizmoDragging) {
+          if (gizmoDragAxis >= 0 && gizmoDragAxis <= 2) {
+            // Axis-constrained: project that axis to screen, resolve mouse delta
+            static const vec3 kAxes[3] = {{1,0,0},{0,1,0},{0,0,1}};
+            vec3  ax = kAxes[gizmoDragAxis];
+            float tipSx, tipSy;
+            if (WorldToScreen({pos.x+ax.x, pos.y+ax.y, pos.z+ax.z}, tipSx, tipSy)) {
+              float sdx = tipSx - bx, sdy = tipSy - by;
+              float slen = std::sqrt(sdx*sdx + sdy*sdy);
+              if (slen > 0.5f) {
+                float usdx  = sdx / slen, usdy = sdy / slen;
+                float t     = io.MouseDelta.x * usdx + io.MouseDelta.y * usdy;
+                // slen pixels = 1 world unit along this axis
+                obj.data.position.x += ax.x * t / slen;
+                obj.data.position.y += ax.y * t / slen;
+                obj.data.position.z += ax.z * t / slen;
+                obj.renderedObject.coordinates = obj.data.position;
+              }
+            }
+          } else if (gizmoDragAxis == 3) {
+            // Free drag: move in camera-facing plane
+            // Screen +x = camera right; screen +y = camera down (= -camera up)
+            float mx = io.MouseDelta.x, my = io.MouseDelta.y;
+            obj.data.position.x += ( mx * camMatrix[0] - my * camMatrix[3]) * dragScale;
+            obj.data.position.y += ( mx * camMatrix[1] - my * camMatrix[4]) * dragScale;
+            obj.data.position.z += ( mx * camMatrix[2] - my * camMatrix[5]) * dragScale;
+            obj.renderedObject.coordinates = obj.data.position;
+          }
+
+          // Re-project after position change so arrows track the object
+          pos = obj.data.position;
+          WorldToScreen(pos, bx, by);
+          if (okX) WorldToScreen({pos.x + arrowLen, pos.y,            pos.z           }, txX, tyX);
+          if (okY) WorldToScreen({pos.x,            pos.y + arrowLen, pos.z           }, txY, tyY);
+          if (okZ) WorldToScreen({pos.x,            pos.y,            pos.z + arrowLen}, txZ, tyZ);
+        }
+
+        // ── Draw arrows ──────────────────────────────────────────────────────
+        const float kLineW = 2.5f;
+        ImU32 colX = (hovAxis==0) ? IM_COL32(255,130,130,255) : IM_COL32(210, 40, 40,255);
+        ImU32 colY = (hovAxis==1) ? IM_COL32(130,255,130,255) : IM_COL32( 40,190, 40,255);
+        ImU32 colZ = (hovAxis==2) ? IM_COL32(130,160,255,255) : IM_COL32( 60,110,220,255);
+
+        if (okX) drawGizmoArrow(dl, {bx,by}, {txX,tyX}, colX, kLineW);
+        if (okY) drawGizmoArrow(dl, {bx,by}, {txY,tyY}, colY, kLineW);
+        if (okZ) drawGizmoArrow(dl, {bx,by}, {txZ,tyZ}, colZ, kLineW);
+
+        // Center handle — white circle, brightens on hover
+        float cr = (hovAxis == 3) ? 8.0f : 6.0f;
+        dl->AddCircleFilled({bx,by}, cr, IM_COL32(220,220,220,210));
+        dl->AddCircle({bx,by}, cr, IM_COL32(150,150,150,255), 16, 1.5f);
+      }
+    }
+  }
+
+  // ── Click-to-select ──────────────────────────────────────────────────────────
+  // Fire only when: not spawning a ghost object, gizmo didn't consume the click,
+  // not currently dragging, and ImGui panels are not capturing the mouse.
+  if (!ghostDragActive && !gizmoConsumedClick && !gizmoDragging &&
+      !io.WantCaptureMouse && ImGui::IsMouseClicked(0)) {
+    float mx = io.MousePos.x, my = io.MousePos.y;
+    int   bestIdx  = -1;
+    float bestDist = 30.0f * 30.0f;  // 30 px pick radius
+    for (int i = 0; i < (int)physicsObjects.size(); ++i) {
+      float sx, sy;
+      if (WorldToScreen(physicsObjects[i].data.position, sx, sy)) {
+        float dx = mx - sx, dy = my - sy;
+        float d2 = dx*dx + dy*dy;
+        if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
+      }
+    }
+    if (bestIdx >= 0) selectedIdx = bestIdx;
   }
 }
 
@@ -2185,8 +2401,10 @@ void Renderer::BindViewportFBO() {
   glViewport(0, 0, renderW, renderH);
   glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  fbWidth  = renderW;
-  fbHeight = renderH;
+  fbWidth      = renderW;
+  fbHeight     = renderH;
+  sceneRenderW = renderW;
+  sceneRenderH = renderH;
 }
 
 void Renderer::UnbindViewportFBO() {

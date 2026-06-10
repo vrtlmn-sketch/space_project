@@ -118,6 +118,19 @@ private:
   float   ghostX{0}, ghostY{0}, ghostZ{-3};
   double  lastMouseX{0}, lastMouseY{0};
 
+  // Gizmo state
+  int  gizmoDragAxis{-1};  // -1=none, 0=X, 1=Y, 2=Z, 3=body-free
+  bool gizmoDragging{false};
+
+  // Scene render dimensions and screen-space image offset.
+  // Set each frame so WorldToScreen works correctly from DrawUI in both
+  // fullscreen and editor-viewport modes.
+  int   sceneRenderW{0}, sceneRenderH{0};
+  float sceneImageOffX{0.0f}, sceneImageOffY{0.0f};
+
+  bool WorldToScreen(vec3 world, float& sx, float& sy);
+  void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects);
+
   // UI internal state
   bool         showSpawnPanel{false};
   bool         showScenePanel{false};
