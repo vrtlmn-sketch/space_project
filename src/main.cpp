@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cmath>
+#include <optional>
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -47,12 +48,11 @@ static void buildScene(
   const ProjectData&                        data,
   std::vector<PhysicsObject>&               physicsObjects,
   std::vector<LineObject>&                  lineObjects,
-  std::vector<GridObject>&                  grids,
+  std::optional<GridObject>&                grid,
   std::vector<std::unique_ptr<CloudObject>>& clouds)
 {
   physicsObjects.clear();
   lineObjects.clear();
-  grids.clear();
   clouds.clear();
 
   for (const auto& pod : data.objects) {
@@ -75,14 +75,7 @@ static void buildScene(
     lineObjects.emplace_back(vec3{obj.data.position});
 
   const GridData& g = data.grid;
-  grids.reserve((size_t)g.count);
-  for (int i = -g.count / 2; i < g.count / 2; i++) {
-    grids.emplace_back(GridObject{
-      vec3{0, (float)i * g.ySpacing, -3.f},
-      vec3{g.sizeX, 10.f, g.sizeZ},
-      g.subdivisions
-    });
-  }
+  grid.emplace(g.cellSize, g.radius, g.showX, g.showY, g.showZ);
 
   for (const auto& cd : data.clouds) {
     if (cd.enabled)
@@ -105,15 +98,14 @@ int main(int argc, char** argv) {
 
   std::vector<PhysicsObject>               physicsObjects;
   std::vector<LineObject>                  lineObjects;
-  std::vector<GridObject>                  grids;
+  std::optional<GridObject>                grid;
   std::vector<std::unique_ptr<CloudObject>> clouds;
   // Pre-reserve to avoid reallocation (PhysicsObject holds OpenGL handles —
   // reallocation would copy/move them and corrupt GPU state)
   physicsObjects.reserve(256);
   lineObjects.reserve(256);
-  grids.reserve(256); // GridObject holds OpenGL handles; reallocation would corrupt them
 
-  GridData currentGrid = GridData{4, 10.f, 10.f, 30, 2.f};
+  GridData currentGrid;
 
   ProceduralGenWindow procGen;
 
@@ -136,14 +128,16 @@ int main(int argc, char** argv) {
   };
 
   cb.applyGrid = [&](const GridFormState& gf) {
-    currentGrid = GridData{gf.count, gf.sizeX, gf.sizeZ, gf.subdivisions, gf.ySpacing};
-    grids.clear();
-    for (int i = -gf.count / 2; i < gf.count / 2; i++) {
-      grids.emplace_back(GridObject{
-        vec3{0, (float)i * gf.ySpacing, -3.f},
-        vec3{gf.sizeX, 10.f, gf.sizeZ},
-        gf.subdivisions
-      });
+    currentGrid.visible  = gf.visible;
+    currentGrid.cellSize = gf.cellSize;
+    currentGrid.radius   = gf.radius;
+    currentGrid.showX   = gf.showX;
+    currentGrid.showY   = gf.showY;
+    currentGrid.showZ   = gf.showZ;
+    if (grid.has_value()) {
+      grid->Rebuild(gf.cellSize, gf.radius, gf.showX, gf.showY, gf.showZ);
+    } else {
+      grid.emplace(gf.cellSize, gf.radius, gf.showX, gf.showY, gf.showZ);
     }
   };
 
@@ -263,8 +257,14 @@ int main(int argc, char** argv) {
   cb.loadProject = [&](const std::string& path) {
     ProjectData data = ProjectSerializer::Load(path);
     currentGrid = data.grid;
-    buildScene(data, physicsObjects, lineObjects, grids, clouds);
+    buildScene(data, physicsObjects, lineObjects, grid, clouds);
     applySettingsToRenderer(data.settings);
+    renderer.gridForm.visible  = currentGrid.visible;
+    renderer.gridForm.cellSize = currentGrid.cellSize;
+    renderer.gridForm.radius   = currentGrid.radius;
+    renderer.gridForm.showX   = currentGrid.showX;
+    renderer.gridForm.showY   = currentGrid.showY;
+    renderer.gridForm.showZ   = currentGrid.showZ;
   };
 
   // ── Startup modal loop ────────────────────────────────────────────────────
@@ -281,15 +281,25 @@ int main(int argc, char** argv) {
     if (renderer.startupChoice == SC::Template) {
       ProjectData tmpl = ProjectSerializer::MilkyWayTemplate();
       currentGrid = tmpl.grid;
-      buildScene(tmpl, physicsObjects, lineObjects, grids, clouds);
+      buildScene(tmpl, physicsObjects, lineObjects, grid, clouds);
     } else if (renderer.startupChoice == SC::Load) {
       ProjectData data = ProjectSerializer::Load(
         std::string(renderer.startupLoadPath));
       currentGrid = data.grid;
-      buildScene(data, physicsObjects, lineObjects, grids, clouds);
+      buildScene(data, physicsObjects, lineObjects, grid, clouds);
       applySettingsToRenderer(data.settings);
+    } else {
+      // SC::Empty → create grid with defaults
+      grid.emplace(currentGrid.cellSize, currentGrid.radius,
+                   currentGrid.showX, currentGrid.showY, currentGrid.showZ);
     }
-    // SC::Empty → start blank
+    // Sync renderer's gridForm with current grid settings
+    renderer.gridForm.visible  = currentGrid.visible;
+    renderer.gridForm.cellSize = currentGrid.cellSize;
+    renderer.gridForm.radius   = currentGrid.radius;
+    renderer.gridForm.showX   = currentGrid.showX;
+    renderer.gridForm.showY   = currentGrid.showY;
+    renderer.gridForm.showZ   = currentGrid.showZ;
   }
 
   // ── Main game loop ─────────────────────────────────────────────────────────
@@ -367,8 +377,18 @@ int main(int argc, char** argv) {
     for (const auto& obj : physicsObjects)
       physData.emplace_back(obj.data);
 
-    for (auto& g : grids)
-      g.Update(renderer, physData);
+    if (grid.has_value() && currentGrid.visible) {
+      float snap = std::max(0.001f, currentGrid.cellSize);
+      float camX = -renderer.cameraTranslate[0];
+      float camY = -renderer.cameraTranslate[1];
+      float camZ = -renderer.cameraTranslate[2];
+      grid->position = {
+        std::floor(camX / snap) * snap,
+        std::floor(camY / snap) * snap,
+        std::floor(camZ / snap) * snap
+      };
+      grid->Update(renderer, physData);
+    }
 
     for (auto& c : clouds)
       c->Update(renderer, physData);
@@ -477,8 +497,8 @@ int main(int argc, char** argv) {
                                  physicsObjects[i].data.color);
       lineObjects[i].Update(renderer);
     }
-    for (auto& g : grids)
-      renderer.Draw(g.renderedObject);
+    if (grid.has_value() && currentGrid.visible)
+      renderer.Draw(grid->renderedObject);
     for (auto& c : clouds) {
       c->renderedObject.uploadTemperature(c->temperature);
       c->renderedObject.uploadRenderMode(c->renderMode);

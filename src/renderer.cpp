@@ -725,7 +725,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawSpawnPanel(cb);
   DrawSceneHierarchy(physicsObjects, clouds, cb);
   DrawInspector(physicsObjects, clouds, cb);
-  DrawRenderingSettings();
+  DrawRenderingSettings(cb);
   DrawPipWindow();
   if (ghostDragActive) DrawGhostObject();
   DrawQuitDialog(cb);
@@ -1187,7 +1187,7 @@ void Renderer::DrawControlsPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawRenderingSettings  (docked right-bottom — rendering method + RT quality)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawRenderingSettings() {
+void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Rendering Settings", nullptr, flags);
 
@@ -1218,6 +1218,27 @@ void Renderer::DrawRenderingSettings() {
     if (ImGui::SliderFloat("##dcolor", &dopplerColorStr, 0.0f, 4.0f, "%.2f"))
       rtDirty = true;
     ImGui::Unindent(8.0f);
+  }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // ── Grid ──
+  if (ImGui::CollapsingHeader("Grid", ImGuiTreeNodeFlags_DefaultOpen)) {
+    bool changed = false;
+    changed |= ImGui::Checkbox("Show Grid", &gridForm.visible);
+    ImGui::Text("Cell Size");
+    ImGui::SetNextItemWidth(-1);
+    changed |= ImGui::SliderFloat("##gcell", &gridForm.cellSize, 0.1f, 10.f, "%.2f");
+    ImGui::Text("Radius (cells)");
+    ImGui::SetNextItemWidth(-1);
+    changed |= ImGui::SliderInt("##gradius", &gridForm.radius, 2, 30);
+    ImGui::Text("Lines");
+    changed |= ImGui::Checkbox("X##gx", &gridForm.showX); ImGui::SameLine();
+    changed |= ImGui::Checkbox("Y##gy", &gridForm.showY); ImGui::SameLine();
+    changed |= ImGui::Checkbox("Z##gz", &gridForm.showZ);
+    if (changed && cb.applyGrid) cb.applyGrid(gridForm);
   }
 
   ImGui::Spacing();
@@ -1732,20 +1753,6 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       }
       if (ghostDragActive)
         ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Click viewport to place");
-      ImGui::EndTabItem();
-    }
-
-    // ── Grid tab ──
-    if (ImGui::BeginTabItem("Grid")) {
-      ImGui::SliderInt("Layers",   &gridForm.count, 1, 10);
-      ImGui::SliderFloat("Size X", &gridForm.sizeX, 1.f, 30.f);
-      ImGui::SliderFloat("Size Z", &gridForm.sizeZ, 1.f, 30.f);
-      ImGui::SliderInt("Subdiv",   &gridForm.subdivisions, 5, 60);
-      ImGui::SliderFloat("Y Spc",  &gridForm.ySpacing, 0.5f, 5.f);
-      ImGui::Spacing();
-      if (ImGui::Button("Apply Grid", ImVec2(-1, 28))) {
-        if (cb.applyGrid) cb.applyGrid(gridForm);
-      }
       ImGui::EndTabItem();
     }
 

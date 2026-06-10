@@ -4,13 +4,12 @@
 #include "mathStructs.h"
 #include "renderer.h"
 
-class GridObject
-{
+class GridObject {
 public:
   RenderedObject renderedObject;
   vec3 position;
-  void Update(Renderer& renderer,const std::vector<PhysicsObjectStructure>& physicsObejcts);
-  GridObject(vec3&& position,const vec3& size,int subdivisions);
-  void SetShaders(const std::string& vertShaderPath,const std::string& fragShaderPath);
-  void AddPoint(const vec3& point);
+  void Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects);
+  GridObject(float cellSize, int radius, bool showX, bool showY, bool showZ);
+  void Rebuild(float cellSize, int radius, bool showX, bool showY, bool showZ);
+  void SetShaders(const std::string& vertShaderPath, const std::string& fragShaderPath);
 };

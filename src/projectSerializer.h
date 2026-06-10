@@ -20,10 +20,12 @@ struct PhysicsObjectData {
 };
 
 struct GridData {
-  int   count{4};
-  float sizeX{10.f}, sizeZ{10.f};
-  int   subdivisions{30};
-  float ySpacing{2.f};
+  bool  visible{true};
+  float cellSize{1.0f};
+  int   radius{10};
+  bool  showX{true};
+  bool  showY{true};
+  bool  showZ{true};
 };
 
 struct CloudData {

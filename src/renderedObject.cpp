@@ -7,93 +7,57 @@
 #include <cstdint>
 
 
-void RenderedObject::GenerateMeshGrid(const vec3& size, int subdivisions){
-  meshType=MeshType::grid;
-  this->hasBeenRendered=false;
+void RenderedObject::GenerateMeshGrid(float cellSize, int radius, bool showX, bool showY, bool showZ) {
+  meshType = MeshType::grid;
+  gridPoints.clear();
+  UVObjectMeshBuffer.clear();
 
-  gridPoints.reserve(size.x*size.y*size.z*subdivisions);
-  float x{};
-  float y{};
-  float z{};
-  while(z<subdivisions){
-    for(int i=0;i<=subdivisions;i++)
-    {
-      x=i;
-      gridPoints.emplace_back(
-        PhysicsObjectStructure{
-          vec3{0,0,0},
-          vec3{
-            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
-            ((float)y*(float)size.y)*(1.f/subdivisions),
-            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
-          0.f});
-    }
-    z++;
-    for(int i=subdivisions;i>=0;i--)
-    {
-      x=i;
-      gridPoints.emplace_back(
-        PhysicsObjectStructure{
-          vec3{0,0,0},
-          vec3{
-            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
-            ((float)y*(float)size.y)*(1.f/subdivisions),
-            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
-          0.f});
-    }
-    z++;
-  }
-  x=0;
-  y=0;
-  z=0;
-  while(x<subdivisions){
-    for(int i=0;i<=subdivisions;i++)
-    {
-      z=i;
-      gridPoints.emplace_back(
-        PhysicsObjectStructure{
-          vec3{0,0,0},
-          vec3{
-            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
-            ((float)y*(float)size.y)*(1.f/subdivisions),
-            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
-          0.f});
-    }
-    x++;
-    for(int i=subdivisions;i>=0;i--)
-    {
-      z=i;
-      gridPoints.emplace_back(
-        PhysicsObjectStructure{
-          vec3{0,0,0},
-          vec3{
-            ((float)x*(float)size.x-size.x*subdivisions/2)*(1.f/subdivisions),
-            ((float)y*(float)size.y)*(1.f/subdivisions),
-            ((float)z*(float)size.z-size.z*subdivisions/2)*(1.f/subdivisions)},
-          0.f});
-    }
-    x++;
-  }
-  //UVObjectMeshBuffer.reserve(gridPoints.size()*3);
-  UVObjectMeshBuffer.reserve(UVObjectMeshBuffer.size()*3);
-  for(auto& p : gridPoints)
-  {
-    UVObjectMeshBuffer.emplace_back(p.position.x);
-    UVObjectMeshBuffer.emplace_back(p.position.y);
-    UVObjectMeshBuffer.emplace_back(p.position.z);
-  }
-  bufferSize=gridPoints.size();
+  float ext = (float)radius * cellSize;
 
+  auto push = [&](float x0, float y0, float z0, float x1, float y1, float z1) {
+    UVObjectMeshBuffer.push_back(x0);
+    UVObjectMeshBuffer.push_back(y0);
+    UVObjectMeshBuffer.push_back(z0);
+    UVObjectMeshBuffer.push_back(x1);
+    UVObjectMeshBuffer.push_back(y1);
+    UVObjectMeshBuffer.push_back(z1);
+  };
+
+  if (showX) {
+    // Lines running along X at each (j, k) lattice node
+    for (int j = -radius; j <= radius; ++j)
+      for (int k = -radius; k <= radius; ++k)
+        push(-ext, (float)j*cellSize, (float)k*cellSize,
+              ext, (float)j*cellSize, (float)k*cellSize);
+  }
+
+  if (showY) {
+    // Lines running along Y at each (i, k) lattice node
+    for (int i = -radius; i <= radius; ++i)
+      for (int k = -radius; k <= radius; ++k)
+        push((float)i*cellSize, -ext, (float)k*cellSize,
+             (float)i*cellSize,  ext, (float)k*cellSize);
+  }
+
+  if (showZ) {
+    // Lines running along Z at each (i, j) lattice node
+    for (int i = -radius; i <= radius; ++i)
+      for (int j = -radius; j <= radius; ++j)
+        push((float)i*cellSize, (float)j*cellSize, -ext,
+             (float)i*cellSize, (float)j*cellSize,  ext);
+  }
+
+  bufferSize = (int)UVObjectMeshBuffer.size() / 3;
 }
 
 void RenderedObject::renderGrid(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(vec3), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
+  glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), UVObjectMeshBuffer.data(), GL_DYNAMIC_DRAW);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
-  glDrawArrays(GL_LINE_STRIP, 0, bufferSize);
+  glDrawArrays(GL_LINES, 0, bufferSize);
   hasBeenRendered=true;
 }
 

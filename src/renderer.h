@@ -50,10 +50,12 @@ struct SpawnFormState {
 };
 
 struct GridFormState {
-  int   count       = 4;
-  float sizeX       = 10.f, sizeZ = 10.f;
-  int   subdivisions = 30;
-  float ySpacing    = 2.0f;
+  bool  visible{true};
+  float cellSize{1.0f};
+  int   radius{10};
+  bool  showX{true};
+  bool  showY{true};
+  bool  showZ{true};
 };
 
 struct CloudFormState {
@@ -141,9 +143,8 @@ private:
   bool         escKeyPressed{false};
   char         loadPathBuf[256]  = "project.json";
   char         keypointLabelBuf[64] = "Key";
-  GridFormState  gridForm{};
   CloudFormState cloudForm{};
-  int            spawnTab{0};  // 0=Physics, 1=Grid, 2=Cloud
+  int            spawnTab{0};  // 0=Physics, 1=Cloud
   int            selectedIdx{-1}; // -1=none, -(2+i)=clouds[i]
 
   // Dock layout
@@ -340,7 +341,7 @@ private:
   void DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
   void DrawGhostObject();
   void DrawQuitDialog(const SceneCallbacks& cb);
-  void DrawRenderingSettings();  // rendering method + RT quality settings
+  void DrawRenderingSettings(const SceneCallbacks& cb);  // rendering method + RT quality settings
   void DrawBenchmarkPanel();     // performance stats section (called from DrawRenderingSettings)
   void DrawPipWindow();   // show secondary view FBO as ImGui image
 
@@ -454,8 +455,9 @@ public:
   bool IsRecording() const { return recording; }
   void DispatchAndCaptureRecordingFrame();   // dispatch compute at recording resolution + capture
 
-  // Public spawn form and save path (accessed from main.cpp)
+  // Public spawn/grid forms and save path (accessed from main.cpp)
   SpawnFormState spawnForm{};
+  GridFormState  gridForm{};
   char           savePathBuf[256] = "project.json";
 
   // Draw ALL UI for one frame — call after all scene rendering

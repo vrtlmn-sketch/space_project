@@ -104,7 +104,7 @@ void UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
                     int horizontalSubdivisions, int verticalSubdivisions);
   void GenerateMeshPlane(float width, float height);
 void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size);
-void GenerateMeshGrid(const vec3& size, int subdivisions);
+void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY = true, bool showZ = true);
 
   void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
   void renderMeshRaytracedDoppler(float cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,

@@ -41,11 +41,12 @@ bool ProjectSerializer::Save(const std::string& path,
 
   // ── Grid ──
   root["grid"] = {
-    {"count",       grid.count},
-    {"sizeX",       grid.sizeX},
-    {"sizeZ",       grid.sizeZ},
-    {"subdivisions",grid.subdivisions},
-    {"ySpacing",    grid.ySpacing}
+    {"visible",  grid.visible},
+    {"cellSize", grid.cellSize},
+    {"radius",   grid.radius},
+    {"showX",   grid.showX},
+    {"showY",   grid.showY},
+    {"showZ",   grid.showZ}
   };
 
   // ── Clouds ──
@@ -181,12 +182,13 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 
   // ── Grid ──
   if (root.contains("grid")) {
-    const auto& g    = root["grid"];
-    data.grid.count       = g.value("count",        4);
-    data.grid.sizeX       = g.value("sizeX",       10.f);
-    data.grid.sizeZ       = g.value("sizeZ",       10.f);
-    data.grid.subdivisions= g.value("subdivisions",30);
-    data.grid.ySpacing    = g.value("ySpacing",     2.f);
+    const auto& g  = root["grid"];
+    data.grid.visible  = g.value("visible",  true);
+    data.grid.cellSize = g.value("cellSize", 1.0f);
+    data.grid.radius   = g.value("radius",   10);
+    data.grid.showX   = g.value("showX",   true);
+    data.grid.showY   = g.value("showY",   true);
+    data.grid.showZ   = g.value("showZ",   true);
   }
 
   // ── Clouds ──
@@ -311,7 +313,7 @@ ProjectData ProjectSerializer::MilkyWayTemplate()
     { .name="Earth",   .mass=10.f, .position={-0.6f,-0.6f,  -3.1f},  .velocity={ 0.18f, 0.022f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/earth.jpg"   },
   };
 
-  data.grid = GridData{4, 10.f, 10.f, 30, 2.f};
+  // grid uses defaults: visible=true, cellSize=1.0, radius=10, showX=true
   data.clouds.push_back(CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f, 4500.f, 0});
 
   return data;
