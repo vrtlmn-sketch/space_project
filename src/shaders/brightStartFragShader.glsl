@@ -37,10 +37,7 @@ void main() {
   float cosTheta = max(dot(norm, viewDir), 0.0);
   float limb     = 0.4 + 0.6 * cosTheta;
 
-  float dist  = max(distance(-uCamera, vPos), 0.05);
-  float scale = 2.0 / dist;
-
-  vec3 color = starColor * limb * scale;
+  vec3 color = starColor * limb;
 
   // Centre bloom highlight
   float bloom = pow(cosTheta, 8.0) * 0.6;

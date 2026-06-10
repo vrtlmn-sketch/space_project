@@ -69,9 +69,6 @@ void main() {
 
   vec3 ambient = baseColor * 0.05;
 
-  float viewDist  = max(distance(-uCamera, vPos), 0.05);
-  float distScale = 2.0 / viewDist;
-
-  vec3 color = (baseColor * totalLight + ambient) * distScale;
+  vec3 color = baseColor * totalLight + ambient;
   FragColor = vec4(color, 1.0);
 }
