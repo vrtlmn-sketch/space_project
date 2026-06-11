@@ -262,6 +262,11 @@ void Renderer::Draw(RenderedObject& ro) {
   }
 }
 
+void Renderer::DrawSkybox(RenderedObject& ro) {
+  if (rayTracerView || !spheremapEnabled) return;
+  ro.renderSkybox(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight, spheremapExposure);
+}
+
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                                   vec3 velocity, vec3 color) {
   if (!rayTracerView) {
@@ -1239,6 +1244,24 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     changed |= ImGui::Checkbox("Y##gy", &gridForm.showY); ImGui::SameLine();
     changed |= ImGui::Checkbox("Z##gz", &gridForm.showZ);
     if (changed && cb.applyGrid) cb.applyGrid(gridForm);
+  }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // ── Spheremap background ──
+  if (ImGui::CollapsingHeader("Spheremap", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Checkbox("Enabled##sm", &spheremapEnabled);
+    ImGui::Text("Exposure");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderFloat("##smexp", &spheremapExposure, 0.05f, 25.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    ImGui::Text("HDR Path");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##smpath", spheremapPathBuf, sizeof(spheremapPathBuf));
+    if (ImGui::Button("Load Spheremap", ImVec2(-1, 0))) {
+      if (cb.loadSpheremap) cb.loadSpheremap(std::string(spheremapPathBuf));
+    }
   }
 
   ImGui::Spacing();

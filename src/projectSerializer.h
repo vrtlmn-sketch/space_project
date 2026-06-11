@@ -59,6 +59,11 @@ struct SceneSettings {
   float dopplerBrightnessStr{2.0f};
   float dopplerColorStr{1.0f};
 
+  // Spheremap background (rasterized view)
+  bool        spheremapEnabled{true};
+  float       spheremapExposure{5.0f};
+  std::string spheremapPath{"assets/default_spheremap.hdr"};
+
   // Render quality
   float nebulaDetail{0.0f};
   int   rtMaxBounces{1};

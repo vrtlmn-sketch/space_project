@@ -76,6 +76,7 @@ public:
                           const std::vector<vec3>& colors);
   void uploadPlanetColor(const vec3& color);
   bool loadTexture(const std::string& path);
+  bool loadTextureHDR(const std::string& path);
   void clearTexture();
   bool textureLoaded() const { return hasTexture; }
   void uploadTemperature(float kelvin);
@@ -87,6 +88,7 @@ public:
   void renderLine(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderCloud(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderGrid(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderSkybox(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight, float exposure);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                            float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
                            vec3 color = {0.55f, 0.25f, 0.15f});

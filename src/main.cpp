@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <cmath>
+#include <cstring>
 #include <optional>
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -113,6 +114,12 @@ int main(int argc, char** argv) {
   background.SetShaders("src/shaders/raytracerVertex.glsl",
                         "src/shaders/spaceBackgroundFrag.glsl");
 
+  RenderedObject skybox;
+  skybox.GenerateMeshPlane(1, 1);
+  skybox.setupShaders("src/shaders/raytracerVertex.glsl",
+                      "src/shaders/skyboxFrag.glsl");
+  skybox.loadTextureHDR("assets/default_spheremap.hdr");
+
   // ── Scene callbacks ────────────────────────────────────────────────────────
   SceneCallbacks cb;
 
@@ -169,6 +176,10 @@ int main(int argc, char** argv) {
     clouds.push_back(std::move(cloud));
   };
 
+  cb.loadSpheremap = [&](const std::string& path) {
+    skybox.loadTextureHDR(path);
+  };
+
   cb.deleteObject = [&](int index) {
     if (index < 0 || index >= (int)physicsObjects.size()) return;
     physicsObjects.erase(physicsObjects.begin() + index);
@@ -192,6 +203,14 @@ int main(int argc, char** argv) {
     renderer.dopplerVelScale      = s.dopplerVelScale;
     renderer.dopplerBrightnessStr = s.dopplerBrightnessStr;
     renderer.dopplerColorStr      = s.dopplerColorStr;
+    renderer.spheremapEnabled  = s.spheremapEnabled;
+    renderer.spheremapExposure = s.spheremapExposure;
+    if (s.spheremapPath != std::string(renderer.spheremapPathBuf)) {
+      std::strncpy(renderer.spheremapPathBuf, s.spheremapPath.c_str(),
+                   sizeof(renderer.spheremapPathBuf) - 1);
+      renderer.spheremapPathBuf[sizeof(renderer.spheremapPathBuf) - 1] = '\0';
+      skybox.loadTextureHDR(s.spheremapPath);
+    }
     renderer.nebulaDetail  = s.nebulaDetail;
     renderer.simSpeed      = s.simSpeed;
     renderer.ramBudgetGB   = s.ramBudgetGB;
@@ -234,6 +253,9 @@ int main(int argc, char** argv) {
     s.dopplerVelScale      = renderer.dopplerVelScale;
     s.dopplerBrightnessStr = renderer.dopplerBrightnessStr;
     s.dopplerColorStr      = renderer.dopplerColorStr;
+    s.spheremapEnabled  = renderer.spheremapEnabled;
+    s.spheremapExposure = renderer.spheremapExposure;
+    s.spheremapPath     = std::string(renderer.spheremapPathBuf);
     s.nebulaDetail    = renderer.nebulaDetail;
     s.rtMaxBounces    = renderer.GetRtMaxBounces();
     s.rtMaxSteps      = renderer.GetRtMaxSteps();
@@ -314,6 +336,9 @@ int main(int argc, char** argv) {
     // In editor viewport mode, redirect all primary drawing into the viewport FBO.
     // Must happen before any draw calls so every object ends up in the FBO.
     renderer.BindViewportFBO();
+
+    // Spheremap background — drawn first, depth writes off (rasterized view only)
+    renderer.DrawSkybox(skybox);
 
     // Ghost-drag: confirm placement on click
     if (renderer.UpdateGhostDrag(renderer.spawnForm)) {
@@ -485,6 +510,7 @@ int main(int argc, char** argv) {
     renderer.BeginSecondaryPass();
 
     // Re-draw all objects into the FBO (no physics, just rendering)
+    renderer.DrawSkybox(skybox);
     for (int i = 0; i < (int)physicsObjects.size(); i++) {
       float objType = 0.0f;
       if (physicsObjects[i].shaderType == ObjectShaderType::Star)      objType = 1.0f;

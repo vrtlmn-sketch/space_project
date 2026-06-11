@@ -383,6 +383,32 @@ void RenderedObject::renderPlane(float cameraTranslate[3],
   hasBeenRendered=true;
 }
 
+void RenderedObject::renderSkybox(float cameraTranslate[3], const float viewRot[9], float fovDeg,
+                                  int fbWidth, int fbHeight, float exposure)
+{
+  if (!hasTexture) return;
+  if (!hasBeenRendered) { setupRender(); }
+
+  glBindVertexArray(vao);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), UVObjectMeshBuffer.data(), GL_STATIC_DRAW);
+  glUseProgram(program);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, textureID);
+  if (textureSamplerUniform != (unsigned int)-1)
+    glUniform1i(textureSamplerUniform, 0);
+  GLint expLoc = glGetUniformLocation(program, "uExposure");
+  if (expLoc >= 0) glUniform1f(expLoc, exposure);
+
+  // Sky is infinitely far: draw first, never write depth
+  glDepthMask(GL_FALSE);
+  glDrawArrays(GL_TRIANGLES, 0, bufferSize);
+  glDepthMask(GL_TRUE);
+  hasBeenRendered = true;
+}
+
 void RenderedObject::setupRender()
 {
   glGenVertexArrays(1, &vao);
@@ -470,6 +496,32 @@ bool RenderedObject::loadTexture(const std::string& path)
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
   glGenerateMipmap(GL_TEXTURE_2D);
   // Longitude wraps, latitude clamps (avoids pole seam artefacts)
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  stbi_image_free(data);
+
+  hasTexture = true;
+  return true;
+}
+
+bool RenderedObject::loadTextureHDR(const std::string& path)
+{
+  clearTexture();
+
+  int w, h, channels;
+  stbi_set_flip_vertically_on_load(false);
+  float* data = stbi_loadf(path.c_str(), &w, &h, &channels, 3);
+  if (!data) {
+    std::cerr << "[texture] failed to load HDR '" << path << "': " << stbi_failure_reason() << "\n";
+    return false;
+  }
+
+  glGenTextures(1, &textureID);
+  glBindTexture(GL_TEXTURE_2D, textureID);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, data);
+  glGenerateMipmap(GL_TEXTURE_2D);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);

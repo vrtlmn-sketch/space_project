@@ -83,6 +83,7 @@ struct SceneCallbacks {
   std::function<void(int cloudIdx, const CloudFormState&)> respawnCloud;
   std::function<void()>                                   saveProject;
   std::function<void(const std::string& path)>            loadProject;
+  std::function<void(const std::string& path)>            loadSpheremap;
 };
 
 class Renderer{
@@ -459,6 +460,12 @@ public:
   SpawnFormState spawnForm{};
   GridFormState  gridForm{};
   char           savePathBuf[256] = "project.json";
+
+  // ---- Spheremap background (rasterized view) ----
+  bool  spheremapEnabled{true};
+  float spheremapExposure{5.0f};
+  char  spheremapPathBuf[256] = "assets/default_spheremap.hdr";
+  void DrawSkybox(RenderedObject& ro);
 
   // Draw ALL UI for one frame — call after all scene rendering
   void DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);

@@ -93,6 +93,11 @@ bool ProjectSerializer::Save(const std::string& path,
     s["dopplerBrightnessStr"]= settings.dopplerBrightnessStr;
     s["dopplerColorStr"]     = settings.dopplerColorStr;
 
+    // Spheremap
+    s["spheremapEnabled"]  = settings.spheremapEnabled;
+    s["spheremapExposure"] = settings.spheremapExposure;
+    s["spheremapPath"]     = settings.spheremapPath;
+
     // Quality
     s["nebulaDetail"]    = settings.nebulaDetail;
     s["rtMaxBounces"]    = settings.rtMaxBounces;
@@ -243,6 +248,11 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dopplerVelScale     = s.value("dopplerVelScale",     0.5f);
     st.dopplerBrightnessStr= s.value("dopplerBrightnessStr",2.0f);
     st.dopplerColorStr     = s.value("dopplerColorStr",     1.0f);
+
+    // Spheremap
+    st.spheremapEnabled  = s.value("spheremapEnabled",  true);
+    st.spheremapExposure = s.value("spheremapExposure", 5.0f);
+    st.spheremapPath     = s.value("spheremapPath",     std::string{"assets/default_spheremap.hdr"});
 
     // Quality
     st.nebulaDetail    = s.value("nebulaDetail",    0.0f);
