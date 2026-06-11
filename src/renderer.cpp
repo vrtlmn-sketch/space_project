@@ -838,7 +838,10 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGui::End();
   }
 
-  DrawGizmoAndPick(physicsObjects);
+  // Gizmo + click-to-select only make sense over the rasterized view —
+  // the raytraced view uses its own projection (and bends light).
+  if (!raytracerIsMain)
+    DrawGizmoAndPick(physicsObjects);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1252,15 +1255,18 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
   // ── Spheremap background ──
   if (ImGui::CollapsingHeader("Spheremap", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::Checkbox("Enabled##sm", &spheremapEnabled);
+    if (ImGui::Checkbox("Enabled##sm", &spheremapEnabled))
+      rtDirty = true;
     ImGui::Text("Exposure");
     ImGui::SetNextItemWidth(-1);
-    ImGui::SliderFloat("##smexp", &spheremapExposure, 0.05f, 25.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    if (ImGui::SliderFloat("##smexp", &spheremapExposure, 0.05f, 25.0f, "%.2f", ImGuiSliderFlags_Logarithmic))
+      rtDirty = true;
     ImGui::Text("HDR Path");
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##smpath", spheremapPathBuf, sizeof(spheremapPathBuf));
     if (ImGui::Button("Load Spheremap", ImVec2(-1, 0))) {
       if (cb.loadSpheremap) cb.loadSpheremap(std::string(spheremapPathBuf));
+      rtDirty = true;
     }
   }
 
@@ -2986,6 +2992,20 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locND >= 0) glUniform1f(locND, nebulaDetail);
   }
 
+  // Skybox spheremap — applies to all 6 programs
+  {
+    bool  skyOn  = spheremapEnabled && skyboxTexID != 0;
+    GLint locSE  = glGetUniformLocation(activeProgram, "uSkyboxEnabled");
+    GLint locSX  = glGetUniformLocation(activeProgram, "uSkyboxExposure");
+    if (locSE >= 0) glUniform1i(locSE, skyOn ? 1 : 0);
+    if (locSX >= 0) glUniform1f(locSX, spheremapExposure);
+    if (skyOn) {
+      glActiveTexture(GL_TEXTURE2);
+      glBindTexture(GL_TEXTURE_2D, skyboxTexID);
+      glActiveTexture(GL_TEXTURE0);
+    }
+  }
+
   // Dispatch the full live-preview image in a single call — no strip loop.
   // Watchdog protection is only needed for recording (DispatchAndCaptureRecordingFrame
   // handles that by spreading strips across app ticks). The live preview at small
@@ -3305,6 +3325,20 @@ void Renderer::CaptureImage() {
     if (locND >= 0) glUniform1f(locND, nebulaDetail);
   }
 
+  // Skybox spheremap — applies to all 6 programs
+  {
+    bool  skyOn  = spheremapEnabled && skyboxTexID != 0;
+    GLint locSE  = glGetUniformLocation(activeProgram, "uSkyboxEnabled");
+    GLint locSX  = glGetUniformLocation(activeProgram, "uSkyboxExposure");
+    if (locSE >= 0) glUniform1i(locSE, skyOn ? 1 : 0);
+    if (locSX >= 0) glUniform1f(locSX, spheremapExposure);
+    if (skyOn) {
+      glActiveTexture(GL_TEXTURE2);
+      glBindTexture(GL_TEXTURE_2D, skyboxTexID);
+      glActiveTexture(GL_TEXTURE0);
+    }
+  }
+
   // Split dispatch into horizontal strips (same watchdog fix as DispatchRaytracer)
   GLuint gx_rec         = (w + 15) / 16;
   GLint  locTileOffY_rec = glGetUniformLocation(activeProgram, "uTileOffsetY");
@@ -3513,6 +3547,20 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   {
     GLint locND = glGetUniformLocation(activeProgram, "uNebulaDetail");
     if (locND >= 0) glUniform1f(locND, nebulaDetail);
+  }
+
+  // Skybox spheremap — applies to all 6 programs
+  {
+    bool  skyOn  = spheremapEnabled && skyboxTexID != 0;
+    GLint locSE  = glGetUniformLocation(activeProgram, "uSkyboxEnabled");
+    GLint locSX  = glGetUniformLocation(activeProgram, "uSkyboxExposure");
+    if (locSE >= 0) glUniform1i(locSE, skyOn ? 1 : 0);
+    if (locSX >= 0) glUniform1f(locSX, spheremapExposure);
+    if (skyOn) {
+      glActiveTexture(GL_TEXTURE2);
+      glBindTexture(GL_TEXTURE_2D, skyboxTexID);
+      glActiveTexture(GL_TEXTURE0);
+    }
   }
 
   GLuint gx_rec2          = (rw + 15) / 16;

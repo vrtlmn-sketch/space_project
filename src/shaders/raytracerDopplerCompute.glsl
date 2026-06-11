@@ -12,6 +12,22 @@ uniform int   uMaxBounces;
 uniform int   uTileOffsetY;
 uniform float uNebulaDetail;
 
+// Skybox spheremap — sampled by the ray's (possibly bent) escape direction
+uniform int   uSkyboxEnabled;
+uniform float uSkyboxExposure;
+layout(binding = 2) uniform sampler2D uSkybox;
+
+vec3 sampleSkybox(vec3 dir)
+{
+    if (uSkyboxEnabled == 0) return vec3(0.0);
+    dir = normalize(dir);
+    const float PI_SB = 3.14159265358979;
+    float u = atan(dir.z, dir.x) / (2.0 * PI_SB) + 0.5;
+    float v = 0.5 - asin(clamp(dir.y, -1.0, 1.0)) / PI_SB;
+    vec3 hdr = textureLod(uSkybox, vec2(u, v), 0.0).rgb * uSkyboxExposure;
+    return vec3(1.0) - exp(-hdr);
+}
+
 // Doppler effect parameters
 uniform float uDopplerVelScale;     // velocity-to-c scale (1/c in simulation units)
 uniform float uDopplerBrightnessStr; // exponent: brightness *= D^this
@@ -294,6 +310,11 @@ void main()
                 refl = reflectionBounce(ro, rd, hitPos, normal);
             color = lit + refl * 0.1;
         }
+    }
+    else
+    {
+        // Ray missed everything — skybox background
+        color = sampleSkybox(rd);
     }
 
     // -----------------------------------------------------------------------

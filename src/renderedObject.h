@@ -79,6 +79,7 @@ public:
   bool loadTextureHDR(const std::string& path);
   void clearTexture();
   bool textureLoaded() const { return hasTexture; }
+  GLuint textureHandle() const { return textureID; }
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadNebulaScatterScale(float scale);

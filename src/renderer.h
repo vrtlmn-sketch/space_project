@@ -461,10 +461,11 @@ public:
   GridFormState  gridForm{};
   char           savePathBuf[256] = "project.json";
 
-  // ---- Spheremap background (rasterized view) ----
-  bool  spheremapEnabled{true};
-  float spheremapExposure{5.0f};
-  char  spheremapPathBuf[256] = "assets/default_spheremap.hdr";
+  // ---- Spheremap background (rasterized + raytraced views) ----
+  bool   spheremapEnabled{true};
+  float  spheremapExposure{5.0f};
+  char   spheremapPathBuf[256] = "assets/default_spheremap.hdr";
+  GLuint skyboxTexID{0};  // set from main.cpp; sampled by RT compute shaders
   void DrawSkybox(RenderedObject& ro);
 
   // Draw ALL UI for one frame — call after all scene rendering

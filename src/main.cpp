@@ -119,6 +119,7 @@ int main(int argc, char** argv) {
   skybox.setupShaders("src/shaders/raytracerVertex.glsl",
                       "src/shaders/skyboxFrag.glsl");
   skybox.loadTextureHDR("assets/default_spheremap.hdr");
+  renderer.skyboxTexID = skybox.textureHandle();
 
   // ── Scene callbacks ────────────────────────────────────────────────────────
   SceneCallbacks cb;
@@ -178,6 +179,7 @@ int main(int argc, char** argv) {
 
   cb.loadSpheremap = [&](const std::string& path) {
     skybox.loadTextureHDR(path);
+    renderer.skyboxTexID = skybox.textureHandle();
   };
 
   cb.deleteObject = [&](int index) {
@@ -210,6 +212,7 @@ int main(int argc, char** argv) {
                    sizeof(renderer.spheremapPathBuf) - 1);
       renderer.spheremapPathBuf[sizeof(renderer.spheremapPathBuf) - 1] = '\0';
       skybox.loadTextureHDR(s.spheremapPath);
+      renderer.skyboxTexID = skybox.textureHandle();
     }
     renderer.nebulaDetail  = s.nebulaDetail;
     renderer.simSpeed      = s.simSpeed;

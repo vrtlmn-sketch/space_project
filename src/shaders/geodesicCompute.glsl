@@ -21,6 +21,22 @@ uniform int   uMaxSteps;     // geodesic integration steps per ray
 uniform int   uTileOffsetY;  // strip Y offset for split dispatch
 uniform float uNebulaDetail; // 0 = uniform look, 1 = max per-particle variation
 
+// Skybox spheremap — sampled by the ray's (possibly bent) escape direction
+uniform int   uSkyboxEnabled;
+uniform float uSkyboxExposure;
+layout(binding = 2) uniform sampler2D uSkybox;
+
+vec3 sampleSkybox(vec3 dir)
+{
+    if (uSkyboxEnabled == 0) return vec3(0.0);
+    dir = normalize(dir);
+    const float PI_SB = 3.14159265358979;
+    float u = atan(dir.z, dir.x) / (2.0 * PI_SB) + 0.5;
+    float v = 0.5 - asin(clamp(dir.y, -1.0, 1.0)) / PI_SB;
+    vec3 hdr = textureLod(uSkybox, vec2(u, v), 0.0).rgb * uSkyboxExposure;
+    return vec3(1.0) - exp(-hdr);
+}
+
 struct spaceObject
 {
     vec4  position;    // xyz = world pos, w unused
@@ -665,6 +681,11 @@ void main()
                 refl = reflectionBounce(ro, vel, hitPos, hitNorm);
             color = lit + refl * 0.1;
         }
+    }
+    else if (!hitScene)
+    {
+        // Escaped ray — skybox sampled with the gravitationally bent direction
+        color = sampleSkybox(vel);
     }
 
     color  = color * cloudTransmittance + nebulaScatter;
