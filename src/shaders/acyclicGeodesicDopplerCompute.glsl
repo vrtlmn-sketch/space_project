@@ -165,26 +165,47 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 
 vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor)
 {
-    vec3 ambient   = baseColor * 0.04;
-    vec3 result    = ambient;
-    vec3 viewDir   = normalize(ro - hitPos);
+    // Mirrors the rasterizer's defaultFrag.glsl lighting exactly:
+    // strong distance falloff + tiny ambient = harsh space lighting.
+    vec3 viewDir    = normalize(ro - hitPos);
+    vec3 totalLight = vec3(0.0);
+    int  lightCount = 0;
+
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
         if (otype != 1) continue;
+
         vec3  lpos  = objects[i].position.xyz;
         float lT    = objects[i].temperature;
         vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
-        vec3  ldir  = lpos - hitPos;
-        float dist2 = dot(ldir, ldir);
-        ldir = normalize(ldir);
-        float diff = max(dot(normal, ldir), 0.0);
+
+        vec3  toLight = lpos - hitPos;
+        float dist2   = dot(toLight, toLight);
+        vec3  ldir    = normalize(toLight);
+
+        float attenuation = 1.0 / max(dist2 * 0.05, 0.001);
+
+        float diff  = max(dot(normal, ldir), 0.0);
         vec3  half_ = normalize(ldir + viewDir);
         float spec  = pow(max(dot(normal, half_), 0.0), 32.0);
-        float atten = 1.0 / (1.0 + 0.0001 * dist2);
-        result += atten * lCol * (diff * baseColor + spec * 0.3);
+
+        totalLight += lCol * (diff + spec * 0.25) * attenuation;
+        lightCount++;
     }
-    return result;
+
+    // No stars in scene — fixed directional fallback (matches defaultFrag)
+    if (lightCount == 0)
+    {
+        vec3  lightDir = normalize(vec3(0.0, 1.0, 1.0) - hitPos);
+        float diff     = max(dot(normal, lightDir), 0.0);
+        vec3  reflDir  = reflect(-lightDir, normal);
+        float spec     = pow(max(dot(reflDir, viewDir), 0.0), 32.0);
+        totalLight     = vec3(1.0) * (diff + spec * 0.3);
+    }
+
+    vec3 ambient = baseColor * 0.05;
+    return baseColor * totalLight + ambient;
 }
 
 vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
