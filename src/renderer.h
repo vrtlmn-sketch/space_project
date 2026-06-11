@@ -154,6 +154,10 @@ private:
   // Framebuffer size
   int fbWidth{}, fbHeight{};
 
+  // ── RT planet texture array state ──
+  GLuint rtPlanetTexArray{0};
+  std::vector<std::string> rtTexArraySignature;
+
   // ── Compute shader raytracer ──
   GLuint rtComputeProgram{0};
   GLuint rtOutputTex{0};
@@ -467,6 +471,12 @@ public:
   char   spheremapPathBuf[256] = "assets/default_spheremap.hdr";
   GLuint skyboxTexID{0};  // set from main.cpp; sampled by RT compute shaders
   void DrawSkybox(RenderedObject& ro);
+
+  // ---- Planet texture array for the RT compute shaders ----
+  // Packs each textured planet's equirect map into one GL_TEXTURE_2D_ARRAY
+  // layer and assigns renderedObject.rtTexLayer. Rebuilds when the set of
+  // texture paths changes. Call once per frame before any RT dispatch.
+  void UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects);
 
   // Draw ALL UI for one frame — call after all scene rendering
   void DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);

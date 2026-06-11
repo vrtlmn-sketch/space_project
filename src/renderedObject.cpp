@@ -221,7 +221,7 @@ void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<R
   raytracerObjectList.push_back(RayTracerObject{
     vec4{coordinates.x, coordinates.y, coordinates.z, 0},
     mass, radius, temperature, objectType,
-    vec4{color.x, color.y, color.z, 0}});
+    vec4{color.x, color.y, color.z, (float)rtTexLayer}});
 }
 void RenderedObject::renderMeshRaytracedDoppler(float cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
@@ -230,7 +230,7 @@ void RenderedObject::renderMeshRaytracedDoppler(float cameraTranslate[3],
   list.push_back(RayTracerObjectDoppler{
     vec4{coordinates.x, coordinates.y, coordinates.z, 0},
     mass, radius, temperature, objectType,
-    vec4{color.x, color.y, color.z, 0},
+    vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{velocity.x, velocity.y, velocity.z, 0}});
 }
 

@@ -37,6 +37,19 @@ vec3 sampleSkybox(vec3 dir)
     return vec3(1.0) - exp(-hdr);
 }
 
+// Planet surface textures — equirectangular maps packed into one array texture.
+// color.w of each object holds the layer index (-1 = untextured, use flat color).
+layout(binding = 3) uniform sampler2DArray uPlanetTextures;
+
+vec3 planetBaseColor(vec4 colorLayer, vec3 n)
+{
+    if (colorLayer.w < -0.5) return colorLayer.xyz;
+    const float PI_PT = 3.14159265358979;
+    float u = fract(atan(n.z, n.x) / (2.0 * PI_PT));
+    float v = acos(clamp(n.y, -1.0, 1.0)) / PI_PT;
+    return textureLod(uPlanetTextures, vec3(u, v, colorLayer.w), 0.0).rgb;
+}
+
 struct spaceObject
 {
     vec4  position;    // xyz = world pos, w unused
@@ -675,7 +688,7 @@ void main()
         else
         {
             // Planet — Blinn-Phong shading
-            vec3 lit  = shadePlanet(ro, hitPos, hitNorm, objects[hitIdx].color.xyz);
+            vec3 lit  = shadePlanet(ro, hitPos, hitNorm, planetBaseColor(objects[hitIdx].color, hitNorm));
             vec3 refl = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, vel, hitPos, hitNorm);

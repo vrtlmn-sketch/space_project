@@ -28,6 +28,19 @@ vec3 sampleSkybox(vec3 dir)
     return vec3(1.0) - exp(-hdr);
 }
 
+// Planet surface textures — equirectangular maps packed into one array texture.
+// color.w of each object holds the layer index (-1 = untextured, use flat color).
+layout(binding = 3) uniform sampler2DArray uPlanetTextures;
+
+vec3 planetBaseColor(vec4 colorLayer, vec3 n)
+{
+    if (colorLayer.w < -0.5) return colorLayer.xyz;
+    const float PI_PT = 3.14159265358979;
+    float u = fract(atan(n.z, n.x) / (2.0 * PI_PT));
+    float v = acos(clamp(n.y, -1.0, 1.0)) / PI_PT;
+    return textureLod(uPlanetTextures, vec3(u, v, colorLayer.w), 0.0).rgb;
+}
+
 // Doppler effect parameters
 uniform float uDopplerVelScale;     // velocity-to-c scale (1/c in simulation units)
 uniform float uDopplerBrightnessStr; // exponent: brightness *= D^this
@@ -304,7 +317,7 @@ void main()
             vec3  cen    = objects[hitIdx].position.xyz;
             vec3  hitPos = ro + rd * tMin;
             vec3  normal = normalize(hitPos - cen);
-            vec3  lit    = shadePlanet(ro, hitPos, normal, objects[hitIdx].color.xyz);
+            vec3  lit    = shadePlanet(ro, hitPos, normal, planetBaseColor(objects[hitIdx].color, normal));
             vec3  refl   = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, rd, hitPos, normal);

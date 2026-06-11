@@ -63,6 +63,7 @@ private:
 public:
   MeshType meshType{MeshType::sphere};
   vec3 coordinates;
+  int  rtTexLayer{-1};  // layer in the RT planet texture array (-1 = untextured)
   float cachedTemperature{0.f};          // set by uploadTemperature(), used by renderCloudRaytraced()
   int   cachedRenderMode{0};            // set by uploadRenderMode(), used by renderCloudRaytraced()
   float cachedNebulaScatterScale{0.4f}; // set by uploadNebulaScatterScale(), used by renderCloudRaytraced()

@@ -338,6 +338,10 @@ int main(int argc, char** argv) {
 
     // In editor viewport mode, redirect all primary drawing into the viewport FBO.
     // Must happen before any draw calls so every object ends up in the FBO.
+    // Keep the RT planet texture array in sync (no-op unless textures changed).
+    // Must run before BindViewportFBO — it binds its own FBOs while blitting.
+    renderer.UpdateRtPlanetTextures(physicsObjects);
+
     renderer.BindViewportFBO();
 
     // Spheremap background — drawn first, depth writes off (rasterized view only)

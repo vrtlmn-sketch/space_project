@@ -267,6 +267,66 @@ void Renderer::DrawSkybox(RenderedObject& ro) {
   ro.renderSkybox(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight, spheremapExposure);
 }
 
+void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects) {
+  constexpr int LAYER_W = 1024, LAYER_H = 512;
+
+  std::vector<RenderedObject*> textured;
+  std::vector<std::string>     sig;
+  for (auto& obj : physicsObjects) {
+    if (obj.renderedObject.textureLoaded() && !obj.texturePath.empty()) {
+      textured.push_back(&obj.renderedObject);
+      sig.push_back(obj.texturePath);
+    } else {
+      obj.renderedObject.rtTexLayer = -1;
+    }
+  }
+
+  if (sig == rtTexArraySignature) {
+    for (int i = 0; i < (int)textured.size(); i++)
+      textured[i]->rtTexLayer = i;
+    return;
+  }
+  rtTexArraySignature = sig;
+
+  if (rtPlanetTexArray) { glDeleteTextures(1, &rtPlanetTexArray); rtPlanetTexArray = 0; }
+  if (textured.empty()) { rtDirty = true; return; }
+
+  glGenTextures(1, &rtPlanetTexArray);
+  glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
+  glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, LAYER_W, LAYER_H,
+               (GLsizei)textured.size(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+  GLuint readFbo = 0, drawFbo = 0;
+  glGenFramebuffers(1, &readFbo);
+  glGenFramebuffers(1, &drawFbo);
+
+  for (int i = 0; i < (int)textured.size(); i++) {
+    GLuint src = textured[i]->textureHandle();
+    GLint  sw = 0, sh = 0;
+    glBindTexture(GL_TEXTURE_2D, src);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,  &sw);
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &sh);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFbo);
+    glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, rtPlanetTexArray, 0, i);
+    glBlitFramebuffer(0, 0, sw, sh, 0, 0, LAYER_W, LAYER_H,
+                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+    textured[i]->rtTexLayer = i;
+  }
+
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glDeleteFramebuffers(1, &readFbo);
+  glDeleteFramebuffers(1, &drawFbo);
+  rtDirty = true;
+}
+
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                                   vec3 velocity, vec3 color) {
   if (!rayTracerView) {
@@ -3002,8 +3062,12 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (skyOn) {
       glActiveTexture(GL_TEXTURE2);
       glBindTexture(GL_TEXTURE_2D, skyboxTexID);
-      glActiveTexture(GL_TEXTURE0);
     }
+    if (rtPlanetTexArray) {
+      glActiveTexture(GL_TEXTURE3);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
+    }
+    glActiveTexture(GL_TEXTURE0);
   }
 
   // Dispatch the full live-preview image in a single call — no strip loop.
@@ -3335,8 +3399,12 @@ void Renderer::CaptureImage() {
     if (skyOn) {
       glActiveTexture(GL_TEXTURE2);
       glBindTexture(GL_TEXTURE_2D, skyboxTexID);
-      glActiveTexture(GL_TEXTURE0);
     }
+    if (rtPlanetTexArray) {
+      glActiveTexture(GL_TEXTURE3);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
+    }
+    glActiveTexture(GL_TEXTURE0);
   }
 
   // Split dispatch into horizontal strips (same watchdog fix as DispatchRaytracer)
@@ -3559,8 +3627,12 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (skyOn) {
       glActiveTexture(GL_TEXTURE2);
       glBindTexture(GL_TEXTURE_2D, skyboxTexID);
-      glActiveTexture(GL_TEXTURE0);
     }
+    if (rtPlanetTexArray) {
+      glActiveTexture(GL_TEXTURE3);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
+    }
+    glActiveTexture(GL_TEXTURE0);
   }
 
   GLuint gx_rec2          = (rw + 15) / 16;
