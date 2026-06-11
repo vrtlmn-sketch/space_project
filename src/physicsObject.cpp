@@ -117,5 +117,16 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
   float objectType = 0.0f; // default: planet
   if (shaderType == ObjectShaderType::Star)      objectType = 1.0f;
   else if (shaderType == ObjectShaderType::BlackHole) objectType = 3.0f;
+
+  // Forward atmosphere params so the RT object structs carry them
+  if (shaderType == ObjectShaderType::Planet && atmosphereEnabled) {
+    renderedObject.rtAtmoRadius    = renderRadius() * (1.0f + atmosphereHeight);
+    renderedObject.rtAtmoFalloff   = atmosphereFalloff;
+    renderedObject.rtAtmoIntensity = atmosphereIntensity;
+    renderedObject.rtAtmoScatter   = atmosphereScatter;
+  } else {
+    renderedObject.rtAtmoRadius = 0.0f;
+  }
+
   renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType, data.velocity, data.color);
 }

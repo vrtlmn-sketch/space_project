@@ -58,6 +58,8 @@ struct spaceObject
     float temperature; // Kelvin  (0 = planet/cloud)
     float objectType;  // 0=planet, 1=star, 2=cloud, 3=black hole
     vec4  color;       // xyz = RGB planet color, w unused
+    vec4  atmo;        // x = atmosphere radius (0 = none), y = falloff, z = intensity
+    vec4  atmoScatter; // xyz = per-channel scattering ratio
 };
 
 layout(std430, binding = 1) buffer Objects {
@@ -157,6 +159,88 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
     float t  = dot(oc, rd);
     vec3  closest = ro + rd * max(t, 0.0) - center;
     return dot(closest, closest);
+}
+
+// ---------------------------------------------------------------------------
+// Atmosphere shells — single-scattering raymarch along a straight ray segment.
+// Composites in-scatter over 'col' and attenuates it by the view transmittance.
+// ---------------------------------------------------------------------------
+float atmoDensity(vec3 p, vec3 cen, float pr, float ar, float falloff)
+{
+    float alt = clamp((length(p - cen) - pr) / (ar - pr), 0.0, 1.0);
+    return exp(-alt * falloff) * (1.0 - alt);
+}
+
+vec3 applyAtmospheres(vec3 ro, vec3 rd, float maxT, vec3 col)
+{
+    const int VS = 8;
+    const int LS = 4;
+    for (int i = 0; i < uObjectCount; i++)
+    {
+        float ar = objects[i].atmo.x;
+        if (ar <= 0.0) continue;
+        vec3  cen     = objects[i].position.xyz;
+        float pr      = objects[i].radius;
+        float falloff = objects[i].atmo.y;
+        float inten   = objects[i].atmo.z;
+        vec3  coeffs  = objects[i].atmoScatter.xyz * 2.0;
+
+        vec3  oc = ro - cen;
+        float b  = dot(oc, rd);
+        float dd = b * b - (dot(oc, oc) - ar * ar);
+        if (dd < 0.0) continue;
+        float s  = sqrt(dd);
+        float t0 = max(-b - s, 0.0);
+        float t1 = min(-b + s, maxT);
+        // Epsilon guards against self-intersection when the ray starts
+        // exactly on the planet surface (geodesic backward march).
+        float tp = raySphere(ro, rd, cen, pr);
+        if (tp > ar * 1e-3) t1 = min(t1, tp);
+        if (t1 <= t0) continue;
+
+        float thick   = ar - pr;
+        float stepLen = (t1 - t0) / float(VS);
+        vec3  p       = ro + rd * (t0 + stepLen * 0.5);
+        vec3  inScatter = vec3(0.0);
+        float viewOD    = 0.0;
+
+        for (int v = 0; v < VS; v++)
+        {
+            float dens = atmoDensity(p, cen, pr, ar, falloff);
+            viewOD += dens * stepLen / thick;
+
+            for (int L = 0; L < uObjectCount; L++)
+            {
+                if (int(objects[L].objectType + 0.5) != 1) continue;
+                vec3 ldir = normalize(objects[L].position.xyz - p);
+                if (raySphere(p, ldir, cen, pr) > 0.0) continue; // planet shadow
+
+                vec3  oc2  = p - cen;
+                float b2   = dot(oc2, ldir);
+                float dd2  = b2 * b2 - (dot(oc2, oc2) - ar * ar);
+                float lLen = -b2 + sqrt(max(dd2, 0.0));
+                float ls   = lLen / float(LS);
+                vec3  lp   = p + ldir * ls * 0.5;
+                float lOD  = 0.0;
+                for (int m = 0; m < LS; m++)
+                {
+                    lOD += atmoDensity(lp, cen, pr, ar, falloff) * ls;
+                    lp  += ldir * ls;
+                }
+                lOD /= thick;
+
+                float mu    = dot(rd, ldir);
+                float phase = 0.75 * (1.0 + mu * mu);
+                vec3  lcol  = (objects[L].temperature > 100.0)
+                              ? blackbody(objects[L].temperature) : vec3(1.0);
+                inScatter += lcol * exp(-(viewOD + lOD) * coeffs)
+                           * dens * (stepLen / thick) * phase;
+            }
+            p += rd * stepLen;
+        }
+        col = col * exp(-viewOD * coeffs) + inScatter * coeffs * inten;
+    }
+    return col;
 }
 
 // ---------------------------------------------------------------------------
@@ -1071,6 +1155,22 @@ void main()
     {
         // Escaped ray — skybox sampled with the gravitationally bent direction
         color = sampleSkybox(finalVel);
+    }
+
+    // Atmosphere shells (approximated along the final straight ray)
+    if (hitScene && hitIdx >= 0)
+        color = applyAtmospheres(hitPos, -finalVel, length(ro - hitPos), color);
+    else if (!hitScene)
+    {
+        // Nearly straight rays: march the true camera ray so atmospheres away
+        // from the black hole render exactly like the simple raytracer.
+        // Strongly bent rays: march the post-bend escape line (lensed image).
+        float dBH2  = closestApproachDist2(ro, rd, uBHPos);
+        float bendR = 8.0 * BH_RS;
+        if (dBH2 > bendR * bendR)
+            color = applyAtmospheres(ro, rd, 1e9, color);
+        else
+            color = applyAtmospheres(finalPos, finalVel, 1e9, color);
     }
 
     color  = color * cloudTransmittance + nebulaScatter;
