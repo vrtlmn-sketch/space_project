@@ -409,6 +409,45 @@ void RenderedObject::renderSkybox(float cameraTranslate[3], const float viewRot[
   hasBeenRendered = true;
 }
 
+void RenderedObject::renderAtmosphere(float cameraTranslate[3], const float viewRot[9], float fovDeg,
+                                      int fbWidth, int fbHeight,
+                                      float planetRadius, float atmoRadius,
+                                      float falloff, float intensity, vec3 scatter)
+{
+  if (!hasBeenRendered) {
+    setupRender();
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size() * sizeof(float),
+                 UVObjectMeshBuffer.data(), GL_STATIC_DRAW);
+    hasBeenRendered = true;
+  }
+  glBindVertexArray(vao);
+  glUseProgram(program);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+
+  glUniform1f(glGetUniformLocation(program, "uPlanetRadius"),     planetRadius);
+  glUniform1f(glGetUniformLocation(program, "uAtmosphereRadius"), atmoRadius);
+  glUniform1f(glGetUniformLocation(program, "uDensityFalloff"),   falloff);
+  glUniform1f(glGetUniformLocation(program, "uIntensity"),        intensity);
+  glUniform3f(glGetUniformLocation(program, "uScatterColor"),     scatter.x, scatter.y, scatter.z);
+
+  // Back faces only so the shell renders from inside the atmosphere too.
+  // Occlusion is handled analytically in the shader; no depth interaction.
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glEnable(GL_CULL_FACE);
+  glCullFace(GL_FRONT);
+  glDisable(GL_DEPTH_TEST);
+  glDepthMask(GL_FALSE);
+
+  glDrawArrays(GL_TRIANGLES, 0, bufferSize);
+
+  glDepthMask(GL_TRUE);
+  glEnable(GL_DEPTH_TEST);
+  glDisable(GL_CULL_FACE);
+  glDisable(GL_BLEND);
+}
+
 void RenderedObject::setupRender()
 {
   glGenVertexArrays(1, &vao);

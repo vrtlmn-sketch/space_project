@@ -38,6 +38,19 @@ PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position, float m
   }
 }
 
+void PhysicsObject::EnsureAtmosphere()
+{
+  float want = renderRadius() * (1.0f + atmosphereHeight);
+  if (atmosphereObject.meshType == MeshType::sphere &&
+      std::abs(atmosphereObject.sphereRadius() - want) < 1e-7f &&
+      atmosphereObject.shadersReady())
+    return;
+  atmosphereObject.GenerateMeshSphere(want, 24, 24);
+  if (!atmosphereObject.shadersReady())
+    atmosphereObject.setupShaders("src/shaders/defaultVert.glsl",
+                                  "src/shaders/atmosphereFrag.glsl");
+}
+
 void PhysicsObject::setTimeframeAndRestore(unsigned int frame)
 {
   if(frameStore.totalFrames() == 0) return;

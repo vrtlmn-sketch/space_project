@@ -267,6 +267,18 @@ void Renderer::DrawSkybox(RenderedObject& ro) {
   ro.renderSkybox(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight, spheremapExposure);
 }
 
+void Renderer::DrawAtmosphere(PhysicsObject& obj) {
+  if (rayTracerView) return;
+  if (!obj.atmosphereEnabled || obj.shaderType != ObjectShaderType::Planet) return;
+  obj.EnsureAtmosphere();
+  obj.atmosphereObject.coordinates = obj.data.position;
+  float r = obj.renderRadius();
+  obj.atmosphereObject.renderAtmosphere(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight,
+                                        r, r * (1.0f + obj.atmosphereHeight),
+                                        obj.atmosphereFalloff, obj.atmosphereIntensity,
+                                        obj.atmosphereScatter);
+}
+
 void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects) {
   constexpr int LAYER_W = 1024, LAYER_H = 512;
 
@@ -2122,6 +2134,29 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
             obj.renderedObject.clearTexture();
           else
             obj.renderedObject.loadTexture(obj.texturePath);
+        }
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Atmosphere");
+        ImGui::Checkbox("Enabled##iatm", &obj.atmosphereEnabled);
+        if (obj.atmosphereEnabled) {
+          ImGui::Text("Height");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##iatmh", &obj.atmosphereHeight, 0.05f, 1.0f, "%.2f");
+          ImGui::Text("Density Falloff");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##iatmf", &obj.atmosphereFalloff, 0.5f, 15.0f, "%.1f");
+          ImGui::Text("Intensity");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##iatmi", &obj.atmosphereIntensity, 0.05f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+          ImGui::Text("Scatter Color");
+          float atmCol[3] = { obj.atmosphereScatter.x, obj.atmosphereScatter.y, obj.atmosphereScatter.z };
+          ImGui::SetNextItemWidth(-1);
+          if (ImGui::ColorEdit3("##iatmc", atmCol, ImGuiColorEditFlags_Float)) {
+            obj.atmosphereScatter.x = atmCol[0];
+            obj.atmosphereScatter.y = atmCol[1];
+            obj.atmosphereScatter.z = atmCol[2];
+          }
         }
       }
     }

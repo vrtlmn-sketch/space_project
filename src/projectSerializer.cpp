@@ -35,6 +35,11 @@ bool ProjectSerializer::Save(const std::string& path,
     o["schwarzschildRadius"] = obj.schwarzschildRadius;
     o["color"]       = vec3ToJson(obj.data.color);
     o["texturePath"] = obj.texturePath;
+    o["atmosphereEnabled"]   = obj.atmosphereEnabled;
+    o["atmosphereHeight"]    = obj.atmosphereHeight;
+    o["atmosphereFalloff"]   = obj.atmosphereFalloff;
+    o["atmosphereIntensity"] = obj.atmosphereIntensity;
+    o["atmosphereColor"]     = vec3ToJson(obj.atmosphereScatter);
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -181,6 +186,13 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.schwarzschildRadius = o.value("schwarzschildRadius", 2.0f * 0.0001f * pod.mass);
       pod.color       = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
       pod.texturePath = o.value("texturePath", std::string{});
+      pod.atmosphereEnabled   = o.value("atmosphereEnabled",   false);
+      pod.atmosphereHeight    = o.value("atmosphereHeight",    0.25f);
+      pod.atmosphereFalloff   = o.value("atmosphereFalloff",   4.0f);
+      pod.atmosphereIntensity = o.value("atmosphereIntensity", 1.0f);
+      pod.atmosphereColor     = o.contains("atmosphereColor")
+                                ? jsonToVec3(o["atmosphereColor"])
+                                : vec3{0.175f, 0.41f, 1.0f};
       data.objects.push_back(pod);
     }
   }
@@ -320,7 +332,7 @@ ProjectData ProjectSerializer::MilkyWayTemplate()
     { "Sol",             15.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  1,  5778.f,  0.003f },
     { .name="Mars",    .mass=10.f, .position={-0.7f, 0.0f,  -3.7f},  .velocity={-0.18f, 0.002f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/mars.jpg"    },
     { .name="Mercury", .mass=2.f,  .position={ 0.7f, 0.0f,  -3.7f},  .velocity={-0.13f, 0.004f,  0.0f }, .shaderType=0, .schwarzschildRadius=0.0004f, .texturePath="assets/mercury.jpg" },
-    { .name="Earth",   .mass=10.f, .position={-0.6f,-0.6f,  -3.1f},  .velocity={ 0.18f, 0.022f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/earth.jpg"   },
+    { .name="Earth",   .mass=10.f, .position={-0.6f,-0.6f,  -3.1f},  .velocity={ 0.18f, 0.022f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/earth.jpg", .atmosphereEnabled=true },
   };
 
   // grid uses defaults: visible=true, cellSize=1.0, radius=10, showX=true

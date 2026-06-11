@@ -17,6 +17,11 @@ struct PhysicsObjectData {
   float schwarzschildRadius{0.0f}; // 0 = compute from mass (2*G*m)
   vec3  color{0.55f, 0.25f, 0.15f}; // planet RGB color
   std::string texturePath{};         // path to optional surface texture (empty = none)
+  bool  atmosphereEnabled{false};
+  float atmosphereHeight{0.25f};
+  float atmosphereFalloff{4.0f};
+  float atmosphereIntensity{1.0f};
+  vec3  atmosphereColor{0.175f, 0.41f, 1.0f};
 };
 
 struct GridData {

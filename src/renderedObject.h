@@ -81,6 +81,8 @@ public:
   void clearTexture();
   bool textureLoaded() const { return hasTexture; }
   GLuint textureHandle() const { return textureID; }
+  float sphereRadius() const { return radius; }
+  bool  shadersReady() const { return program != 0; }
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadNebulaScatterScale(float scale);
@@ -91,6 +93,8 @@ public:
   void renderCloud(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderGrid(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderSkybox(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight, float exposure);
+  void renderAtmosphere(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
+                        float planetRadius, float atmoRadius, float falloff, float intensity, vec3 scatter);
   void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                            float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
                            vec3 color = {0.55f, 0.25f, 0.15f});

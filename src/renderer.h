@@ -472,6 +472,9 @@ public:
   GLuint skyboxTexID{0};  // set from main.cpp; sampled by RT compute shaders
   void DrawSkybox(RenderedObject& ro);
 
+  // Draw a planet's atmosphere shell (rasterized view only, no-op otherwise)
+  void DrawAtmosphere(PhysicsObject& obj);
+
   // ---- Planet texture array for the RT compute shaders ----
   // Packs each textured planet's equirect map into one GL_TEXTURE_2D_ARRAY
   // layer and assigns renderedObject.rtTexLayer. Rebuilds when the set of

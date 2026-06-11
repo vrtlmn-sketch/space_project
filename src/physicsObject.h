@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <cmath>
 #include "renderedObject.h"
 #include "mathStructs.h"
 #include "renderer.h"
@@ -25,6 +26,17 @@ public:
   float temperature{0.0f}; // Kelvin — 0 for planets; e.g. 5778 for Sun
   float schwarzschildRadius{0.05f}; // event horizon radius (editable, default = 2*G*250)
   std::string texturePath{}; // path to optional planet surface texture (empty = none)
+
+  // ---- Atmosphere (planets only) ----
+  bool  atmosphereEnabled{false};
+  float atmosphereHeight{0.25f};    // shell thickness as fraction of planet radius
+  float atmosphereFalloff{4.0f};    // altitude density exponent
+  float atmosphereIntensity{1.0f};
+  vec3  atmosphereScatter{0.175f, 0.41f, 1.0f}; // Rayleigh-like per-channel ratio
+  RenderedObject atmosphereObject;
+
+  float renderRadius() const { return 0.014f * std::pow(data.mass, 0.3f); }
+  void  EnsureAtmosphere();   // (re)build shell mesh + shaders when needed
 
   void SetVelocity(const vec3& velocity);
   void Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);

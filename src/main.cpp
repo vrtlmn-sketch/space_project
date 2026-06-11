@@ -71,6 +71,13 @@ static void buildScene(
       physicsObjects.back().texturePath = pod.texturePath;
       physicsObjects.back().renderedObject.loadTexture(pod.texturePath);
     }
+    auto& po = physicsObjects.back();
+    po.atmosphereEnabled   = pod.atmosphereEnabled;
+    po.atmosphereHeight    = pod.atmosphereHeight;
+    po.atmosphereFalloff   = pod.atmosphereFalloff;
+    po.atmosphereIntensity = pod.atmosphereIntensity;
+    po.atmosphereScatter   = pod.atmosphereColor;
+    if (po.atmosphereEnabled) po.EnsureAtmosphere();
   }
   for (auto& obj : physicsObjects)
     lineObjects.emplace_back(vec3{obj.data.position});
@@ -378,6 +385,10 @@ int main(int argc, char** argv) {
     for (auto& obj : physicsObjects) {
       if (obj.shaderType == ObjectShaderType::Planet && !starPositions.empty()) {
         obj.renderedObject.uploadStarLighting(starPositions, starColors);
+        if (obj.atmosphereEnabled) {
+          obj.EnsureAtmosphere();
+          obj.atmosphereObject.uploadStarLighting(starPositions, starColors);
+        }
       }
       if (obj.shaderType == ObjectShaderType::Star) {
         obj.renderedObject.uploadTemperature(obj.temperature);
@@ -424,6 +435,10 @@ int main(int argc, char** argv) {
 
     for (auto& c : clouds)
       c->Update(renderer, physData);
+
+    // Atmosphere shells — blended pass after all solid geometry
+    for (auto& obj : physicsObjects)
+      renderer.DrawAtmosphere(obj);
 
     if (recOverridePause) renderer.paused = savedPaused;
 
@@ -537,6 +552,8 @@ int main(int argc, char** argv) {
       c->renderedObject.uploadRenderMode(c->renderMode);
       renderer.Draw(c->renderedObject);
     }
+    for (auto& obj : physicsObjects)
+      renderer.DrawAtmosphere(obj);
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO
