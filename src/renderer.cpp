@@ -1042,6 +1042,9 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
           gizmoDragging      = true;
           gizmoDragAxis      = hovAxis;
           gizmoConsumedClick = true;
+          // Kill any active widget (e.g. a half-finished inspector text edit)
+          // so it can neither show stale values nor commit them over the drag.
+          ImGui::ClearActiveID();
         }
 
         // ── Apply drag ───────────────────────────────────────────────────────
@@ -2071,9 +2074,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::Text("Position");
     ImGui::SetNextItemWidth(-1);
     float p[3] = { obj.data.position.x, obj.data.position.y, obj.data.position.z };
+    // While the gizmo drags, give the widget a fresh ID each frame so it can
+    // never hold stale edit state — the display then always tracks the gizmo.
+    if (gizmoDragging) ImGui::PushID(ImGui::GetFrameCount());
     if (ImGui::DragFloat3("##ipos", p, 0.005f, -50.f, 50.f, "%.3f")) {
       obj.data.position.x = p[0]; obj.data.position.y = p[1]; obj.data.position.z = p[2];
     }
+    if (gizmoDragging) ImGui::PopID();
     obj.renderedObject.coordinates = obj.data.position;
 
     // Velocity
