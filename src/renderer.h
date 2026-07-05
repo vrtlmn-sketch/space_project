@@ -136,6 +136,10 @@ private:
   void DrawObjectHighlight(PhysicsObject& obj);
   int  highlightMode{0};  // 0 = selected only, 1 = all objects, 2 = none
 
+  // Distance from camera to the selected object (-1 = nothing selected).
+  // Updated each frame in DrawUI; drives distance-adaptive camera speed.
+  float focusDistance{-1.0f};
+
   // UI internal state
   bool         showSpawnPanel{false};
   bool         showScenePanel{false};
@@ -373,6 +377,7 @@ public:
   float pitch{};
   float roll{};
   float zoom{45.0f}; // FOV in degrees (lower = zoomed in)
+  float cameraSpeedFactor{1.0f}; // user multiplier for camera move speed
   void syncMatrixFromEuler();   // rebuild camMatrix from rotation/pitch/roll
 
   // ---- Simulation state ----

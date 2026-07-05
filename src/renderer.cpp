@@ -387,23 +387,49 @@ bool Renderer::UpdateInputs() {
   }
 
   if (!io.WantTextInput) {
+    // ── Distance-adaptive move speed ──
+    // With a selected object: step = factor · d^exponent (normalised so that
+    // factor 1.0 at d = 3 matches the old fixed speed). Slow near planets,
+    // fast in open space. No selection: constant speed (factor still applies).
+    // kSpeedGain: UI shows 1.0x but the effective multiplier is UI · 1.2.
+    constexpr float kSpeedGain = 1.2f;
+    float userFactor = cameraSpeedFactor * kSpeedGain;
+
+    // Gentle zoom scaling for movement: sqrt curve so deep zoom damps flying
+    // without making travel unbearably slow (45° → 1x, 5° → 0.33x, 0.5° → 0.1x)
+    float zoomScale = std::clamp(std::sqrt(zoom / 45.0f), 0.1f, 1.3f);
+
+    float moveStep = cameraSpeed * userFactor * zoomScale;
+    if (focusDistance > 0.0f) {
+      constexpr float kExponent = 1.0f;
+      moveStep = std::clamp(
+        cameraSpeed * userFactor * zoomScale * std::pow(focusDistance / 3.0f, kExponent),
+        0.0005f, 0.3f);
+    }
+
+    // ── Zoom-adaptive pan speed ──
+    // Rotation scales with FOV: zoomed in = slower panning, so one keypress
+    // never throws the target out of a narrow view.
+    float rotStep = std::clamp(cameraRotationSpeed * (zoom / 45.0f),
+                               0.0005f, cameraRotationSpeed * 2.0f);
+
     // WASD = position movement (yaw-aware, horizontal plane)
-    if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  cameraSpeed});
-    if (glfwGetKey(window, GLFW_KEY_S)          == GLFW_PRESS) move(vec3{0,  0, -cameraSpeed});
-    if (glfwGetKey(window, GLFW_KEY_A)          == GLFW_PRESS) move(vec3{ cameraSpeed, 0, 0});
-    if (glfwGetKey(window, GLFW_KEY_D)          == GLFW_PRESS) move(vec3{-cameraSpeed, 0, 0});
+    if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  moveStep});
+    if (glfwGetKey(window, GLFW_KEY_S)          == GLFW_PRESS) move(vec3{0,  0, -moveStep});
+    if (glfwGetKey(window, GLFW_KEY_A)          == GLFW_PRESS) move(vec3{ moveStep, 0, 0});
+    if (glfwGetKey(window, GLFW_KEY_D)          == GLFW_PRESS) move(vec3{-moveStep, 0, 0});
     // Space = down, Shift = up
-    if (glfwGetKey(window, GLFW_KEY_SPACE)      == GLFW_PRESS) move(vec3{0, -cameraSpeed, 0});
-    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) move(vec3{0,  cameraSpeed, 0});
+    if (glfwGetKey(window, GLFW_KEY_SPACE)      == GLFW_PRESS) move(vec3{0, -moveStep, 0});
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) move(vec3{0,  moveStep, 0});
 
     // Arrow keys + roll = camera-local rotation via matrix
     float dyaw = 0, dpitch = 0, droll = 0;
-    if (glfwGetKey(window, GLFW_KEY_LEFT)   == GLFW_PRESS) dyaw   -= cameraRotationSpeed;
-    if (glfwGetKey(window, GLFW_KEY_RIGHT)  == GLFW_PRESS) dyaw   += cameraRotationSpeed;
-    if (glfwGetKey(window, GLFW_KEY_UP)     == GLFW_PRESS) dpitch -= cameraRotationSpeed;
-    if (glfwGetKey(window, GLFW_KEY_DOWN)   == GLFW_PRESS) dpitch += cameraRotationSpeed;
-    if (glfwGetKey(window, GLFW_KEY_COMMA)  == GLFW_PRESS) droll  -= cameraRotationSpeed;
-    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) droll  += cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_LEFT)   == GLFW_PRESS) dyaw   -= rotStep;
+    if (glfwGetKey(window, GLFW_KEY_RIGHT)  == GLFW_PRESS) dyaw   += rotStep;
+    if (glfwGetKey(window, GLFW_KEY_UP)     == GLFW_PRESS) dpitch -= rotStep;
+    if (glfwGetKey(window, GLFW_KEY_DOWN)   == GLFW_PRESS) dpitch += rotStep;
+    if (glfwGetKey(window, GLFW_KEY_COMMA)  == GLFW_PRESS) droll  -= rotStep;
+    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) droll  += rotStep;
     if (dyaw != 0 || dpitch != 0 || droll != 0)
       rotateCamera(dyaw, dpitch, droll);
 
@@ -753,6 +779,16 @@ static std::string PrettyTexLabel(const std::string& filename) {
 // DrawUI  — master call: fullscreen dockspace + programmatic layout + all panels
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
+  // ── Focus distance (drives distance-adaptive camera speed) ──
+  focusDistance = -1.0f;
+  if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
+    const vec3& p = physicsObjects[selectedIdx].data.position;
+    float dx = p.x + cameraTranslate[0];
+    float dy = p.y + cameraTranslate[1];
+    float dz = p.z + cameraTranslate[2];
+    focusDistance = std::sqrt(dx*dx + dy*dy + dz*dz);
+  }
+
   // ── Fullscreen DockSpace ──
   ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -1315,6 +1351,22 @@ void Renderer::DrawControlsPanel() {
 void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Rendering Settings", nullptr, flags);
+
+  // ── Camera ──
+  ImGui::Text("Camera Speed");
+  ImGui::SetNextItemWidth(-60);
+  ImGui::SliderFloat("##camspeed", &cameraSpeedFactor, 0.05f, 10.0f, "%.2fx",
+                     ImGuiSliderFlags_Logarithmic);
+  ImGui::SameLine();
+  if (ImGui::Button("Reset##camspeed")) cameraSpeedFactor = 1.0f;
+  if (focusDistance > 0.0f)
+    ImGui::TextDisabled("Adaptive: scaling with focus distance");
+  else
+    ImGui::TextDisabled("Constant (nothing selected)");
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
 
   // ── Rendering method ──
   ImGui::Text("Rendering Method");
