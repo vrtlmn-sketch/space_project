@@ -21,7 +21,8 @@ PhysicsObject::PhysicsObject(const vec3& velocity, const vec3& position, float m
   this->temperature=temp;
   // Default Schwarzschild radius: rs = 2*G*mass (G = 0.0001)
   this->schwarzschildRadius = 2.0f * 0.0001f * mass;
-  renderedObject.GenerateMeshSphere(.014f*std::pow(data.mass, 0.3f), 32, 32);
+  this->visualRadius = defaultRadiusForMass(mass);
+  renderedObject.GenerateMeshSphere(visualRadius, 32, 32);
   renderedObject.coordinates = data.position;
   if(sType == ObjectShaderType::Star)
   {

@@ -35,7 +35,12 @@ public:
   vec3  atmosphereScatter{0.175f, 0.41f, 1.0f}; // Rayleigh-like per-channel ratio
   RenderedObject atmosphereObject;
 
-  float renderRadius() const { return 0.014f * std::pow(data.mass, 0.3f); }
+  // Visual size, decoupled from mass (mass only drives gravity).
+  // Defaults to the old mass-derived formula at construction.
+  float visualRadius{0.0f};
+
+  float renderRadius() const { return visualRadius; }
+  static float defaultRadiusForMass(float m) { return 0.014f * std::pow(m, 0.3f); }
   void  EnsureAtmosphere();   // (re)build shell mesh + shaders when needed
 
   void SetVelocity(const vec3& velocity);

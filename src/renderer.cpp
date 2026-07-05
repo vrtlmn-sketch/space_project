@@ -2092,10 +2092,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                                          "src/shaders/defaultFrag.glsl");
     }
 
-    // Mass
+    // Mass — gravity only, no longer tied to visual size
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::DragFloat("Mass##i", &obj.data.mass, 0.5f, 0.1f, 5000.f, "%.1f"))
-      obj.renderedObject.GenerateMeshSphere(0.014f * std::pow(obj.data.mass, 0.3f), 32, 32);
+    ImGui::DragFloat("Mass##i", &obj.data.mass, 0.5f, 0.1f, 5000.f, "%.1f");
+
+    // Size — visual radius, independent of mass
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::DragFloat("Size##i", &obj.visualRadius, 0.0005f, 0.001f, 2.0f, "%.4f"))
+      obj.renderedObject.GenerateMeshSphere(obj.visualRadius, 32, 32);
 
     ImGui::Spacing();
     ImGui::SeparatorText("Transform");

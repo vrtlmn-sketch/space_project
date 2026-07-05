@@ -72,6 +72,10 @@ static void buildScene(
       physicsObjects.back().renderedObject.loadTexture(pod.texturePath);
     }
     auto& po = physicsObjects.back();
+    if (pod.visualRadius > 0.0f) {
+      po.visualRadius = pod.visualRadius;
+      po.renderedObject.GenerateMeshSphere(pod.visualRadius, 32, 32);
+    }
     po.atmosphereEnabled   = pod.atmosphereEnabled;
     po.atmosphereHeight    = pod.atmosphereHeight;
     po.atmosphereFalloff   = pod.atmosphereFalloff;

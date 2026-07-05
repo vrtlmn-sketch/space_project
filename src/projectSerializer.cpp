@@ -33,8 +33,9 @@ bool ProjectSerializer::Save(const std::string& path,
     o["shaderType"]  = static_cast<int>(obj.shaderType);
     o["temperature"] = obj.temperature;
     o["schwarzschildRadius"] = obj.schwarzschildRadius;
-    o["color"]       = vec3ToJson(obj.data.color);
-    o["texturePath"] = obj.texturePath;
+    o["color"]        = vec3ToJson(obj.data.color);
+    o["texturePath"]  = obj.texturePath;
+    o["visualRadius"] = obj.visualRadius;
     o["atmosphereEnabled"]   = obj.atmosphereEnabled;
     o["atmosphereHeight"]    = obj.atmosphereHeight;
     o["atmosphereFalloff"]   = obj.atmosphereFalloff;
@@ -185,7 +186,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.temperature = o.value("temperature",  0.0f);
       pod.schwarzschildRadius = o.value("schwarzschildRadius", 2.0f * 0.0001f * pod.mass);
       pod.color       = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
-      pod.texturePath = o.value("texturePath", std::string{});
+      pod.texturePath  = o.value("texturePath", std::string{});
+      pod.visualRadius = o.value("visualRadius", 0.0f);
       pod.atmosphereEnabled   = o.value("atmosphereEnabled",   false);
       pod.atmosphereHeight    = o.value("atmosphereHeight",    0.25f);
       pod.atmosphereFalloff   = o.value("atmosphereFalloff",   4.0f);
