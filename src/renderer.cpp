@@ -1130,44 +1130,16 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
         dl->AddCircleFilled({bx,by}, cr, IM_COL32(220,220,220,210));
         dl->AddCircle({bx,by}, cr, IM_COL32(150,150,150,255), 16, 1.5f);
 
-        // ── Selection overlay: white outline + name/distance label ──────────
-        {
-          float effR = obj.renderRadius();
-          if (obj.shaderType == ObjectShaderType::BlackHole)
-            effR = std::max(effR, obj.schwarzschildRadius * 2.6f);
-
-          // Screen radius: project a point one visual radius along camera-right
-          float circR = 14.0f;
-          float esx, esy;
-          if (WorldToScreen({pos.x + camMatrix[0]*effR,
-                             pos.y + camMatrix[1]*effR,
-                             pos.z + camMatrix[2]*effR}, esx, esy)) {
-            float dx = esx - bx, dy = esy - by;
-            circR = std::max(std::sqrt(dx*dx + dy*dy) + 6.0f, 14.0f);
-          }
-          dl->AddCircle({bx, by}, circR, IM_COL32(255, 255, 255, 200), 48, 1.5f);
-
-          // Live camera distance (display scale: 1 world unit = 200,000 km,
-          // which makes the default Earth ~5,600 km in radius)
-          constexpr double kKmPerUnit = 200000.0;
-          float ddx = pos.x + cameraTranslate[0];
-          float ddy = pos.y + cameraTranslate[1];
-          float ddz = pos.z + cameraTranslate[2];
-          double km = std::sqrt(ddx*ddx + ddy*ddy + ddz*ddz) * kKmPerUnit;
-
-          char label[160];
-          if (km >= 1.0e6)
-            snprintf(label, sizeof(label), "%s · %.2fM km", obj.name.c_str(), km / 1.0e6);
-          else
-            snprintf(label, sizeof(label), "%s · %.0f km", obj.name.c_str(), km);
-
-          ImVec2 ts = ImGui::CalcTextSize(label);
-          ImVec2 tp = {bx - ts.x * 0.5f, by - circR - ts.y - 6.0f};
-          dl->AddText({tp.x + 1, tp.y + 1}, IM_COL32(0, 0, 0, 200), label);
-          dl->AddText(tp, IM_COL32(255, 255, 255, 235), label);
-        }
       }
     }
+  }
+
+  // ── Highlights: outline + name/distance overlays ──────────────────────────
+  if (highlightMode == 1) {
+    for (auto& o : physicsObjects) DrawObjectHighlight(o);
+  } else if (highlightMode == 0 &&
+             selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
+    DrawObjectHighlight(physicsObjects[selectedIdx]);
   }
 
   // ── Click-to-select ──────────────────────────────────────────────────────────
@@ -1186,7 +1158,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
         if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
       }
     }
-    if (bestIdx >= 0) selectedIdx = bestIdx;
+    if (bestIdx >= 0) { selectedIdx = bestIdx; highlightMode = 0; }
   }
 }
 
@@ -2056,8 +2028,10 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     char cloudLabel[80];
     snprintf(cloudLabel, sizeof(cloudLabel), "[~] Cloud %d  (%d)##cloud%d",
              i, clouds[i]->particleCount(), i);
-    if (ImGui::Selectable(cloudLabel, cloudSel))
-      selectedIdx = cloudSel ? -1 : sentinel;
+    if (ImGui::Selectable(cloudLabel, cloudSel)) {
+      selectedIdx   = cloudSel ? -1 : sentinel;
+      highlightMode = 0;
+    }
     ImGui::PopStyleColor();
   }
 
@@ -2076,9 +2050,19 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
         ? ImVec4(0.12f, 0.06f, 0.18f, 1.f)
         : ImVec4(0.08f, 0.14f, 0.26f, 1.f);
     ImGui::PushStyleColor(ImGuiCol_Header, headerCol);
-    if (ImGui::Selectable(label, sel))
-      selectedIdx = sel ? -1 : i;
+    if (ImGui::Selectable(label, sel)) {
+      selectedIdx   = sel ? -1 : i;
+      highlightMode = 0;
+    }
     ImGui::PopStyleColor();
+  }
+
+  ImGui::Spacing();
+  {
+    float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Show All##hl", ImVec2(half, 0))) highlightMode = 1;
+    ImGui::SameLine();
+    if (ImGui::Button("Hide All##hl", ImVec2(-1, 0)))   highlightMode = 2;
   }
 
   ImGui::End();
@@ -2535,6 +2519,51 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
     return true; // signal: spawn the object
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawObjectHighlight — white outline + name/distance label for one object
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
+  vec3 pos = obj.data.position;
+  float bx, by;
+  if (!WorldToScreen(pos, bx, by)) return;
+
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+
+  float effR = obj.renderRadius();
+  if (obj.shaderType == ObjectShaderType::BlackHole)
+    effR = std::max(effR, obj.schwarzschildRadius * 2.6f);
+
+  // Screen radius: project a point one visual radius along camera-right
+  float circR = 14.0f;
+  float esx, esy;
+  if (WorldToScreen({pos.x + camMatrix[0]*effR,
+                     pos.y + camMatrix[1]*effR,
+                     pos.z + camMatrix[2]*effR}, esx, esy)) {
+    float dx = esx - bx, dy = esy - by;
+    circR = std::max(std::sqrt(dx*dx + dy*dy) + 6.0f, 14.0f);
+  }
+  dl->AddCircle({bx, by}, circR, IM_COL32(255, 255, 255, 200), 48, 1.5f);
+
+  // Live camera distance (display scale: 1 world unit = 200,000 km,
+  // which makes the default Earth ~5,600 km in radius)
+  constexpr double kKmPerUnit = 200000.0;
+  float ddx = pos.x + cameraTranslate[0];
+  float ddy = pos.y + cameraTranslate[1];
+  float ddz = pos.z + cameraTranslate[2];
+  double km = std::sqrt(ddx*ddx + ddy*ddy + ddz*ddz) * kKmPerUnit;
+
+  char label[160];
+  if (km >= 1.0e6)
+    snprintf(label, sizeof(label), "%s · %.2fM km", obj.name.c_str(), km / 1.0e6);
+  else
+    snprintf(label, sizeof(label), "%s · %.0f km", obj.name.c_str(), km);
+
+  ImVec2 ts = ImGui::CalcTextSize(label);
+  ImVec2 tp = {bx - ts.x * 0.5f, by - circR - ts.y - 6.0f};
+  dl->AddText({tp.x + 1, tp.y + 1}, IM_COL32(0, 0, 0, 200), label);
+  dl->AddText(tp, IM_COL32(255, 255, 255, 235), label);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -133,6 +133,8 @@ private:
 
   bool WorldToScreen(vec3 world, float& sx, float& sy);
   void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects);
+  void DrawObjectHighlight(PhysicsObject& obj);
+  int  highlightMode{0};  // 0 = selected only, 1 = all objects, 2 = none
 
   // UI internal state
   bool         showSpawnPanel{false};
