@@ -162,6 +162,45 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 }
 
 // ---------------------------------------------------------------------------
+// Point-source glow for cloud particles.
+// Real stars are unresolved points: their apparent size is the instrument
+// PSF (constant ANGULAR width, not world size), flux falls off as 1/r², and
+// magnitudes are roughly log-distributed (most faint, a few bright). All
+// three together make clusters resolve into star-like points, not blobs.
+// ---------------------------------------------------------------------------
+float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
+{
+    float distC = max(length(cen + uCamera), 0.05);  // camera = -uCamera
+    float ang2  = d2 / (distC * distC);
+
+    // Tight PSF (~0.075 deg), floored at half an output pixel
+    float pixAng = 2.0 / (uProj[1][1] * uResolution.y);
+    float sigmaB = 0.0013;
+    float sigma  = max(sigmaB, 0.5 * pixAng);
+    float s2     = sigma * sigma;
+    float psf    = exp(-ang2 / s2) + 0.015 * exp(-ang2 / (s2 * 9.0));
+
+    // When the PSF is pixel-limited (low res), partially conserve energy so a
+    // dot occupies ~1 pixel instead of smearing a saturated multi-pixel disc.
+    float resComp = sigmaB / sigma;
+
+    // Log-distributed magnitudes
+    float mag = exp(-5.0 * hash1(vec3(idx * 17.13, idx * 31.71, idx * 47.97)));
+
+    // Subsampling packs `stride` real particles into one (radius *= sqrt(stride))
+    float strideComp = clamp(pRadius * pRadius * 1.0e6, 1.0, 64.0);
+
+    // Gentle inverse-square, clamped so stars stay visible at scene distances
+    float flux = clamp(9.0 / (distC * distC), 0.05, 6.0);
+
+    // Large peak amplitude: cores CLIP to white (like a camera sensor), so
+    // magnitude/distance change the saturated dot SIZE (~sqrt(log(amp))·sigma),
+    // never the center brightness — bright small dots.
+    float amp = 20.0 * mag * strideComp * flux * resComp;
+    return min(amp * psf, 1.3);
+}
+
+// ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.
 // Composites in-scatter over 'col' and attenuates it by the view transmittance.
 // ---------------------------------------------------------------------------
@@ -530,23 +569,21 @@ vec3 computeGlow(vec3 rayPos, vec3 rayDir, float maxDist)
 
             float core;
             if (d2 < srad2) core = 5.0;
-            else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.5));
+            else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.35));
 
-            float coronaR = srad * 5.0;
-            float corona  = exp(-d2 / (coronaR * coronaR)) * 0.8;
+            float coronaR = srad * 3.5;
+            float corona  = exp(-d2 / (coronaR * coronaR)) * 0.5;
 
             glow += scol * (core + corona);
         }
         else if (otype == 2)
         {
             float coreS = max(objects[i].radius * 2.0, 0.001);
-            float core  = exp(-d2 / (coreS * coreS)) * 6.0;
-            float haloS = coreS * 4.0;
-            float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
+            float glowAmp = pointSourceGlow(d2, cen, objects[i].radius, float(i));
             vec3 gcol = (objects[i].temperature > 100.0)
                          ? blackbody(objects[i].temperature)
                          : vec3(0.55, 0.65, 1.0);
-            glow += gcol * (core + halo);
+            glow += gcol * glowAmp;
         }
     }
     return glow;
@@ -757,23 +794,21 @@ void main()
 
                             float core;
                             if (d2 < srad2) core = 5.0;
-                            else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.5));
+                            else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.35));
 
-                            float coronaR = srad * 5.0;
-                            float corona  = exp(-d2 / (coronaR * coronaR)) * 0.8;
+                            float coronaR = srad * 3.5;
+                            float corona  = exp(-d2 / (coronaR * coronaR)) * 0.5;
 
                             curvedGlow += scol * (core + corona);
                         }
                         else if (otype == 2)
                         {
                             float coreS = max(objects[i].radius * 2.0, 0.001);
-                            float core  = exp(-d2 / (coreS * coreS)) * 6.0;
-                            float haloS = coreS * 4.0;
-                            float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
+                            float glowAmp = pointSourceGlow(d2, cen, objects[i].radius, float(i));
                             vec3 gcol = (objects[i].temperature > 100.0)
                                          ? blackbody(objects[i].temperature)
                                          : vec3(0.55, 0.65, 1.0);
-                            curvedGlow += gcol * (core + halo);
+                            curvedGlow += gcol * glowAmp;
                         }
                         else if (otype == 4)
                         {
@@ -835,23 +870,21 @@ void main()
 
                         float core;
                         if (sd2 < srad2) core = 5.0;
-                        else core = 5.0 * exp(-(sd2 - srad2) / (srad2 * 0.5));
+                        else core = 5.0 * exp(-(sd2 - srad2) / (srad2 * 0.35));
 
-                        float coronaR = srad * 5.0;
-                        float corona  = exp(-sd2 / (coronaR * coronaR)) * 0.8;
+                        float coronaR = srad * 3.5;
+                        float corona  = exp(-sd2 / (coronaR * coronaR)) * 0.5;
 
                         curvedGlow += scol * (core + corona);
                     }
                     else if (otype == 2)
                     {
                         float coreS = max(objects[i].radius * 2.0, 0.001);
-                        float core  = exp(-sd2 / (coreS * coreS)) * 6.0;
-                        float haloS = coreS * 4.0;
-                        float halo  = exp(-sd2 / (haloS * haloS)) * 0.8;
+                        float glowAmp = pointSourceGlow(sd2, cen, objects[i].radius, float(i));
                         vec3 gcol = (objects[i].temperature > 100.0)
                                      ? blackbody(objects[i].temperature)
                                      : vec3(0.55, 0.65, 1.0);
-                        curvedGlow += gcol * (core + halo);
+                        curvedGlow += gcol * glowAmp;
                     }
                     else if (otype == 4)
                     {
@@ -972,23 +1005,21 @@ void main()
 
                 float core;
                 if (d2 < srad2) core = 5.0;
-                else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.5));
+                else core = 5.0 * exp(-(d2 - srad2) / (srad2 * 0.35));
 
-                float coronaR = srad * 5.0;
-                float corona  = exp(-d2 / (coronaR * coronaR)) * 0.8;
+                float coronaR = srad * 3.5;
+                float corona  = exp(-d2 / (coronaR * coronaR)) * 0.5;
 
                 curvedGlow += scol * (core + corona);
             }
             else if (otype == 2)
             {
                 float coreS = max(objects[i].radius * 2.0, 0.001);
-                float core  = exp(-d2 / (coreS * coreS)) * 6.0;
-                float haloS = coreS * 4.0;
-                float halo  = exp(-d2 / (haloS * haloS)) * 0.8;
+                float glowAmp = pointSourceGlow(d2, cen, objects[i].radius, float(i));
                 vec3 gcol = (objects[i].temperature > 100.0)
                              ? blackbody(objects[i].temperature)
                              : vec3(0.55, 0.65, 1.0);
-                curvedGlow += gcol * (core + halo);
+                curvedGlow += gcol * glowAmp;
             }
             else if (otype == 4)
             {
