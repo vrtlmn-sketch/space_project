@@ -21,8 +21,10 @@ static void scrollCallback(GLFWwindow* /*window*/, double /*xoffset*/, double yo
   if (io.WantCaptureMouse) return;
 
   if (g_scrollReceiver) {
-    g_scrollReceiver->zoom -= (float)yoffset * 2.0f; // scroll up = zoom in (lower FOV)
-    if (g_scrollReceiver->zoom < 5.0f)   g_scrollReceiver->zoom = 5.0f;
+    // Proportional step so deep zoom stays controllable (2° ticks would
+    // overshoot the whole 0.5–5° range in one scroll)
+    g_scrollReceiver->zoom -= (float)yoffset * g_scrollReceiver->zoom * 0.06f;
+    if (g_scrollReceiver->zoom < 0.5f)   g_scrollReceiver->zoom = 0.5f;
     if (g_scrollReceiver->zoom > 120.0f) g_scrollReceiver->zoom = 120.0f;
   }
 }
@@ -405,11 +407,11 @@ bool Renderer::UpdateInputs() {
     if (dyaw != 0 || dpitch != 0 || droll != 0)
       rotateCamera(dyaw, dpitch, droll);
 
-    // Zoom: +/- keys (FOV-based)
-    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= 0.5f; // + (or =) = zoom in
-    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  zoom += 0.5f; // - = zoom out
+    // Zoom: +/- keys (FOV-based, proportional so deep zoom stays controllable)
+    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= zoom * 0.015f; // + (or =) = zoom in
+    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  zoom += zoom * 0.015f; // - = zoom out
     // Clamp zoom/FOV
-    if (zoom < 5.0f)   zoom = 5.0f;
+    if (zoom < 0.5f)   zoom = 0.5f;
     if (zoom > 120.0f) zoom = 120.0f;
 
     // Toggle keys (fire on release)
@@ -1238,7 +1240,7 @@ void Renderer::DrawControlsPanel() {
     syncMatrixFromEuler();
   ImGui::SameLine();
   ImGui::SetNextItemWidth(45);
-  ImGui::DragFloat("##fov", &zoom, 0.5f, 5.f, 120.f, "%.0f");
+  ImGui::DragFloat("##fov", &zoom, 0.5f, 0.5f, 120.f, "%.1f");
   ImGui::SameLine();
   if (ImGui::Button("Reset##cam", ImVec2(45, 0))) resetCamera();
   ImGui::SameLine();
