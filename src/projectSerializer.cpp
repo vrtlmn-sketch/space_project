@@ -113,7 +113,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["rtLiveHeight"]    = settings.rtLiveHeight;
 
     // Simulation
-    s["simSpeed"]    = settings.simSpeed;
+    s["simSpeed"]      = settings.simSpeed;
+    s["playbackSpeed"] = settings.playbackSpeed;
     s["ramBudgetGB"] = settings.ramBudgetGB;
 
     // Recording
@@ -277,7 +278,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.rtLiveHeight    = s.value("rtLiveHeight",    80);
 
     // Simulation
-    st.simSpeed    = s.value("simSpeed",    1.0f);
+    st.simSpeed      = s.value("simSpeed",      1.0f);
+    st.playbackSpeed = s.value("playbackSpeed", 1.0f);
     st.ramBudgetGB = s.value("ramBudgetGB", 1.0f);
 
     // Recording

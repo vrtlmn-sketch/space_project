@@ -80,6 +80,7 @@ struct SceneSettings {
 
   // Simulation
   float simSpeed{1.0f};
+  float playbackSpeed{1.0f};
   float ramBudgetGB{1.0f};
 
   // Recording output settings

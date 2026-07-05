@@ -84,6 +84,7 @@ struct SceneCallbacks {
   std::function<void()>                                   saveProject;
   std::function<void(const std::string& path)>            loadProject;
   std::function<void(const std::string& path)>            loadSpheremap;
+  std::function<void()>                                   clearSimulation;
 };
 
 class Renderer{
@@ -359,7 +360,7 @@ private:
   std::chrono::steady_clock::time_point frameStartTP{};
 
   // ImGui helpers
-  void DrawControlsPanel();
+  void DrawControlsPanel(const SceneCallbacks& cb);
   void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds);
   void DrawSpawnPanel(const SceneCallbacks& cb);
   void DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
@@ -393,7 +394,16 @@ public:
   float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
-  float simSpeed{1.0f};               // simulation speed multiplier (1 = default, <1 = slower, >1 = faster)
+  // ── Simulation vs playback speed ──
+  // simSpeed:      data resolution — dt per recorded frame = 0.02 · simSpeed
+  // playbackSpeed: visual rate — world-time per rendered tick = 0.1 · playbackSpeed
+  // framesThisTick: recorded frames to advance this tick (= 5·playback/sim,
+  //                 fractional remainder carried in an accumulator)
+  float simSpeed{1.0f};        // ACTIVE sim speed (dt of recorded data)
+  float pendingSimSpeed{1.0f}; // UI-edited value; applied via Save (clears data)
+  float playbackSpeed{1.0f};
+  int   framesThisTick{1};
+  void  ComputeFrameAdvance();  // call once per tick, after pause state is final
   bool paused{true};
   bool playingForward{true};
 

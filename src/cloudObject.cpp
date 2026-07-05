@@ -252,7 +252,7 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   glUniform1i(locNodeCount, nodeCount_);
   glUniform1i(locBigBodyCount, bbCount);
   glUniform1f(locG, 0.0001f);
-  glUniform1f(locDt, 0.1f * simSpeed);
+  glUniform1f(locDt, 0.02f * simSpeed);
   glUniform1f(locTheta, barnesHutTheta);
 
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
@@ -280,10 +280,14 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
   {
     if(renderer.playingForward)
     {
-      if(frameStore && timeframe < frameStore->totalFrames())
+      int steps = renderer.framesThisTick;
+
+      // Replay recorded frames: jump ahead, restore only the last one
+      unsigned int total = frameStore ? (unsigned int)frameStore->totalFrames() : 0u;
+      if (steps > 0 && timeframe < total)
       {
-        // Replay recorded frame
-        const void* record = frameStore->get(timeframe);
+        unsigned int jump = std::min((unsigned int)steps, total - timeframe);
+        const void* record = frameStore->get(timeframe + jump - 1);
         if (record) {
           restoreFromRecord(record, renderedObject.cloudParticleCount(), renderedObject);
         }
@@ -291,11 +295,16 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
         if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
           uploadParticlesToGPU();
         }
-        timeframe++;
+        timeframe += jump;
+        steps -= (int)jump;
       }
-      else
+
+      // Simulate remaining steps at the head
+      for (int s = 0; s < steps; ++s)
       {
-        // Simulate new frame
+        if (frameStore && frameStore->totalFrames() == 0)
+          initialSnaps = renderedObject.getParticleSnapshots();
+
         if (computeMethod == CloudComputeMethod::BarnesHutGPU) {
           if (!gpuInitialized) initGPU();
           if (gpuInitialized) {
@@ -317,8 +326,8 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     }
     else
     {
-      // Playing backward — clamp timeframe before accessing
-      if(frameStore && frameStore->totalFrames() > 0)
+      // Playing backward — step framesThisTick frames back
+      if(frameStore && frameStore->totalFrames() > 0 && renderer.framesThisTick > 0)
       {
         unsigned int maxFrame = static_cast<unsigned int>(frameStore->totalFrames()) - 1;
         if (timeframe > maxFrame) timeframe = maxFrame;
@@ -330,7 +339,8 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
         if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
           uploadParticlesToGPU();
         }
-        timeframe = (timeframe > 0) ? timeframe - 1 : timeframe;
+        unsigned int back = (unsigned int)renderer.framesThisTick;
+        timeframe = (timeframe > back) ? timeframe - back : 0;
       }
     }
   }
@@ -364,6 +374,16 @@ void CloudObject::clearRecording()
 {
   if (frameStore) frameStore->clear();
   timeframe = 0;
+}
+
+void CloudObject::resetToInitial()
+{
+  if (!initialSnaps.empty()) {
+    renderedObject.setParticleSnapshots(initialSnaps);
+    if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized)
+      uploadParticlesToGPU();
+  }
+  clearRecording();
 }
 
 CloudObject::CloudObject(const vec3& position, int objectCount, float (*distributionFunction)(float x, float y, float z), const vec3& size){

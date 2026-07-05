@@ -188,6 +188,17 @@ int main(int argc, char** argv) {
     clouds.push_back(std::move(cloud));
   };
 
+  cb.clearSimulation = [&]() {
+    for (auto& obj : physicsObjects)
+      obj.resetToInitial();
+    for (auto& c : clouds)
+      c->resetToInitial();
+    // Rebuild trails from current positions
+    lineObjects.clear();
+    for (auto& obj : physicsObjects)
+      lineObjects.emplace_back(vec3{obj.data.position});
+  };
+
   cb.loadSpheremap = [&](const std::string& path) {
     skybox.loadTextureHDR(path);
     renderer.skyboxTexID = skybox.textureHandle();
@@ -226,7 +237,9 @@ int main(int argc, char** argv) {
       renderer.skyboxTexID = skybox.textureHandle();
     }
     renderer.nebulaDetail  = s.nebulaDetail;
-    renderer.simSpeed      = s.simSpeed;
+    renderer.simSpeed        = s.simSpeed;
+    renderer.pendingSimSpeed = s.simSpeed;
+    renderer.playbackSpeed   = s.playbackSpeed;
     renderer.ramBudgetGB   = s.ramBudgetGB;
     renderer.recStartFrame = s.recStartFrame;
     renderer.recStopFrame  = s.recStopFrame;
@@ -277,6 +290,7 @@ int main(int argc, char** argv) {
     s.rtLiveWidth     = renderer.GetRtLiveWidth();
     s.rtLiveHeight    = renderer.GetRtLiveHeight();
     s.simSpeed        = renderer.simSpeed;
+    s.playbackSpeed   = renderer.playbackSpeed;
     s.ramBudgetGB     = renderer.ramBudgetGB;
     s.recordResPreset = renderer.GetRecordResPreset();
     s.recordWidth     = renderer.GetRecordWidth();
@@ -403,6 +417,10 @@ int main(int argc, char** argv) {
     bool recOverridePause = renderer.IsRecording() && renderer.recFrameActive;
     bool savedPaused = renderer.paused;
     if (recOverridePause) renderer.paused = true;
+
+    // Frames to advance this tick (playback speed / sim speed) — must run
+    // after the pause state is final so all objects see the same step count
+    renderer.ComputeFrameAdvance();
 
     // Physics objects + trail lines
     for (int i = 0; i < (int)physicsObjects.size(); i++) {

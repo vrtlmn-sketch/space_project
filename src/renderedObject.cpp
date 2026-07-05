@@ -823,7 +823,7 @@ void RenderedObject::UpdateCloudPhysics
 (const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed)
 {
   float G = 0.0001f;
-  float dt = 0.1f * simSpeed;
+  float dt = 0.02f * simSpeed;
 
   for(int i = 0; i < (int)cloudParticles.size(); i++)
   {

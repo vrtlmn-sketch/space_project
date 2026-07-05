@@ -625,6 +625,26 @@ void Renderer::movePublic(float dx, float dy, float dz) {
   move(vec3{dx, dy, dz});
 }
 
+void Renderer::ComputeFrameAdvance() {
+  static float accum = 0.0f;
+  if (paused) { framesThisTick = 0; return; }
+
+  // Cap: playback can't go below the data resolution (1 frame per tick)
+  playbackSpeed = std::max(playbackSpeed, simSpeed / 5.0f);
+
+  float framesPerTick = 5.0f * playbackSpeed / std::max(simSpeed, 0.01f);
+  accum += framesPerTick;
+  framesThisTick = (int)accum;
+
+  constexpr int kMaxSteps = 64;   // cap physics catch-up per tick
+  if (framesThisTick > kMaxSteps) {
+    framesThisTick = kMaxSteps;
+    accum = 0.0f;                 // drop the backlog instead of spiralling
+  } else {
+    accum -= (float)framesThisTick;
+  }
+}
+
 void Renderer::resetCamera() {
   cameraTranslate[0] = cameraTranslate[1] = cameraTranslate[2] = 0.0f;
   rotation = 0.0f;
@@ -863,7 +883,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   ImGui::End(); // DockSpaceHost
 
   // ── Draw all panels ──
-  DrawControlsPanel();
+  DrawControlsPanel(cb);
   DrawTimeline(physicsObjects, clouds);
   DrawSpawnPanel(cb);
   DrawSceneHierarchy(physicsObjects, clouds, cb);
@@ -1204,7 +1224,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawControlsPanel  (docked top bar — compact single row)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawControlsPanel() {
+void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Controls", nullptr, flags);
 
@@ -1308,11 +1328,44 @@ void Renderer::DrawControlsPanel() {
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
-  // Sim speed
-  ImGui::Text("Speed");
+  // Simulation speed (data resolution) + playback speed (visual rate)
+  ImGui::Text("Sim");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(70);
-  ImGui::DragFloat("##simspeed", &simSpeed, 0.01f, 0.01f, 10.0f, "%.2fx");
+  ImGui::SetNextItemWidth(60);
+  ImGui::DragFloat("##simspeed", &pendingSimSpeed, 0.01f, 0.05f, 10.0f, "%.2fx");
+  if (std::abs(pendingSimSpeed - simSpeed) > 1e-4f) {
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.45f, 0.05f, 1.00f));
+    if (ImGui::Button("Save##simspeed"))
+      ImGui::OpenPopup("Apply Sim Speed?");
+    ImGui::PopStyleColor();
+  }
+  if (ImGui::BeginPopupModal("Apply Sim Speed?", nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::Text("Your simulation data will be deleted.");
+    ImGui::TextDisabled("All recorded frames are cleared and the timeline\n"
+                        "restarts at frame 0 from the current state.");
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
+    if (ImGui::Button("Delete & Save", ImVec2(120, 0))) {
+      simSpeed = pendingSimSpeed;
+      if (cb.clearSimulation) cb.clearSimulation();
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+      pendingSimSpeed = simSpeed;
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+  ImGui::SameLine();
+  ImGui::Text("Play");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(60);
+  if (ImGui::DragFloat("##playspeed", &playbackSpeed, 0.01f, 0.05f, 10.0f, "%.2fx"))
+    playbackSpeed = std::max(playbackSpeed, simSpeed / 5.0f);
   ImGui::SameLine();
 
   // Separator

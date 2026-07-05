@@ -20,6 +20,8 @@ class CloudObject
 {
 private:
   std::unique_ptr<FrameStore> frameStore;  // lazy-init after particle count is known
+  // Particle state captured just before the first simulated frame
+  std::vector<ParticleSnapshot> initialSnaps;
 
   // Helper: ensure frameStore exists with the right record size.
   void ensureFrameStore();
@@ -86,6 +88,8 @@ public:
   unsigned int getBufferSize() const { return frameStore ? static_cast<unsigned int>(frameStore->totalFrames()) : 0u; }
   void setTimeframeAndRestore(unsigned int frame);
   void clearRecording();
+  // Restore the state from before the first simulated frame, then clear
+  void resetToInitial();
 
   // Allow main loop to propagate RAM budget
   void setRamBudget(size_t bytes) { if (frameStore) frameStore->setRamBudget(bytes); }

@@ -15,6 +15,11 @@ class PhysicsObject
 {
 private:
   FrameStore frameStore{sizeof(vec3)};
+  // State captured just before the first simulated frame (frames only store
+  // positions, so velocity must be kept separately for a true reset)
+  vec3 initialPosition{};
+  vec3 initialVelocity{};
+  bool initialCaptured{false};
 public:
   unsigned int timeframe{};
   std::string name{"Object"};
@@ -55,6 +60,8 @@ public:
   unsigned int getBufferSize() const { return static_cast<unsigned int>(frameStore.totalFrames()); }
   void setTimeframeAndRestore(unsigned int frame);
   void clearRecording();
+  // Restore the state from before the first simulated frame, then clear
+  void resetToInitial();
 
   // Allow main loop to propagate RAM budget
   void setRamBudget(size_t bytes) { frameStore.setRamBudget(bytes); }

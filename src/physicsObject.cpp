@@ -70,22 +70,45 @@ void PhysicsObject::clearRecording()
   timeframe = 0;
 }
 
+void PhysicsObject::resetToInitial()
+{
+  if (initialCaptured) {
+    data.position = initialPosition;
+    data.velocity = initialVelocity;
+    renderedObject.coordinates = data.position;
+  }
+  clearRecording();
+}
+
 void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer)
 {
   if(!renderer.paused)
   {
     if(renderer.playingForward)
     {
-      if(timeframe < frameStore.totalFrames())
+      int steps = renderer.framesThisTick;
+
+      // Replay recorded frames: jump ahead, restore only the last one
+      unsigned int total = static_cast<unsigned int>(frameStore.totalFrames());
+      if (steps > 0 && timeframe < total)
       {
-        const void* p = frameStore.get(timeframe);
+        unsigned int jump = std::min((unsigned int)steps, total - timeframe);
+        const void* p = frameStore.get(timeframe + jump - 1);
         if (p) std::memcpy(&data.position, p, sizeof(vec3));
-        renderedObject.coordinates=data.position;
-        timeframe++;
+        renderedObject.coordinates = data.position;
+        timeframe += jump;
+        steps -= (int)jump;
       }
-      else{
-        float G = 0.0001f;
-        float dt = 0.1f * renderer.simSpeed;
+
+      // Simulate remaining steps at the head (dt = fine-grained data rate)
+      float G = 0.0001f;
+      float dt = 0.02f * renderer.simSpeed;
+      for (int s = 0; s < steps; ++s) {
+        if (frameStore.totalFrames() == 0) {
+          initialPosition = data.position;
+          initialVelocity = data.velocity;
+          initialCaptured = true;
+        }
         for (size_t i = 0; i < physicsObjetcs.size(); ++i) {
           const auto& other = physicsObjetcs[i];
           if (&other == this) continue;
@@ -97,21 +120,22 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
           data.velocity += dir * accel * dt;
         }
         data.position += data.velocity * dt;
-        renderedObject.coordinates=data.position;
         frameStore.push(&data.position);
         timeframe++;
       }
+      if (steps > 0) renderedObject.coordinates = data.position;
     }
     else {
-      // Playing backward — clamp timeframe to valid range first
-      if(frameStore.totalFrames() > 0)
+      // Playing backward — step framesThisTick frames back
+      if(frameStore.totalFrames() > 0 && renderer.framesThisTick > 0)
       {
         if (timeframe >= frameStore.totalFrames())
           timeframe = static_cast<unsigned int>(frameStore.totalFrames()) - 1;
         const void* p = frameStore.get(timeframe);
         if (p) std::memcpy(&data.position, p, sizeof(vec3));
         renderedObject.coordinates=data.position;
-        timeframe = (timeframe>0)?timeframe-1:timeframe;
+        unsigned int back = (unsigned int)renderer.framesThisTick;
+        timeframe = (timeframe > back) ? timeframe - back : 0;
       }
     }
   }
