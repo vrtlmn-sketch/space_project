@@ -300,6 +300,17 @@ private:
   void   EnsurePipFBO(int w, int h);
   void   DestroyPipFBO();
 
+  // ── Inspector planet preview (sphere + texture, rendered to small FBO) ──
+  GLuint previewFBO{0};
+  GLuint previewColorTex{0};
+  GLuint previewDepthRBO{0};
+  RenderedObject previewSphere;            // mesh/shaders set up lazily (needs GL context)
+  bool           previewInit{false};
+  std::string    previewTexPath{"\x01uninit"};  // sentinel forces first texture sync
+  float          previewYaw{0.0f};
+
+  void RenderPlanetPreview(PhysicsObject& obj);
+
   // ── Editor viewport FBO ──
   GLuint vpFBO{0};
   GLuint vpColorTex{0};

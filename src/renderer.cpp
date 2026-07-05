@@ -3,6 +3,8 @@
 #include "cloudObject.h"
 
 #include <cstring>
+#include <cctype>
+#include <algorithm>
 #include <filesystem>
 
 #include "imgui.h"
@@ -717,6 +719,32 @@ static std::vector<std::string> ScanFormationFiles() {
     return a < b;
   });
   return files;
+}
+
+static std::vector<std::string> ScanTextureFiles() {
+  std::vector<std::string> files;
+  const std::string dir = "assets";
+  if (!std::filesystem::exists(dir)) return files;
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (!entry.is_regular_file()) continue;
+    std::string ext = entry.path().extension().string();
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == ".jpg" || ext == ".jpeg" || ext == ".png")
+      files.push_back(entry.path().filename().string());
+  }
+  std::sort(files.begin(), files.end());
+  return files;
+}
+
+// "earth_nightmap.jpg" → "Earth Nightmap"
+static std::string PrettyTexLabel(const std::string& filename) {
+  std::string s = filename.substr(0, filename.find_last_of('.'));
+  bool newWord = true;
+  for (auto& c : s) {
+    if (c == '_' || c == '-') { c = ' '; newWord = true; }
+    else if (newWord) { c = (char)std::toupper((unsigned char)c); newWord = false; }
+  }
+  return s;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2122,25 +2150,39 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
         ImGui::Spacing();
         ImGui::Text("Texture");
-        static const char* kTexLabels[] = {
-          "None", "Earth", "Earth (Night)", "Jupiter", "Mars", "Mercury", "Venus"
-        };
-        static const char* kTexPaths[] = {
-          "", "assets/earth.jpg", "assets/earth_nightmap.jpg",
-          "assets/jupiter.jpg", "assets/mars.jpg", "assets/mercury.jpg", "assets/venus.jpg"
-        };
-        constexpr int kTexCount = 7;
-        int texComboIdx = 0;
-        for (int k = 1; k < kTexCount; ++k) {
-          if (obj.texturePath == kTexPaths[k]) { texComboIdx = k; break; }
+
+        // Live preview — same sphere mesh + planet shader as the scene
+        RenderPlanetPreview(obj);
+        {
+          float availW = ImGui::GetContentRegionAvail().x;
+          float imgSz  = std::min(availW, 220.0f);
+          ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - imgSz) * 0.5f);
+          ImGui::Image((ImTextureID)(uintptr_t)previewColorTex,
+                       ImVec2(imgSz, imgSz), ImVec2(0, 1), ImVec2(1, 0));
         }
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##itexcombo", &texComboIdx, kTexLabels, kTexCount)) {
-          obj.texturePath = kTexPaths[texComboIdx];
-          if (texComboIdx == 0)
+
+        static std::vector<std::string> texFiles;
+        static bool texScanned = false;
+        if (!texScanned) { texFiles = ScanTextureFiles(); texScanned = true; }
+        if (ImGui::SmallButton("Rescan##texscan")) texFiles = ScanTextureFiles();
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%zu textures)", texFiles.size());
+
+        float listH = 7.0f * ImGui::GetTextLineHeightWithSpacing();
+        if (ImGui::BeginListBox("##texlist", ImVec2(-1, listH))) {
+          if (ImGui::Selectable("None (Color)", obj.texturePath.empty())) {
+            obj.texturePath.clear();
             obj.renderedObject.clearTexture();
-          else
-            obj.renderedObject.loadTexture(obj.texturePath);
+          }
+          for (const auto& f : texFiles) {
+            std::string full = "assets/" + f;
+            bool sel = (obj.texturePath == full);
+            if (ImGui::Selectable(PrettyTexLabel(f).c_str(), sel)) {
+              obj.texturePath = full;
+              obj.renderedObject.loadTexture(full);
+            }
+          }
+          ImGui::EndListBox();
         }
 
         ImGui::Spacing();
@@ -2435,6 +2477,82 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
     return true; // signal: spawn the object
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inspector planet preview — sphere rendered with the scene's planet shader
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
+  constexpr int   PREVIEW_SIZE = 256;
+  constexpr float CAM_DIST     = 3.2f;
+
+  if (!previewInit) {
+    glGenFramebuffers(1, &previewFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, previewFBO);
+
+    glGenTextures(1, &previewColorTex);
+    glBindTexture(GL_TEXTURE_2D, previewColorTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, PREVIEW_SIZE, PREVIEW_SIZE, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, previewColorTex, 0);
+
+    glGenRenderbuffers(1, &previewDepthRBO);
+    glBindRenderbuffer(GL_RENDERBUFFER, previewDepthRBO);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, PREVIEW_SIZE, PREVIEW_SIZE);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, previewDepthRBO);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    previewSphere.GenerateMeshSphere(1.0f, 48, 48);
+    previewSphere.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/defaultFrag.glsl");
+    previewInit = true;
+  }
+
+  // Sync texture with the inspected object (reload only on change)
+  if (obj.texturePath != previewTexPath) {
+    if (obj.texturePath.empty())
+      previewSphere.clearTexture();
+    else
+      previewSphere.loadTexture(obj.texturePath);
+    previewTexPath = obj.texturePath;
+  }
+  previewSphere.uploadPlanetColor(obj.data.color);
+
+  // One fixed white light — same shader lighting model as in the scene
+  {
+    std::vector<vec3> lpos{{2.0f, 1.5f, 2.5f}};
+    std::vector<vec3> lcol{{1.0f, 1.0f, 1.0f}};
+    previewSphere.uploadStarLighting(lpos, lcol);
+  }
+
+  // Slowly orbiting look-at camera (light stays fixed → planet appears to spin)
+  previewYaw += ImGui::GetIO().DeltaTime * 0.5f;
+  float cx = CAM_DIST * std::sin(previewYaw);
+  float cz = CAM_DIST * std::cos(previewYaw);
+  float cy = 0.9f;
+
+  vec3 b = normalize(vec3{cx, cy, cz});              // backward
+  vec3 r = normalize(vec3{b.z, 0.0f, -b.x});         // right = up_world × b
+  vec3 u = vec3{b.y*r.z - b.z*r.y, b.z*r.x - b.x*r.z, b.x*r.y - b.y*r.x}; // up = b × r
+  float viewRot[9] = { r.x, r.y, r.z,  u.x, u.y, u.z,  b.x, b.y, b.z };
+  float camT[3]    = { -cx, -cy, -cz };              // uCamera = -camPos
+
+  GLint prevFbo = 0, vp[4];
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+  glGetIntegerv(GL_VIEWPORT, vp);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, previewFBO);
+  glViewport(0, 0, PREVIEW_SIZE, PREVIEW_SIZE);
+  glClearColor(0.02f, 0.02f, 0.04f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glEnable(GL_DEPTH_TEST);
+
+  previewSphere.coordinates = {0, 0, 0};
+  previewSphere.renderMesh(camT, viewRot, 45.0f, PREVIEW_SIZE, PREVIEW_SIZE);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+  glViewport(vp[0], vp[1], vp[2], vp[3]);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
