@@ -1158,7 +1158,10 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
         if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
       }
     }
+    // Hit → select; empty space → deselect (inspector falls back to blank,
+    // leaving only Rendering Settings with content in the right dock)
     if (bestIdx >= 0) { selectedIdx = bestIdx; highlightMode = 0; }
+    else              { selectedIdx = -1;      highlightMode = 0; }
   }
 }
 
