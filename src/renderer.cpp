@@ -1129,6 +1129,43 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
         float cr = (hovAxis == 3) ? 8.0f : 6.0f;
         dl->AddCircleFilled({bx,by}, cr, IM_COL32(220,220,220,210));
         dl->AddCircle({bx,by}, cr, IM_COL32(150,150,150,255), 16, 1.5f);
+
+        // ── Selection overlay: white outline + name/distance label ──────────
+        {
+          float effR = obj.renderRadius();
+          if (obj.shaderType == ObjectShaderType::BlackHole)
+            effR = std::max(effR, obj.schwarzschildRadius * 2.6f);
+
+          // Screen radius: project a point one visual radius along camera-right
+          float circR = 14.0f;
+          float esx, esy;
+          if (WorldToScreen({pos.x + camMatrix[0]*effR,
+                             pos.y + camMatrix[1]*effR,
+                             pos.z + camMatrix[2]*effR}, esx, esy)) {
+            float dx = esx - bx, dy = esy - by;
+            circR = std::max(std::sqrt(dx*dx + dy*dy) + 6.0f, 14.0f);
+          }
+          dl->AddCircle({bx, by}, circR, IM_COL32(255, 255, 255, 200), 48, 1.5f);
+
+          // Live camera distance (display scale: 1 world unit = 200,000 km,
+          // which makes the default Earth ~5,600 km in radius)
+          constexpr double kKmPerUnit = 200000.0;
+          float ddx = pos.x + cameraTranslate[0];
+          float ddy = pos.y + cameraTranslate[1];
+          float ddz = pos.z + cameraTranslate[2];
+          double km = std::sqrt(ddx*ddx + ddy*ddy + ddz*ddz) * kKmPerUnit;
+
+          char label[160];
+          if (km >= 1.0e6)
+            snprintf(label, sizeof(label), "%s · %.2fM km", obj.name.c_str(), km / 1.0e6);
+          else
+            snprintf(label, sizeof(label), "%s · %.0f km", obj.name.c_str(), km);
+
+          ImVec2 ts = ImGui::CalcTextSize(label);
+          ImVec2 tp = {bx - ts.x * 0.5f, by - circR - ts.y - 6.0f};
+          dl->AddText({tp.x + 1, tp.y + 1}, IM_COL32(0, 0, 0, 200), label);
+          dl->AddText(tp, IM_COL32(255, 255, 255, 235), label);
+        }
       }
     }
   }
