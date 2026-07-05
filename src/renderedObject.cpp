@@ -3,8 +3,12 @@
 #include <stb_image.h>
 #include "physicsObject.h"
 #include "renderedObject.h"
+#include "units.h"
 #include <cmath>
 #include <cstdint>
+
+float RenderedObject::sZNear = 0.001f;
+float RenderedObject::sZFar  = 1.0e10f;
 
 
 void RenderedObject::GenerateMeshGrid(float cellSize, int radius, bool showX, bool showY, bool showZ) {
@@ -50,7 +54,7 @@ void RenderedObject::GenerateMeshGrid(float cellSize, int radius, bool showX, bo
   bufferSize = (int)UVObjectMeshBuffer.size() / 3;
 }
 
-void RenderedObject::renderGrid(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
+void RenderedObject::renderGrid(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -61,38 +65,6 @@ void RenderedObject::renderGrid(float cameraTranslate[3], const float viewRot[9]
   hasBeenRendered=true;
 }
 
-void RenderedObject::UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies){
-  float G = 0.0001f;
-  float dt{1/10.f};
-  for(int i=0;i <gridPoints.size();i++)
-  {
-    auto& first=gridPoints[i];
-    first.velocity=vec3{0,0,0};
-    for(auto& other:bigBodies)
-    {
-      if(&other == &first) continue;           
-      vec3 realPosition = first.position+this->coordinates;
-      vec3 r = vec3{other.position.x,other.position.y,other.position.z}
-        - realPosition;
-      float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
-      if (d2 == 0) continue;                 
-      vec3 dir = normalize(r);
-      float accel = G * other.mass / d2;    
-      //calculating the pull
-      first.velocity += dir * accel;        
-      //std::cout<<"velocity changed in "<<accel<<"\n";
-    }
-    first.velocity = normalize(first.velocity);
-    first.velocity*=0.2;
-    //first.position+=first.velocity;
-
-    UVObjectMeshBuffer[i*3] = first.position.x+first.velocity.x;
-    UVObjectMeshBuffer[i*3+1] = first.position.y+first.velocity.y;
-    UVObjectMeshBuffer[i*3+2] = first.position.z+first.velocity.z;
-  }
-  //std::cerr<<"Mesh size is "<<UVObjectMeshBuffer.size()<<"\n";
-
-}
 void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size)
 {
   UVObjectMeshBuffer.reserve(objectCount*3);
@@ -215,22 +187,26 @@ void RenderedObject::GenerateMeshSphere(float radius,
   }
 }
 
-void RenderedObject::renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
+void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                                           float mass, float temperature, float objectType, vec3 color)
 {
   raytracerObjectList.push_back(RayTracerObject{
-    vec4{coordinates.x, coordinates.y, coordinates.z, 0},
+    vec4{(float)(coordinates.x + cameraTranslate[0]),
+         (float)(coordinates.y + cameraTranslate[1]),
+         (float)(coordinates.z + cameraTranslate[2]), 0},
     mass, radius, temperature, objectType,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, 0},
     vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0}});
 }
-void RenderedObject::renderMeshRaytracedDoppler(float cameraTranslate[3],
+void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
                                                 vec3 velocity, float mass, float temperature, float objectType, vec3 color)
 {
   list.push_back(RayTracerObjectDoppler{
-    vec4{coordinates.x, coordinates.y, coordinates.z, 0},
+    vec4{(float)(coordinates.x + cameraTranslate[0]),
+         (float)(coordinates.y + cameraTranslate[1]),
+         (float)(coordinates.z + cameraTranslate[2]), 0},
     mass, radius, temperature, objectType,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{velocity.x, velocity.y, velocity.z, 0},
@@ -238,7 +214,7 @@ void RenderedObject::renderMeshRaytracedDoppler(float cameraTranslate[3],
     vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0}});
 }
 
-void RenderedObject::renderCloudRaytracedDoppler(float cameraTranslate[3],
+void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
                                                  std::vector<RayTracerObjectDoppler>& list)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
@@ -273,9 +249,9 @@ void RenderedObject::renderCloudRaytracedDoppler(float cameraTranslate[3],
     vec3 vel = (i < (int)cloudParticles.size()) ? cloudParticles[i].velocity : vec3{0,0,0};
     list.push_back(RayTracerObjectDoppler{
       vec4{
-        UVObjectMeshBuffer[fi  ] + coordinates.x,
-        UVObjectMeshBuffer[fi+1] + coordinates.y,
-        UVObjectMeshBuffer[fi+2] + coordinates.z,
+        UVObjectMeshBuffer[fi  ] + (float)(coordinates.x + cameraTranslate[0]),
+        UVObjectMeshBuffer[fi+1] + (float)(coordinates.y + cameraTranslate[1]),
+        UVObjectMeshBuffer[fi+2] + (float)(coordinates.z + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType,
       vec4{0,0,0,0},
@@ -283,7 +259,7 @@ void RenderedObject::renderCloudRaytracedDoppler(float cameraTranslate[3],
   }
 }
 
-void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
+void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
   if (particleCount <= 0) return;
@@ -324,15 +300,15 @@ void RenderedObject::renderCloudRaytraced(float cameraTranslate[3], std::vector<
 
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
-        UVObjectMeshBuffer[fi  ] + coordinates.x,
-        UVObjectMeshBuffer[fi+1] + coordinates.y,
-        UVObjectMeshBuffer[fi+2] + coordinates.z,
+        UVObjectMeshBuffer[fi  ] + (float)(coordinates.x + cameraTranslate[0]),
+        UVObjectMeshBuffer[fi+1] + (float)(coordinates.y + cameraTranslate[1]),
+        UVObjectMeshBuffer[fi+2] + (float)(coordinates.z + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType, vec4{0,0,0,0}});
   }
 }
 
-void RenderedObject::renderMesh(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight)
+void RenderedObject::renderMesh(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight)
 {
   if (!hasBeenRendered) {
     setupRender();
@@ -358,7 +334,7 @@ void RenderedObject::renderMesh(float cameraTranslate[3], const float viewRot[9]
 }
 
 //Plane is also a raytracer screen
-void RenderedObject::renderPlane(float cameraTranslate[3],
+void RenderedObject::renderPlane(const double cameraTranslate[3],
                                  const std::vector<RayTracerObject>& rayTracedObjectList,
                                  const float viewRot[9], float fovDeg,
                                  int fbWidth, int fbHeight)
@@ -387,7 +363,7 @@ void RenderedObject::renderPlane(float cameraTranslate[3],
   hasBeenRendered=true;
 }
 
-void RenderedObject::renderSkybox(float cameraTranslate[3], const float viewRot[9], float fovDeg,
+void RenderedObject::renderSkybox(const double cameraTranslate[3], const float viewRot[9], float fovDeg,
                                   int fbWidth, int fbHeight, float exposure)
 {
   if (!hasTexture) return;
@@ -413,7 +389,7 @@ void RenderedObject::renderSkybox(float cameraTranslate[3], const float viewRot[
   hasBeenRendered = true;
 }
 
-void RenderedObject::renderAtmosphere(float cameraTranslate[3], const float viewRot[9], float fovDeg,
+void RenderedObject::renderAtmosphere(const double cameraTranslate[3], const float viewRot[9], float fovDeg,
                                       int fbWidth, int fbHeight,
                                       float planetRadius, float atmoRadius,
                                       float falloff, float intensity, vec3 scatter)
@@ -697,7 +673,7 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   hasBeenRendered = false;
 }
 
-void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTranslate[3], const float viewRot[9],
+void RenderedObject::transformPerspectiveMesh(GLuint program, const double cameraTranslate[3], const float viewRot[9],
                                                 float fovDeg,
                                                 int fbWidth, int fbHeight)
 {
@@ -707,29 +683,42 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, float cameraTransl
   float proj[16];
   float aspect = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : (800.0f / 600.0f);
   float fovy   = fovDeg * M_PI / 180.0f;
-  perspective(fovy, aspect, 0.1f, 100.0f, proj);
+  perspective(fovy, aspect, sZNear, sZFar, proj);
   //we fill perspective uniform
   glUniformMatrix4fv(projectionMatrixBuffer, 1, GL_FALSE, proj);
+
+  // Camera-relative rendering for positioned meshes: the object→camera offset
+  // is computed here in DOUBLE, so positions stay precise anywhere in the
+  // galaxy (float uniforms quantise to ~100 AU at 1e9 AU coordinates).
+  // Lines and clouds carry world-space float vertex buffers, so they keep the
+  // legacy absolute path (their scales tolerate float).
+  bool relative = (meshType == MeshType::sphere || meshType == MeshType::grid ||
+                   meshType == MeshType::plane);
+
+  float relPos[3] = {
+    (float)(coordinates.x + cameraTranslate[0]),
+    (float)(coordinates.y + cameraTranslate[1]),
+    (float)(coordinates.z + cameraTranslate[2])
+  };
+  float absPos[3] = { (float)coordinates.x, (float)coordinates.y, (float)coordinates.z };
+  float camF[3]   = { (float)cameraTranslate[0], (float)cameraTranslate[1], (float)cameraTranslate[2] };
+  float zero[3]   = { 0, 0, 0 };
+
+  const float* worldPos = relative ? relPos : absPos;
+  const float* camUp    = relative ? zero   : camF;
 
   float worldEarth[16] = {
     1,0,0,0,
     0,1,0,0,
     0,0,1,0,
-    coordinates.x, coordinates.y, coordinates.z , 1
+    worldPos[0], worldPos[1], worldPos[2], 1
   };
 
   //we fill the world transform uniform
   glUniformMatrix4fv(worldMatrixBuffer, 1, GL_FALSE, worldEarth);
 
-  glUniform3fv(cameraTranslateUniform, 1, cameraTranslate);
-
-  float tempCoords[3] = {
-    coordinates.x,
-    coordinates.y,
-    coordinates.z 
-  };
-
-  glUniform3fv(objectCoordinateUniform, 1, tempCoords);
+  glUniform3fv(cameraTranslateUniform, 1, camUp);
+  glUniform3fv(objectCoordinateUniform, 1, worldPos);
   if (viewRotUniform != (unsigned int)-1)
     glUniformMatrix3fv(viewRotUniform, 1, GL_TRUE, viewRot);
 
@@ -775,7 +764,7 @@ void RenderedObject::TrimLinePoints(size_t maxPoints){
 }
 
 
-void RenderedObject::renderLine(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
+void RenderedObject::renderLine(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -786,7 +775,7 @@ void RenderedObject::renderLine(float cameraTranslate[3], const float viewRot[9]
   hasBeenRendered=true;
 }
 
-void RenderedObject::renderCloud(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
+void RenderedObject::renderCloud(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   if(bufferSize == 0 || UVObjectMeshBuffer.empty()) return;
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
@@ -803,7 +792,6 @@ void RenderedObject::renderCloud(float cameraTranslate[3], const float viewRot[9
   if (curRenderMode == 1) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE); // additive blending for nebula glow
-    glEnable(GL_PROGRAM_POINT_SIZE);
     glPointSize(8);
   } else {
     glPointSize(2);
@@ -813,7 +801,6 @@ void RenderedObject::renderCloud(float cameraTranslate[3], const float viewRot[9
 
   if (curRenderMode == 1) {
     glDisable(GL_BLEND);
-    glDisable(GL_PROGRAM_POINT_SIZE);
   }
   hasBeenRendered=true;
 }
@@ -822,8 +809,8 @@ void RenderedObject::renderCloud(float cameraTranslate[3], const float viewRot[9
 void RenderedObject::UpdateCloudPhysics
 (const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed)
 {
-  float G = 0.0001f;
-  float dt = 0.02f * simSpeed;
+  float G = (float)units::kG;
+  float dt = (float)(units::kDtYears) * simSpeed;
 
   for(int i = 0; i < (int)cloudParticles.size(); i++)
   {

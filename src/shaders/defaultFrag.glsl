@@ -57,7 +57,8 @@ void main() {
       vec3  toLight     = uLightPositions[i] - vPos;
       float dist2       = dot(toLight, toLight);
       vec3  lightDir    = normalize(toLight);
-      float attenuation = 1.0 / max(dist2 * 0.05, 0.001);
+      // Inverse square, normalised: full brightness at 1 AU from a star
+      float attenuation = 1.0 / max(dist2, 1e-9);
 
       float diff  = max(dot(norm, lightDir), 0.0);
       vec3  half_ = normalize(lightDir + viewDir);

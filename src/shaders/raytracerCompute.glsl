@@ -290,7 +290,8 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor)
         float dist2   = dot(toLight, toLight);
         vec3  ldir    = normalize(toLight);
 
-        float attenuation = 1.0 / max(dist2 * 0.05, 0.001);
+        // Inverse square, normalised: full brightness at 1 AU from a star
+        float attenuation = 1.0 / max(dist2, 1e-9);
 
         float diff  = max(dot(normal, ldir), 0.0);
         vec3  half_ = normalize(ldir + viewDir);

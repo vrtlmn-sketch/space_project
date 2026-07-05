@@ -9,15 +9,15 @@
 
 struct PhysicsObjectData {
   std::string name;
-  float mass{};
-  vec3  position{};
-  vec3  velocity{};
+  double mass{};        // solar masses
+  dvec3  position{};    // AU
+  dvec3  velocity{};    // AU/yr
   int   shaderType{}; // 0=Planet, 1=Star, 2=BlackHole
   float temperature{0.0f}; // Kelvin
-  float schwarzschildRadius{0.0f}; // 0 = compute from mass (2*G*m)
+  float schwarzschildRadius{0.0f}; // AU; 0 = compute from mass (2GM/c²)
   vec3  color{0.55f, 0.25f, 0.15f}; // planet RGB color
   std::string texturePath{};         // path to optional surface texture (empty = none)
-  float visualRadius{0.0f};          // visual size (0 = derive from mass)
+  float visualRadius{0.0f};          // real visual radius in AU (0 = derive from mass)
   bool  atmosphereEnabled{false};
   float atmosphereHeight{0.25f};
   float atmosphereFalloff{4.0f};
@@ -36,6 +36,7 @@ struct GridData {
 
 struct CloudData {
   bool  enabled{false};
+  dvec3 position{0.0, 0.0, -3.0};  // cloud centre (AU)
   int   count{2000};
   float sizeX{3.f}, sizeY{3.f}, sizeZ{3.f};
   std::string formationFile;   // empty = procedural, non-empty = load from templates/formations/
@@ -50,8 +51,8 @@ struct CloudData {
 
 // All non-scene renderer/camera state that is worth persisting per project
 struct SceneSettings {
-  // Camera position and orientation
-  float camX{0}, camY{0}, camZ{0};
+  // Camera position and orientation (AU, double for galactic coordinates)
+  double camX{0}, camY{0}, camZ{0};
   float camRotation{0}, camPitch{0}, camRoll{0}, camZoom{45.0f};
 
   // Render mode
@@ -61,7 +62,7 @@ struct SceneSettings {
 
   // Doppler effect
   bool  dopplerMode{false};
-  float dopplerVelScale{0.5f};
+  float dopplerVelScale{1.581e-5f}; // 1/c in AU/yr
   float dopplerBrightnessStr{2.0f};
   float dopplerColorStr{1.0f};
 
@@ -81,6 +82,10 @@ struct SceneSettings {
   // Simulation
   float simSpeed{1.0f};
   float playbackSpeed{1.0f};
+
+  // Visual size exaggeration
+  bool  exaggeratedSizes{false};
+  float sizeExagFactor{750.0f};
   float ramBudgetGB{1.0f};
 
   // Recording output settings

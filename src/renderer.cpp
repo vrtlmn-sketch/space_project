@@ -1,5 +1,6 @@
 #include "renderer.h"
 #include "physicsObject.h"
+#include "units.h"
 #include "cloudObject.h"
 
 #include <cstring>
@@ -274,9 +275,9 @@ void Renderer::DrawSkybox(RenderedObject& ro) {
 void Renderer::DrawAtmosphere(PhysicsObject& obj) {
   if (rayTracerView) return;
   if (!obj.atmosphereEnabled || obj.shaderType != ObjectShaderType::Planet) return;
-  obj.EnsureAtmosphere();
+  obj.EnsureAtmosphere(activeSizeExag());
   obj.atmosphereObject.coordinates = obj.data.position;
-  float r = obj.renderRadius();
+  float r = obj.renderRadius() * activeSizeExag();
   obj.atmosphereObject.renderAtmosphere(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight,
                                         r, r * (1.0f + obj.atmosphereHeight),
                                         obj.atmosphereFalloff, obj.atmosphereIntensity,
@@ -402,9 +403,13 @@ bool Renderer::UpdateInputs() {
     float moveStep = cameraSpeed * userFactor * zoomScale;
     if (focusDistance > 0.0f) {
       constexpr float kExponent = 1.0f;
+      // Caps scale with the focus distance: approaching a true-scale planet
+      // needs micro-steps, crossing 26,000 ly needs comically large ones.
+      float lo = 1e-7f;
+      float hi = std::max(0.3f, focusDistance * 0.05f);
       moveStep = std::clamp(
         cameraSpeed * userFactor * zoomScale * std::pow(focusDistance / 3.0f, kExponent),
-        0.0005f, 0.3f);
+        lo, hi);
     }
 
     // ── Zoom-adaptive pan speed ──
@@ -799,14 +804,29 @@ static std::string PrettyTexLabel(const std::string& filename) {
 // DrawUI  — master call: fullscreen dockspace + programmatic layout + all panels
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
+  // ── Adaptive near plane: 10% of the nearest object's surface distance ──
+  {
+    double nearest = 1e30;
+    for (auto& o : physicsObjects) {
+      double dx = o.data.position.x + cameraTranslate[0];
+      double dy = o.data.position.y + cameraTranslate[1];
+      double dz = o.data.position.z + cameraTranslate[2];
+      double d  = std::sqrt(dx*dx + dy*dy + dz*dz)
+                - (double)(o.renderRadius() * activeSizeExag());
+      if (d < nearest) nearest = d;
+    }
+    RenderedObject::sZNear = (float)std::clamp(nearest * 0.1, 1e-7, 0.05);
+    RenderedObject::sZFar  = 1.0e10f;
+  }
+
   // ── Focus distance (drives distance-adaptive camera speed) ──
   focusDistance = -1.0f;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
-    const vec3& p = physicsObjects[selectedIdx].data.position;
-    float dx = p.x + cameraTranslate[0];
-    float dy = p.y + cameraTranslate[1];
-    float dz = p.z + cameraTranslate[2];
-    focusDistance = std::sqrt(dx*dx + dy*dy + dz*dz);
+    const dvec3& p = physicsObjects[selectedIdx].data.position;
+    double dx = p.x + cameraTranslate[0];
+    double dy = p.y + cameraTranslate[1];
+    double dz = p.z + cameraTranslate[2];
+    focusDistance = (float)std::sqrt(dx*dx + dy*dy + dz*dz);
   }
 
   // ── Fullscreen DockSpace ──
@@ -1038,12 +1058,12 @@ static void drawGizmoArrow(ImDrawList* dl, ImVec2 base, ImVec2 tip, ImU32 col, f
 
 // Project a world-space point to absolute screen coordinates.
 // Returns false if the point is behind the camera.
-bool Renderer::WorldToScreen(vec3 pos, float& sx, float& sy) {
+bool Renderer::WorldToScreen(dvec3 pos, float& sx, float& sy) {
   if (sceneRenderW <= 0 || sceneRenderH <= 0) return false;
 
-  float px = pos.x + cameraTranslate[0];
-  float py = pos.y + cameraTranslate[1];
-  float pz = pos.z + cameraTranslate[2];
+  float px = (float)(pos.x + cameraTranslate[0]);
+  float py = (float)(pos.y + cameraTranslate[1]);
+  float pz = (float)(pos.z + cameraTranslate[2]);
 
   // Apply view rotation: each row of camMatrix dotted with p gives camera-space coords.
   float vx = camMatrix[0]*px + camMatrix[1]*py + camMatrix[2]*pz;
@@ -1080,12 +1100,12 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
 
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
     auto& obj = physicsObjects[selectedIdx];
-    vec3  pos = obj.data.position;
+    dvec3 pos = obj.data.position;
 
     // Compute view-space depth for this object (needed for sizing and drag scale)
-    float px_ = pos.x + cameraTranslate[0];
-    float py_ = pos.y + cameraTranslate[1];
-    float pz_ = pos.z + cameraTranslate[2];
+    float px_ = (float)(pos.x + cameraTranslate[0]);
+    float py_ = (float)(pos.y + cameraTranslate[1]);
+    float pz_ = (float)(pos.z + cameraTranslate[2]);
     float vz_ = camMatrix[6]*px_ + camMatrix[7]*py_ + camMatrix[8]*pz_;
     float clipW = -vz_;
 
@@ -1287,13 +1307,13 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::Text("Cam");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(55);
-  ImGui::DragFloat("##cX", &cameraTranslate[0], 0.02f, -100.f, 100.f, "%.1f");
+  ImGui::DragScalar("##cX", ImGuiDataType_Double, &cameraTranslate[0], 0.02f, nullptr, nullptr, "%.4g");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(55);
-  ImGui::DragFloat("##cY", &cameraTranslate[1], 0.02f, -100.f, 100.f, "%.1f");
+  ImGui::DragScalar("##cY", ImGuiDataType_Double, &cameraTranslate[1], 0.02f, nullptr, nullptr, "%.4g");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(55);
-  ImGui::DragFloat("##cZ", &cameraTranslate[2], 0.02f, -100.f, 100.f, "%.1f");
+  ImGui::DragScalar("##cZ", ImGuiDataType_Double, &cameraTranslate[2], 0.02f, nullptr, nullptr, "%.4g");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(50);
   float prevYaw = rotation, prevPit = pitch, prevRol = roll;
@@ -1418,6 +1438,19 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::TextDisabled("Constant (nothing selected)");
 
   ImGui::Spacing();
+  if (ImGui::Checkbox("Exaggerated Sizes##exag", &exaggeratedSizes))
+    sizesDirty = true;
+  if (exaggeratedSizes) {
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(60);
+    if (ImGui::DragFloat("##exagf", &sizeExagFactor, 5.0f, 10.0f, 5000.0f, "%.0fx"))
+      sizesDirty = true;
+  }
+  ImGui::TextDisabled(exaggeratedSizes
+    ? "Visual only - physics uses real sizes"
+    : "True-scale sizes (planets are tiny)");
+
+  ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
 
@@ -1437,7 +1470,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::Indent(8.0f);
     ImGui::Text("Vel Scale (1/c)");
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##dvel", &dopplerVelScale, 0.001f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic))
+    if (ImGui::SliderFloat("##dvel", &dopplerVelScale, 1e-6f, 10.0f, "%.2e", ImGuiSliderFlags_Logarithmic))
       rtDirty = true;
     ImGui::Text("Brightness Str");
     ImGui::SetNextItemWidth(-1);
@@ -1458,7 +1491,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   if (ImGui::CollapsingHeader("Grid", ImGuiTreeNodeFlags_DefaultOpen)) {
     bool changed = false;
     changed |= ImGui::Checkbox("Show Grid", &gridForm.visible);
-    ImGui::Text("Cell Size");
+    ImGui::Text("Cell Size (AU)");
     ImGui::SetNextItemWidth(-1);
     changed |= ImGui::SliderFloat("##gcell", &gridForm.cellSize, 0.1f, 10.f, "%.2f");
     ImGui::Text("Radius (cells)");
@@ -1768,7 +1801,8 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     for (auto& c : clouds) if (c) c->setTimeframeAndRestore((unsigned int)frameInt);
   }
   ImGui::SameLine();
-  ImGui::Text("%d/%u", frameInt, maxBuf - 1);
+  ImGui::Text("%d/%u  (t = %s)", frameInt, maxBuf - 1,
+              units::FormatTimeYears((double)frameInt * units::kDtYears * (double)simSpeed).c_str());
 
   // Right-click → add keypoint
   if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
@@ -1960,17 +1994,22 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
     // ── Physics Object tab ──
     if (ImGui::BeginTabItem("Object")) {
       ImGui::InputText("Name##sp", spawnForm.name, sizeof(spawnForm.name));
-      ImGui::SliderFloat("Mass", &spawnForm.mass, 0.1f, 500.f, "%.1f");
+      {
+        double mMin = 1e-12, mMax = 1e8;
+        ImGui::DragScalar("Mass", ImGuiDataType_Double, &spawnForm.mass,
+                          0.01f, &mMin, &mMax, "%.4g Ms", ImGuiSliderFlags_Logarithmic);
+        ImGui::TextDisabled("= %s", units::FormatMassMsun(spawnForm.mass).c_str());
+      }
       ImGui::Spacing();
 
-      ImGui::Text("Position");
+      ImGui::Text("Position (AU)");
       ImGui::SetNextItemWidth(-1);
       float pos[3] = { spawnForm.posX, spawnForm.posY, spawnForm.posZ };
       if (ImGui::DragFloat3("##spos", pos, 0.1f, -50.f, 50.f, "%.2f")) {
         spawnForm.posX = pos[0]; spawnForm.posY = pos[1]; spawnForm.posZ = pos[2];
       }
 
-      ImGui::Text("Velocity");
+      ImGui::Text("Velocity (AU/yr)");
       ImGui::SetNextItemWidth(-1);
       float vel[3] = { spawnForm.velX, spawnForm.velY, spawnForm.velZ };
       if (ImGui::DragFloat3("##svel", vel, 0.01f, -10.f, 10.f, "%.3f")) {
@@ -1980,7 +2019,11 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::Spacing();
       const char* shaderItems[] = { "Planet", "Star", "Black Hole" };
       ImGui::SetNextItemWidth(-1);
-      ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 3);
+      if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 3)) {
+        if (spawnForm.shaderType == 0)      spawnForm.mass = 3.0e-6;  // Earth
+        else if (spawnForm.shaderType == 1) spawnForm.mass = 1.0;     // Sun
+        else                                spawnForm.mass = 4.15e6;  // Sgr A*
+      }
       if (spawnForm.shaderType == 1) {
         ImGui::SetNextItemWidth(-30);
         ImGui::SliderFloat("##stemp", &spawnForm.temperature, 1000.f, 50000.f, "%.0f K");
@@ -2221,44 +2264,52 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                                          "src/shaders/defaultFrag.glsl");
     }
 
-    // Mass — gravity only, no longer tied to visual size
-    ImGui::SetNextItemWidth(-1);
-    ImGui::DragFloat("Mass##i", &obj.data.mass, 0.5f, 0.1f, 5000.f, "%.1f");
+    // Mass — gravity only, no longer tied to visual size (solar masses)
+    {
+      double mMin = 1e-12, mMax = 1e8;
+      ImGui::SetNextItemWidth(-1);
+      ImGui::DragScalar("Mass##i", ImGuiDataType_Double, &obj.data.mass,
+                        0.01f, &mMin, &mMax, "%.4g Ms", ImGuiSliderFlags_Logarithmic);
+      ImGui::TextDisabled("= %s", units::FormatMassMsun(obj.data.mass).c_str());
+    }
 
-    // Size — visual radius, independent of mass
+    // Size — visual radius in AU (real, before exaggeration)
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::DragFloat("Size##i", &obj.visualRadius, 0.0005f, 0.001f, 2.0f, "%.4f"))
-      obj.renderedObject.GenerateMeshSphere(obj.visualRadius, 32, 32);
+    if (ImGui::DragFloat("Size##i", &obj.visualRadius, 0.01f, 1e-7f, 2.0f, "%.4g AU",
+                         ImGuiSliderFlags_Logarithmic))
+      obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
 
     ImGui::Spacing();
     ImGui::SeparatorText("Transform");
 
     // Locate: teleport the camera in front of the object, facing it
     if (ImGui::Button("Locate##iloc", ImVec2(-1, 0))) {
-      float effR = obj.renderRadius();
+      float effR = obj.renderRadius() * activeSizeExag();
       if (obj.shaderType == ObjectShaderType::BlackHole)
         effR = std::max(effR, obj.schwarzschildRadius * 2.6f); // shadow size
       LocateCamera(obj.data.position, effR);
     }
 
-    // Position
-    ImGui::Text("Position");
+    // Position (AU)
+    ImGui::Text("Position (AU)");
     ImGui::SetNextItemWidth(-1);
-    float p[3] = { obj.data.position.x, obj.data.position.y, obj.data.position.z };
+    double p[3] = { obj.data.position.x, obj.data.position.y, obj.data.position.z };
     // While the gizmo drags, give the widget a fresh ID each frame so it can
     // never hold stale edit state — the display then always tracks the gizmo.
     if (gizmoDragging) ImGui::PushID(ImGui::GetFrameCount());
-    if (ImGui::DragFloat3("##ipos", p, 0.005f, -50.f, 50.f, "%.3f")) {
+    if (ImGui::DragScalarN("##ipos", ImGuiDataType_Double, p, 3, 0.005f,
+                           nullptr, nullptr, "%.4g")) {
       obj.data.position.x = p[0]; obj.data.position.y = p[1]; obj.data.position.z = p[2];
     }
     if (gizmoDragging) ImGui::PopID();
     obj.renderedObject.coordinates = obj.data.position;
 
-    // Velocity
-    ImGui::Text("Velocity");
+    // Velocity (AU/yr)
+    ImGui::Text("Velocity (AU/yr)");
     ImGui::SetNextItemWidth(-1);
-    float v[3] = { obj.data.velocity.x, obj.data.velocity.y, obj.data.velocity.z };
-    if (ImGui::DragFloat3("##ivel", v, 0.001f, -10.f, 10.f, "%.4f")) {
+    double v[3] = { obj.data.velocity.x, obj.data.velocity.y, obj.data.velocity.z };
+    if (ImGui::DragScalarN("##ivel", ImGuiDataType_Double, v, 3, 0.01f,
+                           nullptr, nullptr, "%.4g")) {
       obj.data.velocity.x = v[0]; obj.data.velocity.y = v[1]; obj.data.velocity.z = v[2];
     }
 
@@ -2633,13 +2684,13 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
 // DrawObjectHighlight — white outline + name/distance label for one object
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
-  vec3 pos = obj.data.position;
+  dvec3 pos = obj.data.position;
   float bx, by;
   if (!WorldToScreen(pos, bx, by)) return;
 
   ImDrawList* dl = ImGui::GetForegroundDrawList();
 
-  float effR = obj.renderRadius();
+  float effR = obj.renderRadius() * activeSizeExag();
   if (obj.shaderType == ObjectShaderType::BlackHole)
     effR = std::max(effR, obj.schwarzschildRadius * 2.6f);
 
@@ -2656,17 +2707,14 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
 
   // Live camera distance (display scale: 1 world unit = 200,000 km,
   // which makes the default Earth ~5,600 km in radius)
-  constexpr double kKmPerUnit = 200000.0;
-  float ddx = pos.x + cameraTranslate[0];
-  float ddy = pos.y + cameraTranslate[1];
-  float ddz = pos.z + cameraTranslate[2];
-  double km = std::sqrt(ddx*ddx + ddy*ddy + ddz*ddz) * kKmPerUnit;
+  double ddx = pos.x + cameraTranslate[0];
+  double ddy = pos.y + cameraTranslate[1];
+  double ddz = pos.z + cameraTranslate[2];
+  double au  = std::sqrt(ddx*ddx + ddy*ddy + ddz*ddz);
 
   char label[160];
-  if (km >= 1.0e6)
-    snprintf(label, sizeof(label), "%s · %.2fM km", obj.name.c_str(), km / 1.0e6);
-  else
-    snprintf(label, sizeof(label), "%s · %.0f km", obj.name.c_str(), km);
+  snprintf(label, sizeof(label), "%s · %s", obj.name.c_str(),
+           units::FormatDistanceAU(au).c_str());
 
   ImVec2 ts = ImGui::CalcTextSize(label);
   ImVec2 tp = {bx - ts.x * 0.5f, by - circR - ts.y - 6.0f};
@@ -2678,16 +2726,16 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
 // LocateCamera — teleport in front of a target, facing it.
 // Approaches along the current camera→target line so context is kept.
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::LocateCamera(vec3 target, float effRadius) {
-  float dist = std::max(effRadius * 5.7f, 0.15f);
+void Renderer::LocateCamera(dvec3 target, float effRadius) {
+  double dist = std::max((double)effRadius * 5.7, 1e-4);
 
-  vec3 camPos = vec3{-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]};
-  vec3 back   = camPos - target;                 // backward = target → camera
-  float blen  = std::sqrt(back.x*back.x + back.y*back.y + back.z*back.z);
-  vec3 b = (blen > 1e-5f) ? vec3{back.x/blen, back.y/blen, back.z/blen}
-                          : vec3{0, 0, 1};
+  dvec3 camPos{-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]};
+  dvec3 back = camPos - target;                  // backward = target → camera
+  double blen = getLength(back);
+  dvec3 b = (blen > 1e-9) ? dvec3{back.x/blen, back.y/blen, back.z/blen}
+                          : dvec3{0, 0, 1};
 
-  vec3 newCam = target + b * dist;
+  dvec3 newCam = target + b * dist;
   cameraTranslate[0] = -newCam.x;
   cameraTranslate[1] = -newCam.y;
   cameraTranslate[2] = -newCam.z;
@@ -2695,14 +2743,14 @@ void Renderer::LocateCamera(vec3 target, float effRadius) {
   // Invert this codebase's Euler convention (backward row with roll = 0 is
   // (-sin y, cos y·sin p, cos y·cos p)). Pick the branch with cos y matching
   // sign(b.z) so the camera comes out right side up (cos p > 0).
-  float s = (b.z >= 0.0f) ? 1.0f : -1.0f;
-  rotation = std::atan2(-b.x, s * std::sqrt(b.y*b.y + b.z*b.z));
-  pitch    = std::atan2(s * b.y, s * b.z);
+  double s = (b.z >= 0.0) ? 1.0 : -1.0;
+  rotation = (float)std::atan2(-b.x, s * std::sqrt(b.y*b.y + b.z*b.z));
+  pitch    = (float)std::atan2(s * b.y, s * b.z);
   roll     = 0.0f;
   syncMatrixFromEuler();
 
   // Target fills ~40% of the view; small objects get a zoomed-in FOV instead
-  float angDeg = 2.0f * std::atan(effRadius / dist) * 180.0f / (float)M_PI;
+  float angDeg = (float)(2.0 * std::atan((double)effRadius / dist) * 180.0 / M_PI);
   zoom = std::clamp(angDeg / 0.4f, 5.0f, 45.0f);
   rtDirty = true;
 }
@@ -2747,24 +2795,27 @@ void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
   }
   previewSphere.uploadPlanetColor(obj.data.color);
 
-  // One fixed white light — same shader lighting model as in the scene
-  {
-    std::vector<vec3> lpos{{2.0f, 1.5f, 2.5f}};
-    std::vector<vec3> lcol{{1.0f, 1.0f, 1.0f}};
-    previewSphere.uploadStarLighting(lpos, lcol);
-  }
-
   // Slowly orbiting look-at camera (light stays fixed → planet appears to spin)
   previewYaw += ImGui::GetIO().DeltaTime * 0.5f;
   float cx = CAM_DIST * std::sin(previewYaw);
   float cz = CAM_DIST * std::cos(previewYaw);
   float cy = 0.9f;
 
+  // One fixed white light — same shader lighting model as in the scene.
+  // Uploaded in camera-relative space (world light + camT = light - camPos).
+  // Placed ~2 units out so the sphere's near face sits ~1 unit from the
+  // light — full brightness under the 1/d² (1 at 1 AU) attenuation.
+  {
+    std::vector<vec3> lpos{{1.15f - cx, 0.86f - cy, 1.43f - cz}};
+    std::vector<vec3> lcol{{1.0f, 1.0f, 1.0f}};
+    previewSphere.uploadStarLighting(lpos, lcol);
+  }
+
   vec3 b = normalize(vec3{cx, cy, cz});              // backward
   vec3 r = normalize(vec3{b.z, 0.0f, -b.x});         // right = up_world × b
   vec3 u = vec3{b.y*r.z - b.z*r.y, b.z*r.x - b.x*r.z, b.x*r.y - b.y*r.x}; // up = b × r
   float viewRot[9] = { r.x, r.y, r.z,  u.x, u.y, u.z,  b.x, b.y, b.z };
-  float camT[3]    = { -cx, -cy, -cz };              // uCamera = -camPos
+  double camT[3]   = { -cx, -cy, -cz };              // uCamera = -camPos
 
   GLint prevFbo = 0, vp[4];
   glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
@@ -3404,7 +3455,9 @@ void Renderer::DispatchRaytracer(int width, int height) {
   proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
   glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
 
-  float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
+  // Camera-relative space: RT object positions already have the camera
+  // subtracted in double, so the shader camera sits at the origin.
+  float cam[3] = { 0.0f, 0.0f, 0.0f };
   glUniform3fv(locCamera, 1, cam);
   if (locViewRot >= 0)
     glUniformMatrix3fv(locViewRot, 1, GL_TRUE, camMatrix);
@@ -3749,7 +3802,9 @@ void Renderer::CaptureImage() {
   proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
   glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
 
-  float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
+  // Camera-relative space: RT object positions already have the camera
+  // subtracted in double, so the shader camera sits at the origin.
+  float cam[3] = { 0.0f, 0.0f, 0.0f };
   glUniform3fv(locCamera, 1, cam);
   if (locViewRot >= 0)
     glUniformMatrix3fv(locViewRot, 1, GL_TRUE, camMatrix);
@@ -3979,7 +4034,9 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   proj[14] = (2.0f * zFar * zNear) / (zNear - zFar);
   glUniformMatrix4fv(locProj, 1, GL_FALSE, proj);
 
-  float cam[3] = { cameraTranslate[0], cameraTranslate[1], cameraTranslate[2] };
+  // Camera-relative space: RT object positions already have the camera
+  // subtracted in double, so the shader camera sits at the origin.
+  float cam[3] = { 0.0f, 0.0f, 0.0f };
   glUniform3fv(locCamera, 1, cam);
   if (locViewRot >= 0)
     glUniformMatrix3fv(locViewRot, 1, GL_TRUE, camMatrix);

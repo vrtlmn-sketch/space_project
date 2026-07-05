@@ -32,7 +32,7 @@ struct Keypoint {
 // ---- Camera keyframe on the timeline ----
 struct CameraKeyframe {
   unsigned int frame{};
-  float pos[3]{};
+  double pos[3]{};
   float rotation{};
   float pitch{};
   float roll{};
@@ -42,9 +42,9 @@ struct CameraKeyframe {
 // ---- Spawn form state ----
 struct SpawnFormState {
   char   name[64]   = "Object";
-  float  mass       = 5.0f;
-  float  posX       = 0.0f, posY = 0.0f, posZ = -3.0f;
-  float  velX       = 0.0f, velY = 0.0f, velZ =  0.0f;
+  double mass       = 3.0e-6;  // solar masses (default: Earth mass)
+  float  posX       = 0.0f, posY = 0.0f, posZ = -3.0f;   // AU
+  float  velX       = 0.0f, velY = 0.0f, velZ =  0.0f;   // AU/yr
   int    shaderType = 0;   // 0=Planet, 1=Star, 2=BlackHole
   float  temperature = 5778.0f; // Kelvin (meaningful for stars)
 };
@@ -132,7 +132,7 @@ private:
   int   sceneRenderW{0}, sceneRenderH{0};
   float sceneImageOffX{0.0f}, sceneImageOffY{0.0f};
 
-  bool WorldToScreen(vec3 world, float& sx, float& sy);
+  bool WorldToScreen(dvec3 world, float& sx, float& sy);
   void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects);
   void DrawObjectHighlight(PhysicsObject& obj);
   int  highlightMode{0};  // 0 = selected only, 1 = all objects, 2 = none
@@ -278,7 +278,7 @@ private:
   int    rtMaxSteps{256};                // geodesic integration steps per ray
 
   // Dirty-flag: skip raytracer dispatch when nothing changed
-  float  rtLastCamera[3]{};
+  double rtLastCamera[3]{};
   float  rtLastViewRot[9]{1,0,0, 0,1,0, 0,0,1};
   float  rtLastZoom{};
   int    rtLastBounces{-1};
@@ -319,7 +319,7 @@ private:
   void RenderPlanetPreview(PhysicsObject& obj);
 
   // Teleport the camera in front of a target, facing it (Locate button)
-  void LocateCamera(vec3 target, float effRadius);
+  void LocateCamera(dvec3 target, float effRadius);
 
   // ── Editor viewport FBO ──
   GLuint vpFBO{0};
@@ -373,12 +373,19 @@ private:
 
 public:
   // ---- Public camera state (exposed so UI sliders can drive them) ----
-  float cameraTranslate[3] = { 0, 0, 0 };
+  double cameraTranslate[3] = { 0, 0, 0 };  // = -cameraPosition (uCamera semantics)
   float rotation{};
   float pitch{};
   float roll{};
   float zoom{45.0f}; // FOV in degrees (lower = zoomed in)
   float cameraSpeedFactor{1.0f}; // user multiplier for camera move speed
+
+  // ── Visual size exaggeration ──
+  // Objects store their REAL radius (AU); this factor only scales rendering.
+  bool  exaggeratedSizes{false};
+  float sizeExagFactor{750.0f};
+  bool  sizesDirty{false};  // set on toggle; main loop regenerates meshes
+  float activeSizeExag() const { return exaggeratedSizes ? sizeExagFactor : 1.0f; }
   void syncMatrixFromEuler();   // rebuild camMatrix from rotation/pitch/roll
 
   // ---- Simulation state ----
@@ -389,14 +396,15 @@ public:
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
   bool dopplerMode{false};       // true = use Doppler shader variants
-  float dopplerVelScale{0.5f};   // maps simulation velocity to v/c (tune to scene scale)
+  float dopplerVelScale{1.581e-5f}; // v/c per AU/yr: 1/c = 1/63241 → physically real Doppler
   float dopplerBrightnessStr{2.0f}; // brightness exponent: brightness *= D^this
   float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──
-  // simSpeed:      data resolution — dt per recorded frame = 0.02 · simSpeed
-  // playbackSpeed: visual rate — world-time per rendered tick = 0.1 · playbackSpeed
+  // simSpeed:      data resolution — dt per recorded frame = kDtYears · simSpeed
+  // playbackSpeed: visual rate — world-time per tick = 5 · kDtYears · playbackSpeed
+  //                (≈ 0.9 days/tick at 1×: Earth orbits in ~7 s of wall time)
   // framesThisTick: recorded frames to advance this tick (= 5·playback/sim,
   //                 fractional remainder carried in an accumulator)
   float simSpeed{1.0f};        // ACTIVE sim speed (dt of recorded data)

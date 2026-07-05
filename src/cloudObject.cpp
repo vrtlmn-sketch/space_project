@@ -1,4 +1,5 @@
 #include "cloudObject.h"
+#include "units.h"
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <glad/gl.h>
@@ -251,8 +252,8 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   glUniform1i(locParticleCount, particleCount_);
   glUniform1i(locNodeCount, nodeCount_);
   glUniform1i(locBigBodyCount, bbCount);
-  glUniform1f(locG, 0.0001f);
-  glUniform1f(locDt, 0.02f * simSpeed);
+  glUniform1f(locG, (float)units::kG);
+  glUniform1f(locDt, (float)units::kDtYears * simSpeed);
   glUniform1f(locTheta, barnesHutTheta);
 
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
@@ -389,7 +390,7 @@ void CloudObject::resetToInitial()
 CloudObject::CloudObject(const vec3& position, int objectCount, float (*distributionFunction)(float x, float y, float z), const vec3& size){
   renderedObject.GenerateMeshCloud(objectCount, distributionFunction, size);
   this->position = position;
-  renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
+  renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/cloudFrag.glsl");
   // frameStore is lazy-init'd in ensureFrameStore() once particle count is known
 }
 
@@ -403,7 +404,7 @@ CloudObject::CloudObject(const vec3& position, const std::string& formationPath)
     std::cerr << "[CloudObject] Failed to open formation file: " << formationPath << "\n";
     // Fallback: create a tiny procedural cloud
     renderedObject.GenerateMeshCloud(100, [](float,float,float){ return 1.0f; }, vec3{1,1,1});
-    renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
+    renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/cloudFrag.glsl");
     return;
   }
 
@@ -434,14 +435,14 @@ CloudObject::CloudObject(const vec3& position, const std::string& formationPath)
   }
 
   renderedObject.LoadCloudFromFormation(cloudData);
-  renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
+  renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/cloudFrag.glsl");
   // frameStore is lazy-init'd in ensureFrameStore() once particle count is known
 }
 
 CloudObject::CloudObject(const vec3& pos, std::vector<CloudParticle> pts) {
   this->position = pos;
   renderedObject.LoadCloudFromFormation(pts);
-  renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/lineShaders.glsl");
+  renderedObject.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/cloudFrag.glsl");
 }
 
 CloudObject::~CloudObject() {

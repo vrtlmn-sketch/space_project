@@ -24,12 +24,13 @@
 
 static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   std::unique_ptr<CloudObject> cloud;
+  vec3 cpos = static_cast<vec3>(cd.position);
   if (!cd.formationFile.empty()) {
     std::string formPath = "templates/formations/" + cd.formationFile;
-    cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, formPath);
+    cloud = std::make_unique<CloudObject>(cpos, formPath);
   } else {
     cloud = std::make_unique<CloudObject>(
-      vec3{0, 0, -3}, cd.count, randomDistribution,
+      cpos, cd.count, randomDistribution,
       vec3{cd.sizeX, cd.sizeY, cd.sizeZ});
   }
   cloud->formationFile      = cd.formationFile;   // keep bare filename, not full path
@@ -84,7 +85,7 @@ static void buildScene(
     if (po.atmosphereEnabled) po.EnsureAtmosphere();
   }
   for (auto& obj : physicsObjects)
-    lineObjects.emplace_back(vec3{obj.data.position});
+    lineObjects.emplace_back(static_cast<vec3>(obj.data.position));
 
   const GridData& g = data.grid;
   grid.emplace(g.cellSize, g.radius, g.showX, g.showY, g.showZ);
@@ -160,12 +161,25 @@ int main(int argc, char** argv) {
     }
   };
 
+  auto cloudDataFromForm = [](const CloudFormState& cf) {
+    CloudData cd;
+    cd.enabled = true;
+    cd.count = cf.count;
+    cd.sizeX = cf.sizeX; cd.sizeY = cf.sizeY; cd.sizeZ = cf.sizeZ;
+    cd.formationFile = cf.formationFile;
+    cd.computeMethod = cf.computeMethod;
+    cd.theta = cf.theta;
+    cd.temperature = cf.temperature;
+    cd.renderMode = cf.renderMode;
+    cd.nebulaScatterScale = cf.nebulaScatterScale;
+    cd.particleSizeSpread = cf.particleSizeSpread;
+    cd.scale = cf.scale;
+    return cd;
+  };
+
   cb.applyCloud = [&](const CloudFormState& cf) {
     if (!cf.enabled) return;
-    CloudData cd{true, cf.count, cf.sizeX, cf.sizeY, cf.sizeZ,
-                 cf.formationFile, cf.computeMethod, cf.theta,
-                 cf.temperature, cf.renderMode, cf.nebulaScatterScale, cf.particleSizeSpread, cf.scale};
-    clouds.push_back(buildCloudFromData(cd));
+    clouds.push_back(buildCloudFromData(cloudDataFromForm(cf)));
   };
 
   cb.deleteCloud = [&](int cloudIdx) {
@@ -175,9 +189,8 @@ int main(int argc, char** argv) {
 
   cb.respawnCloud = [&](int cloudIdx, const CloudFormState& cf) {
     if (cloudIdx < 0 || cloudIdx >= (int)clouds.size()) return;
-    CloudData cd{true, cf.count, cf.sizeX, cf.sizeY, cf.sizeZ,
-                 cf.formationFile, cf.computeMethod, cf.theta,
-                 cf.temperature, cf.renderMode, cf.nebulaScatterScale, cf.particleSizeSpread, cf.scale};
+    CloudData cd = cloudDataFromForm(cf);
+    cd.position = dvec3(clouds[cloudIdx]->position);  // keep current placement
     clouds[cloudIdx] = buildCloudFromData(cd);
   };
 
@@ -196,7 +209,7 @@ int main(int argc, char** argv) {
     // Rebuild trails from current positions
     lineObjects.clear();
     for (auto& obj : physicsObjects)
-      lineObjects.emplace_back(vec3{obj.data.position});
+      lineObjects.emplace_back(static_cast<vec3>(obj.data.position));
   };
 
   cb.loadSpheremap = [&](const std::string& path) {
@@ -240,6 +253,9 @@ int main(int argc, char** argv) {
     renderer.simSpeed        = s.simSpeed;
     renderer.pendingSimSpeed = s.simSpeed;
     renderer.playbackSpeed   = s.playbackSpeed;
+    renderer.exaggeratedSizes = s.exaggeratedSizes;
+    renderer.sizeExagFactor   = s.sizeExagFactor;
+    renderer.sizesDirty       = true;
     renderer.ramBudgetGB   = s.ramBudgetGB;
     renderer.recStartFrame = s.recStartFrame;
     renderer.recStopFrame  = s.recStopFrame;
@@ -258,12 +274,19 @@ int main(int argc, char** argv) {
     if (path.empty()) path = "project.json";
     std::vector<CloudData> cloudDatas;
     for (const auto& c : clouds) {
-      cloudDatas.push_back(CloudData{
-        true, c->particleCount(),
-        3.f, 3.f, 3.f, c->formationFile, static_cast<int>(c->computeMethod),
-        c->barnesHutTheta, c->temperature, c->renderMode,
-        c->nebulaScatterScale, c->particleSizeSpread, c->scale
-      });
+      CloudData cd;
+      cd.enabled = true;
+      cd.position = dvec3(c->position);
+      cd.count = c->particleCount();
+      cd.formationFile = c->formationFile;
+      cd.computeMethod = static_cast<int>(c->computeMethod);
+      cd.theta = c->barnesHutTheta;
+      cd.temperature = c->temperature;
+      cd.renderMode = c->renderMode;
+      cd.nebulaScatterScale = c->nebulaScatterScale;
+      cd.particleSizeSpread = c->particleSizeSpread;
+      cd.scale = c->scale;
+      cloudDatas.push_back(cd);
     }
     SceneSettings s;
     s.camX        = renderer.cameraTranslate[0];
@@ -291,6 +314,8 @@ int main(int argc, char** argv) {
     s.rtLiveHeight    = renderer.GetRtLiveHeight();
     s.simSpeed        = renderer.simSpeed;
     s.playbackSpeed   = renderer.playbackSpeed;
+    s.exaggeratedSizes = renderer.exaggeratedSizes;
+    s.sizeExagFactor   = renderer.sizeExagFactor;
     s.ramBudgetGB     = renderer.ramBudgetGB;
     s.recordResPreset = renderer.GetRecordResPreset();
     s.recordWidth     = renderer.GetRecordWidth();
@@ -329,7 +354,11 @@ int main(int argc, char** argv) {
   {
     using SC = Renderer::StartupChoice;
     if (renderer.startupChoice == SC::Template) {
-      ProjectData tmpl = ProjectSerializer::MilkyWayTemplate();
+      // Template scene ships as an editable JSON preset; the hardcoded
+      // fallback only kicks in if the file is missing or broken.
+      ProjectData tmpl = ProjectSerializer::Load("templates/solar_system.json");
+      if (tmpl.objects.empty())
+        tmpl = ProjectSerializer::MilkyWayTemplate();
       currentGrid = tmpl.grid;
       buildScene(tmpl, physicsObjects, lineObjects, grid, clouds);
     } else if (renderer.startupChoice == SC::Load) {
@@ -363,6 +392,15 @@ int main(int argc, char** argv) {
 
     // In editor viewport mode, redirect all primary drawing into the viewport FBO.
     // Must happen before any draw calls so every object ends up in the FBO.
+    // Regenerate sphere meshes when the size-exaggeration toggle changes
+    if (renderer.sizesDirty) {
+      for (auto& obj : physicsObjects)
+        obj.renderedObject.GenerateMeshSphere(
+          obj.visualRadius * renderer.activeSizeExag(), 32, 32);
+      renderer.sizesDirty = false;
+      renderer.SetRtMaxSteps(renderer.GetRtMaxSteps());  // marks RT dirty
+    }
+
     // Keep the RT planet texture array in sync (no-op unless textures changed).
     // Must run before BindViewportFBO — it binds its own FBOs while blitting.
     renderer.UpdateRtPlanetTextures(physicsObjects);
@@ -382,7 +420,11 @@ int main(int argc, char** argv) {
     std::vector<vec3> starColors;
     for (const auto& obj : physicsObjects) {
       if (obj.shaderType == ObjectShaderType::Star) {
-        starPositions.push_back(obj.data.position);
+        // Camera-relative (matches the camera-relative vertex positions)
+        starPositions.push_back(vec3{
+          (float)(obj.data.position.x + renderer.cameraTranslate[0]),
+          (float)(obj.data.position.y + renderer.cameraTranslate[1]),
+          (float)(obj.data.position.z + renderer.cameraTranslate[2])});
         // Basic blackbody approximation for the light colour
         float t = obj.temperature;
         float r, g, b;

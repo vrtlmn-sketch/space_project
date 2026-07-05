@@ -16,6 +16,13 @@ enum class MeshType{
 
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback
+public:
+  // Adaptive clip planes, set once per frame by the renderer. True-scale
+  // planets need a tiny near plane up close; the galactic backdrop needs a
+  // huge far plane. Depth precision concentrates near the near plane, and
+  // nothing overlaps at galactic distance, so the extreme ratio is safe.
+  static float sZNear;
+  static float sZFar;
 private:
   int horizontalSubdivisions{};
   int verticalSubdivisions{};
@@ -62,7 +69,7 @@ private:
   std::vector<PhysicsObjectStructure> gridPoints;
 public:
   MeshType meshType{MeshType::sphere};
-  vec3 coordinates;
+  dvec3 coordinates;  // world position (double: galactic coords need it)
   int  rtTexLayer{-1};  // layer in the RT planet texture array (-1 = untextured)
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
@@ -75,7 +82,7 @@ public:
   float cachedParticleSizeSpread{0.0f}; // set by uploadParticleSizeSpread(), used by renderCloudRaytraced()
 
   void setupRender();
-  void transformPerspectiveMesh(GLuint program, float cameraTranslate[3], const float viewRot[9],
+  void transformPerspectiveMesh(GLuint program, const double cameraTranslate[3], const float viewRot[9],
                                 float fovDeg = 45.f,
                                 int fbWidth = 800, int fbHeight = 600);
   void uploadStarLighting(const std::vector<vec3>& positions,
@@ -93,22 +100,21 @@ public:
   void uploadNebulaScatterScale(float scale);
   void uploadParticleSizeSpread(float spread);
   void uploadResolution(int w, int h);
-  void renderMesh(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
-  void renderLine(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
-  void renderCloud(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
-  void renderGrid(float cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
-  void renderSkybox(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight, float exposure);
-  void renderAtmosphere(float cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
+  void renderMesh(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderLine(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderCloud(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderGrid(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  void renderSkybox(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight, float exposure);
+  void renderAtmosphere(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
                         float planetRadius, float atmoRadius, float falloff, float intensity, vec3 scatter);
-  void renderMeshRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
+  void renderMeshRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                            float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
                            vec3 color = {0.55f, 0.25f, 0.15f});
 
-void renderPlane(float cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
+void renderPlane(const double cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
                  const float viewRot[9], float fovDeg = 45.f,
                  int fbWidth = 800, int fbHeight = 600);
 void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed = 1.0f);
-void UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 
 
   void setupShaders(const std::string& vertPath, const std::string& fragPath);
@@ -119,11 +125,11 @@ void UpdateGridPhysics(const std::vector<PhysicsObjectStructure>& bigBodies);
 void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size);
 void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY = true, bool showZ = true);
 
-  void renderCloudRaytraced(float cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
-  void renderMeshRaytracedDoppler(float cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
+  void renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
+  void renderMeshRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
                                   vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
                                   vec3 color = {0.55f, 0.25f, 0.15f});
-  void renderCloudRaytracedDoppler(float cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list);
+  void renderCloudRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);
   void TrimLinePoints(size_t maxPoints);

@@ -29,6 +29,28 @@ struct vec3{
 };
 
 
+// Double-precision vector for physics state (positions can reach 1e9+ AU;
+// float32's 7 digits would round galactic coordinates to ~100 AU)
+struct dvec3{
+  double x{};
+  double y{};
+  double z{};
+  dvec3() = default;
+  dvec3(double x_, double y_, double z_) : x(x_), y(y_), z(z_) {}
+  dvec3(const vec3& v) : x(v.x), y(v.y), z(v.z) {}
+  operator vec3() const { return vec3{(float)x, (float)y, (float)z}; }
+  dvec3 operator+(const dvec3& o) const { return {x+o.x, y+o.y, z+o.z}; }
+  dvec3 operator-(const dvec3& o) const { return {x-o.x, y-o.y, z-o.z}; }
+  dvec3& operator+=(const dvec3& o) { x+=o.x; y+=o.y; z+=o.z; return *this; }
+  dvec3 operator*(double s) const { return {x*s, y*s, z*s}; }
+};
+
+inline double getLength(const dvec3& v) { return std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z); }
+inline dvec3 normalize(const dvec3& v) {
+  double l = getLength(v);
+  return (l > 0.0) ? dvec3{v.x/l, v.y/l, v.z/l} : dvec3{0,0,0};
+}
+
 float randomDistribution(float x, float y, float z);
 float asteroidBeltDistribution(float x, float y, float z);
 float sphereDistribution(float x, float y, float z);

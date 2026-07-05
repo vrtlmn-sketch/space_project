@@ -2,6 +2,7 @@
 #include <fstream>
 #include <iostream>
 #include "json.hpp"
+#include "units.h"
 
 using json = nlohmann::json;
 
@@ -12,6 +13,12 @@ static json vec3ToJson(const vec3& v) {
 static vec3 jsonToVec3(const json& j) {
   return vec3{j[0].get<float>(), j[1].get<float>(), j[2].get<float>()};
 }
+static json dvec3ToJson(const dvec3& v) {
+  return json::array({v.x, v.y, v.z});
+}
+static dvec3 jsonToDVec3(const json& j) {
+  return dvec3{j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
+}
 
 // ─── Save ────────────────────────────────────────────────────────────────────
 bool ProjectSerializer::Save(const std::string& path,
@@ -21,6 +28,7 @@ bool ProjectSerializer::Save(const std::string& path,
                              const SceneSettings& settings)
 {
   json root;
+  root["unitsVersion"] = 2;  // v2: AU / solar masses / years, G = 4pi^2
 
   // ── Physics objects ──
   json objsArr = json::array();
@@ -28,8 +36,8 @@ bool ProjectSerializer::Save(const std::string& path,
     json o;
     o["name"]        = obj.name;
     o["mass"]        = obj.data.mass;
-    o["position"]    = vec3ToJson(obj.data.position);
-    o["velocity"]    = vec3ToJson(obj.data.velocity);
+    o["position"]    = dvec3ToJson(obj.data.position);
+    o["velocity"]    = dvec3ToJson(obj.data.velocity);
     o["shaderType"]  = static_cast<int>(obj.shaderType);
     o["temperature"] = obj.temperature;
     o["schwarzschildRadius"] = obj.schwarzschildRadius;
@@ -60,6 +68,7 @@ bool ProjectSerializer::Save(const std::string& path,
   for (const auto& cloud : clouds) {
     cloudsArr.push_back({
       {"enabled",           cloud.enabled},
+      {"position",          dvec3ToJson(cloud.position)},
       {"count",             cloud.count},
       {"sizeX",             cloud.sizeX},
       {"sizeY",             cloud.sizeY},
@@ -115,6 +124,8 @@ bool ProjectSerializer::Save(const std::string& path,
     // Simulation
     s["simSpeed"]      = settings.simSpeed;
     s["playbackSpeed"] = settings.playbackSpeed;
+    s["exaggeratedSizes"] = settings.exaggeratedSizes;
+    s["sizeExagFactor"]   = settings.sizeExagFactor;
     s["ramBudgetGB"] = settings.ramBudgetGB;
 
     // Recording
@@ -175,17 +186,24 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     return data;
   }
 
+  if (root.value("unitsVersion", 0) < 2) {
+    std::cerr << "[ProjectSerializer] WARNING: '" << path << "' predates the "
+                 "real-unit system (AU / solar masses / years). Its masses, "
+                 "distances and velocities will behave incorrectly.\n";
+  }
+
   // ── Physics objects ──
   if (root.contains("physicsObjects")) {
     for (const auto& o : root["physicsObjects"]) {
       PhysicsObjectData pod;
       pod.name        = o.value("name",        "Object");
-      pod.mass        = o.value("mass",         1.0f);
-      pod.position    = jsonToVec3(o["position"]);
-      pod.velocity    = jsonToVec3(o["velocity"]);
+      pod.mass        = o.value("mass",         1.0);
+      pod.position    = jsonToDVec3(o["position"]);
+      pod.velocity    = jsonToDVec3(o["velocity"]);
       pod.shaderType  = o.value("shaderType",   0);
       pod.temperature = o.value("temperature",  0.0f);
-      pod.schwarzschildRadius = o.value("schwarzschildRadius", 2.0f * 0.0001f * pod.mass);
+      pod.schwarzschildRadius = o.value("schwarzschildRadius",
+                                         (float)(units::kRsAUPerMsun * pod.mass));
       pod.color       = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
       pod.texturePath  = o.value("texturePath", std::string{});
       pod.visualRadius = o.value("visualRadius", 0.0f);
@@ -215,6 +233,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
   auto parseCloudJson = [](const json& c) -> CloudData {
     CloudData cd;
     cd.enabled       = c.value("enabled",      false);
+    if (c.contains("position")) cd.position = jsonToDVec3(c["position"]);
     cd.count         = c.value("count",        40000);
     cd.sizeX         = c.value("sizeX",         5.f);
     cd.sizeY         = c.value("sizeY",         5.f);
@@ -245,9 +264,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     SceneSettings& st = data.settings;
 
     // Camera
-    st.camX        = s.value("camX",        0.0f);
-    st.camY        = s.value("camY",        0.0f);
-    st.camZ        = s.value("camZ",        0.0f);
+    st.camX        = s.value("camX",        0.0);
+    st.camY        = s.value("camY",        0.0);
+    st.camZ        = s.value("camZ",        0.0);
     st.camRotation = s.value("camRotation", 0.0f);
     st.camPitch    = s.value("camPitch",    0.0f);
     st.camRoll     = s.value("camRoll",     0.0f);
@@ -260,7 +279,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 
     // Doppler
     st.dopplerMode         = s.value("dopplerMode",         false);
-    st.dopplerVelScale     = s.value("dopplerVelScale",     0.5f);
+    st.dopplerVelScale     = s.value("dopplerVelScale",     1.581e-5f);
     st.dopplerBrightnessStr= s.value("dopplerBrightnessStr",2.0f);
     st.dopplerColorStr     = s.value("dopplerColorStr",     1.0f);
 
@@ -280,6 +299,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);
     st.playbackSpeed = s.value("playbackSpeed", 1.0f);
+    st.exaggeratedSizes = s.value("exaggeratedSizes", false);
+    st.sizeExagFactor   = s.value("sizeExagFactor",   750.0f);
     st.ramBudgetGB = s.value("ramBudgetGB", 1.0f);
 
     // Recording
@@ -311,9 +332,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
         cf.roll     = kf.value("roll",     0.0f);
         cf.zoom     = kf.value("zoom",    45.0f);
         if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
-          cf.pos[0] = kf["pos"][0].get<float>();
-          cf.pos[1] = kf["pos"][1].get<float>();
-          cf.pos[2] = kf["pos"][2].get<float>();
+          cf.pos[0] = kf["pos"][0].get<double>();
+          cf.pos[1] = kf["pos"][1].get<double>();
+          cf.pos[2] = kf["pos"][2].get<double>();
         }
         st.cameraKeyframes.push_back(cf);
       }
@@ -325,22 +346,46 @@ ProjectData ProjectSerializer::Load(const std::string& path)
   return data;
 }
 
-// ─── Milky Way Template ──────────────────────────────────────────────────────
+// ─── Solar System Template ───────────────────────────────────────────────────
+// Real units: AU / solar masses / years. Circular orbit speed v = 2π/√a.
+// Visual radii are REAL (true scale) — toggle Exaggerated Sizes to see discs.
+// Sgr A* sits at its true 26,000 ly with the milky-way cloud around it.
 ProjectData ProjectSerializer::MilkyWayTemplate()
 {
   ProjectData data;
 
+  constexpr double sunZ  = -3.0;                       // scene centre
+  const double bhZ = sunZ - 26000.0 * units::kAUPerLy; // ≈ -1.644e9 AU
+
   data.objects = {
-    //  name               mass    position (x,y,z)              velocity (x,y,z)             shader  temp(K)  rs
-    { "Sagittarius A*", 250.f,  { 0.0f,   0.0f,  -3.0f  },   { 0.0f,   0.01f,  0.0f   },  2,     0.f,   0.05f },
-    { "Sol",             15.f,  { 0.9f,   0.0f,  -3.0f  },   { 0.0f,  -0.004f,-0.18f  },  1,  5778.f,  0.003f },
-    { .name="Mars",    .mass=10.f, .position={-0.7f, 0.0f,  -3.7f},  .velocity={-0.18f, 0.002f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/mars.jpg"    },
-    { .name="Mercury", .mass=2.f,  .position={ 0.7f, 0.0f,  -3.7f},  .velocity={-0.13f, 0.004f,  0.0f }, .shaderType=0, .schwarzschildRadius=0.0004f, .texturePath="assets/mercury.jpg" },
-    { .name="Earth",   .mass=10.f, .position={-0.6f,-0.6f,  -3.1f},  .velocity={ 0.18f, 0.022f, -0.10f}, .shaderType=0, .schwarzschildRadius=0.002f,  .texturePath="assets/earth.jpg", .atmosphereEnabled=true },
+    { .name="Sol",     .mass=1.0,      .position={ 0.0,    0.0, sunZ},          .velocity={0,0,0},
+      .shaderType=1, .temperature=5778.f, .visualRadius=0.00465f },
+    { .name="Mercury", .mass=1.66e-7,  .position={ 0.387,  0.0, sunZ},          .velocity={ 0.0,   0.0, 10.09},
+      .shaderType=0, .texturePath="assets/mercury.jpg", .visualRadius=1.63e-5f },
+    { .name="Venus",   .mass=2.45e-6,  .position={ 0.0,    0.0, sunZ + 0.723},  .velocity={-7.388, 0.0, 0.0},
+      .shaderType=0, .texturePath="assets/venus.jpg",   .visualRadius=4.04e-5f },
+    { .name="Earth",   .mass=3.00e-6,  .position={-0.9397, 0.0, sunZ - 0.342},  .velocity={ 2.149, 0.0, -5.904},
+      .shaderType=0, .texturePath="assets/earth.jpg",   .visualRadius=4.26e-5f, .atmosphereEnabled=true },
+    { .name="Mars",    .mass=3.23e-7,  .position={ 0.762,  0.0, sunZ - 1.3198}, .velocity={ 4.407, 0.0, 2.545},
+      .shaderType=0, .texturePath="assets/mars.jpg",    .visualRadius=2.27e-5f },
+    { .name="Jupiter", .mass=9.55e-4,  .position={ 3.679,  0.0, sunZ + 3.679},  .velocity={-1.948, 0.0, 1.948},
+      .shaderType=0, .texturePath="assets/jupiter.jpg", .visualRadius=4.67e-4f },
+    { .name="Sagittarius A*", .mass=4.15e6, .position={0.0, 0.0, bhZ}, .velocity={0,0,0},
+      .shaderType=2, .visualRadius=0.082f },
   };
 
-  // grid uses defaults: visible=true, cellSize=1.0, radius=10, showX=true
-  data.clouds.push_back(CloudData{true, 5000, 3.0f, 3.0f, 3.0f, "milky_way_5k.json", 0, 0.5f, 4500.f, 0});
+  // Real-scale milky way (50,000 ly disc, AU units) centred on Sgr A* —
+  // the solar system sits INSIDE the disc, 26,000 ly from the centre.
+  {
+    CloudData cd;
+    cd.enabled       = true;
+    cd.position      = {0.0, 0.0, bhZ};
+    cd.count         = 5000;
+    cd.formationFile = "milky_way_real_5k.json";
+    cd.temperature   = 4500.f;
+    cd.scale         = 1.0f;
+    data.clouds.push_back(cd);
+  }
 
   return data;
 }

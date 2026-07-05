@@ -14,11 +14,11 @@ enum class ObjectShaderType { Planet, Star, BlackHole };
 class PhysicsObject
 {
 private:
-  FrameStore frameStore{sizeof(vec3)};
+  FrameStore frameStore{sizeof(dvec3)};
   // State captured just before the first simulated frame (frames only store
   // positions, so velocity must be kept separately for a true reset)
-  vec3 initialPosition{};
-  vec3 initialVelocity{};
+  dvec3 initialPosition{};
+  dvec3 initialVelocity{};
   bool initialCaptured{false};
 public:
   unsigned int timeframe{};
@@ -45,12 +45,16 @@ public:
   float visualRadius{0.0f};
 
   float renderRadius() const { return visualRadius; }
-  static float defaultRadiusForMass(float m) { return 0.014f * std::pow(m, 0.3f); }
-  void  EnsureAtmosphere();   // (re)build shell mesh + shaders when needed
+  // Real-ish default radius in AU: 1 M☉ → solar radius (0.00465 AU),
+  // Earth mass (3e-6 M☉) → ~Earth radius (4.3e-5 AU)
+  static float defaultRadiusForMass(double m) {
+    return (float)(0.00465 * std::pow(std::max(m, 1e-12), 0.4));
+  }
+  void  EnsureAtmosphere(float sizeExag = 1.0f); // (re)build shell mesh + shaders
 
   void SetVelocity(const vec3& velocity);
   void Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);
-  PhysicsObject(const vec3& velocity, const vec3& position, float mass,
+  PhysicsObject(const dvec3& velocity, const dvec3& position, double mass,
                 const std::string& name = "Object",
                 ObjectShaderType shaderType = ObjectShaderType::Planet,
                 float temperature = 0.0f);
