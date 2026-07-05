@@ -311,6 +311,9 @@ private:
 
   void RenderPlanetPreview(PhysicsObject& obj);
 
+  // Teleport the camera in front of a target, facing it (Locate button)
+  void LocateCamera(vec3 target, float effRadius);
+
   // ── Editor viewport FBO ──
   GLuint vpFBO{0};
   GLuint vpColorTex{0};

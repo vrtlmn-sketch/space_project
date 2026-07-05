@@ -78,6 +78,9 @@ public:
   // Returns the number of live particles (for UI display)
   int particleCount() const { return renderedObject.cloudParticleCount(); }
 
+  // Centroid and bounding radius of the particle cloud (world space)
+  void boundsEstimate(vec3& center, float& radius) const;
+
   // Timeline accessors
   unsigned int getTimeframe() const { return timeframe; }
   unsigned int getBufferSize() const { return frameStore ? static_cast<unsigned int>(frameStore->totalFrames()) : 0u; }

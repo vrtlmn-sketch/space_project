@@ -431,3 +431,28 @@ CloudObject::~CloudObject() {
 void CloudObject::SetShaders(const std::string& vertShaderPath, const std::string& fragShaderPath){
   renderedObject.setupShaders(vertShaderPath, fragShaderPath);
 }
+
+void CloudObject::boundsEstimate(vec3& center, float& radius) const {
+  const auto& buf = renderedObject.UVObjectMeshBuffer;
+  size_t n = buf.size() / 3;
+  if (n == 0) { center = renderedObject.coordinates; radius = 1.0f; return; }
+
+  double cx = 0, cy = 0, cz = 0;
+  for (size_t i = 0; i < n; ++i) {
+    cx += buf[i*3]; cy += buf[i*3+1]; cz += buf[i*3+2];
+  }
+  cx /= (double)n; cy /= (double)n; cz /= (double)n;
+
+  double r2sum = 0;
+  for (size_t i = 0; i < n; ++i) {
+    double dx = buf[i*3] - cx, dy = buf[i*3+1] - cy, dz = buf[i*3+2] - cz;
+    r2sum += dx*dx + dy*dy + dz*dz;
+  }
+  // 2× RMS radius covers the bulk of the cloud without outlier blowup
+  float rms = (float)std::sqrt(r2sum / (double)n);
+
+  center = vec3{(float)cx + renderedObject.coordinates.x,
+                (float)cy + renderedObject.coordinates.y,
+                (float)cz + renderedObject.coordinates.z};
+  radius = std::max(2.0f * rms, 0.1f);
+}

@@ -2100,6 +2100,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::Spacing();
     ImGui::SeparatorText("Transform");
 
+    // Locate: teleport the camera in front of the object, facing it
+    if (ImGui::Button("Locate##iloc", ImVec2(-1, 0))) {
+      float effR = obj.renderRadius();
+      if (obj.shaderType == ObjectShaderType::BlackHole)
+        effR = std::max(effR, obj.schwarzschildRadius * 2.6f); // shadow size
+      LocateCamera(obj.data.position, effR);
+    }
+
     // Position
     ImGui::Text("Position");
     ImGui::SetNextItemWidth(-1);
@@ -2252,6 +2260,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
       ImGui::Text("Active: %d particles", cloud->particleCount());
       ImGui::TextDisabled("Frame: %u / %u", cloud->getTimeframe(), cloud->getBufferSize());
+      ImGui::Spacing();
+
+      if (ImGui::Button("Locate##ciloc", ImVec2(-1, 0))) {
+        vec3 center; float radius;
+        cloud->boundsEstimate(center, radius);
+        LocateCamera(center, radius);
+      }
       ImGui::Spacing();
 
       // ── Formation file selector ──
@@ -2479,6 +2494,39 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
     return true; // signal: spawn the object
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LocateCamera — teleport in front of a target, facing it.
+// Approaches along the current camera→target line so context is kept.
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::LocateCamera(vec3 target, float effRadius) {
+  float dist = std::max(effRadius * 5.7f, 0.15f);
+
+  vec3 camPos = vec3{-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]};
+  vec3 back   = camPos - target;                 // backward = target → camera
+  float blen  = std::sqrt(back.x*back.x + back.y*back.y + back.z*back.z);
+  vec3 b = (blen > 1e-5f) ? vec3{back.x/blen, back.y/blen, back.z/blen}
+                          : vec3{0, 0, 1};
+
+  vec3 newCam = target + b * dist;
+  cameraTranslate[0] = -newCam.x;
+  cameraTranslate[1] = -newCam.y;
+  cameraTranslate[2] = -newCam.z;
+
+  // Invert this codebase's Euler convention (backward row with roll = 0 is
+  // (-sin y, cos y·sin p, cos y·cos p)). Pick the branch with cos y matching
+  // sign(b.z) so the camera comes out right side up (cos p > 0).
+  float s = (b.z >= 0.0f) ? 1.0f : -1.0f;
+  rotation = std::atan2(-b.x, s * std::sqrt(b.y*b.y + b.z*b.z));
+  pitch    = std::atan2(s * b.y, s * b.z);
+  roll     = 0.0f;
+  syncMatrixFromEuler();
+
+  // Target fills ~40% of the view; small objects get a zoomed-in FOV instead
+  float angDeg = 2.0f * std::atan(effRadius / dist) * 180.0f / (float)M_PI;
+  zoom = std::clamp(angDeg / 0.4f, 5.0f, 45.0f);
+  rtDirty = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
