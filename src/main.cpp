@@ -62,8 +62,7 @@ static void buildScene(
     if (pod.shaderType == 1)      st = ObjectShaderType::Star;
     else if (pod.shaderType == 2) st = ObjectShaderType::BlackHole;
     physicsObjects.emplace_back(
-      vec3{pod.velocity.x, pod.velocity.y, pod.velocity.z},
-      vec3{pod.position.x, pod.position.y, pod.position.z},
+      pod.velocity, pod.position,
       pod.mass, pod.name, st, pod.temperature);
     if (pod.schwarzschildRadius > 0.0f)
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
@@ -331,6 +330,7 @@ int main(int argc, char** argv) {
 
   cb.loadProject = [&](const std::string& path) {
     ProjectData data = ProjectSerializer::Load(path);
+    renderer.showLegacyUnitsWarning = data.legacyUnits;
     currentGrid = data.grid;
     buildScene(data, physicsObjects, lineObjects, grid, clouds);
     applySettingsToRenderer(data.settings);
@@ -354,16 +354,19 @@ int main(int argc, char** argv) {
   {
     using SC = Renderer::StartupChoice;
     if (renderer.startupChoice == SC::Template) {
-      // Template scene ships as an editable JSON preset; the hardcoded
-      // fallback only kicks in if the file is missing or broken.
+      // Template scene is an editable JSON preset, loaded exactly like a
+      // normal project — nothing about it is hardcoded.
       ProjectData tmpl = ProjectSerializer::Load("templates/solar_system.json");
       if (tmpl.objects.empty())
-        tmpl = ProjectSerializer::MilkyWayTemplate();
+        std::cerr << "[main] Template scene missing or broken "
+                     "(templates/solar_system.json) — starting empty.\n";
       currentGrid = tmpl.grid;
       buildScene(tmpl, physicsObjects, lineObjects, grid, clouds);
+      applySettingsToRenderer(tmpl.settings);
     } else if (renderer.startupChoice == SC::Load) {
       ProjectData data = ProjectSerializer::Load(
         std::string(renderer.startupLoadPath));
+      renderer.showLegacyUnitsWarning = data.legacyUnits;
       currentGrid = data.grid;
       buildScene(data, physicsObjects, lineObjects, grid, clouds);
       applySettingsToRenderer(data.settings);

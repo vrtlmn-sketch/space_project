@@ -143,6 +143,8 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
       }
     }
   }
+  renderedObject.coordinates = data.position;
+
   float objectType = 0.0f; // default: planet
   if (shaderType == ObjectShaderType::Star)      objectType = 1.0f;
   else if (shaderType == ObjectShaderType::BlackHole) objectType = 3.0f;

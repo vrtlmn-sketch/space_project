@@ -844,6 +844,25 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   ImGui::Begin("##DockSpaceHost", nullptr, dockFlags);
   ImGui::PopStyleVar(3);
 
+  // ── Legacy-units warning (loaded a pre-v2 project file) ──
+  if (showLegacyUnitsWarning) {
+    ImGui::OpenPopup("Outdated Project File");
+    showLegacyUnitsWarning = false;
+  }
+  if (ImGui::BeginPopupModal("Outdated Project File", nullptr,
+                             ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                       "This project predates the real-unit system.");
+    ImGui::TextDisabled("Its masses, distances and velocities use old made-up\n"
+                        "units (AU / solar masses / years expected) and will\n"
+                        "behave incorrectly. Re-create the scene and save it\n"
+                        "again to upgrade it.");
+    ImGui::Spacing();
+    if (ImGui::Button("OK", ImVec2(120, 0)))
+      ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+  }
+
   ImGuiID dockspace_id = ImGui::GetID("MainDockSpace");
 
   // Rebuild layout when editor viewport mode is toggled

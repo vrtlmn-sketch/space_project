@@ -456,6 +456,9 @@ public:
   StartupChoice startupChoice{StartupChoice::None};
   char startupLoadPath[256] = "project.json";
 
+  // Set after loading a pre-v2 project file; DrawUI shows a warning popup
+  bool showLegacyUnitsWarning{false};
+
   bool InitWindow(const char* wName, int wheight, int wwidth);
   bool BeginFrame();
   void Draw(RenderedObject& ro);

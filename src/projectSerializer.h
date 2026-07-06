@@ -107,6 +107,7 @@ struct ProjectData {
   GridData      grid;
   std::vector<CloudData> clouds;
   SceneSettings settings;
+  bool          legacyUnits{false}; // file predates the real-unit system (v2)
 };
 
 // ─── Serializer ──────────────────────────────────────────────────────────────
@@ -122,7 +123,4 @@ public:
 
   // Load a JSON file; returns populated ProjectData or empty on error
   static ProjectData Load(const std::string& path);
-
-  // Build the milky way template data
-  static ProjectData MilkyWayTemplate();
 };

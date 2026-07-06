@@ -187,6 +187,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
   }
 
   if (root.value("unitsVersion", 0) < 2) {
+    data.legacyUnits = true;
     std::cerr << "[ProjectSerializer] WARNING: '" << path << "' predates the "
                  "real-unit system (AU / solar masses / years). Its masses, "
                  "distances and velocities will behave incorrectly.\n";
@@ -343,49 +344,5 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()
             << " objects from " << path << "\n";
-  return data;
-}
-
-// ─── Solar System Template ───────────────────────────────────────────────────
-// Real units: AU / solar masses / years. Circular orbit speed v = 2π/√a.
-// Visual radii are REAL (true scale) — toggle Exaggerated Sizes to see discs.
-// Sgr A* sits at its true 26,000 ly with the milky-way cloud around it.
-ProjectData ProjectSerializer::MilkyWayTemplate()
-{
-  ProjectData data;
-
-  constexpr double sunZ  = -3.0;                       // scene centre
-  const double bhZ = sunZ - 26000.0 * units::kAUPerLy; // ≈ -1.644e9 AU
-
-  data.objects = {
-    { .name="Sol",     .mass=1.0,      .position={ 0.0,    0.0, sunZ},          .velocity={0,0,0},
-      .shaderType=1, .temperature=5778.f, .visualRadius=0.00465f },
-    { .name="Mercury", .mass=1.66e-7,  .position={ 0.387,  0.0, sunZ},          .velocity={ 0.0,   0.0, 10.09},
-      .shaderType=0, .texturePath="assets/mercury.jpg", .visualRadius=1.63e-5f },
-    { .name="Venus",   .mass=2.45e-6,  .position={ 0.0,    0.0, sunZ + 0.723},  .velocity={-7.388, 0.0, 0.0},
-      .shaderType=0, .texturePath="assets/venus.jpg",   .visualRadius=4.04e-5f },
-    { .name="Earth",   .mass=3.00e-6,  .position={-0.9397, 0.0, sunZ - 0.342},  .velocity={ 2.149, 0.0, -5.904},
-      .shaderType=0, .texturePath="assets/earth.jpg",   .visualRadius=4.26e-5f, .atmosphereEnabled=true },
-    { .name="Mars",    .mass=3.23e-7,  .position={ 0.762,  0.0, sunZ - 1.3198}, .velocity={ 4.407, 0.0, 2.545},
-      .shaderType=0, .texturePath="assets/mars.jpg",    .visualRadius=2.27e-5f },
-    { .name="Jupiter", .mass=9.55e-4,  .position={ 3.679,  0.0, sunZ + 3.679},  .velocity={-1.948, 0.0, 1.948},
-      .shaderType=0, .texturePath="assets/jupiter.jpg", .visualRadius=4.67e-4f },
-    { .name="Sagittarius A*", .mass=4.15e6, .position={0.0, 0.0, bhZ}, .velocity={0,0,0},
-      .shaderType=2, .visualRadius=0.082f },
-  };
-
-  // Real-scale milky way (50,000 ly disc, AU units) centred on Sgr A* —
-  // the solar system sits INSIDE the disc, 26,000 ly from the centre.
-  {
-    CloudData cd;
-    cd.enabled       = true;
-    cd.position      = {0.0, 0.0, bhZ};
-    cd.count         = 5000;
-    cd.formationFile = "milky_way_real_5k.json";
-    cd.temperature   = 4500.f;
-    cd.scale         = 1.0f;
-    data.clouds.push_back(cd);
-  }
-
   return data;
 }

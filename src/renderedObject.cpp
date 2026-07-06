@@ -122,7 +122,6 @@ void RenderedObject::GenerateMeshPlane(float width, float height)
 void RenderedObject::GenerateMeshSphere(float radius,
                                         int horizontalSubdivisions, int verticalSubdivisions)
 {
-  this->coordinates            = {0.0f, 0.0f, 0.0f};
   this->horizontalSubdivisions = horizontalSubdivisions;
   this->verticalSubdivisions   = verticalSubdivisions;
   this->radius                 = radius;
@@ -744,9 +743,10 @@ void RenderedObject::GenerateMeshLine(vec3&& origin){
   this->coordinates=(vec3){0.0f,0.0f,0.0f};
   this->hasBeenRendered=false;
   meshType=MeshType::line;
+  linePoints.clear();
   linePoints.reserve(500);
   linePoints.emplace_back(origin);
-  bufferSize = 3;
+  bufferSize = linePoints.size();
 }
 
 void RenderedObject::AddPointToLine(const vec3& point){
@@ -771,7 +771,7 @@ void RenderedObject::renderLine(const double cameraTranslate[3], const float vie
   glBufferData(GL_ARRAY_BUFFER, linePoints.size()*sizeof(vec3), &linePoints[0], GL_STATIC_DRAW);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
-  glDrawArrays(GL_LINE_STRIP, 0, bufferSize);
+  glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)linePoints.size());
   hasBeenRendered=true;
 }
 
