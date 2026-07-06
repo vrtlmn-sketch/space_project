@@ -64,7 +64,8 @@ bool ProjectSerializer::Save(const std::string& path,
     {"radius",   grid.radius},
     {"showX",   grid.showX},
     {"showY",   grid.showY},
-    {"showZ",   grid.showZ}
+    {"showZ",   grid.showZ},
+    {"adaptive", grid.adaptive}
   };
 
   // ── Clouds ──
@@ -235,6 +236,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     data.grid.showX   = g.value("showX",   true);
     data.grid.showY   = g.value("showY",   true);
     data.grid.showZ   = g.value("showZ",   true);
+    data.grid.adaptive = g.value("adaptive", true);
   }
 
   // ── Clouds ──

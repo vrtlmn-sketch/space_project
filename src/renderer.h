@@ -57,6 +57,7 @@ struct GridFormState {
   bool  showX{true};
   bool  showY{true};
   bool  showZ{true};
+  bool  adaptive{true};
 };
 
 struct CloudFormState {
@@ -137,10 +138,6 @@ private:
   void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects);
   void DrawObjectHighlight(PhysicsObject& obj);
   int  highlightMode{0};  // 0 = selected only, 1 = all objects, 2 = none
-
-  // Distance from camera to the selected object (-1 = nothing selected).
-  // Updated each frame in DrawUI; drives distance-adaptive camera speed.
-  float focusDistance{-1.0f};
 
   // UI internal state
   bool         showSpawnPanel{false};
@@ -519,6 +516,11 @@ public:
   // Public spawn/grid forms (accessed from main.cpp)
   SpawnFormState spawnForm{};
   GridFormState  gridForm{};
+
+  // Camera context distance: selected object, or nearest object surface when
+  // nothing is selected (-1 = empty scene). Updated each frame in DrawUI;
+  // drives distance-adaptive camera speed and the adaptive grid scale.
+  float focusDistance{-1.0f};
 
   // ---- App settings (persisted in settings.json, independent of projects) ----
   bool showSettingsPanel{false};

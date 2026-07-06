@@ -45,6 +45,10 @@ private:
   unsigned int resolutionUniform{};
   unsigned int temperatureUniform{};
   unsigned int renderModeUniform{};
+  // adaptive grid uniforms (gridVert/gridShader)
+  unsigned int gridScaleUniform{};
+  unsigned int gridAlphaUniform{};
+  unsigned int gridExtentUniform{};
   // per-object-type lighting uniforms (planet shader)
   unsigned int lightCountUniform{};
   unsigned int lightPositionsUniform{};
@@ -76,6 +80,10 @@ public:
   float rtAtmoFalloff{4.0f};
   float rtAtmoIntensity{1.0f};
   vec3  rtAtmoScatter{0.175f, 0.41f, 1.0f};
+  // Adaptive grid state (mesh has unit cells; scaled at draw time)
+  float gridScale{1.0f};    // world size of one lattice cell
+  float gridAlpha{1.0f};    // level cross-fade
+  float gridExtent{10.0f};  // half-size of the lattice in world units
   float cachedTemperature{0.f};          // set by uploadTemperature(), used by renderCloudRaytraced()
   int   cachedRenderMode{0};            // set by uploadRenderMode(), used by renderCloudRaytraced()
   float cachedNebulaScatterScale{0.4f}; // set by uploadNebulaScatterScale(), used by renderCloudRaytraced()

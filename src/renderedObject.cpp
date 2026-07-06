@@ -61,7 +61,17 @@ void RenderedObject::renderGrid(const double cameraTranslate[3], const float vie
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), UVObjectMeshBuffer.data(), GL_DYNAMIC_DRAW);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+  if (gridScaleUniform  != (unsigned int)-1) glUniform1f(gridScaleUniform,  gridScale);
+  if (gridAlphaUniform  != (unsigned int)-1) glUniform1f(gridAlphaUniform,  gridAlpha);
+  if (gridExtentUniform != (unsigned int)-1) glUniform1f(gridExtentUniform, gridExtent);
+  // Blended fade-out toward the rim; no depth writes so the translucent
+  // lattice never occludes solid geometry drawn after it
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);
   glDrawArrays(GL_LINES, 0, bufferSize);
+  glDepthMask(GL_TRUE);
+  glDisable(GL_BLEND);
   hasBeenRendered=true;
 }
 
@@ -465,6 +475,9 @@ void RenderedObject::setupRender()
   resolutionUniform       = glGetUniformLocation(program, "uResolution");
   temperatureUniform      = glGetUniformLocation(program, "uTemperature");
   renderModeUniform       = glGetUniformLocation(program, "uRenderMode");
+  gridScaleUniform        = glGetUniformLocation(program, "uScale");
+  gridAlphaUniform        = glGetUniformLocation(program, "uGridAlpha");
+  gridExtentUniform       = glGetUniformLocation(program, "uGridExtent");
   lightCountUniform       = glGetUniformLocation(program, "uLightCount");
   lightPositionsUniform   = glGetUniformLocation(program, "uLightPositions");
   lightColorsUniform      = glGetUniformLocation(program, "uLightColors");

@@ -32,6 +32,7 @@ struct GridData {
   bool  showX{true};
   bool  showY{true};
   bool  showZ{true};
+  bool  adaptive{true};
 };
 
 struct CloudData {

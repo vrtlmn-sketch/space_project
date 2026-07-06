@@ -88,7 +88,7 @@ static void buildScene(
     lineObjects.emplace_back(static_cast<vec3>(obj.data.position));
 
   const GridData& g = data.grid;
-  grid.emplace(g.cellSize, g.radius, g.showX, g.showY, g.showZ);
+  grid.emplace(g.cellSize, g.radius, g.showX, g.showY, g.showZ, g.adaptive);
 
   for (const auto& cd : data.clouds) {
     if (cd.enabled)
@@ -154,10 +154,11 @@ int main(int argc, char** argv) {
     currentGrid.showX   = gf.showX;
     currentGrid.showY   = gf.showY;
     currentGrid.showZ   = gf.showZ;
+    currentGrid.adaptive = gf.adaptive;
     if (grid.has_value()) {
-      grid->Rebuild(gf.cellSize, gf.radius, gf.showX, gf.showY, gf.showZ);
+      grid->Rebuild(gf.cellSize, gf.radius, gf.showX, gf.showY, gf.showZ, gf.adaptive);
     } else {
-      grid.emplace(gf.cellSize, gf.radius, gf.showX, gf.showY, gf.showZ);
+      grid.emplace(gf.cellSize, gf.radius, gf.showX, gf.showY, gf.showZ, gf.adaptive);
     }
   };
 
@@ -368,6 +369,7 @@ int main(int argc, char** argv) {
     renderer.gridForm.showX   = currentGrid.showX;
     renderer.gridForm.showY   = currentGrid.showY;
     renderer.gridForm.showZ   = currentGrid.showZ;
+    renderer.gridForm.adaptive = currentGrid.adaptive;
   };
 
   // ── Startup modal loop ────────────────────────────────────────────────────
@@ -412,6 +414,7 @@ int main(int argc, char** argv) {
     renderer.gridForm.showX   = currentGrid.showX;
     renderer.gridForm.showY   = currentGrid.showY;
     renderer.gridForm.showZ   = currentGrid.showZ;
+    renderer.gridForm.adaptive = currentGrid.adaptive;
   }
 
   // ── Main game loop ─────────────────────────────────────────────────────────
@@ -517,18 +520,8 @@ int main(int argc, char** argv) {
     for (const auto& obj : physicsObjects)
       physData.emplace_back(obj.data);
 
-    if (grid.has_value() && currentGrid.visible) {
-      float snap = std::max(0.001f, currentGrid.cellSize);
-      float camX = -renderer.cameraTranslate[0];
-      float camY = -renderer.cameraTranslate[1];
-      float camZ = -renderer.cameraTranslate[2];
-      grid->position = {
-        std::floor(camX / snap) * snap,
-        std::floor(camY / snap) * snap,
-        std::floor(camZ / snap) * snap
-      };
+    if (grid.has_value() && currentGrid.visible)
       grid->Update(renderer, physData);
-    }
 
     for (auto& c : clouds)
       c->Update(renderer, physData);
@@ -643,7 +636,7 @@ int main(int argc, char** argv) {
       lineObjects[i].Update(renderer);
     }
     if (grid.has_value() && currentGrid.visible)
-      renderer.Draw(grid->renderedObject);
+      grid->Update(renderer, physData);
     for (auto& c : clouds) {
       c->renderedObject.uploadTemperature(c->temperature);
       c->renderedObject.uploadRenderMode(c->renderMode);

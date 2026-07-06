@@ -2287,6 +2287,10 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   if (ImGui::CollapsingHeader("Grid", ImGuiTreeNodeFlags_DefaultOpen)) {
     bool changed = false;
     changed |= ImGui::Checkbox("Show Grid", &gridForm.visible);
+    changed |= ImGui::Checkbox("Adaptive Scale", &gridForm.adaptive);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Cell size follows the camera's context distance\n"
+                        "in powers of 10 (Cell Size = the base cell).");
     ImGui::Text("Cell Size (AU)");
     ImGui::SetNextItemWidth(-1);
     changed |= ImGui::SliderFloat("##gcell", &gridForm.cellSize, 0.1f, 10.f, "%.2f");
