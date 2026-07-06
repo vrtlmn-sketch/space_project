@@ -634,8 +634,8 @@ void Renderer::ComputeFrameAdvance() {
   static float accum = 0.0f;
   if (paused) { framesThisTick = 0; return; }
 
-  // Cap: playback can't go below the data resolution (1 frame per tick)
-  playbackSpeed = std::max(playbackSpeed, simSpeed / 5.0f);
+  // Cap: playback can't go slower than the simulation speed
+  playbackSpeed = std::max(playbackSpeed, simSpeed);
 
   float framesPerTick = 5.0f * playbackSpeed / std::max(simSpeed, 0.01f);
   accum += framesPerTick;
@@ -1404,7 +1404,7 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::SameLine();
   ImGui::SetNextItemWidth(60);
   if (ImGui::DragFloat("##playspeed", &playbackSpeed, 0.01f, 0.05f, 10.0f, "%.2fx"))
-    playbackSpeed = std::max(playbackSpeed, simSpeed / 5.0f);
+    playbackSpeed = std::max(playbackSpeed, simSpeed);
   ImGui::SameLine();
 
   // Separator
