@@ -903,9 +903,17 @@ bool Renderer::DrawStartupModal() {
                          | ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("##startup", nullptr, flags);
 
-  // Title
-  ImGui::SetCursorPosX((mw - ImGui::CalcTextSize("BlackholeSim").x) * 0.5f);
-  ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "BlackholeSim");
+  // Title — logo image, text fallback if the file is missing
+  ProjectThumb logo = GetProjectThumb("assets/logo.png");
+  if (logo.id && logo.w > 0) {
+    float lw = mw * 0.6f;
+    float lh = lw * (float)logo.h / (float)logo.w;
+    ImGui::SetCursorPosX((mw - lw) * 0.5f);
+    ImGui::Image((ImTextureID)(uintptr_t)logo.id, ImVec2(lw, lh));
+  } else {
+    ImGui::SetCursorPosX((mw - ImGui::CalcTextSize("BlackholeSim").x) * 0.5f);
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "BlackholeSim");
+  }
   ImGui::Separator();
   ImGui::Spacing();
 
