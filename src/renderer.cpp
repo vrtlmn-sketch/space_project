@@ -897,31 +897,44 @@ bool Renderer::DrawStartupModal() {
   if (!projectsScanned) RescanProjects();
 
   ImGuiIO& io = ImGui::GetIO();
-  ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+  ImDrawList* bg = ImGui::GetBackgroundDrawList();
+
+  // ── Fullscreen background image (cover-scaled, centre-cropped) ──
+  ProjectThumb back = GetProjectThumb("assets/background.bmp");
+  if (back.id && back.w > 0 && back.h > 0) {
+    float scale = std::max(io.DisplaySize.x / (float)back.w,
+                           io.DisplaySize.y / (float)back.h);
+    float bw2 = back.w * scale, bh2 = back.h * scale;
+    ImVec2 p0((io.DisplaySize.x - bw2) * 0.5f, (io.DisplaySize.y - bh2) * 0.5f);
+    bg->AddImage((ImTextureID)(uintptr_t)back.id, p0, ImVec2(p0.x + bw2, p0.y + bh2));
+  }
+
   // Scale the modal with the display so big screens get a big browser
   float mw = std::clamp(io.DisplaySize.x * 0.55f, 660.0f, 1100.0f);
-  float mh = std::clamp(io.DisplaySize.y * 0.80f, 640.0f, 950.0f);
-  ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  float mh = std::clamp(io.DisplaySize.y * 0.72f, 600.0f, 880.0f);
+
+  // ── Logo above the project box, drawn straight onto the background ──
+  ProjectThumb logo = GetProjectThumb("assets/logo.png");
+  float lw = mw * 0.5f;
+  float lh = (logo.id && logo.w > 0) ? lw * (float)logo.h / (float)logo.w : 0.0f;
+  float gap = (lh > 0.0f) ? 18.0f : 0.0f;
+
+  // Centre the logo + modal block vertically
+  float totalH = lh + gap + mh;
+  float startY = std::max(8.0f, (io.DisplaySize.y - totalH) * 0.5f);
+  if (lh > 0.0f) {
+    ImVec2 l0((io.DisplaySize.x - lw) * 0.5f, startY);
+    bg->AddImage((ImTextureID)(uintptr_t)logo.id, l0, ImVec2(l0.x + lw, l0.y + lh));
+  }
+
+  ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, startY + lh + gap),
+                          ImGuiCond_Always, ImVec2(0.5f, 0.0f));
   ImGui::SetNextWindowSize(ImVec2(mw, mh), ImGuiCond_Always);
   ImGui::SetNextWindowBgAlpha(0.97f);
 
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
                          | ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("##startup", nullptr, flags);
-
-  // Title — logo image, text fallback if the file is missing
-  ProjectThumb logo = GetProjectThumb("assets/logo.png");
-  if (logo.id && logo.w > 0) {
-    float lw = mw * 0.6f;
-    float lh = lw * (float)logo.h / (float)logo.w;
-    ImGui::SetCursorPosX((mw - lw) * 0.5f);
-    ImGui::Image((ImTextureID)(uintptr_t)logo.id, ImVec2(lw, lh));
-  } else {
-    ImGui::SetCursorPosX((mw - ImGui::CalcTextSize("BlackholeSim").x) * 0.5f);
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "BlackholeSim");
-  }
-  ImGui::Separator();
-  ImGui::Spacing();
 
   // ── Project browser ──
   ImGui::Text("Projects");
