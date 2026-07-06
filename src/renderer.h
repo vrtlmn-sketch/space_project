@@ -332,7 +332,6 @@ private:
   std::vector<std::string> cliLog;
 
   // ---- Text editor (no file I/O yet — in-memory buffer only) ----
-  bool showTextEditor{false};
   std::string textEditorBuf;
 
   void   EnsureViewportFBO(int w, int h);

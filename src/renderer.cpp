@@ -1616,8 +1616,10 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawSettingsPanel();
   DrawTextEditor();
   DrawCliPanel();
-  // After a layout (re)build, make Inspector the visible tab of the right dock
+  // After a layout (re)build, select the default tab in each shared dock:
+  // Viewport in the centre (over Text Editor), Inspector on the right
   if (focusInspectorNext) {
+    if (editorViewport) ImGui::SetWindowFocus("Viewport");
     ImGui::SetWindowFocus("Inspector");
     focusInspectorNext = false;
   }
@@ -1965,8 +1967,6 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::SameLine();
   if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
   ImGui::SameLine();
-  if (ImGui::Button("Editor", ImVec2(60, 0))) showTextEditor = !showTextEditor;
-  ImGui::SameLine();
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
@@ -2201,13 +2201,55 @@ static int TextEditorResizeCb(ImGuiInputTextCallbackData* data) {
 }
 
 void Renderer::DrawTextEditor() {
-  if (!showTextEditor) return;
   ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Text Editor", &showTextEditor)) { ImGui::End(); return; }
+  if (!ImGui::Begin("Text Editor", nullptr, ImGuiWindowFlags_NoCollapse)) {
+    ImGui::End();
+    return;
+  }
 
+  ImGuiStyle& style = ImGui::GetStyle();
   ImVec2 avail = ImGui::GetContentRegionAvail();
+  float lineH  = ImGui::GetTextLineHeight();
+
+  // Line count + gutter width (grows with the number of digits)
+  int lineCount = 1 + (int)std::count(textEditorBuf.begin(), textEditorBuf.end(), '\n');
+  int digits = 1;
+  for (int n = lineCount; n >= 10; n /= 10) ++digits;
+  float gutterW = ImGui::CalcTextSize("0").x * (float)digits + 14.0f;
+
+  // The editor is a child window internally — read its scroll so the gutter
+  // tracks it exactly (window name: "<parent>/<id hex>", set by BeginChildEx)
+  float scrollY = 0.0f;
+  {
+    char childName[64];
+    std::snprintf(childName, sizeof(childName), "Text Editor/%08X",
+                  ImGui::GetID("##texteditbuf"));
+    if (ImGuiWindow* child = ImGui::FindWindowByName(childName))
+      scrollY = child->Scroll.y;
+  }
+
+  // ── Line-number gutter ──
+  ImGui::BeginChild("##texteditgutter", ImVec2(gutterW, avail.y), false,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+                    | ImGuiWindowFlags_NoInputs);
+  {
+    // Match the input text's inner frame padding, then only draw the
+    // visible range (clipped against the current scroll)
+    float top = style.FramePadding.y;
+    int first = std::max(0, (int)((scrollY - top) / lineH));
+    int last  = std::min(lineCount, first + (int)(avail.y / lineH) + 2);
+    for (int i = first; i < last; ++i) {
+      ImGui::SetCursorPos(ImVec2(4.0f, top + (float)i * lineH - scrollY));
+      ImGui::TextDisabled("%*d", digits, i + 1);
+    }
+  }
+  ImGui::EndChild();
+  ImGui::SameLine(0.0f, 0.0f);
+
+  // ── Editor ──
   ImGui::InputTextMultiline("##texteditbuf", textEditorBuf.data(),
-                            textEditorBuf.capacity() + 1, avail,
+                            textEditorBuf.capacity() + 1,
+                            ImVec2(avail.x - gutterW, avail.y),
                             ImGuiInputTextFlags_CallbackResize |
                             ImGuiInputTextFlags_AllowTabInput,
                             TextEditorResizeCb, &textEditorBuf);
