@@ -75,7 +75,7 @@ bool Renderer::InitWindow(
   if (!io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSansMono.ttf", 14.0f))
     io.Fonts->AddFontDefault();
 
-  // Theme from settings.json (only "ImGui" exists for now)
+  // Theme from settings.json
   LoadAppSettings();
   ApplyTheme(appTheme);
 
@@ -98,7 +98,7 @@ void Renderer::LoadAppSettings() {
   try {
     nlohmann::json root;
     f >> root;
-    std::string theme = root.value("theme", std::string{"ImGui"});
+    std::string theme = root.value("theme", std::string{"Space wander (ImGui)"});
     std::strncpy(appTheme, theme.c_str(), sizeof(appTheme) - 1);
     appTheme[sizeof(appTheme) - 1] = '\0';
   } catch (...) {
@@ -118,9 +118,11 @@ void Renderer::SaveAppSettings() {
   std::cout << "[Settings] Saved settings.json\n";
 }
 
-// Terminal dashboard theme (btop/lazygit-inspired, dark navy + cyan).
-// Currently the only theme is "ImGui"; every unknown name falls back to it.
-void Renderer::ApplyTheme(const char* /*name*/) {
+// Themes share the terminal-dashboard geometry (sharp edges, thin borders,
+// dense padding); the palette depends on the name:
+//   "Space wander (ImGui)" — dark navy + cyan (default, fallback for unknown)
+//   "Unix (Dark)"          — monochrome: black surfaces, white text & borders
+void Renderer::ApplyTheme(const char* name) {
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
 
@@ -228,6 +230,79 @@ void Renderer::ApplyTheme(const char* /*name*/) {
   c[ImGuiCol_TableBorderLight]     = ImVec4(0.120f, 0.175f, 0.250f, 1.00f);
   c[ImGuiCol_TableRowBg]           = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
   c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.070f, 0.090f, 0.130f, 0.40f);
+
+  // ── "Unix (Dark)" — overrides: everything black, text/borders white.
+  // Inline semantic colours (orange Play, red Rec, green Viewport…) are pushed
+  // per-widget and stay untouched.
+  if (std::strcmp(name, "Unix (Dark)") == 0) {
+    const ImVec4 black   = ImVec4(0.000f, 0.000f, 0.000f, 1.00f);
+    const ImVec4 surface = ImVec4(0.030f, 0.030f, 0.030f, 1.00f);
+    const ImVec4 hover   = ImVec4(0.150f, 0.150f, 0.150f, 1.00f);
+    const ImVec4 active  = ImVec4(0.280f, 0.280f, 0.280f, 1.00f);
+    const ImVec4 white   = ImVec4(0.930f, 0.930f, 0.930f, 1.00f);
+    const ImVec4 gray    = ImVec4(0.550f, 0.550f, 0.550f, 1.00f);
+
+    c[ImGuiCol_WindowBg]             = black;
+    c[ImGuiCol_ChildBg]              = surface;
+    c[ImGuiCol_PopupBg]              = ImVec4(0.02f, 0.02f, 0.02f, 0.98f);
+
+    c[ImGuiCol_Border]               = white;
+    c[ImGuiCol_BorderShadow]         = ImVec4(0, 0, 0, 0);
+
+    c[ImGuiCol_FrameBg]              = black;
+    c[ImGuiCol_FrameBgHovered]       = hover;
+    c[ImGuiCol_FrameBgActive]        = active;
+
+    c[ImGuiCol_TitleBg]              = black;
+    c[ImGuiCol_TitleBgActive]        = hover;
+    c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.00f, 0.00f, 0.00f, 0.85f);
+
+    c[ImGuiCol_MenuBarBg]            = surface;
+
+    c[ImGuiCol_ScrollbarBg]          = black;
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.55f, 0.55f, 0.55f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = white;
+
+    c[ImGuiCol_Button]               = black;
+    c[ImGuiCol_ButtonHovered]        = hover;
+    c[ImGuiCol_ButtonActive]         = active;
+
+    c[ImGuiCol_CheckMark]            = white;
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.75f, 0.75f, 0.75f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]     = white;
+
+    c[ImGuiCol_Header]               = hover;
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = active;
+
+    c[ImGuiCol_Separator]            = white;
+    c[ImGuiCol_SeparatorHovered]     = white;
+    c[ImGuiCol_SeparatorActive]      = white;
+
+    c[ImGuiCol_ResizeGrip]           = ImVec4(0.93f, 0.93f, 0.93f, 0.25f);
+    c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.93f, 0.93f, 0.93f, 0.65f);
+    c[ImGuiCol_ResizeGripActive]     = ImVec4(0.93f, 0.93f, 0.93f, 0.90f);
+
+    c[ImGuiCol_Tab]                  = black;
+    c[ImGuiCol_TabHovered]           = hover;
+    c[ImGuiCol_TabSelected]          = active;
+    c[ImGuiCol_TabSelectedOverline]  = white;
+    c[ImGuiCol_TabDimmed]            = black;
+    c[ImGuiCol_TabDimmedSelected]    = hover;
+
+    c[ImGuiCol_DockingPreview]       = ImVec4(0.93f, 0.93f, 0.93f, 0.70f);
+    c[ImGuiCol_DockingEmptyBg]       = black;
+
+    c[ImGuiCol_Text]                 = white;
+    c[ImGuiCol_TextDisabled]         = gray;
+
+    c[ImGuiCol_TableHeaderBg]        = surface;
+    c[ImGuiCol_TableBorderStrong]    = white;
+    c[ImGuiCol_TableBorderLight]     = gray;
+    c[ImGuiCol_TableRowBg]           = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.10f, 0.10f, 0.10f, 0.40f);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1912,7 +1987,7 @@ void Renderer::DrawSettingsPanel() {
     if (ImGui::BeginTabItem("Interface")) {
       ImGui::Spacing();
       ImGui::Text("Theme");
-      static const char* kThemes[] = { "ImGui" };
+      static const char* kThemes[] = { "Space wander (ImGui)", "Unix (Dark)" };
       int cur = 0;
       for (int i = 0; i < (int)IM_ARRAYSIZE(kThemes); ++i)
         if (std::strcmp(appTheme, kThemes[i]) == 0) cur = i;

@@ -521,7 +521,7 @@ public:
 
   // ---- App settings (persisted in settings.json, independent of projects) ----
   bool showSettingsPanel{false};
-  char appTheme[64] = "ImGui";
+  char appTheme[64] = "Space wander (ImGui)";
   void ApplyTheme(const char* name);   // set ImGui style by theme name
   void LoadAppSettings();              // read settings.json
   void SaveAppSettings();              // write settings.json
