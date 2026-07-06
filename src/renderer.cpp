@@ -122,10 +122,27 @@ void Renderer::SaveAppSettings() {
 // dense padding); the palette depends on the name:
 //   "Space wander (ImGui)" — dark navy + cyan (default, fallback for unknown)
 //   "Unix (Dark)"          — monochrome: black surfaces, white text & borders
+//   "Mercury smooth (Gray)" — soft charcoal grays
+//   "Luna (Light)"          — clean light theme, white surfaces, blue accent
+// Brighten semantic colours (orange Play, red Rec, green Viewport…) on light
+// themes: dark-tuned buttons are barely visible on white, so scale the
+// dominant channel up to 0.95 while keeping the hue. Identity on dark themes.
+ImVec4 Renderer::SemBtn(const ImVec4& c) const {
+  if (!themeLight) return c;
+  float mx = std::max(c.x, std::max(c.y, c.z));
+  if (mx <= 0.0f) return c;
+  float k = 0.95f / mx;
+  if (k <= 1.0f) return c;
+  return ImVec4(std::min(c.x * k, 1.0f), std::min(c.y * k, 1.0f),
+                std::min(c.z * k, 1.0f), c.w);
+}
+
 void Renderer::ApplyTheme(const char* name) {
+  themeLight = (std::strcmp(name, "Luna (Light)") == 0);
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
 
+  // Shared geometry for ALL themes — only colours differ between them.
   // Sharp edges everywhere — no rounding
   style.WindowRounding    = 0.0f;
   style.ChildRounding     = 0.0f;
@@ -135,14 +152,14 @@ void Renderer::ApplyTheme(const char* name) {
   style.ScrollbarRounding = 0.0f;
   style.TabRounding       = 0.0f;
 
-  // Thin visible borders, dense terminal-grid padding
+  // Thin visible borders, comfortable padding (bigger buttons/fields)
   style.WindowBorderSize  = 1.0f;
   style.ChildBorderSize   = 1.0f;
   style.FrameBorderSize   = 1.0f;
   style.PopupBorderSize   = 1.0f;
-  style.WindowPadding     = ImVec2(7.0f, 5.0f);
-  style.FramePadding      = ImVec2(5.0f, 2.0f);
-  style.ItemSpacing       = ImVec2(6.0f, 4.0f);
+  style.WindowPadding     = ImVec2(8.0f, 7.0f);
+  style.FramePadding      = ImVec2(6.0f, 4.0f);
+  style.ItemSpacing       = ImVec2(8.0f, 5.0f);
   style.ItemInnerSpacing  = ImVec2(4.0f, 4.0f);
   style.ScrollbarSize     = 10.0f;
   style.GrabMinSize       = 8.0f;
@@ -302,6 +319,156 @@ void Renderer::ApplyTheme(const char* name) {
     c[ImGuiCol_TableBorderLight]     = gray;
     c[ImGuiCol_TableRowBg]           = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.10f, 0.10f, 0.10f, 0.40f);
+  }
+
+  // ── "Mercury smooth (Gray)" — soft charcoal grays, low-contrast
+  // borders. The editor-like neutral look; semantic colours stay untouched.
+  else if (std::strcmp(name, "Mercury smooth (Gray)") == 0) {
+    const ImVec4 bg      = ImVec4(0.130f, 0.135f, 0.155f, 1.00f);
+    const ImVec4 surface = ImVec4(0.165f, 0.170f, 0.190f, 1.00f);
+    const ImVec4 field   = ImVec4(0.190f, 0.195f, 0.220f, 1.00f);
+    const ImVec4 hover   = ImVec4(0.240f, 0.250f, 0.280f, 1.00f);
+    const ImVec4 active  = ImVec4(0.300f, 0.310f, 0.350f, 1.00f);
+    const ImVec4 border  = ImVec4(0.270f, 0.280f, 0.310f, 1.00f);
+    const ImVec4 text    = ImVec4(0.870f, 0.880f, 0.900f, 1.00f);
+    const ImVec4 dim     = ImVec4(0.520f, 0.535f, 0.570f, 1.00f);
+    const ImVec4 accent  = ImVec4(0.580f, 0.640f, 0.780f, 1.00f);
+
+    c[ImGuiCol_WindowBg]             = bg;
+    c[ImGuiCol_ChildBg]              = surface;
+    c[ImGuiCol_PopupBg]              = ImVec4(0.150f, 0.155f, 0.175f, 0.98f);
+
+    c[ImGuiCol_Border]               = border;
+    c[ImGuiCol_BorderShadow]         = ImVec4(0, 0, 0, 0);
+
+    c[ImGuiCol_FrameBg]              = field;
+    c[ImGuiCol_FrameBgHovered]       = hover;
+    c[ImGuiCol_FrameBgActive]        = active;
+
+    c[ImGuiCol_TitleBg]              = bg;
+    c[ImGuiCol_TitleBgActive]        = surface;
+    c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.13f, 0.135f, 0.155f, 0.85f);
+
+    c[ImGuiCol_MenuBarBg]            = surface;
+
+    c[ImGuiCol_ScrollbarBg]          = bg;
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.300f, 0.310f, 0.345f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.380f, 0.395f, 0.435f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = accent;
+
+    c[ImGuiCol_Button]               = field;
+    c[ImGuiCol_ButtonHovered]        = hover;
+    c[ImGuiCol_ButtonActive]         = active;
+
+    c[ImGuiCol_CheckMark]            = accent;
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.480f, 0.530f, 0.650f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]     = accent;
+
+    c[ImGuiCol_Header]               = hover;
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.270f, 0.280f, 0.315f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = active;
+
+    c[ImGuiCol_Separator]            = border;
+    c[ImGuiCol_SeparatorHovered]     = ImVec4(0.400f, 0.440f, 0.550f, 1.00f);
+    c[ImGuiCol_SeparatorActive]      = accent;
+
+    c[ImGuiCol_ResizeGrip]           = ImVec4(0.580f, 0.640f, 0.780f, 0.25f);
+    c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.580f, 0.640f, 0.780f, 0.65f);
+    c[ImGuiCol_ResizeGripActive]     = ImVec4(0.580f, 0.640f, 0.780f, 0.90f);
+
+    c[ImGuiCol_Tab]                  = bg;
+    c[ImGuiCol_TabHovered]           = hover;
+    c[ImGuiCol_TabSelected]          = ImVec4(0.240f, 0.250f, 0.285f, 1.00f);
+    c[ImGuiCol_TabSelectedOverline]  = accent;
+    c[ImGuiCol_TabDimmed]            = bg;
+    c[ImGuiCol_TabDimmedSelected]    = surface;
+
+    c[ImGuiCol_DockingPreview]       = ImVec4(0.580f, 0.640f, 0.780f, 0.70f);
+    c[ImGuiCol_DockingEmptyBg]       = ImVec4(0.110f, 0.115f, 0.130f, 1.00f);
+
+    c[ImGuiCol_Text]                 = text;
+    c[ImGuiCol_TextDisabled]         = dim;
+
+    c[ImGuiCol_TableHeaderBg]        = surface;
+    c[ImGuiCol_TableBorderStrong]    = border;
+    c[ImGuiCol_TableBorderLight]     = ImVec4(0.210f, 0.220f, 0.245f, 1.00f);
+    c[ImGuiCol_TableRowBg]           = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.180f, 0.185f, 0.210f, 0.40f);
+  }
+
+  // ── "Luna (Light)" — clean light theme: off-white chrome, white panels,
+  // soft gray borders, dark text, blue accent.
+  else if (std::strcmp(name, "Luna (Light)") == 0) {
+    const ImVec4 bg      = ImVec4(0.960f, 0.965f, 0.972f, 1.00f);
+    const ImVec4 surface = ImVec4(0.990f, 0.992f, 0.995f, 1.00f);
+    const ImVec4 field   = ImVec4(1.000f, 1.000f, 1.000f, 1.00f);
+    const ImVec4 hover   = ImVec4(0.900f, 0.915f, 0.935f, 1.00f);
+    const ImVec4 active  = ImVec4(0.830f, 0.860f, 0.895f, 1.00f);
+    const ImVec4 border  = ImVec4(0.800f, 0.820f, 0.845f, 1.00f);
+    const ImVec4 text    = ImVec4(0.145f, 0.165f, 0.195f, 1.00f);
+    const ImVec4 dim     = ImVec4(0.500f, 0.530f, 0.565f, 1.00f);
+    const ImVec4 accent  = ImVec4(0.130f, 0.440f, 0.870f, 1.00f);
+
+    c[ImGuiCol_WindowBg]             = bg;
+    c[ImGuiCol_ChildBg]              = surface;
+    c[ImGuiCol_PopupBg]              = ImVec4(0.985f, 0.988f, 0.992f, 0.99f);
+
+    c[ImGuiCol_Border]               = border;
+    c[ImGuiCol_BorderShadow]         = ImVec4(0, 0, 0, 0);
+
+    c[ImGuiCol_FrameBg]              = field;
+    c[ImGuiCol_FrameBgHovered]       = hover;
+    c[ImGuiCol_FrameBgActive]        = active;
+
+    c[ImGuiCol_TitleBg]              = bg;
+    c[ImGuiCol_TitleBgActive]        = hover;
+    c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.96f, 0.965f, 0.972f, 0.90f);
+
+    c[ImGuiCol_MenuBarBg]            = bg;
+
+    c[ImGuiCol_ScrollbarBg]          = bg;
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.740f, 0.765f, 0.795f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.620f, 0.655f, 0.695f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = accent;
+
+    c[ImGuiCol_Button]               = ImVec4(0.940f, 0.948f, 0.958f, 1.00f);
+    c[ImGuiCol_ButtonHovered]        = hover;
+    c[ImGuiCol_ButtonActive]         = active;
+
+    c[ImGuiCol_CheckMark]            = accent;
+    c[ImGuiCol_SliderGrab]           = ImVec4(0.350f, 0.560f, 0.860f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]     = accent;
+
+    c[ImGuiCol_Header]               = ImVec4(0.800f, 0.880f, 0.980f, 1.00f);
+    c[ImGuiCol_HeaderHovered]        = ImVec4(0.855f, 0.910f, 0.980f, 1.00f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(0.740f, 0.840f, 0.970f, 1.00f);
+
+    c[ImGuiCol_Separator]            = border;
+    c[ImGuiCol_SeparatorHovered]     = ImVec4(0.350f, 0.560f, 0.860f, 1.00f);
+    c[ImGuiCol_SeparatorActive]      = accent;
+
+    c[ImGuiCol_ResizeGrip]           = ImVec4(0.130f, 0.440f, 0.870f, 0.20f);
+    c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.130f, 0.440f, 0.870f, 0.55f);
+    c[ImGuiCol_ResizeGripActive]     = ImVec4(0.130f, 0.440f, 0.870f, 0.85f);
+
+    c[ImGuiCol_Tab]                  = ImVec4(0.910f, 0.920f, 0.935f, 1.00f);
+    c[ImGuiCol_TabHovered]           = hover;
+    c[ImGuiCol_TabSelected]          = field;
+    c[ImGuiCol_TabSelectedOverline]  = accent;
+    c[ImGuiCol_TabDimmed]            = bg;
+    c[ImGuiCol_TabDimmedSelected]    = ImVec4(0.940f, 0.948f, 0.958f, 1.00f);
+
+    c[ImGuiCol_DockingPreview]       = ImVec4(0.130f, 0.440f, 0.870f, 0.60f);
+    c[ImGuiCol_DockingEmptyBg]       = ImVec4(0.900f, 0.910f, 0.925f, 1.00f);
+
+    c[ImGuiCol_Text]                 = text;
+    c[ImGuiCol_TextDisabled]         = dim;
+
+    c[ImGuiCol_TableHeaderBg]        = bg;
+    c[ImGuiCol_TableBorderStrong]    = border;
+    c[ImGuiCol_TableBorderLight]     = ImVec4(0.880f, 0.895f, 0.915f, 1.00f);
+    c[ImGuiCol_TableRowBg]           = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.930f, 0.940f, 0.952f, 0.50f);
   }
 }
 
@@ -990,15 +1157,16 @@ static int DrawProjectCards(const std::vector<Renderer::ProjectInfo>& list,
     if (th.id) {
       dl->AddImage((ImTextureID)(uintptr_t)th.id, t0, t1);
     } else {
-      dl->AddRectFilled(t0, t1, IM_COL32(35, 38, 46, 255), 3.0f);
+      dl->AddRectFilled(t0, t1, ImGui::GetColorU32(ImGuiCol_FrameBg), 3.0f);
+      dl->AddRect(t0, t1, ImGui::GetColorU32(ImGuiCol_Border), 3.0f);
       const char* lbl = "no image";
       ImVec2 ts = ImGui::CalcTextSize(lbl);
       dl->AddText(ImVec2(t0.x + (thumbW - ts.x) * 0.5f, t0.y + (thumbH - ts.y) * 0.5f),
-                  IM_COL32(110, 115, 125, 255), lbl);
+                  ImGui::GetColorU32(ImGuiCol_TextDisabled), lbl);
     }
     float midY = pos.y + thumbH * 0.5f;
-    dl->AddText(ImVec2(t1.x + 16, midY - 18), IM_COL32(235, 238, 245, 255), p.name.c_str());
-    dl->AddText(ImVec2(t1.x + 16, midY + 6),  IM_COL32(130, 135, 145, 255), p.file.c_str());
+    dl->AddText(ImVec2(t1.x + 16, midY - 18), ImGui::GetColorU32(ImGuiCol_Text), p.name.c_str());
+    dl->AddText(ImVec2(t1.x + 16, midY + 6),  ImGui::GetColorU32(ImGuiCol_TextDisabled), p.file.c_str());
   }
   return clicked;
 }
@@ -1395,7 +1563,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGuiID dock_main = dockspace_id;
 
     ImGuiID dock_top;
-    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Up, 0.045f, &dock_top, &dock_main);
+    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Up, 0.055f, &dock_top, &dock_main);
 
     ImGuiID dock_left;
     ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.17f, &dock_left, &dock_main);
@@ -1799,9 +1967,9 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
 
   // ── Simulation group ──
   if (paused) {
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.80f, 0.40f, 0.00f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.55f, 0.10f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.65f, 0.30f, 0.00f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.80f, 0.40f, 0.00f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.95f, 0.55f, 0.10f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.65f, 0.30f, 0.00f, 1.00f)));
     if (ImGui::Button("Play [P]", ImVec2(80, 0))) paused = false;
     ImGui::PopStyleColor(3);
   } else {
@@ -1824,9 +1992,9 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   if (raytracerEnabled) {
     if (ImGui::Button("RT On [T]", ImVec2(65, 0))) raytracerEnabled = false;
   } else {
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.35f, 0.35f, 0.35f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.50f, 0.50f, 0.50f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.60f, 0.60f, 0.60f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.35f, 0.35f, 0.35f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.50f, 0.50f, 0.50f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.60f, 0.60f, 0.60f, 1.00f)));
     if (ImGui::Button("RT Off [T]", ImVec2(65, 0))) raytracerEnabled = true;
     ImGui::PopStyleColor(3);
   }
@@ -1834,15 +2002,15 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
 
   // Record
   if (recording) {
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.85f, 0.10f, 0.10f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.00f, 0.20f, 0.20f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.70f, 0.05f, 0.05f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.85f, 0.10f, 0.10f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(1.00f, 0.20f, 0.20f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.70f, 0.05f, 0.05f, 1.00f)));
     if (ImGui::Button("Stop [R]", ImVec2(75, 0))) StopRecording();
     ImGui::PopStyleColor(3);
   } else {
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.45f, 0.10f, 0.10f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.65f, 0.20f, 0.20f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.80f, 0.15f, 0.15f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.45f, 0.10f, 0.10f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.65f, 0.20f, 0.20f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.80f, 0.15f, 0.15f, 1.00f)));
     if (ImGui::Button("Rec [R]", ImVec2(75, 0))) StartRecording();
     ImGui::PopStyleColor(3);
   }
@@ -1904,7 +2072,7 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::DragFloat("##simspeed", &pendingSimSpeed, 0.01f, 0.05f, 10.0f, "%.2fx");
   if (std::abs(pendingSimSpeed - simSpeed) > 1e-4f) {
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.45f, 0.05f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button, SemBtn(ImVec4(0.70f, 0.45f, 0.05f, 1.00f)));
     if (ImGui::Button("Save##simspeed"))
       ImGui::OpenPopup("Apply Sim Speed?");
     ImGui::PopStyleColor();
@@ -1915,7 +2083,7 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     ImGui::TextDisabled("All recorded frames are cleared and the timeline\n"
                         "restarts at frame 0 from the current state.");
     ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button, SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
     if (ImGui::Button("Delete & Save", ImVec2(120, 0))) {
       simSpeed = pendingSimSpeed;
       if (cb.clearSimulation) cb.clearSimulation();
@@ -1943,9 +2111,9 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
 
   // Editor viewport toggle
   if (editorViewport) {
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.15f, 0.45f, 0.15f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.60f, 0.25f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.10f, 0.35f, 0.10f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.15f, 0.45f, 0.15f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.25f, 0.60f, 0.25f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.10f, 0.35f, 0.10f, 1.00f)));
     if (ImGui::Button("Viewport [V]", ImVec2(95, 0))) editorViewport = false;
     ImGui::PopStyleColor(3);
   } else {
@@ -1965,9 +2133,9 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::SameLine();
 
   // Quit
-  ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
+  ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
   if (ImGui::Button("Quit", ImVec2(45, 0))) showQuitDialog = true;
   ImGui::PopStyleColor(3);
 
@@ -1987,7 +2155,8 @@ void Renderer::DrawSettingsPanel() {
     if (ImGui::BeginTabItem("Interface")) {
       ImGui::Spacing();
       ImGui::Text("Theme");
-      static const char* kThemes[] = { "Space wander (ImGui)", "Unix (Dark)" };
+      static const char* kThemes[] = { "Space wander (ImGui)", "Unix (Dark)",
+                                       "Mercury smooth (Gray)", "Luna (Light)" };
       int cur = 0;
       for (int i = 0; i < (int)IM_ARRAYSIZE(kThemes); ++i)
         if (std::strcmp(appTheme, kThemes[i]) == 0) cur = i;
@@ -3016,9 +3185,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
     if (ImGui::Button("Delete", ImVec2(-1, 28))) {
       if (cb.deleteObject) cb.deleteObject(selectedIdx);
       selectedIdx = -1;
@@ -3169,9 +3338,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         if (cb.respawnCloud) cb.respawnCloud(cloudIdx, cloudForm);
         lastCloudIdx = -99; // force re-sync after respawn
       }
-      ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.55f, 0.10f, 0.10f, 1.00f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.00f));
-      ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
+      ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
       if (ImGui::Button("Remove", ImVec2(-1, 28))) {
         if (cb.deleteCloud) cb.deleteCloud(cloudIdx);
         selectedIdx = -1;

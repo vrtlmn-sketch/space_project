@@ -22,6 +22,7 @@ class PhysicsObject;
 class GridObject;
 class CloudObject;
 class LineObject;
+struct ImVec4;
 
 // ---- Keypoint on the timeline ----
 struct Keypoint {
@@ -521,8 +522,12 @@ public:
 
   // ---- App settings (persisted in settings.json, independent of projects) ----
   bool showSettingsPanel{false};
+  bool themeLight{false};              // active theme has light surfaces
   char appTheme[64] = "Space wander (ImGui)";
   void ApplyTheme(const char* name);   // set ImGui style by theme name
+  // Semantic button colours (orange Play, red Rec, …) are tuned for dark
+  // themes; on light themes this brightens them so they stay visible.
+  ImVec4 SemBtn(const ImVec4& c) const;
   void LoadAppSettings();              // read settings.json
   void SaveAppSettings();              // write settings.json
   void DrawSettingsPanel();
