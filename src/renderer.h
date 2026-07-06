@@ -519,6 +519,14 @@ public:
   SpawnFormState spawnForm{};
   GridFormState  gridForm{};
 
+  // ---- App settings (persisted in settings.json, independent of projects) ----
+  bool showSettingsPanel{false};
+  char appTheme[64] = "ImGui";
+  void ApplyTheme(const char* name);   // set ImGui style by theme name
+  void LoadAppSettings();              // read settings.json
+  void SaveAppSettings();              // write settings.json
+  void DrawSettingsPanel();
+
   // ---- Current project identity (accessed from main.cpp) ----
   char projectNameBuf[128]  = "Untitled";
   char projectImageBuf[256] = "";   // thumbnail image path ("" = none)

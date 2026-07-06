@@ -24,3 +24,6 @@ tests/build/
 
 *.mp4
 *.gcov
+
+# Per-user app settings
+settings.json

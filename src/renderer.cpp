@@ -71,11 +71,56 @@ bool Renderer::InitWindow(
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-  // ── Terminal dashboard theme (btop/lazygit-inspired, dark navy + cyan) ──
   // Monospace font: bundled DejaVu Sans Mono, ImGui default as fallback
   if (!io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSansMono.ttf", 14.0f))
     io.Fonts->AddFontDefault();
 
+  // Theme from settings.json (only "ImGui" exists for now)
+  LoadAppSettings();
+  ApplyTheme(appTheme);
+
+  ImGui_ImplGlfw_InitForOpenGL(window, true);
+  ImGui_ImplOpenGL3_Init("#version 460");
+
+  // ── Compute shader raytracer + blit setup ──
+  InitComputeShader();
+
+  initialised = true;
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App settings (settings.json) + themes
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::LoadAppSettings() {
+  std::ifstream f("settings.json");
+  if (!f.is_open()) return;
+  try {
+    nlohmann::json root;
+    f >> root;
+    std::string theme = root.value("theme", std::string{"ImGui"});
+    std::strncpy(appTheme, theme.c_str(), sizeof(appTheme) - 1);
+    appTheme[sizeof(appTheme) - 1] = '\0';
+  } catch (...) {
+    std::cerr << "[Settings] Failed to parse settings.json\n";
+  }
+}
+
+void Renderer::SaveAppSettings() {
+  nlohmann::json root;
+  root["theme"] = std::string(appTheme);
+  std::ofstream f("settings.json");
+  if (!f.is_open()) {
+    std::cerr << "[Settings] Cannot write settings.json\n";
+    return;
+  }
+  f << root.dump(2) << "\n";
+  std::cout << "[Settings] Saved settings.json\n";
+}
+
+// Terminal dashboard theme (btop/lazygit-inspired, dark navy + cyan).
+// Currently the only theme is "ImGui"; every unknown name falls back to it.
+void Renderer::ApplyTheme(const char* /*name*/) {
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
 
@@ -183,15 +228,6 @@ bool Renderer::InitWindow(
   c[ImGuiCol_TableBorderLight]     = ImVec4(0.120f, 0.175f, 0.250f, 1.00f);
   c[ImGuiCol_TableRowBg]           = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
   c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.070f, 0.090f, 0.130f, 0.40f);
-
-  ImGui_ImplGlfw_InitForOpenGL(window, true);
-  ImGui_ImplOpenGL3_Init("#version 460");
-
-  // ── Compute shader raytracer + blit setup ──
-  InitComputeShader();
-
-  initialised = true;
-  return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1332,6 +1368,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawInspector(physicsObjects, clouds, cb);
   DrawRenderingSettings(cb);
   DrawProjectPanel(cb);
+  DrawSettingsPanel();
   DrawCliPanel();
   // After a layout (re)build, make Inspector the visible tab of the right dock
   if (focusInspectorNext) {
@@ -1680,6 +1717,8 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   // ── Project ──
   if (ImGui::Button("Project", ImVec2(70, 0))) showProjectPanel = !showProjectPanel;
   ImGui::SameLine();
+  if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
+  ImGui::SameLine();
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
@@ -1856,6 +1895,45 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
   if (ImGui::Button("Quit", ImVec2(45, 0))) showQuitDialog = true;
   ImGui::PopStyleColor(3);
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawSettingsPanel — app settings (tabs; persisted in settings.json)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawSettingsPanel() {
+  if (!showSettingsPanel) return;
+
+  ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Settings", &showSettingsPanel)) { ImGui::End(); return; }
+
+  if (ImGui::BeginTabBar("##settingsTabs")) {
+    if (ImGui::BeginTabItem("Interface")) {
+      ImGui::Spacing();
+      ImGui::Text("Theme");
+      static const char* kThemes[] = { "ImGui" };
+      int cur = 0;
+      for (int i = 0; i < (int)IM_ARRAYSIZE(kThemes); ++i)
+        if (std::strcmp(appTheme, kThemes[i]) == 0) cur = i;
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::Combo("##theme", &cur, kThemes, IM_ARRAYSIZE(kThemes))) {
+        std::strncpy(appTheme, kThemes[cur], sizeof(appTheme) - 1);
+        appTheme[sizeof(appTheme) - 1] = '\0';
+        ApplyTheme(appTheme);
+      }
+      ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
+  }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+  if (ImGui::Button("Save", ImVec2(120, 0)))
+    SaveAppSettings();
+  ImGui::SameLine();
+  ImGui::TextDisabled("writes settings.json");
 
   ImGui::End();
 }
