@@ -71,7 +71,11 @@ bool Renderer::InitWindow(
   io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-  // ── Dark sharp-edged space theme ──
+  // ── Terminal dashboard theme (btop/lazygit-inspired, dark navy + cyan) ──
+  // Monospace font: bundled DejaVu Sans Mono, ImGui default as fallback
+  if (!io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSansMono.ttf", 14.0f))
+    io.Fonts->AddFontDefault();
+
   ImGui::StyleColorsDark();
   ImGuiStyle& style = ImGui::GetStyle();
 
@@ -84,99 +88,101 @@ bool Renderer::InitWindow(
   style.ScrollbarRounding = 0.0f;
   style.TabRounding       = 0.0f;
 
-  // Thin borders, compact padding
+  // Thin visible borders, dense terminal-grid padding
   style.WindowBorderSize  = 1.0f;
-  style.FrameBorderSize   = 0.0f;
+  style.ChildBorderSize   = 1.0f;
+  style.FrameBorderSize   = 1.0f;
   style.PopupBorderSize   = 1.0f;
-  style.WindowPadding     = ImVec2(8.0f, 6.0f);
-  style.FramePadding      = ImVec2(6.0f, 3.0f);
-  style.ItemSpacing       = ImVec2(8.0f, 4.0f);
+  style.WindowPadding     = ImVec2(7.0f, 5.0f);
+  style.FramePadding      = ImVec2(5.0f, 2.0f);
+  style.ItemSpacing       = ImVec2(6.0f, 4.0f);
   style.ItemInnerSpacing  = ImVec2(4.0f, 4.0f);
-  style.ScrollbarSize     = 12.0f;
+  style.ScrollbarSize     = 10.0f;
   style.GrabMinSize       = 8.0f;
 
   // Docking-specific
   style.DockingSeparatorSize = 2.0f;
 
-  // Colours: deep space blacks, neon cyan/blue accents
+  // Colours: dark navy blue-blacks, muted cyan pane accents
   ImVec4* c = style.Colors;
 
-  // Backgrounds
-  c[ImGuiCol_WindowBg]             = ImVec4(0.06f, 0.06f, 0.08f, 1.00f);
-  c[ImGuiCol_ChildBg]              = ImVec4(0.06f, 0.06f, 0.08f, 1.00f);
-  c[ImGuiCol_PopupBg]              = ImVec4(0.07f, 0.07f, 0.10f, 0.96f);
+  // Backgrounds — window darker, panels a step lighter blue-gray
+  c[ImGuiCol_WindowBg]             = ImVec4(0.043f, 0.055f, 0.086f, 1.00f);
+  c[ImGuiCol_ChildBg]              = ImVec4(0.055f, 0.075f, 0.115f, 1.00f);
+  c[ImGuiCol_PopupBg]              = ImVec4(0.050f, 0.068f, 0.105f, 0.98f);
 
-  // Borders
-  c[ImGuiCol_Border]               = ImVec4(0.14f, 0.16f, 0.22f, 1.00f);
+  // Borders — muted blue/cyan pane frames, clearly visible
+  c[ImGuiCol_Border]               = ImVec4(0.19f, 0.28f, 0.38f, 1.00f);
   c[ImGuiCol_BorderShadow]         = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
 
-  // Frames (input fields, sliders)
-  c[ImGuiCol_FrameBg]              = ImVec4(0.10f, 0.10f, 0.14f, 1.00f);
-  c[ImGuiCol_FrameBgHovered]       = ImVec4(0.14f, 0.16f, 0.22f, 1.00f);
-  c[ImGuiCol_FrameBgActive]        = ImVec4(0.08f, 0.20f, 0.35f, 1.00f);
+  // Frames (input fields, sliders) — dark command-line fields
+  c[ImGuiCol_FrameBg]              = ImVec4(0.050f, 0.075f, 0.120f, 1.00f);
+  c[ImGuiCol_FrameBgHovered]       = ImVec4(0.085f, 0.135f, 0.210f, 1.00f);
+  c[ImGuiCol_FrameBgActive]        = ImVec4(0.070f, 0.200f, 0.320f, 1.00f);
 
-  // Title bars
-  c[ImGuiCol_TitleBg]              = ImVec4(0.05f, 0.05f, 0.07f, 1.00f);
-  c[ImGuiCol_TitleBgActive]        = ImVec4(0.06f, 0.12f, 0.22f, 1.00f);
-  c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.04f, 0.04f, 0.06f, 0.80f);
+  // Title bars — terminal pane title strips
+  c[ImGuiCol_TitleBg]              = ImVec4(0.050f, 0.070f, 0.105f, 1.00f);
+  c[ImGuiCol_TitleBgActive]        = ImVec4(0.085f, 0.165f, 0.265f, 1.00f);
+  c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.040f, 0.055f, 0.085f, 0.85f);
 
   // Menu bar
-  c[ImGuiCol_MenuBarBg]            = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
+  c[ImGuiCol_MenuBarBg]            = ImVec4(0.055f, 0.075f, 0.115f, 1.00f);
 
   // Scrollbar
-  c[ImGuiCol_ScrollbarBg]          = ImVec4(0.05f, 0.05f, 0.07f, 1.00f);
-  c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.18f, 0.20f, 0.28f, 1.00f);
-  c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.25f, 0.30f, 0.42f, 1.00f);
-  c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.15f, 0.40f, 0.70f, 1.00f);
+  c[ImGuiCol_ScrollbarBg]          = ImVec4(0.043f, 0.055f, 0.086f, 1.00f);
+  c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.170f, 0.250f, 0.350f, 1.00f);
+  c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.230f, 0.350f, 0.490f, 1.00f);
+  c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.250f, 0.550f, 0.800f, 1.00f);
 
-  // Buttons — flat with cyan accent
-  c[ImGuiCol_Button]               = ImVec4(0.10f, 0.14f, 0.22f, 1.00f);
-  c[ImGuiCol_ButtonHovered]        = ImVec4(0.12f, 0.28f, 0.50f, 1.00f);
-  c[ImGuiCol_ButtonActive]         = ImVec4(0.08f, 0.35f, 0.65f, 1.00f);
+  // Buttons — flat rectangular command labels
+  c[ImGuiCol_Button]               = ImVec4(0.080f, 0.130f, 0.210f, 1.00f);
+  c[ImGuiCol_ButtonHovered]        = ImVec4(0.120f, 0.240f, 0.390f, 1.00f);
+  c[ImGuiCol_ButtonActive]         = ImVec4(0.100f, 0.330f, 0.530f, 1.00f);
 
   // Checkmark
-  c[ImGuiCol_CheckMark]            = ImVec4(0.20f, 0.70f, 1.00f, 1.00f);
+  c[ImGuiCol_CheckMark]            = ImVec4(0.400f, 0.800f, 1.000f, 1.00f);
 
   // Sliders
-  c[ImGuiCol_SliderGrab]           = ImVec4(0.15f, 0.45f, 0.80f, 1.00f);
-  c[ImGuiCol_SliderGrabActive]     = ImVec4(0.20f, 0.60f, 1.00f, 1.00f);
+  c[ImGuiCol_SliderGrab]           = ImVec4(0.250f, 0.580f, 0.840f, 1.00f);
+  c[ImGuiCol_SliderGrabActive]     = ImVec4(0.400f, 0.800f, 1.000f, 1.00f);
 
-  // Headers (selectable, tree nodes)
-  c[ImGuiCol_Header]               = ImVec4(0.10f, 0.18f, 0.30f, 1.00f);
-  c[ImGuiCol_HeaderHovered]        = ImVec4(0.12f, 0.28f, 0.50f, 1.00f);
-  c[ImGuiCol_HeaderActive]         = ImVec4(0.10f, 0.35f, 0.65f, 1.00f);
+  // Headers (selectable, tree nodes) — muted navy/cyan selected rows
+  c[ImGuiCol_Header]               = ImVec4(0.100f, 0.220f, 0.340f, 1.00f);
+  c[ImGuiCol_HeaderHovered]        = ImVec4(0.130f, 0.300f, 0.460f, 1.00f);
+  c[ImGuiCol_HeaderActive]         = ImVec4(0.120f, 0.380f, 0.580f, 1.00f);
 
-  // Separator
-  c[ImGuiCol_Separator]            = ImVec4(0.14f, 0.16f, 0.22f, 1.00f);
-  c[ImGuiCol_SeparatorHovered]     = ImVec4(0.15f, 0.40f, 0.70f, 1.00f);
-  c[ImGuiCol_SeparatorActive]      = ImVec4(0.20f, 0.55f, 0.90f, 1.00f);
+  // Separator — visible pane divider lines
+  c[ImGuiCol_Separator]            = ImVec4(0.190f, 0.280f, 0.380f, 1.00f);
+  c[ImGuiCol_SeparatorHovered]     = ImVec4(0.200f, 0.450f, 0.700f, 1.00f);
+  c[ImGuiCol_SeparatorActive]      = ImVec4(0.300f, 0.650f, 0.950f, 1.00f);
 
   // Resize grip
-  c[ImGuiCol_ResizeGrip]           = ImVec4(0.15f, 0.40f, 0.70f, 0.25f);
-  c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.15f, 0.40f, 0.70f, 0.65f);
-  c[ImGuiCol_ResizeGripActive]     = ImVec4(0.20f, 0.55f, 0.90f, 0.90f);
+  c[ImGuiCol_ResizeGrip]           = ImVec4(0.200f, 0.450f, 0.700f, 0.25f);
+  c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.200f, 0.450f, 0.700f, 0.65f);
+  c[ImGuiCol_ResizeGripActive]     = ImVec4(0.300f, 0.650f, 0.950f, 0.90f);
 
-  // Tabs
-  c[ImGuiCol_Tab]                  = ImVec4(0.08f, 0.10f, 0.15f, 1.00f);
-  c[ImGuiCol_TabHovered]           = ImVec4(0.12f, 0.28f, 0.50f, 1.00f);
-  c[ImGuiCol_TabSelected]          = ImVec4(0.10f, 0.22f, 0.40f, 1.00f);
-  c[ImGuiCol_TabDimmed]            = ImVec4(0.06f, 0.06f, 0.08f, 1.00f);
-  c[ImGuiCol_TabDimmedSelected]    = ImVec4(0.08f, 0.14f, 0.24f, 1.00f);
+  // Tabs — compact rectangular, active tab brighter with cyan overline
+  c[ImGuiCol_Tab]                  = ImVec4(0.055f, 0.085f, 0.135f, 1.00f);
+  c[ImGuiCol_TabHovered]           = ImVec4(0.120f, 0.260f, 0.420f, 1.00f);
+  c[ImGuiCol_TabSelected]          = ImVec4(0.100f, 0.220f, 0.360f, 1.00f);
+  c[ImGuiCol_TabSelectedOverline]  = ImVec4(0.400f, 0.800f, 1.000f, 1.00f);
+  c[ImGuiCol_TabDimmed]            = ImVec4(0.048f, 0.065f, 0.100f, 1.00f);
+  c[ImGuiCol_TabDimmedSelected]    = ImVec4(0.080f, 0.150f, 0.240f, 1.00f);
 
   // Docking
-  c[ImGuiCol_DockingPreview]       = ImVec4(0.15f, 0.45f, 0.80f, 0.70f);
-  c[ImGuiCol_DockingEmptyBg]       = ImVec4(0.04f, 0.04f, 0.06f, 1.00f);
+  c[ImGuiCol_DockingPreview]       = ImVec4(0.250f, 0.550f, 0.800f, 0.70f);
+  c[ImGuiCol_DockingEmptyBg]       = ImVec4(0.035f, 0.045f, 0.070f, 1.00f);
 
-  // Text
-  c[ImGuiCol_Text]                 = ImVec4(0.88f, 0.90f, 0.92f, 1.00f);
-  c[ImGuiCol_TextDisabled]         = ImVec4(0.40f, 0.42f, 0.46f, 1.00f);
+  // Text — bright off-white with a cold blue tint
+  c[ImGuiCol_Text]                 = ImVec4(0.900f, 0.930f, 0.960f, 1.00f);
+  c[ImGuiCol_TextDisabled]         = ImVec4(0.470f, 0.550f, 0.650f, 1.00f);
 
   // Table
-  c[ImGuiCol_TableHeaderBg]        = ImVec4(0.08f, 0.10f, 0.15f, 1.00f);
-  c[ImGuiCol_TableBorderStrong]    = ImVec4(0.14f, 0.16f, 0.22f, 1.00f);
-  c[ImGuiCol_TableBorderLight]     = ImVec4(0.10f, 0.12f, 0.18f, 1.00f);
-  c[ImGuiCol_TableRowBg]           = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-  c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.08f, 0.08f, 0.10f, 0.40f);
+  c[ImGuiCol_TableHeaderBg]        = ImVec4(0.070f, 0.110f, 0.175f, 1.00f);
+  c[ImGuiCol_TableBorderStrong]    = ImVec4(0.190f, 0.280f, 0.380f, 1.00f);
+  c[ImGuiCol_TableBorderLight]     = ImVec4(0.120f, 0.175f, 0.250f, 1.00f);
+  c[ImGuiCol_TableRowBg]           = ImVec4(0.000f, 0.000f, 0.000f, 0.00f);
+  c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.070f, 0.090f, 0.130f, 0.40f);
 
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init("#version 460");
