@@ -5,14 +5,20 @@
       "count": 5000,
       "enabled": true,
       "formationFile": "milky_way_real_5k.json",
+      "nebulaScatterScale": 0.4000000059604645,
+      "particleSizeSpread": 0.0,
       "position": [
         0.0,
         0.0,
-        -1644268005.0
+        -1644268032.0
       ],
       "renderMode": 0,
       "scale": 1.0,
-      "temperature": 4500.0
+      "sizeX": 3.0,
+      "sizeY": 3.0,
+      "sizeZ": 3.0,
+      "temperature": 4500.0,
+      "theta": 0.5
     }
   ],
   "grid": {
@@ -23,9 +29,23 @@
     "showZ": true,
     "visible": true
   },
-  "imagePath": "Milky.bmp",
+  "imagePath": "solarSystem.bmp",
   "physicsObjects": [
     {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
       "mass": 1.0,
       "name": "Sol",
       "position": [
@@ -33,17 +53,32 @@
         0.0,
         -3.0
       ],
+      "schwarzschildRadius": 1.9742003587452928e-08,
       "shaderType": 1,
       "temperature": 5778.0,
       "texturePath": "",
       "velocity": [
-        0,
-        0,
-        0
+        0.0,
+        0.0,
+        0.0
       ],
-      "visualRadius": 0.00465
+      "visualRadius": 0.004650000017136335
     },
     {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
       "mass": 1.66e-07,
       "name": "Mercury",
       "position": [
@@ -51,17 +86,32 @@
         0.0,
         -3.0
       ],
+      "schwarzschildRadius": 3.277172590509256e-15,
       "shaderType": 0,
-      "temperature": 0,
+      "temperature": 0.0,
       "texturePath": "assets/mercury.jpg",
       "velocity": [
         0.0,
         0.0,
         10.09
       ],
-      "visualRadius": 1.63e-05
+      "visualRadius": 1.630000042496249e-05
     },
     {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
       "mass": 2.45e-06,
       "name": "Venus",
       "position": [
@@ -69,18 +119,32 @@
         0.0,
         -2.277
       ],
+      "schwarzschildRadius": 4.8367908934759604e-14,
       "shaderType": 0,
-      "temperature": 0,
+      "temperature": 0.0,
       "texturePath": "assets/venus.jpg",
       "velocity": [
         -7.388,
         0.0,
         0.0
       ],
-      "visualRadius": 4.04e-05
+      "visualRadius": 4.039999839733355e-05
     },
     {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
       "atmosphereEnabled": true,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
       "mass": 3e-06,
       "name": "Earth",
       "position": [
@@ -88,17 +152,32 @@
         0.0,
         -3.342
       ],
+      "schwarzschildRadius": 5.922600734495354e-14,
       "shaderType": 0,
-      "temperature": 0,
+      "temperature": 0.0,
       "texturePath": "assets/earth.jpg",
       "velocity": [
         2.149,
         0.0,
         -5.904
       ],
-      "visualRadius": 4.26e-05
+      "visualRadius": 4.260000059730373e-05
     },
     {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
       "mass": 3.23e-07,
       "name": "Mars",
       "position": [
@@ -106,17 +185,32 @@
         0.0,
         -4.3198
       ],
+      "schwarzschildRadius": 6.37666689132124e-15,
       "shaderType": 0,
-      "temperature": 0,
+      "temperature": 0.0,
       "texturePath": "assets/mars.jpg",
       "velocity": [
         4.407,
         0.0,
         2.545
       ],
-      "visualRadius": 2.27e-05
+      "visualRadius": 2.2700000045006163e-05
     },
     {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
       "mass": 0.000955,
       "name": "Jupiter",
       "position": [
@@ -124,17 +218,32 @@
         0.0,
         0.6789999999999998
       ],
+      "schwarzschildRadius": 1.88536131151551e-11,
       "shaderType": 0,
-      "temperature": 0,
+      "temperature": 0.0,
       "texturePath": "assets/jupiter.jpg",
       "velocity": [
         -1.948,
         0.0,
         1.948
       ],
-      "visualRadius": 0.000467
+      "visualRadius": 0.0004670000053010881
     },
     {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
       "mass": 4150000.0,
       "name": "Sagittarius A*",
       "position": [
@@ -142,30 +251,32 @@
         0.0,
         -1644268005.0
       ],
+      "schwarzschildRadius": 0.08192931115627289,
       "shaderType": 2,
-      "temperature": 0,
+      "temperature": 0.0,
       "texturePath": "",
       "velocity": [
-        0,
-        0,
-        0
+        0.0,
+        0.0,
+        0.0
       ],
-      "visualRadius": 0.082
+      "visualRadius": 0.0820000022649765
     }
   ],
+  "projectName": "milky_way",
   "settings": {
-    "camPitch": 0.0,
-    "camRoll": 0.0,
-    "camRotation": 0.0,
-    "camX": 0.0,
-    "camY": 0.0,
-    "camZ": 0.0,
+    "camPitch": 0.3769913911819458,
+    "camRoll": -0.13069090247154236,
+    "camRotation": -0.24092406034469604,
+    "camX": -4.667154219583608,
+    "camY": -3.9962871571915457,
+    "camZ": -3.872011373692658,
     "camZoom": 45.0,
     "cameraKeyframes": [],
     "dopplerBrightnessStr": 2.0,
     "dopplerColorStr": 1.0,
     "dopplerMode": false,
-    "dopplerVelScale": 1.581e-05,
+    "dopplerVelScale": 1.5809999240445904e-05,
     "exaggeratedSizes": false,
     "keypoints": [],
     "nebulaDetail": 0.0,

@@ -1245,42 +1245,43 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     : ImGuiDockNodeFlags_PassthruCentralNode;
   ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dsFlags);
 
-  // ── Build programmatic layout on first frame (or after mode toggle) ──
+  // ── Build programmatic layout on first frame (or after mode toggle/reset) ──
   if (!dockLayoutInitialized) {
     dockLayoutInitialized = true;
+    focusInspectorNext    = true;
 
     ImGui::DockBuilderRemoveNode(dockspace_id);
     ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
 
-    ImGuiID dock_main, dock_bottom;
-    ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.12f, &dock_bottom, &dock_main);
+    ImGuiID dock_main = dockspace_id;
 
     ImGuiID dock_top;
-    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Up, 0.065f, &dock_top, &dock_main);
+    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Up, 0.045f, &dock_top, &dock_main);
 
     ImGuiID dock_left;
-    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.20f, &dock_left, &dock_main);
+    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.17f, &dock_left, &dock_main);
 
     ImGuiID dock_right;
-    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.22f, &dock_right, &dock_main);
+    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.24f, &dock_right, &dock_main);
 
-    ImGuiID dock_right_top, dock_right_bottom;
-    ImGui::DockBuilderSplitNode(dock_right, ImGuiDir_Down, 0.40f, &dock_right_bottom, &dock_right_top);
+    // Centre: timeline strip under the viewport
+    ImGuiID dock_center_bottom;
+    ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.33f, &dock_center_bottom, &dock_main);
 
-    ImGuiID dock_bottom_left, dock_bottom_right;
-    ImGui::DockBuilderSplitNode(dock_bottom, ImGuiDir_Right, 0.30f, &dock_bottom_right, &dock_bottom_left);
-
-    ImGuiID dock_left_top, dock_left_bottom;
-    ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.50f, &dock_left_bottom, &dock_left_top);
+    // Left column: Hierarchy / Spawn / Secondary View
+    ImGuiID dock_left_bottom, dock_left_mid;
+    ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.31f, &dock_left_bottom, &dock_left);
+    ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.46f, &dock_left_mid, &dock_left);
 
     ImGui::DockBuilderDockWindow("Controls",           dock_top);
-    ImGui::DockBuilderDockWindow("Spawn",               dock_left_top);
-    ImGui::DockBuilderDockWindow("Hierarchy",           dock_left_bottom);
-    ImGui::DockBuilderDockWindow("Inspector",           dock_right_top);
-    ImGui::DockBuilderDockWindow("Rendering Settings",  dock_right_bottom);
-    ImGui::DockBuilderDockWindow("Timeline",            dock_bottom_left);
-    ImGui::DockBuilderDockWindow("Secondary View",      dock_bottom_right);
+    ImGui::DockBuilderDockWindow("Hierarchy",          dock_left);
+    ImGui::DockBuilderDockWindow("Spawn",              dock_left_mid);
+    ImGui::DockBuilderDockWindow("Secondary View",     dock_left_bottom);
+    // Inspector + Rendering Settings share one node as tabs
+    ImGui::DockBuilderDockWindow("Inspector",          dock_right);
+    ImGui::DockBuilderDockWindow("Rendering Settings", dock_right);
+    ImGui::DockBuilderDockWindow("Timeline",           dock_center_bottom);
 
     if (editorViewport)
       ImGui::DockBuilderDockWindow("Viewport", dock_main);
@@ -1298,6 +1299,11 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawInspector(physicsObjects, clouds, cb);
   DrawRenderingSettings(cb);
   DrawProjectPanel(cb);
+  // After a layout (re)build, make Inspector the visible tab of the right dock
+  if (focusInspectorNext) {
+    ImGui::SetWindowFocus("Inspector");
+    focusInspectorNext = false;
+  }
   DrawPipWindow();
   if (ghostDragActive) DrawGhostObject();
   DrawQuitDialog(cb);
@@ -1796,6 +1802,13 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     ImGui::PopStyleColor(3);
   } else {
     if (ImGui::Button("Viewport [V]", ImVec2(95, 0))) editorViewport = true;
+  }
+  ImGui::SameLine();
+
+  // Reset layout — restores the default dock arrangement (viewport mode on)
+  if (ImGui::Button("Reset Layout", ImVec2(95, 0))) {
+    editorViewport        = true;
+    dockLayoutInitialized = false;
   }
   ImGui::SameLine();
 

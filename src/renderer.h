@@ -326,7 +326,8 @@ private:
   GLuint vpDepthRBO{0};
   int    vpWidth{0}, vpHeight{0};   // central-area available size (from last frame's DrawUI)
   int    vpFboW{0}, vpFboH{0};      // actual FBO dimensions (screen-aspect sub-rect of central area)
-  bool   prevEditorViewport{false};
+  bool   prevEditorViewport{true};
+  bool   focusInspectorNext{false};  // one-shot: select Inspector tab after layout reset
 
   void   EnsureViewportFBO(int w, int h);
   void   DestroyViewportFBO();
@@ -426,7 +427,7 @@ public:
   float ramBudgetGB{1.0f};  // user-configurable: 1–128 GB
 
   // ---- Editor viewport mode ----
-  bool editorViewport{false};  // true = render scene to FBO, show in central docked window
+  bool editorViewport{true};   // true = render scene to FBO, show in central docked window
   void BindViewportFBO();      // call before primary 3D draw; no-op when editorViewport=false
   void UnbindViewportFBO();    // call after primary 3D draw; no-op when editorViewport=false
 
