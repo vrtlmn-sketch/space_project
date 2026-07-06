@@ -439,14 +439,16 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_SPACE)      == GLFW_PRESS) move(vec3{0, -moveStep, 0});
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) move(vec3{0,  moveStep, 0});
 
-    // Arrow keys + roll = camera-local rotation via matrix
+    // Arrow keys + roll = camera-local rotation via matrix.
+    // Yaw/pitch scale with zoom (panning a narrow view needs finesse);
+    // roll spins around the view axis, so it always runs at full speed.
     float dyaw = 0, dpitch = 0, droll = 0;
     if (glfwGetKey(window, GLFW_KEY_LEFT)   == GLFW_PRESS) dyaw   -= rotStep;
     if (glfwGetKey(window, GLFW_KEY_RIGHT)  == GLFW_PRESS) dyaw   += rotStep;
     if (glfwGetKey(window, GLFW_KEY_UP)     == GLFW_PRESS) dpitch -= rotStep;
     if (glfwGetKey(window, GLFW_KEY_DOWN)   == GLFW_PRESS) dpitch += rotStep;
-    if (glfwGetKey(window, GLFW_KEY_COMMA)  == GLFW_PRESS) droll  -= rotStep;
-    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) droll  += rotStep;
+    if (glfwGetKey(window, GLFW_KEY_COMMA)  == GLFW_PRESS) droll  -= cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) droll  += cameraRotationSpeed;
     if (dyaw != 0 || dpitch != 0 || droll != 0)
       rotateCamera(dyaw, dpitch, droll);
 
