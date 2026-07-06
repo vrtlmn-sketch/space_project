@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
@@ -269,8 +270,11 @@ int main(int argc, char** argv) {
   };
 
   cb.saveProject = [&]() {
-    std::string path(renderer.savePathBuf);
-    if (path.empty()) path = "project.json";
+    std::string path(renderer.projectFileBuf);
+    if (path.empty()) path = "projects/project.json";
+    std::error_code dirEc;
+    auto parent = std::filesystem::path(path).parent_path();
+    if (!parent.empty()) std::filesystem::create_directories(parent, dirEc);
     std::vector<CloudData> cloudDatas;
     for (const auto& c : clouds) {
       CloudData cd;
@@ -325,7 +329,30 @@ int main(int argc, char** argv) {
     s.recStopFrame    = renderer.recStopFrame;
     s.keypoints       = renderer.keypoints;
     s.cameraKeyframes = renderer.cameraKeyframes;
-    ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas, s);
+    ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas, s,
+                            std::string(renderer.projectNameBuf),
+                            std::string(renderer.projectImageBuf));
+    std::strncpy(renderer.projectFileBuf, path.c_str(),
+                 sizeof(renderer.projectFileBuf) - 1);
+    renderer.projectFileBuf[sizeof(renderer.projectFileBuf) - 1] = '\0';
+  };
+
+  auto applyProjectMeta = [&](const ProjectData& d, const std::string& path) {
+    std::string name = d.projectName;
+    if (name.empty()) {
+      name = std::filesystem::path(path).stem().string();
+      if (name.empty()) name = "Untitled";
+    }
+    std::strncpy(renderer.projectNameBuf, name.c_str(),
+                 sizeof(renderer.projectNameBuf) - 1);
+    renderer.projectNameBuf[sizeof(renderer.projectNameBuf) - 1] = '\0';
+    std::strncpy(renderer.projectImageBuf, d.imagePath.c_str(),
+                 sizeof(renderer.projectImageBuf) - 1);
+    renderer.projectImageBuf[sizeof(renderer.projectImageBuf) - 1] = '\0';
+    std::strncpy(renderer.projectFileBuf, path.c_str(),
+                 sizeof(renderer.projectFileBuf) - 1);
+    renderer.projectFileBuf[sizeof(renderer.projectFileBuf) - 1] = '\0';
+    renderer.projectSaveAsBuf[0] = '\0';
   };
 
   cb.loadProject = [&](const std::string& path) {
@@ -334,6 +361,7 @@ int main(int argc, char** argv) {
     currentGrid = data.grid;
     buildScene(data, physicsObjects, lineObjects, grid, clouds);
     applySettingsToRenderer(data.settings);
+    applyProjectMeta(data, path);
     renderer.gridForm.visible  = currentGrid.visible;
     renderer.gridForm.cellSize = currentGrid.cellSize;
     renderer.gridForm.radius   = currentGrid.radius;
@@ -354,22 +382,24 @@ int main(int argc, char** argv) {
   {
     using SC = Renderer::StartupChoice;
     if (renderer.startupChoice == SC::Template) {
-      // Template scene is an editable JSON preset, loaded exactly like a
-      // normal project — nothing about it is hardcoded.
-      ProjectData tmpl = ProjectSerializer::Load("templates/solar_system.json");
+      // --template flag: load the Milky Way project like any other project
+      const std::string tmplPath = "projects/milky_way.json";
+      ProjectData tmpl = ProjectSerializer::Load(tmplPath);
       if (tmpl.objects.empty())
-        std::cerr << "[main] Template scene missing or broken "
-                     "(templates/solar_system.json) — starting empty.\n";
+        std::cerr << "[main] Template project missing or broken "
+                     "(" << tmplPath << ") — starting empty.\n";
       currentGrid = tmpl.grid;
       buildScene(tmpl, physicsObjects, lineObjects, grid, clouds);
       applySettingsToRenderer(tmpl.settings);
+      applyProjectMeta(tmpl, tmplPath);
     } else if (renderer.startupChoice == SC::Load) {
-      ProjectData data = ProjectSerializer::Load(
-        std::string(renderer.startupLoadPath));
+      std::string loadPath(renderer.startupLoadPath);
+      ProjectData data = ProjectSerializer::Load(loadPath);
       renderer.showLegacyUnitsWarning = data.legacyUnits;
       currentGrid = data.grid;
       buildScene(data, physicsObjects, lineObjects, grid, clouds);
       applySettingsToRenderer(data.settings);
+      applyProjectMeta(data, loadPath);
     } else {
       // SC::Empty → create grid with defaults
       grid.emplace(currentGrid.cellSize, currentGrid.radius,

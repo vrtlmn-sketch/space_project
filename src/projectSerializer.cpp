@@ -25,10 +25,14 @@ bool ProjectSerializer::Save(const std::string& path,
                              const std::vector<PhysicsObject>& physicsObjects,
                              const GridData& grid,
                              const std::vector<CloudData>& clouds,
-                             const SceneSettings& settings)
+                             const SceneSettings& settings,
+                             const std::string& projectName,
+                             const std::string& imagePath)
 {
   json root;
   root["unitsVersion"] = 2;  // v2: AU / solar masses / years, G = 4pi^2
+  root["projectName"]  = projectName;
+  root["imagePath"]    = imagePath;
 
   // ── Physics objects ──
   json objsArr = json::array();
@@ -185,6 +189,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     std::cerr << "[ProjectSerializer] JSON parse error: " << e.what() << "\n";
     return data;
   }
+
+  data.projectName = root.value("projectName", std::string{});
+  data.imagePath   = root.value("imagePath",   std::string{});
 
   if (root.value("unitsVersion", 0) < 2) {
     data.legacyUnits = true;

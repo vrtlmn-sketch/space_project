@@ -144,12 +144,11 @@ private:
   // UI internal state
   bool         showSpawnPanel{false};
   bool         showScenePanel{false};
-  bool         showSaveDialog{false};
-  bool         showLoadDialog{false};
+  bool         showProjectPanel{false};
   bool         showQuitDialog{false};
   bool         quitConfirmed{false};
   bool         escKeyPressed{false};
-  char         loadPathBuf[256]  = "project.json";
+  char         loadPathBuf[256]  = "";
   char         keypointLabelBuf[64] = "Key";
   CloudFormState cloudForm{};
   int            spawnTab{0};  // 0=Physics, 1=Cloud
@@ -368,6 +367,7 @@ private:
   void DrawGhostObject();
   void DrawQuitDialog(const SceneCallbacks& cb);
   void DrawRenderingSettings(const SceneCallbacks& cb);  // rendering method + RT quality settings
+  void DrawProjectPanel(const SceneCallbacks& cb);       // project name/image, save, load, browser
   void DrawBenchmarkPanel();     // performance stats section (called from DrawRenderingSettings)
   void DrawPipWindow();   // show secondary view FBO as ImGui image
 
@@ -407,10 +407,17 @@ public:
   //                (≈ 0.9 days/tick at 1×: Earth orbits in ~7 s of wall time)
   // framesThisTick: recorded frames to advance this tick (= 5·playback/sim,
   //                 fractional remainder carried in an accumulator)
+  // Recorded frames consumed per tick when playbackSpeed == simSpeed.
+  // Sole source of the sim-vs-playback rate ratio: both the frame advance
+  // and the playback floor derive from it.
+  static constexpr float kBaseFramesPerTick = 5.0f;
   float simSpeed{1.0f};        // ACTIVE sim speed (dt of recorded data)
   float pendingSimSpeed{1.0f}; // UI-edited value; applied via Save (clears data)
   float playbackSpeed{1.0f};
   int   framesThisTick{1};
+  // Slowest useful playback: every recorded frame is displayed
+  // (framesThisTick == 1). Scales with the data resolution.
+  float minPlaybackSpeed() const { return simSpeed / kBaseFramesPerTick; }
   void  ComputeFrameAdvance();  // call once per tick, after pause state is final
   bool paused{true};
   bool playingForward{true};
@@ -454,7 +461,7 @@ public:
   // Will be set to "template" or "empty" or "load" by the modal
   enum class StartupChoice { None, Empty, Template, Load };
   StartupChoice startupChoice{StartupChoice::None};
-  char startupLoadPath[256] = "project.json";
+  char startupLoadPath[256] = "";
 
   // Set after loading a pre-v2 project file; DrawUI shows a warning popup
   bool showLegacyUnitsWarning{false};
@@ -502,10 +509,25 @@ public:
   bool IsRecording() const { return recording; }
   void DispatchAndCaptureRecordingFrame();   // dispatch compute at recording resolution + capture
 
-  // Public spawn/grid forms and save path (accessed from main.cpp)
+  // Public spawn/grid forms (accessed from main.cpp)
   SpawnFormState spawnForm{};
   GridFormState  gridForm{};
-  char           savePathBuf[256] = "project.json";
+
+  // ---- Current project identity (accessed from main.cpp) ----
+  char projectNameBuf[128]  = "Untitled";
+  char projectImageBuf[256] = "";   // thumbnail image path ("" = none)
+  char projectFileBuf[256]  = "";   // file the project was loaded from / saves to
+  char projectSaveAsBuf[256] = "";
+
+  // ---- Project browser (projects/ directory) ----
+  struct ProjectInfo {
+    std::string file;   // e.g. "projects/milky_way.json"
+    std::string name;   // display name (from JSON or prettified filename)
+    std::string image;  // thumbnail path ("" = none)
+  };
+  std::vector<ProjectInfo> projectList;
+  bool projectsScanned{false};
+  void RescanProjects();
 
   // ---- Spheremap background (rasterized + raytraced views) ----
   bool   spheremapEnabled{true};

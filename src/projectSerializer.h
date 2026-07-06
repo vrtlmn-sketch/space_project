@@ -103,6 +103,8 @@ struct SceneSettings {
 };
 
 struct ProjectData {
+  std::string   projectName;        // display name ("" = untitled)
+  std::string   imagePath;          // project thumbnail image ("" = none)
   std::vector<PhysicsObjectData> objects;
   GridData      grid;
   std::vector<CloudData> clouds;
@@ -119,7 +121,9 @@ public:
                    const std::vector<PhysicsObject>& physicsObjects,
                    const GridData& grid,
                    const std::vector<CloudData>& clouds,
-                   const SceneSettings& settings);
+                   const SceneSettings& settings,
+                   const std::string& projectName = {},
+                   const std::string& imagePath   = {});
 
   // Load a JSON file; returns populated ProjectData or empty on error
   static ProjectData Load(const std::string& path);

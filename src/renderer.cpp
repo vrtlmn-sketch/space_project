@@ -7,6 +7,11 @@
 #include <cctype>
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <map>
+
+#include <stb_image.h>
+#include "json.hpp"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -634,10 +639,12 @@ void Renderer::ComputeFrameAdvance() {
   static float accum = 0.0f;
   if (paused) { framesThisTick = 0; return; }
 
-  // Cap: playback can't go slower than the simulation speed
-  playbackSpeed = std::max(playbackSpeed, simSpeed);
+  // Cap: playback bottoms out at the data resolution — the point where every
+  // recorded frame is consumed (framesPerTick == 1). Derived from the same
+  // constant as the frame advance, so it always tracks the sim speed.
+  playbackSpeed = std::max(playbackSpeed, minPlaybackSpeed());
 
-  float framesPerTick = 5.0f * playbackSpeed / std::max(simSpeed, 0.01f);
+  float framesPerTick = kBaseFramesPerTick * playbackSpeed / std::max(simSpeed, 0.01f);
   accum += framesPerTick;
   framesThisTick = (int)accum;
 
@@ -663,15 +670,233 @@ void Renderer::resetCamera() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Project browser helpers
+// ─────────────────────────────────────────────────────────────────────────────
+static std::string PrettyTexLabel(const std::string& filename); // defined below
+
+// "My Cool Scene" → "my_cool_scene" (for default save filenames)
+static std::string SanitizeProjectFileName(const char* name) {
+  std::string s;
+  for (const char* c = name; *c; ++c) {
+    if (std::isalnum((unsigned char)*c)) s += (char)std::tolower((unsigned char)*c);
+    else if (*c == ' ' || *c == '-' || *c == '_') s += '_';
+  }
+  if (s.empty()) s = "project";
+  return s;
+}
+
+// Cached GL textures for project thumbnails, keyed by path + mtime so an
+// overwritten image (new screenshot) reloads automatically.
+struct ProjectThumb { GLuint id{0}; int w{0}, h{0}; };
+static ProjectThumb GetProjectThumb(const std::string& path) {
+  static std::map<std::string, std::pair<std::string, ProjectThumb>> cache;
+  if (path.empty()) return {};
+  std::error_code ec;
+  auto mt = std::filesystem::last_write_time(path, ec);
+  if (ec) return {};
+  std::string stamp = std::to_string(mt.time_since_epoch().count());
+  auto it = cache.find(path);
+  if (it != cache.end()) {
+    if (it->second.first == stamp) return it->second.second;
+    if (it->second.second.id) glDeleteTextures(1, &it->second.second.id);
+    cache.erase(it);
+  }
+  ProjectThumb th;
+  int n = 0;
+  unsigned char* px = stbi_load(path.c_str(), &th.w, &th.h, &n, 4);
+  if (px) {
+    glGenTextures(1, &th.id);
+    glBindTexture(GL_TEXTURE_2D, th.id);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, th.w, th.h, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    stbi_image_free(px);
+  }
+  cache[path] = {stamp, th};
+  return th;
+}
+
+// List files with matching extensions across a set of directories.
+static std::vector<std::string> ScanFilesByExt(
+  const std::vector<std::string>& dirs, const std::vector<std::string>& exts)
+{
+  std::vector<std::string> out;
+  for (const auto& d : dirs) {
+    if (!std::filesystem::exists(d)) continue;
+    for (const auto& entry : std::filesystem::directory_iterator(d)) {
+      if (!entry.is_regular_file()) continue;
+      std::string ext = entry.path().extension().string();
+      for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+      if (std::find(exts.begin(), exts.end(), ext) == exts.end()) continue;
+      std::string p = entry.path().generic_string();
+      if (p.rfind("./", 0) == 0) p = p.substr(2);
+      out.push_back(p);
+    }
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+// Native file dialog via zenity (no-op if zenity isn't installed).
+// Returns true and fills buf with a path (relative to cwd when possible).
+static bool ZenityPickFile(char* buf, size_t bufSize, const char* title) {
+  char cmd[512];
+  std::snprintf(cmd, sizeof(cmd),
+                "zenity --file-selection --title=\"%s\" 2>/dev/null", title);
+  FILE* p = popen(cmd, "r");
+  if (!p) return false;
+  char line[512] = {0};
+  bool got = fgets(line, sizeof(line), p) != nullptr;
+  int status = pclose(p);
+  if (!got || status != 0) return false;
+  line[std::strcspn(line, "\n")] = '\0';
+  if (line[0] == '\0') return false;
+  std::string s = line;
+  std::error_code ec;
+  std::string cwd = std::filesystem::current_path(ec).generic_string() + "/";
+  if (!ec && s.rfind(cwd, 0) == 0) s = s.substr(cwd.size());
+  std::strncpy(buf, s.c_str(), bufSize - 1);
+  buf[bufSize - 1] = '\0';
+  return true;
+}
+
+// Text input with a placeholder hint plus a dropdown of candidate files.
+// `width` is the total row width used by input + arrow button.
+static bool FilePickerInput(const char* id, char* buf, size_t bufSize,
+                            const char* hint,
+                            const std::vector<std::string>& candidates,
+                            float width)
+{
+  bool changed = false;
+  float arrowW = ImGui::GetFrameHeight();
+  ImGui::SetNextItemWidth(width - arrowW - 2.0f);
+  changed |= ImGui::InputTextWithHint(id, hint, buf, bufSize);
+  ImGui::SameLine(0, 2);
+  std::string btnId   = std::string(id) + "_dd";
+  std::string popupId = std::string(id) + "_pop";
+  if (ImGui::ArrowButton(btnId.c_str(), ImGuiDir_Down))
+    ImGui::OpenPopup(popupId.c_str());
+  if (ImGui::BeginPopup(popupId.c_str())) {
+    if (candidates.empty()) ImGui::TextDisabled("(no files found)");
+    for (const auto& f : candidates) {
+      if (ImGui::Selectable(f.c_str())) {
+        std::strncpy(buf, f.c_str(), bufSize - 1);
+        buf[bufSize - 1] = '\0';
+        changed = true;
+      }
+    }
+    ImGui::EndPopup();
+  }
+  return changed;
+}
+
+static std::vector<std::string> ListImageFiles() {
+  return ScanFilesByExt({".", "assets", "projects"},
+                        {".bmp", ".png", ".jpg", ".jpeg"});
+}
+
+// Project fields show a fixed "projects/" prefix, so entries inside projects/
+// are listed as bare filenames; files elsewhere keep an explicit path.
+static std::vector<std::string> ListProjectEntries() {
+  std::vector<std::string> out;
+  for (auto& f : ScanFilesByExt({"projects"}, {".json"}))
+    out.push_back(f.substr(std::strlen("projects/")));
+  for (auto& f : ScanFilesByExt({"."}, {".json"}))
+    out.push_back("./" + f);
+  return out;
+}
+
+// "my_scene" → "projects/my_scene.json". Anything containing '/' is treated
+// as an explicit path and passed through untouched.
+static std::string ResolveProjectPath(const char* buf) {
+  std::string s(buf);
+  if (s.empty() || s.find('/') != std::string::npos) return s;
+  if (s.size() < 5 || s.compare(s.size() - 5, 5, ".json") != 0) s += ".json";
+  return "projects/" + s;
+}
+
+// Strip a leading "projects/" so browsed files show in their short form
+static void StripProjectsPrefix(char* buf) {
+  const char* pfx = "projects/";
+  size_t n = std::strlen(pfx);
+  if (std::strncmp(buf, pfx, n) == 0)
+    std::memmove(buf, buf + n, std::strlen(buf + n) + 1);
+}
+
+void Renderer::RescanProjects() {
+  projectList.clear();
+  const std::string dir = "projects";
+  if (std::filesystem::exists(dir)) {
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+      if (!entry.is_regular_file() || entry.path().extension() != ".json") continue;
+      ProjectInfo pi;
+      pi.file = entry.path().generic_string();
+      try {
+        std::ifstream f(pi.file);
+        nlohmann::json root;
+        f >> root;
+        pi.name  = root.value("projectName", std::string{});
+        pi.image = root.value("imagePath",  std::string{});
+      } catch (...) {}
+      if (pi.name.empty())
+        pi.name = PrettyTexLabel(entry.path().filename().string());
+      projectList.push_back(pi);
+    }
+    std::sort(projectList.begin(), projectList.end(),
+              [](const ProjectInfo& a, const ProjectInfo& b) { return a.name < b.name; });
+  }
+  projectsScanned = true;
+}
+
+// Draws one selectable row per project (thumbnail + name + filename).
+// Returns the clicked index, or -1.
+static int DrawProjectCards(const std::vector<Renderer::ProjectInfo>& list,
+                            float thumbW = 160.0f) {
+  int clicked = -1;
+  const float thumbH = thumbW * 9.0f / 16.0f;
+  const float rowH   = thumbH + 8.0f;
+  for (int i = 0; i < (int)list.size(); ++i) {
+    const auto& p = list[i];
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    char id[32];
+    std::snprintf(id, sizeof(id), "##proj%d", i);
+    if (ImGui::Selectable(id, false, 0, ImVec2(0, rowH))) clicked = i;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 t0(pos.x + 4, pos.y + 4);
+    ImVec2 t1(t0.x + thumbW, t0.y + thumbH);
+    ProjectThumb th = GetProjectThumb(p.image);
+    if (th.id) {
+      dl->AddImage((ImTextureID)(uintptr_t)th.id, t0, t1);
+    } else {
+      dl->AddRectFilled(t0, t1, IM_COL32(35, 38, 46, 255), 3.0f);
+      const char* lbl = "no image";
+      ImVec2 ts = ImGui::CalcTextSize(lbl);
+      dl->AddText(ImVec2(t0.x + (thumbW - ts.x) * 0.5f, t0.y + (thumbH - ts.y) * 0.5f),
+                  IM_COL32(110, 115, 125, 255), lbl);
+    }
+    float midY = pos.y + thumbH * 0.5f;
+    dl->AddText(ImVec2(t1.x + 16, midY - 18), IM_COL32(235, 238, 245, 255), p.name.c_str());
+    dl->AddText(ImVec2(t1.x + 16, midY + 6),  IM_COL32(130, 135, 145, 255), p.file.c_str());
+  }
+  return clicked;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DrawStartupModal
 // ─────────────────────────────────────────────────────────────────────────────
 bool Renderer::DrawStartupModal() {
   if (!showStartupModal) return false;
+  if (!projectsScanned) RescanProjects();
 
   ImGuiIO& io = ImGui::GetIO();
   ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+  // Scale the modal with the display so big screens get a big browser
+  float mw = std::clamp(io.DisplaySize.x * 0.55f, 660.0f, 1100.0f);
+  float mh = std::clamp(io.DisplaySize.y * 0.80f, 640.0f, 950.0f);
   ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(480, 320), ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(mw, mh), ImGuiCond_Always);
   ImGui::SetNextWindowBgAlpha(0.97f);
 
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
@@ -679,45 +904,181 @@ bool Renderer::DrawStartupModal() {
   ImGui::Begin("##startup", nullptr, flags);
 
   // Title
-  ImGui::SetCursorPosX((480 - ImGui::CalcTextSize("BlackholeSim").x) * 0.5f);
+  ImGui::SetCursorPosX((mw - ImGui::CalcTextSize("BlackholeSim").x) * 0.5f);
   ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "BlackholeSim");
   ImGui::Separator();
   ImGui::Spacing();
 
-  ImGui::TextWrapped("Choose how to start your simulation:");
-  ImGui::Spacing();
-
-  float bw = 430.f;
-  // ── Template ──
-  if (ImGui::Button("Start with Milky Way Template", ImVec2(bw, 48))) {
-    startupChoice  = StartupChoice::Template;
-    showStartupModal = false;
+  // ── Project browser ──
+  ImGui::Text("Projects");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Rescan##startup")) RescanProjects();
+  // Fill everything except the bottom section (empty-project + custom path)
+  ImGui::BeginChild("##startupProjects", ImVec2(0, -150), true);
+  if (projectList.empty()) {
+    ImGui::TextDisabled("No projects found in the projects/ directory.");
+  } else {
+    int clicked = DrawProjectCards(projectList, 288.0f);
+    if (clicked >= 0) {
+      std::strncpy(startupLoadPath, projectList[clicked].file.c_str(),
+                   sizeof(startupLoadPath) - 1);
+      startupLoadPath[sizeof(startupLoadPath) - 1] = '\0';
+      startupChoice    = StartupChoice::Load;
+      showStartupModal = false;
+    }
   }
-  ImGui::TextDisabled("  Black hole + orbiting star & planets — the classic setup");
+  ImGui::EndChild();
   ImGui::Spacing();
 
   // ── Empty ──
-  if (ImGui::Button("New Empty Project", ImVec2(bw, 48))) {
+  if (ImGui::Button("New Empty Project", ImVec2(-1, 42))) {
     startupChoice  = StartupChoice::Empty;
     showStartupModal = false;
   }
   ImGui::TextDisabled("  Start with a blank canvas and spawn your own objects");
   ImGui::Spacing();
 
-  // ── Load ──
+  // ── Load from custom path ──
   ImGui::Separator();
   ImGui::Spacing();
   ImGui::Text("Load from file:");
-  ImGui::SetNextItemWidth(bw - 100.f);
-  ImGui::InputText("##loadpath", startupLoadPath, sizeof(startupLoadPath));
+  ImGui::TextDisabled("projects/");
+  ImGui::SameLine(0, 2);
+  FilePickerInput("##loadpath", startupLoadPath, sizeof(startupLoadPath),
+                  "my_project", ListProjectEntries(),
+                  ImGui::GetContentRegionAvail().x - 200.0f);
   ImGui::SameLine();
-  if (ImGui::Button("Load", ImVec2(90, 0))) {
+  if (ImGui::Button("Browse...##startup", ImVec2(95, 0))) {
+    if (ZenityPickFile(startupLoadPath, sizeof(startupLoadPath), "Load Project"))
+      StripProjectsPrefix(startupLoadPath);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Load", ImVec2(90, 0)) && startupLoadPath[0] != '\0') {
+    std::string full = ResolveProjectPath(startupLoadPath);
+    std::strncpy(startupLoadPath, full.c_str(), sizeof(startupLoadPath) - 1);
+    startupLoadPath[sizeof(startupLoadPath) - 1] = '\0';
     startupChoice  = StartupChoice::Load;
     showStartupModal = false;
   }
 
   ImGui::End();
   return true; // modal still open
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawProjectPanel — project name/image, save, save-as, and project browser
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
+  if (!showProjectPanel) return;
+  if (!projectsScanned) RescanProjects();
+
+  ImGui::SetNextWindowSize(ImVec2(480, 700), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Project", &showProjectPanel)) { ImGui::End(); return; }
+
+  // ── Identity ──
+  ImGui::Text("Name");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::InputText("##projname", projectNameBuf, sizeof(projectNameBuf));
+
+  ImGui::Spacing();
+  ImGui::Text("Image");
+  if (projectImageBuf[0] != '\0') {
+    ProjectThumb th = GetProjectThumb(projectImageBuf);
+    if (th.id) {
+      float w = std::min(360.0f, ImGui::GetContentRegionAvail().x);
+      float h = (th.w > 0) ? w * (float)th.h / (float)th.w : w * 0.5625f;
+      ImGui::Image((ImTextureID)(uintptr_t)th.id, ImVec2(w, h));
+    } else {
+      ImGui::TextDisabled("(image not found: %s)", projectImageBuf);
+    }
+  } else {
+    ImGui::TextDisabled("No image yet — the first screenshot you take\n"
+                        "becomes the project image automatically.");
+  }
+  FilePickerInput("##projimg", projectImageBuf, sizeof(projectImageBuf),
+                  "screenshot.bmp", ListImageFiles(),
+                  ImGui::GetContentRegionAvail().x);
+  if (ImGui::Button("Use Last Screenshot##projimg")) {
+    std::strncpy(projectImageBuf, imagePathBuf, sizeof(projectImageBuf) - 1);
+    projectImageBuf[sizeof(projectImageBuf) - 1] = '\0';
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Browse...##projimg"))
+    ZenityPickFile(projectImageBuf, sizeof(projectImageBuf), "Choose Project Image");
+  ImGui::SameLine();
+  if (ImGui::Button("Clear##projimg")) projectImageBuf[0] = '\0';
+
+  // ── Save ──
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+  if (projectFileBuf[0] != '\0')
+    ImGui::TextDisabled("File: %s", projectFileBuf);
+  else
+    ImGui::TextDisabled("File: (not saved yet)");
+
+  if (ImGui::Button("Save", ImVec2(120, 0))) {
+    if (projectFileBuf[0] == '\0') {
+      std::string p = "projects/" + SanitizeProjectFileName(projectNameBuf) + ".json";
+      std::strncpy(projectFileBuf, p.c_str(), sizeof(projectFileBuf) - 1);
+      projectFileBuf[sizeof(projectFileBuf) - 1] = '\0';
+    }
+    if (cb.saveProject) cb.saveProject();
+    RescanProjects();
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("saves to the file above");
+
+  std::string saveAsHint = SanitizeProjectFileName(projectNameBuf);
+  ImGui::TextDisabled("projects/");
+  ImGui::SameLine(0, 2);
+  ImGui::SetNextItemWidth(-100.f);
+  ImGui::InputTextWithHint("##saveas", saveAsHint.c_str(),
+                           projectSaveAsBuf, sizeof(projectSaveAsBuf));
+  ImGui::SameLine();
+  if (ImGui::Button("Save As", ImVec2(90, 0))) {
+    std::string target = ResolveProjectPath(
+      projectSaveAsBuf[0] != '\0' ? projectSaveAsBuf : saveAsHint.c_str());
+    std::strncpy(projectFileBuf, target.c_str(), sizeof(projectFileBuf) - 1);
+    projectFileBuf[sizeof(projectFileBuf) - 1] = '\0';
+    if (cb.saveProject) cb.saveProject();
+    RescanProjects();
+  }
+
+  // ── Load ──
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+  ImGui::Text("Load Project");
+  ImGui::SameLine();
+  if (ImGui::SmallButton("Rescan##projpanel")) RescanProjects();
+  ImGui::TextDisabled("Loading replaces the current scene — save first!");
+  ImGui::BeginChild("##panelProjects", ImVec2(0, 200), true);
+  if (projectList.empty()) {
+    ImGui::TextDisabled("No projects found in the projects/ directory.");
+  } else {
+    int clicked = DrawProjectCards(projectList);
+    if (clicked >= 0 && cb.loadProject)
+      cb.loadProject(projectList[clicked].file);
+  }
+  ImGui::EndChild();
+
+  ImGui::TextDisabled("projects/");
+  ImGui::SameLine(0, 2);
+  FilePickerInput("##panelloadpath", loadPathBuf, sizeof(loadPathBuf),
+                  "my_project", ListProjectEntries(),
+                  ImGui::GetContentRegionAvail().x - 200.0f);
+  ImGui::SameLine();
+  if (ImGui::Button("Browse...##panel", ImVec2(95, 0))) {
+    if (ZenityPickFile(loadPathBuf, sizeof(loadPathBuf), "Load Project"))
+      StripProjectsPrefix(loadPathBuf);
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Load##panel", ImVec2(90, 0)) && loadPathBuf[0] != '\0') {
+    if (cb.loadProject) cb.loadProject(ResolveProjectPath(loadPathBuf));
+  }
+
+  ImGui::End();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -928,6 +1289,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawSceneHierarchy(physicsObjects, clouds, cb);
   DrawInspector(physicsObjects, clouds, cb);
   DrawRenderingSettings(cb);
+  DrawProjectPanel(cb);
   DrawPipWindow();
   if (ghostDragActive) DrawGhostObject();
   DrawQuitDialog(cb);
@@ -1267,6 +1629,12 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Controls", nullptr, flags);
 
+  // ── Project ──
+  if (ImGui::Button("Project", ImVec2(70, 0))) showProjectPanel = !showProjectPanel;
+  ImGui::SameLine();
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+
   // ── Simulation group ──
   if (paused) {
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.80f, 0.40f, 0.00f, 1.00f));
@@ -1403,8 +1771,8 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::Text("Play");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(60);
-  if (ImGui::DragFloat("##playspeed", &playbackSpeed, 0.01f, 0.05f, 10.0f, "%.2fx"))
-    playbackSpeed = std::max(playbackSpeed, simSpeed);
+  if (ImGui::DragFloat("##playspeed", &playbackSpeed, 0.01f, 0.01f, 10.0f, "%.2fx"))
+    playbackSpeed = std::max(playbackSpeed, minPlaybackSpeed());
   ImGui::SameLine();
 
   // Separator
@@ -2158,35 +2526,14 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawSceneHierarchy  (docked left-bottom — object list + save/load)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
+void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& /*cb*/) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Hierarchy", nullptr, flags);
 
-  // Save / Load
-  if (ImGui::Button("Save")) showSaveDialog = !showSaveDialog;
+  // Project (name / image / save / load live in the Project panel)
+  if (ImGui::Button("Project...")) showProjectPanel = true;
   ImGui::SameLine();
-  if (ImGui::Button("Load")) showLoadDialog = !showLoadDialog;
-  ImGui::SameLine();
-  ImGui::TextDisabled("(%zu objects)", physicsObjects.size());
-
-  if (showSaveDialog) {
-    ImGui::SetNextItemWidth(-60);
-    ImGui::InputText("##svp", savePathBuf, sizeof(savePathBuf));
-    ImGui::SameLine();
-    if (ImGui::Button("OK##sv")) {
-      if (cb.saveProject) cb.saveProject();
-      showSaveDialog = false;
-    }
-  }
-  if (showLoadDialog) {
-    ImGui::SetNextItemWidth(-60);
-    ImGui::InputText("##ldp", loadPathBuf, sizeof(loadPathBuf));
-    ImGui::SameLine();
-    if (ImGui::Button("OK##ld")) {
-      if (cb.loadProject) cb.loadProject(std::string(loadPathBuf));
-      showLoadDialog = false;
-    }
-  }
+  ImGui::TextDisabled("%s (%zu objects)", projectNameBuf, physicsObjects.size());
 
   ImGui::Separator();
 
@@ -3918,6 +4265,31 @@ void Renderer::CaptureImage() {
   fwrite(pixels.data(), 1, pixels.size(), pipe);
   pclose(pipe);
   std::cout << "[IMG] Saved: " << imagePathBuf << " (" << w << "x" << h << ")\n";
+
+  // First screenshot of a project becomes its thumbnail image.
+  // Persist it into the project file right away so the project browser
+  // picks it up without requiring a full scene save.
+  if (projectImageBuf[0] == '\0') {
+    std::strncpy(projectImageBuf, imagePathBuf, sizeof(projectImageBuf) - 1);
+    projectImageBuf[sizeof(projectImageBuf) - 1] = '\0';
+    if (projectFileBuf[0] != '\0') {
+      try {
+        std::ifstream fi(projectFileBuf);
+        if (fi.is_open()) {
+          nlohmann::json root;
+          fi >> root;
+          fi.close();
+          root["imagePath"] = std::string(projectImageBuf);
+          std::ofstream fo(projectFileBuf);
+          fo << root.dump(2);
+          projectsScanned = false;
+          std::cout << "[IMG] Set as project image in " << projectFileBuf << "\n";
+        }
+      } catch (...) {
+        std::cerr << "[IMG] Could not update project image in " << projectFileBuf << "\n";
+      }
+    }
+  }
 
   // Trigger "Saved" dialog
   showImgSavedDialog = true;
