@@ -331,6 +331,10 @@ private:
   char cliInputBuf[256] = "";
   std::vector<std::string> cliLog;
 
+  // ---- Text editor (no file I/O yet — in-memory buffer only) ----
+  bool showTextEditor{false};
+  std::string textEditorBuf;
+
   void   EnsureViewportFBO(int w, int h);
   void   DestroyViewportFBO();
 
@@ -372,6 +376,7 @@ private:
   void DrawRenderingSettings(const SceneCallbacks& cb);  // rendering method + RT quality settings
   void DrawProjectPanel(const SceneCallbacks& cb);       // project name/image, save, load, browser
   void DrawCliPanel();                                   // command line (placeholder)
+  void DrawTextEditor();                                 // plain text editor (stage for future features)
   void DrawBenchmarkPanel();     // performance stats section (called from DrawRenderingSettings)
   void DrawPipWindow();   // show secondary view FBO as ImGui image
 

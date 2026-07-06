@@ -1595,6 +1595,8 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGui::DockBuilderDockWindow("Timeline",           dock_center_bottom);
     ImGui::DockBuilderDockWindow("CLI",                dock_cli);
 
+    // Text editor lives in the central node, behind the viewport tab
+    ImGui::DockBuilderDockWindow("Text Editor", dock_main);
     if (editorViewport)
       ImGui::DockBuilderDockWindow("Viewport", dock_main);
 
@@ -1612,6 +1614,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawRenderingSettings(cb);
   DrawProjectPanel(cb);
   DrawSettingsPanel();
+  DrawTextEditor();
   DrawCliPanel();
   // After a layout (re)build, make Inspector the visible tab of the right dock
   if (focusInspectorNext) {
@@ -1962,6 +1965,8 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::SameLine();
   if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
   ImGui::SameLine();
+  if (ImGui::Button("Editor", ImVec2(60, 0))) showTextEditor = !showTextEditor;
+  ImGui::SameLine();
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
@@ -2178,6 +2183,34 @@ void Renderer::DrawSettingsPanel() {
     SaveAppSettings();
   ImGui::SameLine();
   ImGui::TextDisabled("writes settings.json");
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawTextEditor — plain in-memory text editor (docked behind the viewport)
+// ─────────────────────────────────────────────────────────────────────────────
+// std::string-backed InputText: grows the buffer on demand (imgui_stdlib style)
+static int TextEditorResizeCb(ImGuiInputTextCallbackData* data) {
+  if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+    std::string* s = (std::string*)data->UserData;
+    s->resize((size_t)data->BufTextLen);
+    data->Buf = s->data();
+  }
+  return 0;
+}
+
+void Renderer::DrawTextEditor() {
+  if (!showTextEditor) return;
+  ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Text Editor", &showTextEditor)) { ImGui::End(); return; }
+
+  ImVec2 avail = ImGui::GetContentRegionAvail();
+  ImGui::InputTextMultiline("##texteditbuf", textEditorBuf.data(),
+                            textEditorBuf.capacity() + 1, avail,
+                            ImGuiInputTextFlags_CallbackResize |
+                            ImGuiInputTextFlags_AllowTabInput,
+                            TextEditorResizeCb, &textEditorBuf);
 
   ImGui::End();
 }
