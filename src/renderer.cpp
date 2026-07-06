@@ -400,9 +400,10 @@ bool Renderer::UpdateInputs() {
 
   if (!io.WantTextInput) {
     // ── Distance-adaptive move speed ──
-    // With a selected object: step = factor · d^exponent (normalised so that
-    // factor 1.0 at d = 3 matches the old fixed speed). Slow near planets,
-    // fast in open space. No selection: constant speed (factor still applies).
+    // step = factor · d^exponent (normalised so that factor 1.0 at d = 3
+    // matches the old fixed speed). d = selected-object distance, or the
+    // nearest object's surface when nothing is selected. Slow near planets,
+    // fast in open space.
     // kSpeedGain: UI shows 1.0x but the effective multiplier is UI · 1.2.
     constexpr float kSpeedGain = 1.2f;
     float userFactor = cameraSpeedFactor * kSpeedGain;
@@ -1193,21 +1194,24 @@ static std::string PrettyTexLabel(const std::string& filename) {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
   // ── Adaptive near plane: 10% of the nearest object's surface distance ──
+  double nearestSurface = 1e30;
   {
-    double nearest = 1e30;
     for (auto& o : physicsObjects) {
       double dx = o.data.position.x + cameraTranslate[0];
       double dy = o.data.position.y + cameraTranslate[1];
       double dz = o.data.position.z + cameraTranslate[2];
       double d  = std::sqrt(dx*dx + dy*dy + dz*dz)
                 - (double)(o.renderRadius() * activeSizeExag());
-      if (d < nearest) nearest = d;
+      if (d < nearestSurface) nearestSurface = d;
     }
-    RenderedObject::sZNear = (float)std::clamp(nearest * 0.1, 1e-7, 0.05);
+    RenderedObject::sZNear = (float)std::clamp(nearestSurface * 0.1, 1e-7, 0.05);
     RenderedObject::sZFar  = 1.0e10f;
   }
 
   // ── Focus distance (drives distance-adaptive camera speed) ──
+  // Selected object wins; with nothing selected, fall back to the nearest
+  // object's surface so open-space flight speeds up with remoteness
+  // (crossing the galaxy deselected is as fast as it would be focused).
   focusDistance = -1.0f;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
     const dvec3& p = physicsObjects[selectedIdx].data.position;
@@ -1215,6 +1219,8 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     double dy = p.y + cameraTranslate[1];
     double dz = p.z + cameraTranslate[2];
     focusDistance = (float)std::sqrt(dx*dx + dy*dy + dz*dz);
+  } else if (!physicsObjects.empty()) {
+    focusDistance = (float)std::max(nearestSurface, 0.001);
   }
 
   // ── Fullscreen DockSpace ──
