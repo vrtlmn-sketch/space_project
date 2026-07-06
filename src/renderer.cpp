@@ -1281,7 +1281,13 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     // Inspector + Rendering Settings share one node as tabs
     ImGui::DockBuilderDockWindow("Inspector",          dock_right);
     ImGui::DockBuilderDockWindow("Rendering Settings", dock_right);
+    // Bottom strip: timeline on the left, CLI on the right
+    ImGuiID dock_cli;
+    ImGui::DockBuilderSplitNode(dock_center_bottom, ImGuiDir_Right, 0.30f,
+                                &dock_cli, &dock_center_bottom);
+
     ImGui::DockBuilderDockWindow("Timeline",           dock_center_bottom);
+    ImGui::DockBuilderDockWindow("CLI",                dock_cli);
 
     if (editorViewport)
       ImGui::DockBuilderDockWindow("Viewport", dock_main);
@@ -1299,6 +1305,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawInspector(physicsObjects, clouds, cb);
   DrawRenderingSettings(cb);
   DrawProjectPanel(cb);
+  DrawCliPanel();
   // After a layout (re)build, make Inspector the visible tab of the right dock
   if (focusInspectorNext) {
     ImGui::SetWindowFocus("Inspector");
@@ -1822,6 +1829,38 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.90f, 0.15f, 0.15f, 1.00f));
   if (ImGui::Button("Quit", ImVec2(45, 0))) showQuitDialog = true;
   ImGui::PopStyleColor(3);
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DrawCliPanel — command line placeholder (docked next to the timeline)
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawCliPanel() {
+  ImGui::Begin("CLI", nullptr, ImGuiWindowFlags_NoCollapse);
+
+  // Scrollback log
+  float inputRowH = ImGui::GetFrameHeightWithSpacing();
+  ImGui::BeginChild("##clilog", ImVec2(0, -inputRowH), false);
+  ImGui::TextDisabled("type \"help\" to see commands");
+  for (const auto& line : cliLog)
+    ImGui::TextUnformatted(line.c_str());
+  if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+    ImGui::SetScrollHereY(1.0f);
+  ImGui::EndChild();
+
+  // Prompt
+  ImGui::TextUnformatted("$");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::InputText("##cliinput", cliInputBuf, sizeof(cliInputBuf),
+                       ImGuiInputTextFlags_EnterReturnsTrue)) {
+    if (cliInputBuf[0] != '\0')
+      cliLog.push_back(std::string("$ ") + cliInputBuf);
+    cliLog.push_back("not implemented yet");
+    cliInputBuf[0] = '\0';
+    ImGui::SetKeyboardFocusHere(-1);  // keep typing without re-clicking
+  }
 
   ImGui::End();
 }

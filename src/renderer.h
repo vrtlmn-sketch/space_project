@@ -329,6 +329,10 @@ private:
   bool   prevEditorViewport{true};
   bool   focusInspectorNext{false};  // one-shot: select Inspector tab after layout reset
 
+  // ---- CLI panel state (placeholder feature) ----
+  char cliInputBuf[256] = "";
+  std::vector<std::string> cliLog;
+
   void   EnsureViewportFBO(int w, int h);
   void   DestroyViewportFBO();
 
@@ -369,6 +373,7 @@ private:
   void DrawQuitDialog(const SceneCallbacks& cb);
   void DrawRenderingSettings(const SceneCallbacks& cb);  // rendering method + RT quality settings
   void DrawProjectPanel(const SceneCallbacks& cb);       // project name/image, save, load, browser
+  void DrawCliPanel();                                   // command line (placeholder)
   void DrawBenchmarkPanel();     // performance stats section (called from DrawRenderingSettings)
   void DrawPipWindow();   // show secondary view FBO as ImGui image
 
