@@ -163,6 +163,26 @@ bool ProjectSerializer::Save(const std::string& path,
       });
     s["cameraKeyframes"] = kfArr;
 
+    // Spawned camera objects (with their own keyframe lanes)
+    json camArr = json::array();
+    for (const auto& cam : settings.sceneCameras) {
+      json ckf = json::array();
+      for (const auto& kf : cam.keyframes)
+        ckf.push_back({
+          {"frame",    kf.frame},
+          {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
+          {"rotation", kf.rotation}, {"pitch", kf.pitch}, {"roll", kf.roll}, {"zoom", kf.zoom}
+        });
+      camArr.push_back({
+        {"name",     cam.name},
+        {"position", json::array({cam.position.x, cam.position.y, cam.position.z})},
+        {"rotation", json::array({cam.rotationDeg.x, cam.rotationDeg.y, cam.rotationDeg.z})},
+        {"fov",      cam.fov},
+        {"keyframes", ckf}
+      });
+    }
+    s["sceneCameras"] = camArr;
+
     root["settings"] = s;
   }
 
@@ -351,6 +371,42 @@ ProjectData ProjectSerializer::Load(const std::string& path)
           cf.pos[2] = kf["pos"][2].get<double>();
         }
         st.cameraKeyframes.push_back(cf);
+      }
+    }
+
+    // Spawned camera objects
+    if (s.contains("sceneCameras") && s["sceneCameras"].is_array()) {
+      for (const auto& c : s["sceneCameras"]) {
+        SceneCamera cam;
+        cam.name = c.value("name", std::string{"Camera"});
+        if (c.contains("position") && c["position"].is_array() && c["position"].size() >= 3) {
+          cam.position = dvec3(c["position"][0].get<double>(),
+                               c["position"][1].get<double>(),
+                               c["position"][2].get<double>());
+        }
+        if (c.contains("rotation") && c["rotation"].is_array() && c["rotation"].size() >= 3) {
+          cam.rotationDeg = vec3{ c["rotation"][0].get<float>(),
+                                  c["rotation"][1].get<float>(),
+                                  c["rotation"][2].get<float>() };
+        }
+        cam.fov = c.value("fov", 45.0f);
+        if (c.contains("keyframes") && c["keyframes"].is_array()) {
+          for (const auto& kf : c["keyframes"]) {
+            CameraKeyframe cf;
+            cf.frame    = kf.value("frame", 0u);
+            cf.rotation = kf.value("rotation", 0.0f);
+            cf.pitch    = kf.value("pitch",    0.0f);
+            cf.roll     = kf.value("roll",     0.0f);
+            cf.zoom     = kf.value("zoom",    45.0f);
+            if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
+              cf.pos[0] = kf["pos"][0].get<double>();
+              cf.pos[1] = kf["pos"][1].get<double>();
+              cf.pos[2] = kf["pos"][2].get<double>();
+            }
+            cam.keyframes.push_back(cf);
+          }
+        }
+        st.sceneCameras.push_back(cam);
       }
     }
   }

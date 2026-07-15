@@ -265,6 +265,7 @@ int main(int argc, char** argv) {
     renderer.recStopFrame  = s.recStopFrame;
     renderer.keypoints       = s.keypoints;
     renderer.cameraKeyframes = s.cameraKeyframes;
+    renderer.sceneCameras    = s.sceneCameras;
     renderer.SetRtMaxBounces(s.rtMaxBounces);
     renderer.SetRtMaxSteps(s.rtMaxSteps);
     renderer.SetRtLiveRes(s.rtLiveResPreset, s.rtLiveWidth, s.rtLiveHeight);
@@ -334,6 +335,7 @@ int main(int argc, char** argv) {
     s.recStopFrame    = renderer.recStopFrame;
     s.keypoints       = renderer.keypoints;
     s.cameraKeyframes = renderer.cameraKeyframes;
+    s.sceneCameras    = renderer.sceneCameras;
     ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas, s,
                             std::string(renderer.projectNameBuf),
                             std::string(renderer.projectImageBuf));

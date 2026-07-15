@@ -3772,6 +3772,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::SameLine();
       ImGui::Checkbox("Rotate##cgz", &showRotateGizmo);
 
+      if (ImGui::Button("Locate##camloc", ImVec2(-1, 0))) {
+        // Frame the camera object like any other object (freecam flies to it)
+        LocateCamera(cam->position, 0.02f);
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Fly the freecam to this camera object");
+
       if (ImGui::Button("Match Freecam", ImVec2(-1, 0))) {
         const float r2d = 57.2957795f;
         cam->position   = dvec3(-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]);

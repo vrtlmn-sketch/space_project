@@ -103,6 +103,7 @@ struct SceneSettings {
   int recStopFrame{-1};
   std::vector<Keypoint>       keypoints;
   std::vector<CameraKeyframe> cameraKeyframes;
+  std::vector<SceneCamera>    sceneCameras;   // spawned camera objects
 };
 
 struct ProjectData {
