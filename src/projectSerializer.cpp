@@ -44,6 +44,7 @@ bool ProjectSerializer::Save(const std::string& path,
     o["velocity"]    = dvec3ToJson(obj.data.velocity);
     o["shaderType"]  = static_cast<int>(obj.shaderType);
     o["temperature"] = obj.temperature;
+    o["rotation"]    = vec3ToJson(obj.rotationDeg);
     o["schwarzschildRadius"] = obj.schwarzschildRadius;
     o["color"]        = vec3ToJson(obj.data.color);
     o["texturePath"]  = obj.texturePath;
@@ -211,6 +212,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.velocity    = jsonToDVec3(o["velocity"]);
       pod.shaderType  = o.value("shaderType",   0);
       pod.temperature = o.value("temperature",  0.0f);
+      pod.rotation    = o.contains("rotation") ? jsonToVec3(o["rotation"]) : vec3{0,0,0};
       pod.schwarzschildRadius = o.value("schwarzschildRadius",
                                          (float)(units::kRsAUPerMsun * pod.mass));
       pod.color       = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};

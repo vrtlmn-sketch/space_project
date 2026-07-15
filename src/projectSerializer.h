@@ -14,6 +14,7 @@ struct PhysicsObjectData {
   dvec3  velocity{};    // AU/yr
   int   shaderType{}; // 0=Planet, 1=Star, 2=BlackHole
   float temperature{0.0f}; // Kelvin
+  vec3  rotation{0.0f, 0.0f, 0.0f}; // Euler X/Y/Z degrees
   float schwarzschildRadius{0.0f}; // AU; 0 = compute from mass (2GM/c²)
   vec3  color{0.55f, 0.25f, 0.15f}; // planet RGB color
   std::string texturePath{};         // path to optional surface texture (empty = none)

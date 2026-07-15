@@ -1822,7 +1822,7 @@ bool Renderer::WorldToScreen(dvec3 pos, float& sx, float& sy) {
   float vz = camMatrix[6]*px + camMatrix[7]*py + camMatrix[8]*pz;
 
   float clipW = -vz;
-  if (clipW <= 0.001f) return false;
+  if (clipW <= 1e-6f) return false;   // just "in front of camera" (true-scale planets get very close)
 
   float fovy   = zoom * (float)M_PI / 180.0f;
   float f      = 1.0f / std::tan(fovy * 0.5f);
@@ -1860,7 +1860,9 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
     float vz_ = camMatrix[6]*px_ + camMatrix[7]*py_ + camMatrix[8]*pz_;
     float clipW = -vz_;
 
-    if (clipW > 0.01f) {
+    // Any positive depth: the old 0.01 floor hid the gizmo when you got close
+    // to a true-scale (tiny) planet — exactly when you want fine control.
+    if (clipW > 1e-6f) {
       float fovy = zoom * (float)M_PI / 180.0f;
       float f    = 1.0f / std::tan(fovy * 0.5f);
 
@@ -1876,87 +1878,137 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
       bool okY    = WorldToScreen({pos.x,            pos.y + arrowLen, pos.z           }, txY, tyY);
       bool okZ    = WorldToScreen({pos.x,            pos.y,            pos.z + arrowLen}, txZ, tyZ);
 
-      if (baseOk) {
-        // ── Hover detection ──────────────────────────────────────────────────
+      if (baseOk && (showMoveGizmo || showRotateGizmo)) {
         ImVec2 mp = io.MousePos;
-        const float kHover  = 9.0f;
-        const float kCenter = 9.0f;
 
-        int hovAxis = gizmoDragging ? gizmoDragAxis : -1;
-        if (!gizmoDragging) {
-          float dC = std::sqrt((mp.x-bx)*(mp.x-bx) + (mp.y-by)*(mp.y-by));
-          float dX = okX ? pointToSegDist(mp, {bx,by}, {txX,tyX}) : 1e9f;
-          float dY = okY ? pointToSegDist(mp, {bx,by}, {txY,tyY}) : 1e9f;
-          float dZ = okZ ? pointToSegDist(mp, {bx,by}, {txZ,tyZ}) : 1e9f;
-          if      (dC < kCenter) hovAxis = 3;
-          else if (dX < kHover)  hovAxis = 0;
-          else if (dY < kHover)  hovAxis = 1;
-          else if (dZ < kHover)  hovAxis = 2;
+        // Build rotate rings (world circles of radius arrowLen, projected).
+        std::vector<ImVec2> rings[3];
+        if (showRotateGizmo) {
+          constexpr int kSeg = 48;
+          for (int a = 0; a < 3; ++a) {
+            for (int i = 0; i <= kSeg; ++i) {
+              float t = (float)i / kSeg * 2.0f * (float)M_PI;
+              float c = std::cos(t) * arrowLen, s = std::sin(t) * arrowLen;
+              dvec3 wp = (a == 0) ? dvec3{pos.x, pos.y + c, pos.z + s}
+                       : (a == 1) ? dvec3{pos.x + c, pos.y, pos.z + s}
+                                  : dvec3{pos.x + c, pos.y + s, pos.z};
+              float sx, sy;
+              if (WorldToScreen(wp, sx, sy)) rings[a].push_back({sx, sy});
+            }
+          }
         }
 
-        // ── Start drag on click ──────────────────────────────────────────────
-        if (!gizmoDragging && hovAxis >= 0 && ImGui::IsMouseClicked(0)) {
+        // ── Hover: pick the nearest handle across BOTH gizmos ──
+        // kind 0 = move (axis 0-2 arrows, 3 = centre free), kind 1 = rotate rings
+        int   hovKind = -1, hovAxis = -1;
+        if (gizmoDragging) { hovKind = gizmoDragKind; hovAxis = gizmoDragAxis; }
+        else {
+          float best = 9.0f;
+          if (showMoveGizmo) {
+            float dC = std::sqrt((mp.x-bx)*(mp.x-bx) + (mp.y-by)*(mp.y-by));
+            if (dC < best) { best = dC; hovKind = 0; hovAxis = 3; }
+            float dX = okX ? pointToSegDist(mp, {bx,by}, {txX,tyX}) : 1e9f;
+            float dY = okY ? pointToSegDist(mp, {bx,by}, {txY,tyY}) : 1e9f;
+            float dZ = okZ ? pointToSegDist(mp, {bx,by}, {txZ,tyZ}) : 1e9f;
+            if (dX < best) { best = dX; hovKind = 0; hovAxis = 0; }
+            if (dY < best) { best = dY; hovKind = 0; hovAxis = 1; }
+            if (dZ < best) { best = dZ; hovKind = 0; hovAxis = 2; }
+          }
+          if (showRotateGizmo) {
+            for (int a = 0; a < 3; ++a)
+              for (size_t i = 1; i < rings[a].size(); ++i) {
+                float d = pointToSegDist(mp, rings[a][i-1], rings[a][i]);
+                if (d < best) { best = d; hovKind = 1; hovAxis = a; }
+              }
+          }
+        }
+
+        // ── Start drag on click ──
+        if (!gizmoDragging && hovKind >= 0 && ImGui::IsMouseClicked(0)) {
           gizmoDragging      = true;
+          gizmoDragKind      = hovKind;
           gizmoDragAxis      = hovAxis;
           gizmoConsumedClick = true;
-          // Kill any active widget (e.g. a half-finished inspector text edit)
-          // so it can neither show stale values nor commit them over the drag.
-          ImGui::ClearActiveID();
+          ImGui::ClearActiveID();  // drop any half-finished inspector edit
         }
 
-        // ── Apply drag ───────────────────────────────────────────────────────
-        if (gizmoDragging) {
+        // ── Apply drag ──
+        if (gizmoDragging && gizmoDragKind == 0) {
           if (gizmoDragAxis >= 0 && gizmoDragAxis <= 2) {
-            // Axis-constrained: project that axis to screen, resolve mouse delta
+            // Axis-constrained move. Reference the arrow TIP (arrowLen away,
+            // always ~70px on-screen) so movement scales with distance and the
+            // toward-camera axis never jumps.
             static const vec3 kAxes[3] = {{1,0,0},{0,1,0},{0,0,1}};
             vec3  ax = kAxes[gizmoDragAxis];
             float tipSx, tipSy;
-            if (WorldToScreen({pos.x+ax.x, pos.y+ax.y, pos.z+ax.z}, tipSx, tipSy)) {
+            if (WorldToScreen({pos.x+ax.x*arrowLen, pos.y+ax.y*arrowLen, pos.z+ax.z*arrowLen},
+                              tipSx, tipSy)) {
               float sdx = tipSx - bx, sdy = tipSy - by;
               float slen = std::sqrt(sdx*sdx + sdy*sdy);
               if (slen > 0.5f) {
                 float usdx  = sdx / slen, usdy = sdy / slen;
                 float t     = io.MouseDelta.x * usdx + io.MouseDelta.y * usdy;
-                // slen pixels = 1 world unit along this axis
-                obj.data.position.x += ax.x * t / slen;
-                obj.data.position.y += ax.y * t / slen;
-                obj.data.position.z += ax.z * t / slen;
+                float worldPerPx = arrowLen / slen;
+                obj.data.position.x += (double)(ax.x * t * worldPerPx);
+                obj.data.position.y += (double)(ax.y * t * worldPerPx);
+                obj.data.position.z += (double)(ax.z * t * worldPerPx);
                 obj.renderedObject.coordinates = obj.data.position;
               }
             }
           } else if (gizmoDragAxis == 3) {
-            // Free drag: move in camera-facing plane
-            // Screen +x = camera right; screen +y = camera down (= -camera up)
+            // Free drag in the camera-facing plane
             float mx = io.MouseDelta.x, my = io.MouseDelta.y;
             obj.data.position.x += ( mx * camMatrix[0] - my * camMatrix[3]) * dragScale;
             obj.data.position.y += ( mx * camMatrix[1] - my * camMatrix[4]) * dragScale;
             obj.data.position.z += ( mx * camMatrix[2] - my * camMatrix[5]) * dragScale;
             obj.renderedObject.coordinates = obj.data.position;
           }
-
-          // Re-project after position change so arrows track the object
+          // Re-project so the handles track the object during a move
           pos = obj.data.position;
           WorldToScreen(pos, bx, by);
-          if (okX) WorldToScreen({pos.x + arrowLen, pos.y,            pos.z           }, txX, tyX);
-          if (okY) WorldToScreen({pos.x,            pos.y + arrowLen, pos.z           }, txY, tyY);
-          if (okZ) WorldToScreen({pos.x,            pos.y,            pos.z + arrowLen}, txZ, tyZ);
+          if (okX) WorldToScreen({pos.x + arrowLen, pos.y, pos.z}, txX, tyX);
+          if (okY) WorldToScreen({pos.x, pos.y + arrowLen, pos.z}, txY, tyY);
+          if (okZ) WorldToScreen({pos.x, pos.y, pos.z + arrowLen}, txZ, tyZ);
+        } else if (gizmoDragging && gizmoDragKind == 1 &&
+                   gizmoDragAxis >= 0 && gizmoDragAxis <= 2) {
+          // Rotate: screen-angular mouse motion about the object centre
+          ImVec2 prev = { mp.x - io.MouseDelta.x, mp.y - io.MouseDelta.y };
+          float a0 = std::atan2(prev.y - by, prev.x - bx);
+          float a1 = std::atan2(mp.y   - by, mp.x   - bx);
+          float da = a1 - a0;
+          while (da >  (float)M_PI) da -= 2.0f*(float)M_PI;
+          while (da < -(float)M_PI) da += 2.0f*(float)M_PI;
+          float deg = da * 180.0f / (float)M_PI;
+          float* comp = (gizmoDragAxis == 0) ? &obj.rotationDeg.x
+                      : (gizmoDragAxis == 1) ? &obj.rotationDeg.y
+                                             : &obj.rotationDeg.z;
+          *comp = std::fmod(*comp + deg, 360.0f);
         }
 
-        // ── Draw arrows ──────────────────────────────────────────────────────
-        const float kLineW = 2.5f;
-        ImU32 colX = (hovAxis==0) ? IM_COL32(255,130,130,255) : IM_COL32(210, 40, 40,255);
-        ImU32 colY = (hovAxis==1) ? IM_COL32(130,255,130,255) : IM_COL32( 40,190, 40,255);
-        ImU32 colZ = (hovAxis==2) ? IM_COL32(130,160,255,255) : IM_COL32( 60,110,220,255);
+        // ── Draw rotate rings (under the arrows) ──
+        if (showRotateGizmo) {
+          const ImU32 dim[3] = { IM_COL32(180,50,50,180), IM_COL32(50,160,50,180), IM_COL32(70,110,200,180) };
+          const ImU32 hot[3] = { IM_COL32(255,130,130,255), IM_COL32(130,255,130,255), IM_COL32(130,160,255,255) };
+          for (int a = 0; a < 3; ++a) {
+            if (rings[a].size() < 2) continue;
+            ImU32 col = (hovKind==1 && hovAxis==a) ? hot[a] : dim[a];
+            dl->AddPolyline(rings[a].data(), (int)rings[a].size(), col, 0, 2.2f);
+          }
+        }
 
-        if (okX) drawGizmoArrow(dl, {bx,by}, {txX,tyX}, colX, kLineW);
-        if (okY) drawGizmoArrow(dl, {bx,by}, {txY,tyY}, colY, kLineW);
-        if (okZ) drawGizmoArrow(dl, {bx,by}, {txZ,tyZ}, colZ, kLineW);
-
-        // Center handle — white circle, brightens on hover
-        float cr = (hovAxis == 3) ? 8.0f : 6.0f;
-        dl->AddCircleFilled({bx,by}, cr, IM_COL32(220,220,220,210));
-        dl->AddCircle({bx,by}, cr, IM_COL32(150,150,150,255), 16, 1.5f);
-
+        // ── Draw move arrows + centre handle (on top) ──
+        if (showMoveGizmo) {
+          const float kLineW = 2.5f;
+          ImU32 colX = (hovKind==0 && hovAxis==0) ? IM_COL32(255,130,130,255) : IM_COL32(210, 40, 40,255);
+          ImU32 colY = (hovKind==0 && hovAxis==1) ? IM_COL32(130,255,130,255) : IM_COL32( 40,190, 40,255);
+          ImU32 colZ = (hovKind==0 && hovAxis==2) ? IM_COL32(130,160,255,255) : IM_COL32( 60,110,220,255);
+          if (okX) drawGizmoArrow(dl, {bx,by}, {txX,tyX}, colX, kLineW);
+          if (okY) drawGizmoArrow(dl, {bx,by}, {txY,tyY}, colY, kLineW);
+          if (okZ) drawGizmoArrow(dl, {bx,by}, {txZ,tyZ}, colZ, kLineW);
+          float cr = (hovKind==0 && hovAxis == 3) ? 8.0f : 6.0f;
+          dl->AddCircleFilled({bx,by}, cr, IM_COL32(220,220,220,210));
+          dl->AddCircle({bx,by}, cr, IM_COL32(150,150,150,255), 16, 1.5f);
+        }
       }
     }
   }
@@ -1971,9 +2023,12 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
 
   // ── Click-to-select ──────────────────────────────────────────────────────────
   // Fire only when: not spawning a ghost object, gizmo didn't consume the click,
-  // not currently dragging, and ImGui panels are not capturing the mouse.
+  // not currently dragging, and the click landed on the 3D scene. In editor-
+  // viewport mode the scene is an ImGui window (WantCaptureMouse is true over
+  // it), so use the viewport-hover flag instead of !WantCaptureMouse there.
+  bool sceneClickable = editorViewport ? viewportHovered : !io.WantCaptureMouse;
   if (!ghostDragActive && !gizmoConsumedClick && !gizmoDragging &&
-      !io.WantCaptureMouse && ImGui::IsMouseClicked(0)) {
+      sceneClickable && ImGui::IsMouseClicked(0)) {
     float mx = io.MousePos.x, my = io.MousePos.y;
     int   bestIdx  = -1;
     float bestDist = 30.0f * 30.0f;  // 30 px pick radius
@@ -3355,6 +3410,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::Spacing();
     ImGui::SeparatorText("Transform");
 
+    // Gizmo handles shown in the scene — Move (arrows) and Rotate (rings)
+    // are independent; both on by default, either can be toggled off.
+    ImGui::TextUnformatted("Gizmo");
+    ImGui::SameLine();
+    ImGui::Checkbox("Move##giz", &showMoveGizmo);
+    ImGui::SameLine();
+    ImGui::Checkbox("Rotate##giz", &showRotateGizmo);
+
     // Locate: teleport the camera in front of the object, facing it
     if (ImGui::Button("Locate##iloc", ImVec2(-1, 0))) {
       float effR = obj.renderRadius() * activeSizeExag();
@@ -3385,6 +3448,18 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                            nullptr, nullptr, "%.4g")) {
       obj.data.velocity.x = v[0]; obj.data.velocity.y = v[1]; obj.data.velocity.z = v[2];
     }
+
+    // Rotation (Euler X/Y/Z degrees)
+    ImGui::Text("Rotation (deg)");
+    ImGui::SetNextItemWidth(-1);
+    float rot[3] = { obj.rotationDeg.x, obj.rotationDeg.y, obj.rotationDeg.z };
+    if (gizmoDragging && gizmoDragKind == 1) ImGui::PushID(ImGui::GetFrameCount());
+    if (ImGui::DragFloat3("##irot", rot, 0.5f, 0.0f, 0.0f, "%.1f")) {
+      obj.rotationDeg = { std::fmod(rot[0], 360.0f),
+                          std::fmod(rot[1], 360.0f),
+                          std::fmod(rot[2], 360.0f) };
+    }
+    if (gizmoDragging && gizmoDragKind == 1) ImGui::PopID();
 
     ImGui::Spacing();
     ImGui::SeparatorText("Appearance");
@@ -3742,8 +3817,9 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
   ghostY = -cameraTranslate[1] + ndcY * halfH;
   ghostZ = -3.f;  // fixed depth plane
 
-  // Place on left click (only when ImGui is not capturing mouse)
-  if (!io.WantCaptureMouse && ImGui::IsMouseClicked(0)) {
+  // Place on left click (when the click lands on the 3D scene)
+  bool sceneClickable = editorViewport ? viewportHovered : !io.WantCaptureMouse;
+  if (sceneClickable && ImGui::IsMouseClicked(0)) {
     form.posX = ghostX;
     form.posY = ghostY;
     form.posZ = ghostZ;

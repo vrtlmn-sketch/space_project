@@ -74,6 +74,7 @@ private:
 public:
   MeshType meshType{MeshType::sphere};
   dvec3 coordinates;  // world position (double: galactic coords need it)
+  vec3  rotationDeg{0.0f, 0.0f, 0.0f};  // object orientation (Euler X/Y/Z degrees)
   int  rtTexLayer{-1};  // layer in the RT planet texture array (-1 = untextured)
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};

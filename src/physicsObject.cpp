@@ -144,6 +144,7 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
     }
   }
   renderedObject.coordinates = data.position;
+  renderedObject.rotationDeg = rotationDeg;
 
   float objectType = 0.0f; // default: planet
   if (shaderType == ObjectShaderType::Star)      objectType = 1.0f;

@@ -20,6 +20,8 @@ void main(){
 
   uCameraPos = uCamera;
   vPos       = (uWorld * vec4(aPos, 1.0)).xyz;
-  vNormal    = aNormal;
+  // Rotate the normal by the object's rotation (upper-left 3x3 of uWorld).
+  // Identity for unrotated objects, so lighting is unchanged in that case.
+  vNormal    = normalize(mat3(uWorld) * aNormal);
   vTexCoord  = aTexCoord;
 }

@@ -132,6 +132,9 @@ private:
   // Gizmo state
   int  gizmoDragAxis{-1};  // -1=none, 0=X, 1=Y, 2=Z, 3=body-free
   bool gizmoDragging{false};
+  int  gizmoDragKind{0};   // active drag: 0 = move, 1 = rotate
+  bool showMoveGizmo{true};    // arrows (move) visible
+  bool showRotateGizmo{true};  // rings (rotate) visible
 
   // Scene render dimensions and screen-space image offset.
   // Set each frame so WorldToScreen works correctly from DrawUI in both

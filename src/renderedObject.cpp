@@ -719,10 +719,26 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
   const float* worldPos = relative ? relPos : absPos;
   const float* camUp    = relative ? zero   : camF;
 
+  // World transform = Translation · Rotation. Rotation (Euler X/Y/Z) only
+  // applies to spheres — grids/planes stay axis-aligned. Column-major layout.
+  float r00 = 1, r01 = 0, r02 = 0;
+  float r10 = 0, r11 = 1, r12 = 0;
+  float r20 = 0, r21 = 0, r22 = 1;
+  if (meshType == MeshType::sphere &&
+      (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f)) {
+    const float d2r = 3.14159265358979323846f / 180.0f;
+    float ca = std::cos(rotationDeg.x*d2r), sa = std::sin(rotationDeg.x*d2r);
+    float cb = std::cos(rotationDeg.y*d2r), sb = std::sin(rotationDeg.y*d2r);
+    float cc = std::cos(rotationDeg.z*d2r), sc = std::sin(rotationDeg.z*d2r);
+    // R = Rz · Ry · Rx
+    r00 = cc*cb;            r01 = cc*sb*sa - sc*ca; r02 = cc*sb*ca + sc*sa;
+    r10 = sc*cb;            r11 = sc*sb*sa + cc*ca; r12 = sc*sb*ca - cc*sa;
+    r20 = -sb;             r21 = cb*sa;            r22 = cb*ca;
+  }
   float worldEarth[16] = {
-    1,0,0,0,
-    0,1,0,0,
-    0,0,1,0,
+    r00, r10, r20, 0,
+    r01, r11, r21, 0,
+    r02, r12, r22, 0,
     worldPos[0], worldPos[1], worldPos[2], 1
   };
 
