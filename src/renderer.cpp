@@ -737,6 +737,28 @@ bool Renderer::UpdateInputs() {
     if (dyaw != 0 || dpitch != 0 || droll != 0)
       rotateCamera(dyaw, dpitch, droll);
 
+    // ── Right-mouse drag = look around (same as the arrow keys) ──
+    // Drag left → view rotates right (== Right arrow); drag up → look up.
+    // Only begins when the press starts over the viewport (not a panel).
+    {
+      // The scene sits inside the "Viewport" ImGui window in editor mode, so
+      // WantCaptureMouse is true over it — use the viewport-hover flag instead.
+      bool sceneHovered = editorViewport ? viewportHovered : !io.WantCaptureMouse;
+      // Read the button + motion from RAW GLFW, not ImGui: while the cursor is
+      // disabled its virtual position leaves the window, which makes ImGui drop
+      // the button state (ending the drag) — raw state is unaffected.
+      bool rmb = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+      if (rmb && !rightLookActive && sceneHovered) rightLookActive = true;
+      if (!rmb) rightLookActive = false;
+      if (rightLookActive && rmb) {
+        ImVec2 d = ImGui::GetIO().MouseDelta;
+        if (d.x != 0.0f || d.y != 0.0f) {
+          float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.15f, 1.5f);
+          rotateCamera(-d.x * sens, -d.y * sens, 0.0f);
+        }
+      }
+    }
+
     // Zoom: +/- keys (FOV-based, proportional so deep zoom stays controllable)
     if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= zoom * 0.015f; // + (or =) = zoom in
     if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  zoom += zoom * 0.015f; // - = zoom out
@@ -1656,7 +1678,10 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
 
       // Fill the content area with a click-absorbing button (no scroll/drag interference)
       ImVec2 cursor = ImGui::GetCursorScreenPos();
-      ImGui::InvisibleButton("##vp_img", avail);
+      ImGui::InvisibleButton("##vp_img", avail,
+                             ImGuiButtonFlags_MouseButtonLeft |
+                             ImGuiButtonFlags_MouseButtonRight);
+      viewportHovered = ImGui::IsItemHovered();
 
       if (vpColorTex && vpFboW > 0 && vpFboH > 0) {
         // Center the FBO image (which maintains the screen aspect) within the available area
@@ -2223,6 +2248,12 @@ static int TextEditorResizeCb(ImGuiInputTextCallbackData* data) {
 }
 
 void Renderer::DrawTextEditor() {
+  // Default to "not captured" every frame — set true only below when the
+  // editor is actually the visible, focused tab. This must be cleared BEFORE
+  // the early-return so a background Text Editor tab (whose Begin() returns
+  // false) never leaves the flag stale and blocks camera movement.
+  textEditorCaptured = false;
+
   ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Text Editor", nullptr, ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
@@ -2261,11 +2292,6 @@ void Renderer::DrawTextEditor() {
     ImGui::ClearActiveID();
     st = nullptr;
   }
-
-  // When the window is focused but the input isn't active yet (e.g. first
-  // frame after clicking the tab), pull keyboard focus into it so vim has a
-  // cursor to work with.
-  bool forceFocus = winFocused && st == nullptr;
 
   // ── Vim key processing (before the widget so we see the input first) ──
   bool vimNormalish = vimMode && vimEd.mode != VimEditor::Mode::Insert;
@@ -2395,7 +2421,6 @@ void Renderer::DrawTextEditor() {
   ImGuiInputTextFlags edFlags = ImGuiInputTextFlags_CallbackResize |
                                 ImGuiInputTextFlags_AllowTabInput;
   if (vimNormalish) edFlags |= ImGuiInputTextFlags_ReadOnly;
-  if (forceFocus) ImGui::SetKeyboardFocusHere();
   ImGui::InputTextMultiline("##texteditbuf", textEditorBuf.data(),
                             textEditorBuf.capacity() + 1,
                             ImVec2(avail.x - gutterW, editH),

@@ -125,6 +125,10 @@ private:
   float   ghostX{0}, ghostY{0}, ghostZ{-3};
   double  lastMouseX{0}, lastMouseY{0};
 
+  // Right-mouse look (drag to rotate the view, like the arrow keys)
+  bool    rightLookActive{false};
+  bool    viewportHovered{false};  // mouse over the 3D scene this frame
+
   // Gizmo state
   int  gizmoDragAxis{-1};  // -1=none, 0=X, 1=Y, 2=Z, 3=body-free
   bool gizmoDragging{false};
