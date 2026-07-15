@@ -678,23 +678,29 @@ int main(int argc, char** argv) {
       return 0;
     }
 
+    // Current timeline frame (0 when there are no simulated objects yet)
+    unsigned int curFrame = physicsObjects.empty() ? 0u : physicsObjects[0].getTimeframe();
+
     // ── Handle camera keyframe capture request ─────────────────────────────
+    // If a spawned camera is selected, capture for THAT camera; else freecam.
     if (renderer.captureRequested) {
       renderer.captureRequested = false;
-      if (!physicsObjects.empty()) {
-        unsigned int curFrame = physicsObjects[0].getTimeframe();
-        renderer.InsertCameraKeyframe(curFrame);
-      }
+      int camIdx = renderer.SelectedCameraIndex();
+      if (camIdx >= 0) renderer.InsertSceneCameraKeyframe(camIdx, curFrame);
+      else             renderer.InsertCameraKeyframe(curFrame);
     }
 
     // ── Handle camera keyframe clear request ────────────────────────────────
     if (renderer.clearCaptureRequested) {
       renderer.clearCaptureRequested = false;
-      if (!physicsObjects.empty()) {
-        unsigned int curFrame = physicsObjects[0].getTimeframe();
-        renderer.RemoveCameraKeyframe(curFrame);
-      }
+      int camIdx = renderer.SelectedCameraIndex();
+      if (camIdx >= 0) renderer.RemoveSceneCameraKeyframe(camIdx, curFrame);
+      else             renderer.RemoveCameraKeyframe(curFrame);
     }
+
+    // ── Animate keyframed cameras to the current frame while playing ────────
+    if (!renderer.paused)
+      renderer.UpdateSceneCameraKeyframes(curFrame);
 
     // ── Handle recording keyframe requests ─────────────────────────────────
     if (renderer.recStartRequested) {

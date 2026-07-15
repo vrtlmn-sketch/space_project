@@ -499,6 +499,11 @@ public:
   void InsertCameraKeyframe(unsigned int frame);
   // Remove the camera keyframe at (or nearest to) the given frame
   void RemoveCameraKeyframe(unsigned int frame);
+  // Per-spawned-camera keyframes: capture/remove the camera's own transform
+  void InsertSceneCameraKeyframe(int camIdx, unsigned int frame);
+  void RemoveSceneCameraKeyframe(int camIdx, unsigned int frame);
+  // Interpolate keyframed cameras' transforms to the given frame (playback)
+  void UpdateSceneCameraKeyframes(unsigned int frame);
 
   // ---- Recording keyframes (auto-start/stop) ----
   int recStartFrame{-1};  // -1 = not set

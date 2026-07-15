@@ -3099,59 +3099,71 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     clearCaptureRequested = true;
   }
 
-  if (!cameraKeyframes.empty()) {
-    // Draw camera keyframe markers on a small bar
-    ImVec2 camPos = ImGui::GetCursorScreenPos();
-    float camBarH = 14.0f;
-    ImGui::Dummy(ImVec2(sliderW, camBarH));
-
-    // Background bar
-    dl->AddRectFilled(camPos, ImVec2(camPos.x + sliderW, camPos.y + camBarH),
-                      IM_COL32(30, 30, 40, 180));
-
-    int deleteIdx = -1;
-    for (int ci = 0; ci < (int)cameraKeyframes.size(); ++ci) {
-      auto& ck = cameraKeyframes[ci];
+  // ── Timeline keyframe lanes — one per camera, all identical in style ──
+  // A single helper draws every lane (freecam + spawned cameras) the same way,
+  // so new timeline-driven objects can be added later with zero visual drift.
+  // onJump restores that lane's owner to the clicked keyframe; returns the
+  // keyframe index to delete (right-click), or -1.
+  auto drawKeyframeLane = [&](const char* name, std::vector<CameraKeyframe>& kfs,
+                              bool selected,
+                              const std::function<void(const CameraKeyframe&)>& onJump) -> int {
+    ImGui::TextColored(selected ? ImVec4(1.0f, 0.86f, 0.5f, 1.0f)
+                                : ImVec4(0.62f, 0.64f, 0.70f, 1.0f), "%s", name);
+    ImVec2 laneP = ImGui::GetCursorScreenPos();
+    const float laneH = 14.0f;
+    ImGui::Dummy(ImVec2(sliderW, laneH));
+    dl->AddRectFilled(laneP, ImVec2(laneP.x + sliderW, laneP.y + laneH),
+                      IM_COL32(30, 30, 40, 170));
+    dl->AddRect(laneP, ImVec2(laneP.x + sliderW, laneP.y + laneH),
+                selected ? IM_COL32(150, 130, 70, 200) : IM_COL32(60, 60, 72, 200));
+    int delK = -1;
+    for (int ki = 0; ki < (int)kfs.size(); ++ki) {
+      const CameraKeyframe& ck = kfs[ki];
       float t = (float)ck.frame / (float)(maxBuf - 1);
-      float xPos = camPos.x + t * sliderW;
-      float yMid = camPos.y + camBarH * 0.5f;
-
-      // Cyan triangle
-      dl->AddTriangleFilled(
-        ImVec2(xPos - 5, yMid - 5),
-        ImVec2(xPos + 5, yMid - 5),
-        ImVec2(xPos,     yMid + 5),
-        IM_COL32(0, 220, 255, 220));
-
-      // Hit test
-      if (std::abs(ImGui::GetMousePos().x - xPos) < 8 &&
+      float x = laneP.x + t * sliderW, yMid = laneP.y + laneH * 0.5f;
+      ImU32 col = selected ? IM_COL32(255, 205, 90, 240) : IM_COL32(150, 170, 210, 220);
+      dl->AddQuadFilled({x, yMid-6}, {x+6, yMid}, {x, yMid+6}, {x-6, yMid}, col);
+      if (std::abs(ImGui::GetMousePos().x - x) < 8 &&
           std::abs(ImGui::GetMousePos().y - yMid) < 8) {
         ImGui::BeginTooltip();
-        ImGui::Text("Cam @ frame %u", ck.frame);
+        ImGui::Text("%s @ frame %u", name, ck.frame);
         ImGui::EndTooltip();
-        // Left-click: jump to frame + restore camera
         if (ImGui::IsMouseClicked(0)) {
           paused = true;
           for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(ck.frame);
           for (auto& c : clouds) c->setTimeframeAndRestore(ck.frame);
-          cameraTranslate[0] = ck.pos[0];
-          cameraTranslate[1] = ck.pos[1];
-          cameraTranslate[2] = ck.pos[2];
-          rotation = ck.rotation;
-          pitch    = ck.pitch;
-          roll     = ck.roll;
-          zoom     = ck.zoom;
-          syncMatrixFromEuler();
+          onJump(ck);
         }
-        // Right-click: delete
-        if (ImGui::IsMouseClicked(1)) {
-          deleteIdx = ci;
-        }
+        if (ImGui::IsMouseClicked(1)) delK = ki;
       }
     }
-    if (deleteIdx >= 0) {
-      cameraKeyframes.erase(cameraKeyframes.begin() + deleteIdx);
-    }
+    return delK;
+  };
+
+  // Freecam lane (highlighted when no camera object is selected — that's who C targets)
+  {
+    int d = drawKeyframeLane("Freecam", cameraKeyframes, SelectedCameraIndex() < 0,
+      [&](const CameraKeyframe& ck) {
+        cameraTranslate[0] = ck.pos[0]; cameraTranslate[1] = ck.pos[1]; cameraTranslate[2] = ck.pos[2];
+        rotation = ck.rotation; pitch = ck.pitch; roll = ck.roll; zoom = ck.zoom;
+        syncMatrixFromEuler();
+        selectedIdx = -1;
+      });
+    if (d >= 0) cameraKeyframes.erase(cameraKeyframes.begin() + d);
+  }
+
+  // Spawned-camera lanes
+  for (int cami = 0; cami < (int)sceneCameras.size(); ++cami) {
+    SceneCamera& cam = sceneCameras[cami];
+    int d = drawKeyframeLane(cam.name.c_str(), cam.keyframes, SelectedCameraIndex() == cami,
+      [&, cami](const CameraKeyframe& ck) {
+        SceneCamera& c = sceneCameras[cami];
+        c.position    = dvec3(ck.pos[0], ck.pos[1], ck.pos[2]);
+        c.rotationDeg = { ck.pitch, ck.rotation, ck.roll };
+        c.fov         = ck.zoom;
+        selectedIdx = CameraSentinel(cami);
+      });
+    if (d >= 0) cam.keyframes.erase(cam.keyframes.begin() + d);
   }
 
   // ── Recording keyframe lane ──
@@ -5640,6 +5652,67 @@ void Renderer::RemoveCameraKeyframe(unsigned int frame) {
     if (d < bestDist) { bestDist = d; bestIdx = i; }
   }
   cameraKeyframes.erase(cameraKeyframes.begin() + bestIdx);
+}
+
+// ── Per-spawned-camera keyframes ─────────────────────────────────────────────
+// A camera keyframe stores the camera's OWN transform (position, Euler degrees,
+// FOV) at a frame; playback interpolates these to animate the camera.
+void Renderer::InsertSceneCameraKeyframe(int camIdx, unsigned int frame) {
+  if (camIdx < 0 || camIdx >= (int)sceneCameras.size()) return;
+  SceneCamera& cam = sceneCameras[camIdx];
+  CameraKeyframe kf;
+  kf.frame    = frame;
+  kf.pos[0]   = cam.position.x; kf.pos[1] = cam.position.y; kf.pos[2] = cam.position.z;
+  kf.pitch    = cam.rotationDeg.x;   // stored in DEGREES for camera objects
+  kf.rotation = cam.rotationDeg.y;
+  kf.roll     = cam.rotationDeg.z;
+  kf.zoom     = cam.fov;
+  for (auto& k : cam.keyframes)
+    if (k.frame == frame) { k = kf; return; }
+  auto it = cam.keyframes.begin();
+  while (it != cam.keyframes.end() && it->frame < frame) ++it;
+  cam.keyframes.insert(it, kf);
+}
+
+void Renderer::RemoveSceneCameraKeyframe(int camIdx, unsigned int frame) {
+  if (camIdx < 0 || camIdx >= (int)sceneCameras.size()) return;
+  auto& kfs = sceneCameras[camIdx].keyframes;
+  if (kfs.empty()) return;
+  int best = 0;
+  unsigned int bestD = (frame > kfs[0].frame) ? frame - kfs[0].frame : kfs[0].frame - frame;
+  for (int i = 1; i < (int)kfs.size(); ++i) {
+    unsigned int d = (frame > kfs[i].frame) ? frame - kfs[i].frame : kfs[i].frame - frame;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  kfs.erase(kfs.begin() + best);
+}
+
+void Renderer::UpdateSceneCameraKeyframes(unsigned int frame) {
+  for (auto& cam : sceneCameras) {
+    if (cam.keyframes.size() < 1) continue;
+    const CameraKeyframe* before = nullptr;
+    const CameraKeyframe* after  = nullptr;
+    for (auto& kf : cam.keyframes) {
+      if (kf.frame <= frame) before = &kf;
+      if (kf.frame >= frame && !after) after = &kf;
+    }
+    if (!before && !after) continue;
+    if (before && after && before->frame != after->frame) {
+      float t = (float)(frame - before->frame) / (float)(after->frame - before->frame);
+      cam.position = dvec3(before->pos[0] + t*(after->pos[0]-before->pos[0]),
+                           before->pos[1] + t*(after->pos[1]-before->pos[1]),
+                           before->pos[2] + t*(after->pos[2]-before->pos[2]));
+      cam.rotationDeg = { before->pitch    + t*(after->pitch    - before->pitch),
+                          before->rotation + t*(after->rotation - before->rotation),
+                          before->roll     + t*(after->roll     - before->roll) };
+      cam.fov = before->zoom + t*(after->zoom - before->zoom);
+    } else {
+      const CameraKeyframe* k = before ? before : after;
+      cam.position    = dvec3(k->pos[0], k->pos[1], k->pos[2]);
+      cam.rotationDeg = { k->pitch, k->rotation, k->roll };
+      cam.fov         = k->zoom;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
