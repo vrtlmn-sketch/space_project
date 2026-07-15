@@ -53,6 +53,7 @@ public:
   unsigned int timeframe{};
   RenderedObject renderedObject;
   vec3 position;
+  vec3 rotationDeg{0.0f, 0.0f, 0.0f};  // cloud orientation (Euler X/Y/Z degrees)
   std::string formationFile;  // empty = procedural generation
   CloudComputeMethod computeMethod{CloudComputeMethod::CPU};
   float barnesHutTheta{0.5f};

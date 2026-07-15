@@ -227,11 +227,26 @@ void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
          rotationDeg.z*0.01745329252f, 0}});
 }
 
+// Build R = Rz·Ry·Rx (row-major) from Euler DEGREES — matches the CPU/GLSL
+// convention used for spheres and the cloud vertex shader.
+static void eulerMat3(const vec3& deg, float R[9]) {
+  const float d2r = 0.01745329252f;
+  float ca=std::cos(deg.x*d2r), sa=std::sin(deg.x*d2r);
+  float cb=std::cos(deg.y*d2r), sb=std::sin(deg.y*d2r);
+  float cc=std::cos(deg.z*d2r), sc=std::sin(deg.z*d2r);
+  R[0]=cc*cb; R[1]=cc*sb*sa-sc*ca; R[2]=cc*sb*ca+sc*sa;
+  R[3]=sc*cb; R[4]=sc*sb*sa+cc*ca; R[5]=sc*sb*ca-cc*sa;
+  R[6]=-sb;   R[7]=cb*sa;          R[8]=cb*ca;
+}
+
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
                                                  std::vector<RayTracerObjectDoppler>& list)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
   if (particleCount <= 0) return;
+
+  bool rot = (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f);
+  float R[9]; if (rot) eulerMat3(rotationDeg, R);
 
   constexpr int RT_CLOUD_CAP = 2000;
   int stride = (particleCount > RT_CLOUD_CAP) ? (particleCount / RT_CLOUD_CAP) : 1;
@@ -260,11 +275,18 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
     }
 
     vec3 vel = (i < (int)cloudParticles.size()) ? cloudParticles[i].velocity : vec3{0,0,0};
+    float rx = UVObjectMeshBuffer[fi], ry = UVObjectMeshBuffer[fi+1], rz = UVObjectMeshBuffer[fi+2];
+    if (rot) {
+      float ox = R[0]*rx + R[1]*ry + R[2]*rz;
+      float oy = R[3]*rx + R[4]*ry + R[5]*rz;
+      float oz = R[6]*rx + R[7]*ry + R[8]*rz;
+      rx = ox; ry = oy; rz = oz;
+    }
     list.push_back(RayTracerObjectDoppler{
       vec4{
-        UVObjectMeshBuffer[fi  ] + (float)(coordinates.x + cameraTranslate[0]),
-        UVObjectMeshBuffer[fi+1] + (float)(coordinates.y + cameraTranslate[1]),
-        UVObjectMeshBuffer[fi+2] + (float)(coordinates.z + cameraTranslate[2]),
+        rx + (float)(coordinates.x + cameraTranslate[0]),
+        ry + (float)(coordinates.y + cameraTranslate[1]),
+        rz + (float)(coordinates.z + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType,
       vec4{0,0,0,0},
@@ -285,6 +307,9 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
   // mode the mass is scaled by the stride so total optical depth is preserved.
   constexpr int RT_CLOUD_CAP = 2000;
   int stride = (particleCount > RT_CLOUD_CAP) ? (particleCount / RT_CLOUD_CAP) : 1;
+
+  bool rot = (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f);
+  float R[9]; if (rot) eulerMat3(rotationDeg, R);
 
   float pRadius  = (cachedRenderMode == 1) ? 0.08f : 0.001f;
   float pObjType = (cachedRenderMode == 1) ? 4.0f  : 2.0f;
@@ -311,11 +336,18 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
       pRad = 0.08f * (1.0f - cachedParticleSizeSpread) + varied * cachedParticleSizeSpread;
     }
 
+    float rx = UVObjectMeshBuffer[fi], ry = UVObjectMeshBuffer[fi+1], rz = UVObjectMeshBuffer[fi+2];
+    if (rot) {
+      float ox = R[0]*rx + R[1]*ry + R[2]*rz;
+      float oy = R[3]*rx + R[4]*ry + R[5]*rz;
+      float oz = R[6]*rx + R[7]*ry + R[8]*rz;
+      rx = ox; ry = oy; rz = oz;
+    }
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
-        UVObjectMeshBuffer[fi  ] + (float)(coordinates.x + cameraTranslate[0]),
-        UVObjectMeshBuffer[fi+1] + (float)(coordinates.y + cameraTranslate[1]),
-        UVObjectMeshBuffer[fi+2] + (float)(coordinates.z + cameraTranslate[2]),
+        rx + (float)(coordinates.x + cameraTranslate[0]),
+        ry + (float)(coordinates.y + cameraTranslate[1]),
+        rz + (float)(coordinates.z + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType, vec4{0,0,0,0}});
   }
@@ -708,8 +740,10 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
   // galaxy (float uniforms quantise to ~100 AU at 1e9 AU coordinates).
   // Lines and clouds carry world-space float vertex buffers, so they keep the
   // legacy absolute path (their scales tolerate float).
+  // Clouds join the relative path so object rotation (below) applies to the
+  // particle offsets only, not the camera offset — and it improves precision.
   bool relative = (meshType == MeshType::sphere || meshType == MeshType::grid ||
-                   meshType == MeshType::plane);
+                   meshType == MeshType::plane  || meshType == MeshType::cloud);
 
   float relPos[3] = {
     (float)(coordinates.x + cameraTranslate[0]),
@@ -728,7 +762,7 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
   float r00 = 1, r01 = 0, r02 = 0;
   float r10 = 0, r11 = 1, r12 = 0;
   float r20 = 0, r21 = 0, r22 = 1;
-  if (meshType == MeshType::sphere &&
+  if ((meshType == MeshType::sphere || meshType == MeshType::cloud) &&
       (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f)) {
     const float d2r = 3.14159265358979323846f / 180.0f;
     float ca = std::cos(rotationDeg.x*d2r), sa = std::sin(rotationDeg.x*d2r);

@@ -42,6 +42,7 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   cloud->nebulaScatterScale = cd.nebulaScatterScale;
   cloud->particleSizeSpread = cd.particleSizeSpread;
   cloud->scale              = cd.scale;
+  cloud->rotationDeg        = cd.rotation;
   if (cd.scale != 1.0f)
     cloud->applyVirialScale(cd.scale);
   return cloud;
@@ -193,6 +194,7 @@ int main(int argc, char** argv) {
     if (cloudIdx < 0 || cloudIdx >= (int)clouds.size()) return;
     CloudData cd = cloudDataFromForm(cf);
     cd.position = dvec3(clouds[cloudIdx]->position);  // keep current placement
+    cd.rotation = clouds[cloudIdx]->rotationDeg;      // keep current orientation
     clouds[cloudIdx] = buildCloudFromData(cd);
   };
 
@@ -291,6 +293,7 @@ int main(int argc, char** argv) {
       cd.nebulaScatterScale = c->nebulaScatterScale;
       cd.particleSizeSpread = c->particleSizeSpread;
       cd.scale = c->scale;
+      cd.rotation = c->rotationDeg;
       cloudDatas.push_back(cd);
     }
     SceneSettings s;

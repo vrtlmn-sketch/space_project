@@ -1770,7 +1770,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   // Gizmo + click-to-select only make sense over the rasterized view —
   // the raytraced view uses its own projection (and bends light).
   if (!raytracerIsMain)
-    DrawGizmoAndPick(physicsObjects);
+    DrawGizmoAndPick(physicsObjects, clouds);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1837,7 +1837,8 @@ bool Renderer::WorldToScreen(dvec3 pos, float& sx, float& sy) {
 }
 
 // Draw the translate gizmo for the selected object and handle click-to-select.
-void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
+void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
+                                std::vector<std::unique_ptr<CloudObject>>& clouds) {
   if (sceneRenderW <= 0 || sceneRenderH <= 0) return;
 
   ImGuiIO&   io = ImGui::GetIO();
@@ -1849,10 +1850,35 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
 
   bool gizmoConsumedClick = false;
 
+  // Resolve the gizmo target: a physics object (selectedIdx>=0) OR a cloud
+  // (selectedIdx<=-2). Both expose a centre position and a rotation to edit.
+  dvec3  pos{};
+  vec3*  rotPtr = nullptr;
+  bool   haveTarget = false;
+  PhysicsObject* selObj = nullptr;
+  CloudObject*   selCloud = nullptr;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
-    auto& obj = physicsObjects[selectedIdx];
-    dvec3 pos = obj.data.position;
+    selObj = &physicsObjects[selectedIdx];
+    pos = selObj->data.position;
+    rotPtr = &selObj->rotationDeg;
+    haveTarget = true;
+  } else if (selectedIdx <= -2) {
+    int ci = -(selectedIdx + 2);
+    if (ci >= 0 && ci < (int)clouds.size()) {
+      selCloud = clouds[ci].get();
+      pos = dvec3(selCloud->position);
+      rotPtr = &selCloud->rotationDeg;
+      haveTarget = true;
+    }
+  }
+  // Write a new centre position back to whichever target is selected
+  auto writePos = [&](const dvec3& p) {
+    pos = p;
+    if (selObj) { selObj->data.position = p; selObj->renderedObject.coordinates = p; }
+    else if (selCloud) { selCloud->position = vec3{(float)p.x, (float)p.y, (float)p.z}; }
+  };
 
+  if (haveTarget) {
     // Compute view-space depth for this object (needed for sizing and drag scale)
     float px_ = (float)(pos.x + cameraTranslate[0]);
     float py_ = (float)(pos.y + cameraTranslate[1]);
@@ -1949,22 +1975,19 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
                 float usdx  = sdx / slen, usdy = sdy / slen;
                 float t     = io.MouseDelta.x * usdx + io.MouseDelta.y * usdy;
                 float worldPerPx = arrowLen / slen;
-                obj.data.position.x += (double)(ax.x * t * worldPerPx);
-                obj.data.position.y += (double)(ax.y * t * worldPerPx);
-                obj.data.position.z += (double)(ax.z * t * worldPerPx);
-                obj.renderedObject.coordinates = obj.data.position;
+                writePos({ pos.x + (double)(ax.x * t * worldPerPx),
+                           pos.y + (double)(ax.y * t * worldPerPx),
+                           pos.z + (double)(ax.z * t * worldPerPx) });
               }
             }
           } else if (gizmoDragAxis == 3) {
             // Free drag in the camera-facing plane
             float mx = io.MouseDelta.x, my = io.MouseDelta.y;
-            obj.data.position.x += ( mx * camMatrix[0] - my * camMatrix[3]) * dragScale;
-            obj.data.position.y += ( mx * camMatrix[1] - my * camMatrix[4]) * dragScale;
-            obj.data.position.z += ( mx * camMatrix[2] - my * camMatrix[5]) * dragScale;
-            obj.renderedObject.coordinates = obj.data.position;
+            writePos({ pos.x + ( mx * camMatrix[0] - my * camMatrix[3]) * dragScale,
+                       pos.y + ( mx * camMatrix[1] - my * camMatrix[4]) * dragScale,
+                       pos.z + ( mx * camMatrix[2] - my * camMatrix[5]) * dragScale });
           }
           // Re-project so the handles track the object during a move
-          pos = obj.data.position;
           WorldToScreen(pos, bx, by);
           if (okX) WorldToScreen({pos.x + arrowLen, pos.y, pos.z}, txX, tyX);
           if (okY) WorldToScreen({pos.x, pos.y + arrowLen, pos.z}, txY, tyY);
@@ -1979,9 +2002,9 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects) {
           while (da >  (float)M_PI) da -= 2.0f*(float)M_PI;
           while (da < -(float)M_PI) da += 2.0f*(float)M_PI;
           float deg = da * 180.0f / (float)M_PI;
-          float* comp = (gizmoDragAxis == 0) ? &obj.rotationDeg.x
-                      : (gizmoDragAxis == 1) ? &obj.rotationDeg.y
-                                             : &obj.rotationDeg.z;
+          float* comp = (gizmoDragAxis == 0) ? &rotPtr->x
+                      : (gizmoDragAxis == 1) ? &rotPtr->y
+                                             : &rotPtr->z;
           *comp = std::fmod(*comp + deg, 360.0f);
         }
 
@@ -3599,6 +3622,30 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         cloud->boundsEstimate(center, radius);
         LocateCamera(center, radius);
       }
+
+      // Position (AU) — cloud centre. Numeric field always works even when the
+      // centre is at galactic distance (gizmo would be unreachable there).
+      ImGui::Text("Position (AU)");
+      ImGui::SetNextItemWidth(-1);
+      double cp[3] = { cloud->position.x, cloud->position.y, cloud->position.z };
+      if (gizmoDragging && gizmoDragKind == 0) ImGui::PushID(ImGui::GetFrameCount());
+      if (ImGui::DragScalarN("##cipos", ImGuiDataType_Double, cp, 3, 0.05f,
+                             nullptr, nullptr, "%.4g")) {
+        cloud->position = { (float)cp[0], (float)cp[1], (float)cp[2] };
+      }
+      if (gizmoDragging && gizmoDragKind == 0) ImGui::PopID();
+
+      // Rotation (Euler X/Y/Z degrees) — spins the whole particle cloud
+      ImGui::Text("Rotation (deg)");
+      ImGui::SetNextItemWidth(-1);
+      float crot[3] = { cloud->rotationDeg.x, cloud->rotationDeg.y, cloud->rotationDeg.z };
+      if (gizmoDragging && gizmoDragKind == 1) ImGui::PushID(ImGui::GetFrameCount());
+      if (ImGui::DragFloat3("##cirot", crot, 0.5f, 0.0f, 0.0f, "%.1f")) {
+        cloud->rotationDeg = { std::fmod(crot[0], 360.0f),
+                               std::fmod(crot[1], 360.0f),
+                               std::fmod(crot[2], 360.0f) };
+      }
+      if (gizmoDragging && gizmoDragKind == 1) ImGui::PopID();
       ImGui::Spacing();
 
       // ── Formation file selector ──

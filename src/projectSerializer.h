@@ -39,6 +39,7 @@ struct GridData {
 struct CloudData {
   bool  enabled{false};
   dvec3 position{0.0, 0.0, -3.0};  // cloud centre (AU)
+  vec3  rotation{0.0f, 0.0f, 0.0f}; // Euler X/Y/Z degrees
   int   count{2000};
   float sizeX{3.f}, sizeY{3.f}, sizeZ{3.f};
   std::string formationFile;   // empty = procedural, non-empty = load from templates/formations/

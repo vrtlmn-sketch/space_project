@@ -143,7 +143,8 @@ private:
   float sceneImageOffX{0.0f}, sceneImageOffY{0.0f};
 
   bool WorldToScreen(dvec3 world, float& sx, float& sy);
-  void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects);
+  void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
+                        std::vector<std::unique_ptr<CloudObject>>& clouds);
   void DrawObjectHighlight(PhysicsObject& obj);
   int  highlightMode{0};  // 0 = selected only, 1 = all objects, 2 = none
 

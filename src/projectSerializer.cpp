@@ -75,6 +75,7 @@ bool ProjectSerializer::Save(const std::string& path,
     cloudsArr.push_back({
       {"enabled",           cloud.enabled},
       {"position",          dvec3ToJson(cloud.position)},
+      {"rotation",          vec3ToJson(cloud.rotation)},
       {"count",             cloud.count},
       {"sizeX",             cloud.sizeX},
       {"sizeY",             cloud.sizeY},
@@ -246,6 +247,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     CloudData cd;
     cd.enabled       = c.value("enabled",      false);
     if (c.contains("position")) cd.position = jsonToDVec3(c["position"]);
+    if (c.contains("rotation")) cd.rotation = jsonToVec3(c["rotation"]);
     cd.count         = c.value("count",        40000);
     cd.sizeX         = c.value("sizeX",         5.f);
     cd.sizeY         = c.value("sizeY",         5.f);

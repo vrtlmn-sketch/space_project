@@ -275,6 +275,7 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
 // ── Update ──────────────────────────────────────────────────────────────────
 void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects){
   renderedObject.coordinates = position;
+  renderedObject.rotationDeg = rotationDeg;
   ensureFrameStore();
 
   if(!renderer.paused)
