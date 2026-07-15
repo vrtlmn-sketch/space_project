@@ -864,6 +864,78 @@ void Renderer::syncMatrixFromEuler() {
   camMatrix[6] = -sy*cr + cy*sp*sr;   camMatrix[7] = sy*sr + cy*sp*cr;   camMatrix[8] = cy*cp;
 }
 
+// Build a view-rotation matrix from a camera object's Euler angles, using the
+// SAME convention as the freecam (yaw = rot.y, pitch = rot.x, roll = rot.z).
+void Renderer::CameraViewMatrix(const vec3& rotationDeg, float out[9]) const {
+  const float d2r = 0.01745329252f;
+  float yaw = rotationDeg.y*d2r, pit = rotationDeg.x*d2r, rol = rotationDeg.z*d2r;
+  float cy = std::cos(yaw), sy = std::sin(yaw);
+  float cp = std::cos(pit), sp = std::sin(pit);
+  float cr = std::cos(rol), sr = std::sin(rol);
+  out[0] = cy*cr + sy*sp*sr;  out[1] = -cy*sr + sy*sp*cr;  out[2] = sy*cp;
+  out[3] = cp*sr;             out[4] = cp*cr;              out[5] = -sp;
+  out[6] = -sy*cr + cy*sp*sr; out[7] = sy*sr + cy*sp*cr;   out[8] = cy*cp;
+}
+
+// Wireframe frustum trapezoid for each spawned camera (rasterized view only).
+void Renderer::DrawCameraFrustums() {
+  if (rayTracerView || sceneRenderW <= 0 || sceneRenderH <= 0) return;
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  int selCam = SelectedCameraIndex();
+
+  for (int ci = 0; ci < (int)sceneCameras.size(); ++ci) {
+    const SceneCamera& cam = sceneCameras[ci];
+    float M[9];
+    CameraViewMatrix(cam.rotationDeg, M);
+    // Camera world axes (view matrix rows: right, up, -forward)
+    dvec3 right   { M[0], M[1], M[2] };
+    dvec3 up      { M[3], M[4], M[5] };
+    dvec3 forward { -M[6], -M[7], -M[8] };
+
+    // Frustum depth scaled to ~90px on screen (distance-adaptive)
+    float px = (float)(cam.position.x + cameraTranslate[0]);
+    float py = (float)(cam.position.y + cameraTranslate[1]);
+    float pz = (float)(cam.position.z + cameraTranslate[2]);
+    float vz = camMatrix[6]*px + camMatrix[7]*py + camMatrix[8]*pz;
+    float clipW = -vz;
+    if (clipW <= 1e-6f) continue;
+    float fovy = zoom * (float)M_PI / 180.0f;
+    float f    = 1.0f / std::tan(fovy * 0.5f);
+    float depth = 90.0f * 2.0f * clipW / (f * (float)sceneRenderH);
+
+    float half   = std::tan(cam.fov * 0.5f * (float)M_PI / 180.0f) * depth;
+    float aspect = (float)sceneRenderW / (float)sceneRenderH;
+    float hw = half * aspect, hh = half;
+
+    dvec3 apex = cam.position;
+    dvec3 c    = { apex.x + forward.x*depth, apex.y + forward.y*depth, apex.z + forward.z*depth };
+    auto corner = [&](float sx, float sy) {
+      return dvec3{ c.x + right.x*(sx*hw) + up.x*(sy*hh),
+                    c.y + right.y*(sx*hw) + up.y*(sy*hh),
+                    c.z + right.z*(sx*hw) + up.z*(sy*hh) };
+    };
+    dvec3 corners[4] = { corner(-1,-1), corner(1,-1), corner(1,1), corner(-1,1) };
+
+    float ax, ay; bool aok = WorldToScreen(apex, ax, ay);
+    float sc[4][2]; bool cok[4];
+    for (int k = 0; k < 4; ++k) cok[k] = WorldToScreen(corners[k], sc[k][0], sc[k][1]);
+
+    ImU32 col = (selCam == ci) ? IM_COL32(255, 220, 120, 255) : IM_COL32(180, 190, 210, 220);
+    // apex → corners
+    if (aok) for (int k = 0; k < 4; ++k)
+      if (cok[k]) dl->AddLine({ax,ay}, {sc[k][0],sc[k][1]}, col, 1.6f);
+    // far rectangle
+    for (int k = 0; k < 4; ++k) {
+      int n = (k+1)%4;
+      if (cok[k] && cok[n]) dl->AddLine({sc[k][0],sc[k][1]}, {sc[n][0],sc[n][1]}, col, 1.6f);
+    }
+    if (aok) {
+      dl->AddCircleFilled({ax,ay}, (selCam==ci)?5.0f:4.0f, col);
+      dl->AddText({ax + 7, ay - 7}, col, cam.name.c_str());
+    }
+  }
+}
+
 // Extract Euler angles from camMatrix.
 // V = Rx(p) * Ry(y) * Rz(r)  →  m[5] = -sin(p), m[2] = sy*cp, m[8] = cy*cp,
 //                                 m[3] = cp*sr,   m[4] = cp*cr
@@ -1528,12 +1600,20 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   // object's surface so open-space flight speeds up with remoteness
   // (crossing the galaxy deselected is as fast as it would be focused).
   focusDistance = -1.0f;
-  if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
-    const dvec3& p = physicsObjects[selectedIdx].data.position;
+  auto focusFrom = [&](const dvec3& p) {
     double dx = p.x + cameraTranslate[0];
     double dy = p.y + cameraTranslate[1];
     double dz = p.z + cameraTranslate[2];
     focusDistance = (float)std::sqrt(dx*dx + dy*dy + dz*dz);
+  };
+  int camSel = SelectedCameraIndex();
+  int cloudSel = (selectedIdx <= -2 && selectedIdx > -1000) ? -(selectedIdx + 2) : -1;
+  if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
+    focusFrom(physicsObjects[selectedIdx].data.position);
+  } else if (camSel >= 0 && camSel < (int)sceneCameras.size()) {
+    focusFrom(sceneCameras[camSel].position);
+  } else if (cloudSel >= 0 && cloudSel < (int)clouds.size()) {
+    focusFrom(dvec3(clouds[cloudSel]->position));
   } else if (!physicsObjects.empty()) {
     focusDistance = (float)std::max(nearestSurface, 0.001);
   }
@@ -1770,6 +1850,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   // Gizmo + click-to-select only make sense over the rasterized view —
   // the raytraced view uses its own projection (and bends light).
   if (!raytracerIsMain)
+    DrawCameraFrustums();
     DrawGizmoAndPick(physicsObjects, clouds);
 }
 
@@ -1857,11 +1938,20 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
   bool   haveTarget = false;
   PhysicsObject* selObj = nullptr;
   CloudObject*   selCloud = nullptr;
+  SceneCamera*   selCam = nullptr;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
     selObj = &physicsObjects[selectedIdx];
     pos = selObj->data.position;
     rotPtr = &selObj->rotationDeg;
     haveTarget = true;
+  } else if (selectedIdx <= -1000) {
+    int ci = SelectedCameraIndex();
+    if (ci >= 0 && ci < (int)sceneCameras.size()) {
+      selCam = &sceneCameras[ci];
+      pos = selCam->position;
+      rotPtr = &selCam->rotationDeg;
+      haveTarget = true;
+    }
   } else if (selectedIdx <= -2) {
     int ci = -(selectedIdx + 2);
     if (ci >= 0 && ci < (int)clouds.size()) {
@@ -1876,6 +1966,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
     pos = p;
     if (selObj) { selObj->data.position = p; selObj->renderedObject.coordinates = p; }
     else if (selCloud) { selCloud->position = vec3{(float)p.x, (float)p.y, (float)p.z}; }
+    else if (selCam) { selCam->position = p; }
   };
 
   if (haveTarget) {
@@ -3303,6 +3394,45 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::EndTabItem();
     }
 
+    // ── Camera tab ──
+    if (ImGui::BeginTabItem("Camera")) {
+      static float camSpawnPos[3] = { 0.0f, 0.0f, -3.0f };
+      static float camSpawnFov    = 45.0f;
+      ImGui::TextWrapped("A viewpoint you can frame, keyframe and view in the "
+                         "secondary window. Shown as a frustum in the scene.");
+      ImGui::Spacing();
+      ImGui::Text("Position (AU)");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::DragFloat3("##camspawnpos", camSpawnPos, 0.1f, -50.f, 50.f, "%.2f");
+      ImGui::Text("Field of View");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##camspawnfov", &camSpawnFov, 1.0f, 120.0f, "%.1f deg");
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+      if (ImGui::Button("Spawn Camera", ImVec2(-1, 28))) {
+        SceneCamera cam;
+        cam.name     = "Camera " + std::to_string(sceneCameras.size() + 1);
+        cam.position = dvec3(camSpawnPos[0], camSpawnPos[1], camSpawnPos[2]);
+        cam.fov      = camSpawnFov;
+        sceneCameras.push_back(cam);
+        selectedIdx  = CameraSentinel((int)sceneCameras.size() - 1);
+      }
+      ImGui::Spacing();
+      if (ImGui::Button("Spawn at Freecam", ImVec2(-1, 0))) {
+        const float r2d = 57.2957795f;
+        SceneCamera cam;
+        cam.name       = "Camera " + std::to_string(sceneCameras.size() + 1);
+        cam.position   = dvec3(-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]);
+        cam.rotationDeg = { pitch * r2d, rotation * r2d, roll * r2d };
+        cam.fov        = zoom;
+        sceneCameras.push_back(cam);
+        selectedIdx    = CameraSentinel((int)sceneCameras.size() - 1);
+      }
+      ImGui::TextDisabled("%zu camera(s) in scene", sceneCameras.size());
+      ImGui::EndTabItem();
+    }
+
     ImGui::EndTabBar();
   }
   ImGui::End();
@@ -3332,6 +3462,20 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
              i, clouds[i]->particleCount(), i);
     if (ImGui::Selectable(cloudLabel, cloudSel)) {
       selectedIdx   = cloudSel ? -1 : sentinel;
+      highlightMode = 0;
+    }
+    ImGui::PopStyleColor();
+  }
+
+  // Camera list
+  for (int i = 0; i < (int)sceneCameras.size(); i++) {
+    int sentinel = CameraSentinel(i);
+    bool camSel = (selectedIdx == sentinel);
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.17f, 0.06f, 1.f));
+    char camLabel[96];
+    snprintf(camLabel, sizeof(camLabel), "[#] %s##scam%d", sceneCameras[i].name.c_str(), i);
+    if (ImGui::Selectable(camLabel, camSel)) {
+      selectedIdx   = camSel ? -1 : sentinel;
       highlightMode = 0;
     }
     ImGui::PopStyleColor();
@@ -3589,6 +3733,79 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       selectedIdx = -1;
     }
     ImGui::PopStyleColor(3);
+  }
+
+  // ── Camera object ──
+  else if (selectedIdx <= -1000) {
+    int camIdx = SelectedCameraIndex();
+    SceneCamera* cam = (camIdx >= 0 && camIdx < (int)sceneCameras.size())
+                       ? &sceneCameras[camIdx] : nullptr;
+    if (cam) {
+      ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.5f, 1.0f), "%s", cam->name.c_str());
+      ImGui::Separator();
+
+      char nameBuf[64];
+      std::strncpy(nameBuf, cam->name.c_str(), sizeof(nameBuf) - 1);
+      nameBuf[sizeof(nameBuf) - 1] = '\0';
+      ImGui::Text("Name");
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::InputText("##camname", nameBuf, sizeof(nameBuf))) cam->name = nameBuf;
+
+      ImGui::SeparatorText("Transform");
+
+      // Gizmo mode toggles (shared with objects)
+      ImGui::TextUnformatted("Gizmo");
+      ImGui::SameLine();
+      ImGui::Checkbox("Move##cgz", &showMoveGizmo);
+      ImGui::SameLine();
+      ImGui::Checkbox("Rotate##cgz", &showRotateGizmo);
+
+      if (ImGui::Button("Match Freecam", ImVec2(-1, 0))) {
+        const float r2d = 57.2957795f;
+        cam->position   = dvec3(-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]);
+        cam->rotationDeg = { pitch * r2d, rotation * r2d, roll * r2d };
+        cam->fov        = zoom;
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Snap this camera to the current freecam view");
+
+      ImGui::Text("Position (AU)");
+      ImGui::SetNextItemWidth(-1);
+      double cpp[3] = { cam->position.x, cam->position.y, cam->position.z };
+      if (gizmoDragging && gizmoDragKind == 0) ImGui::PushID(ImGui::GetFrameCount());
+      if (ImGui::DragScalarN("##campos", ImGuiDataType_Double, cpp, 3, 0.01f,
+                             nullptr, nullptr, "%.4g")) {
+        cam->position = { cpp[0], cpp[1], cpp[2] };
+      }
+      if (gizmoDragging && gizmoDragKind == 0) ImGui::PopID();
+
+      ImGui::Text("Rotation (deg)");
+      ImGui::SetNextItemWidth(-1);
+      float crr[3] = { cam->rotationDeg.x, cam->rotationDeg.y, cam->rotationDeg.z };
+      if (gizmoDragging && gizmoDragKind == 1) ImGui::PushID(ImGui::GetFrameCount());
+      if (ImGui::DragFloat3("##camrot", crr, 0.5f, 0.0f, 0.0f, "%.1f")) {
+        cam->rotationDeg = { std::fmod(crr[0], 360.0f), std::fmod(crr[1], 360.0f),
+                             std::fmod(crr[2], 360.0f) };
+      }
+      if (gizmoDragging && gizmoDragKind == 1) ImGui::PopID();
+
+      ImGui::Text("Field of View");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##camfov", &cam->fov, 1.0f, 120.0f, "%.1f deg");
+
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+      ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
+      if (ImGui::Button("Delete", ImVec2(-1, 28))) {
+        sceneCameras.erase(sceneCameras.begin() + camIdx);
+        if (secondaryCameraSource == camIdx) secondaryCameraSource = -1;
+        else if (secondaryCameraSource > camIdx) --secondaryCameraSource;
+        selectedIdx = -1;
+      }
+      ImGui::PopStyleColor(2);
+    }
   }
 
   // ── Cloud ──
@@ -4162,6 +4379,24 @@ void Renderer::BeginSecondaryPass() {
   // Flip to the OTHER view for the secondary pass
   rayTracerView = !rayTracerView;
 
+  // If a spawned camera drives the secondary view, swap the freecam transform
+  // to that camera's for the duration of the pass (restored in EndSecondaryPass).
+  secondaryOverride = false;
+  if (secondaryCameraSource >= 0 && secondaryCameraSource < (int)sceneCameras.size()) {
+    secondaryOverride = true;
+    savedCamTranslate[0] = cameraTranslate[0];
+    savedCamTranslate[1] = cameraTranslate[1];
+    savedCamTranslate[2] = cameraTranslate[2];
+    std::memcpy(savedCamMatrix, camMatrix, sizeof(camMatrix));
+    savedZoom = zoom;
+    const SceneCamera& c = sceneCameras[secondaryCameraSource];
+    cameraTranslate[0] = -c.position.x;
+    cameraTranslate[1] = -c.position.y;
+    cameraTranslate[2] = -c.position.z;
+    CameraViewMatrix(c.rotationDeg, camMatrix);
+    zoom = c.fov;
+  }
+
   // Clear accumulated raytracer objects from the primary pass
   // (they belong to the primary view; the secondary pass will re-accumulate)
   rayTracedObjects.clear();
@@ -4193,6 +4428,16 @@ void Renderer::EndSecondaryPass() {
   // Flip rayTracerView back to the primary view
   rayTracerView = !rayTracerView;
 
+  // Restore the freecam transform if a spawned camera drove this pass
+  if (secondaryOverride) {
+    cameraTranslate[0] = savedCamTranslate[0];
+    cameraTranslate[1] = savedCamTranslate[1];
+    cameraTranslate[2] = savedCamTranslate[2];
+    std::memcpy(camMatrix, savedCamMatrix, sizeof(camMatrix));
+    zoom = savedZoom;
+    secondaryOverride = false;
+  }
+
   // Clear secondary raytracer objects (EndFrame will clear primary ones)
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
@@ -4208,6 +4453,20 @@ void Renderer::DrawPipWindow() {
 
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Secondary View", nullptr, flags);
+
+  // ── View source: Freecam or a spawned camera ──
+  if (secondaryCameraSource >= (int)sceneCameras.size()) secondaryCameraSource = -1;
+  const char* srcName = (secondaryCameraSource < 0) ? "Freecam"
+                        : sceneCameras[secondaryCameraSource].name.c_str();
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::BeginCombo("##pipsrc", srcName)) {
+    if (ImGui::Selectable("Freecam", secondaryCameraSource < 0)) secondaryCameraSource = -1;
+    for (int i = 0; i < (int)sceneCameras.size(); ++i) {
+      bool sel = (secondaryCameraSource == i);
+      if (ImGui::Selectable(sceneCameras[i].name.c_str(), sel)) secondaryCameraSource = i;
+    }
+    ImGui::EndCombo();
+  }
 
   ImVec2 avail = ImGui::GetContentRegionAvail();
   float imgW = avail.x;

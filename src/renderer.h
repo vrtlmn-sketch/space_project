@@ -47,8 +47,17 @@ struct SpawnFormState {
   double mass       = 3.0e-6;  // solar masses (default: Earth mass)
   float  posX       = 0.0f, posY = 0.0f, posZ = -3.0f;   // AU
   float  velX       = 0.0f, velY = 0.0f, velZ =  0.0f;   // AU/yr
-  int    shaderType = 0;   // 0=Planet, 1=Star, 2=BlackHole
+  int    shaderType = 0;   // 0=Planet, 1=Star, 2=BlackHole, 3=Camera
   float  temperature = 5778.0f; // Kelvin (meaningful for stars)
+};
+
+// ---- Spawned camera object (viewpoint you can frame, keyframe and record) ----
+struct SceneCamera {
+  std::string name{"Camera"};
+  dvec3 position{0.0, 0.0, -3.0};       // AU
+  vec3  rotationDeg{0.0f, 0.0f, 0.0f};  // pitch(x), yaw(y), roll(z) degrees
+  float fov{45.0f};                     // field of view in degrees (= zoom)
+  std::vector<CameraKeyframe> keyframes; // this camera's own timeline lane
 };
 
 struct GridFormState {
@@ -462,6 +471,25 @@ public:
 
   // ---- Timeline keypoints ----
   std::vector<Keypoint> keypoints{};
+
+  // ---- Spawned camera objects ----
+  std::vector<SceneCamera> sceneCameras{};
+  // Secondary (PiP) view source: -1 = freecam, >=0 = sceneCameras index
+  int  secondaryCameraSource{-1};
+  // Saved freecam transform while the secondary pass renders another camera
+  bool   secondaryOverride{false};
+  double savedCamTranslate[3]{};
+  float  savedCamMatrix[9]{};
+  float  savedZoom{45.0f};
+  // Build a view-rotation matrix (row-major 3x3) + FOV from a camera's euler.
+  void CameraViewMatrix(const vec3& rotationDeg, float out[9]) const;
+  // Draw wireframe frustums for all spawned cameras (rasterized view only)
+  void DrawCameraFrustums();
+  // Camera selection helpers: encode camera i as selectedIdx = -(1000 + i)
+  static int  CameraSentinel(int i) { return -(1000 + i); }
+  int  SelectedCameraIndex() const {
+    return (selectedIdx <= -1000) ? -(selectedIdx) - 1000 : -1;
+  }
 
   // ---- Camera keyframes ----
   std::vector<CameraKeyframe> cameraKeyframes{};
