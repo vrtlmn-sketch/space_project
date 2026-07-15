@@ -101,6 +101,7 @@ void Renderer::LoadAppSettings() {
     std::string theme = root.value("theme", std::string{"Space wander (ImGui)"});
     std::strncpy(appTheme, theme.c_str(), sizeof(appTheme) - 1);
     appTheme[sizeof(appTheme) - 1] = '\0';
+    vimMode = root.value("vimMode", false);
   } catch (...) {
     std::cerr << "[Settings] Failed to parse settings.json\n";
   }
@@ -108,7 +109,8 @@ void Renderer::LoadAppSettings() {
 
 void Renderer::SaveAppSettings() {
   nlohmann::json root;
-  root["theme"] = std::string(appTheme);
+  root["theme"]   = std::string(appTheme);
+  root["vimMode"] = vimMode;
   std::ofstream f("settings.json");
   if (!f.is_open()) {
     std::cerr << "[Settings] Cannot write settings.json\n";
@@ -666,9 +668,14 @@ bool Renderer::UpdateInputs() {
   // If ImGui wants the keyboard, skip game keys
   ImGuiIO& io = ImGui::GetIO();
 
-  // Esc = open quit dialog (edge-triggered so it doesn't re-fire)
+  // Esc = open quit dialog (edge-triggered so it doesn't re-fire).
+  // Suppressed while the text editor owns the keyboard — there ESC is a vim
+  // mode switch, not a request to quit.
   if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) escKeyPressed = true;
-  else { if (escKeyPressed) { showQuitDialog = true; } escKeyPressed = false; }
+  else {
+    if (escKeyPressed && !textEditorCaptured) showQuitDialog = true;
+    escKeyPressed = false;
+  }
 
   // Intercept GLFW window-close button → show quit dialog instead of closing
   if (glfwWindowShouldClose(window)) {
@@ -676,7 +683,7 @@ bool Renderer::UpdateInputs() {
     showQuitDialog = true;
   }
 
-  if (!io.WantTextInput) {
+  if (!io.WantTextInput && !textEditorCaptured) {
     // ── Distance-adaptive move speed ──
     // step = factor · d^exponent (normalised so that factor 1.0 at d = 3
     // matches the old fixed speed). d = selected-object distance, or the
@@ -805,9 +812,14 @@ bool Renderer::UpdateInputs() {
     else { if (recStopKeyPressed) { recStopRequested = true; } recStopKeyPressed = false; }
   }
 
-  // Q = open quit dialog (always active, even when ImGui has keyboard)
+  // Q = open quit dialog. Suppressed while a text field / the editor owns the
+  // keyboard, so typing 'q' doesn't quit the app.
   if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)  quitButtonPressed = true;
-  else { if (quitButtonPressed) { showQuitDialog = true; } quitButtonPressed = false; }
+  else {
+    if (quitButtonPressed && !io.WantTextInput && !textEditorCaptured)
+      showQuitDialog = true;
+    quitButtonPressed = false;
+  }
 
   if (quitConfirmed) return false;
   return true;
@@ -2173,6 +2185,16 @@ void Renderer::DrawSettingsPanel() {
       }
       ImGui::EndTabItem();
     }
+    if (ImGui::BeginTabItem("Editor")) {
+      ImGui::Spacing();
+      if (ImGui::Checkbox("Vim Mode", &vimMode)) {
+        if (vimMode) vimEd.ResetState();
+      }
+      ImGui::TextDisabled("Modal editing in the Text Editor:\n"
+                          "NORMAL / INSERT / VISUAL, motions, operators,\n"
+                          "counts, undo. No \":\" commands yet.");
+      ImGui::EndTabItem();
+    }
     ImGui::EndTabBar();
   }
 
@@ -2211,25 +2233,148 @@ void Renderer::DrawTextEditor() {
   ImVec2 avail = ImGui::GetContentRegionAvail();
   float lineH  = ImGui::GetTextLineHeight();
 
+  // Vim status line reserves one row at the bottom
+  float statusH = vimMode ? (lineH + style.ItemSpacing.y * 2.0f) : 0.0f;
+  float editH   = avail.y - statusH;
+
   // Line count + gutter width (grows with the number of digits)
   int lineCount = 1 + (int)std::count(textEditorBuf.begin(), textEditorBuf.end(), '\n');
   int digits = 1;
   for (int n = lineCount; n >= 10; n /= 10) ++digits;
-  float gutterW = ImGui::CalcTextSize("0").x * (float)digits + 14.0f;
+  float charW   = ImGui::CalcTextSize("0").x;
+  float gutterW = charW * (float)digits + 14.0f;
+
+  ImGuiID editorId = ImGui::GetID("##texteditbuf");
+  ImGuiInputTextState* st = ImGui::GetInputTextState(editorId);
+
+  // The editor owns the keyboard whenever its window is focused — this alone
+  // suspends the global key controls (WASD/P/R/F...), independent of whether
+  // the InputText widget happens to be "active" this frame. Without this the
+  // read-only NORMAL-mode field would let typed keys leak to camera controls.
+  bool winFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+  textEditorCaptured = winFocused;
+
+  // Release the input the instant the window loses focus: otherwise an active
+  // multiline field keeps io.WantTextInput true forever and the global key
+  // controls (WASD/P/R…) never resume when you click away.
+  if (!winFocused && st && ImGui::GetActiveID() == editorId) {
+    ImGui::ClearActiveID();
+    st = nullptr;
+  }
+
+  // When the window is focused but the input isn't active yet (e.g. first
+  // frame after clicking the tab), pull keyboard focus into it so vim has a
+  // cursor to work with.
+  bool forceFocus = winFocused && st == nullptr;
+
+  // ── Vim key processing (before the widget so we see the input first) ──
+  bool vimNormalish = vimMode && vimEd.mode != VimEditor::Mode::Insert;
+  int  vimCursor = -1, vimSelB = -1, vimSelE = -1;
+  bool vimChanged = false;
+  if (vimMode && st && winFocused) {
+    ImGuiIO& io = ImGui::GetIO();
+    // Steal ESC from the widget: mode switch instead of deactivation.
+    // Ctrl+[ is the standard vim synonym — reliable even when a window-manager
+    // Escape remap (e.g. CapsLock→Esc) is invisible to GLFW's physical-key map.
+    ImGuiID vimOwner = ImGui::GetID("##vimkeys");
+    ImGui::SetKeyOwner(ImGuiKey_Escape, vimOwner, ImGuiInputFlags_LockThisFrame);
+    bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape, ImGuiInputFlags_None, vimOwner);
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) esc = true;
+
+    // In NORMAL/VISUAL the field is read-only, but block the editing keys
+    // anyway so nothing slips through, and so ImGui doesn't treat them as
+    // navigation while we own the keyboard.
+    if (vimNormalish) {
+      const ImGuiKey block[] = { ImGuiKey_Enter, ImGuiKey_KeypadEnter,
+                                 ImGuiKey_Backspace, ImGuiKey_Delete, ImGuiKey_Tab };
+      for (ImGuiKey k : block)
+        ImGui::SetKeyOwner(k, vimOwner, ImGuiInputFlags_LockThisFrame);
+    }
+
+    VimEditor::Mode modeBefore = vimEd.mode;
+    int stCur = st->GetCursorPos();
+    if (vimEd.mode == VimEditor::Mode::Insert) {
+      // Own Enter so we insert the newline ourselves — the docked read-only-
+      // toggled multiline widget doesn't reliably self-insert it otherwise.
+      ImGui::SetKeyOwner(ImGuiKey_Enter, vimOwner, ImGuiInputFlags_LockThisFrame);
+      ImGui::SetKeyOwner(ImGuiKey_KeypadEnter, vimOwner, ImGuiInputFlags_LockThisFrame);
+      bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, ImGuiInputFlags_None, vimOwner) ||
+                   ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, ImGuiInputFlags_None, vimOwner);
+      if (esc) {
+        int cursor = stCur;
+        vimEd.ExitInsert(textEditorBuf, cursor);
+        vimCursor = cursor;
+        vimNormalish = true;
+      } else if (enter) {
+        int cursor = std::clamp(stCur, 0, (int)textEditorBuf.size());
+        textEditorBuf.insert((size_t)cursor, "\n");
+        vimCursor = cursor + 1; vimChanged = true;
+      } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W)) {
+        // Ctrl+W — delete the word before the cursor
+        int cursor = stCur;
+        if (vimEd.DeleteWordBefore(textEditorBuf, cursor)) {
+          vimCursor = cursor; vimChanged = true;
+        }
+      } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_U)) {
+        // Ctrl+U — delete from cursor to line start
+        int cursor = stCur;
+        if (vimEd.DeleteToLineStart(textEditorBuf, cursor)) {
+          vimCursor = cursor; vimChanged = true;
+        }
+      }
+    } else {
+      // In VISUAL mode the widget cursor sits at the selection end for
+      // rendering; the true vim cursor is cached (unless the user clicked)
+      int cursor = (vimStbCursor >= 0 && stCur == vimStbCursor) ? vimRealCursor : stCur;
+      if (esc) vimEd.CancelPending();
+      // Consume typed characters as vim commands
+      std::vector<unsigned int> chars;
+      for (int i = 0; i < io.InputQueueCharacters.Size; ++i)
+        chars.push_back((unsigned int)io.InputQueueCharacters[i]);
+      io.InputQueueCharacters.resize(0);
+      bool ctrlR = io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R);
+      vimChanged = vimEd.HandleNormalKeys(textEditorBuf, chars, ctrlR, cursor);
+      vimCursor  = cursor;
+      vimEd.GetSelection(textEditorBuf, cursor, vimSelB, vimSelE);
+    }
+
+    // Yank/delete filled the register → mirror to the system clipboard
+    if (vimEd.clipboardPending) {
+      ImGui::SetClipboardText(vimEd.clipboardText.c_str());
+      vimEd.clipboardPending = false;
+    }
+
+    // Push cursor/selection into the widget state; reload if we edited the buffer
+    if (vimCursor >= 0) {
+      if (vimSelB >= 0) st->SetSelection(vimSelB, vimSelE);
+      else              st->SetSelection(vimCursor, vimCursor);
+      vimStbCursor  = (vimSelB >= 0) ? vimSelE : vimCursor;
+      vimRealCursor = vimCursor;
+      st->CursorFollow = true;
+      st->CursorAnimReset();
+      // Reload the widget's internal buffer when we edited the text OR when
+      // entering INSERT mode: a read-only-activated widget never copied the
+      // text internally, and editing that stale state crashes.
+      bool enteredInsert = (modeBefore != VimEditor::Mode::Insert) &&
+                           (vimEd.mode == VimEditor::Mode::Insert);
+      if (vimChanged || enteredInsert) st->ReloadUserBufAndKeepSelection();
+    }
+  }
 
   // The editor is a child window internally — read its scroll so the gutter
   // tracks it exactly (window name: "<parent>/<id hex>", set by BeginChildEx)
   float scrollY = 0.0f;
+  ImGuiWindow* editorChild = nullptr;
   {
     char childName[64];
-    std::snprintf(childName, sizeof(childName), "Text Editor/%08X",
-                  ImGui::GetID("##texteditbuf"));
-    if (ImGuiWindow* child = ImGui::FindWindowByName(childName))
-      scrollY = child->Scroll.y;
+    // InputTextMultiline names its internal child "<parent>/<label>_<id hex>"
+    std::snprintf(childName, sizeof(childName), "Text Editor/##texteditbuf_%08X", editorId);
+    editorChild = ImGui::FindWindowByName(childName);
+    if (editorChild) scrollY = editorChild->Scroll.y;
   }
 
   // ── Line-number gutter ──
-  ImGui::BeginChild("##texteditgutter", ImVec2(gutterW, avail.y), false,
+  ImGui::BeginChild("##texteditgutter", ImVec2(gutterW, editH), false,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
                     | ImGuiWindowFlags_NoInputs);
   {
@@ -2237,7 +2382,7 @@ void Renderer::DrawTextEditor() {
     // visible range (clipped against the current scroll)
     float top = style.FramePadding.y;
     int first = std::max(0, (int)((scrollY - top) / lineH));
-    int last  = std::min(lineCount, first + (int)(avail.y / lineH) + 2);
+    int last  = std::min(lineCount, first + (int)(editH / lineH) + 2);
     for (int i = first; i < last; ++i) {
       ImGui::SetCursorPos(ImVec2(4.0f, top + (float)i * lineH - scrollY));
       ImGui::TextDisabled("%*d", digits, i + 1);
@@ -2247,12 +2392,61 @@ void Renderer::DrawTextEditor() {
   ImGui::SameLine(0.0f, 0.0f);
 
   // ── Editor ──
+  ImGuiInputTextFlags edFlags = ImGuiInputTextFlags_CallbackResize |
+                                ImGuiInputTextFlags_AllowTabInput;
+  if (vimNormalish) edFlags |= ImGuiInputTextFlags_ReadOnly;
+  if (forceFocus) ImGui::SetKeyboardFocusHere();
   ImGui::InputTextMultiline("##texteditbuf", textEditorBuf.data(),
                             textEditorBuf.capacity() + 1,
-                            ImVec2(avail.x - gutterW, avail.y),
-                            ImGuiInputTextFlags_CallbackResize |
-                            ImGuiInputTextFlags_AllowTabInput,
-                            TextEditorResizeCb, &textEditorBuf);
+                            ImVec2(avail.x - gutterW, editH),
+                            edFlags, TextEditorResizeCb, &textEditorBuf);
+
+  // ── Vim block cursor overlay (NORMAL/VISUAL; the widget hides its caret) ──
+  if (vimNormalish && st && editorChild) {
+    int cur = (vimCursor >= 0) ? vimCursor : st->GetCursorPos();
+    cur = std::clamp(cur, 0, (int)textEditorBuf.size());
+    int lineStart = cur;
+    while (lineStart > 0 && textEditorBuf[lineStart - 1] != '\n') --lineStart;
+    int line = (int)std::count(textEditorBuf.begin(), textEditorBuf.begin() + lineStart, '\n');
+    // ImGui draws the multiline text starting at the child's content origin
+    // (DC.CursorStartPos), which already has the scroll offset baked in.
+    // Measure the actual rendered width up to the cursor so the block lands
+    // exactly on the glyph — works for proportional fonts, not just monospace.
+    const char* base = textEditorBuf.data();
+    float preW = ImGui::CalcTextSize(base + lineStart, base + cur).x;
+    float cellW = charW;
+    if (cur < (int)textEditorBuf.size() && textEditorBuf[cur] != '\n') {
+      cellW = ImGui::CalcTextSize(base + cur, base + cur + 1).x;
+      if (cellW <= 0.0f) cellW = charW;
+    }
+    ImVec2 origin = editorChild->DC.CursorStartPos;
+    ImVec2 p0(origin.x + preW - st->Scroll.x, origin.y + (float)line * lineH);
+    ImVec2 p1(p0.x + cellW, p0.y + lineH);
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    dl->PushClipRect(editorChild->ClipRect.Min, editorChild->ClipRect.Max, false);
+    // Solid block cursor (terminal-style): fill covers the cell, then redraw
+    // the character under it in the background colour so it stays readable.
+    ImU32 blockCol = ImGui::GetColorU32(ImGuiCol_Text);
+    dl->AddRectFilled(p0, p1, blockCol);
+    if (cur < (int)textEditorBuf.size() && textEditorBuf[cur] != '\n') {
+      char ch[2] = { textEditorBuf[cur], 0 };
+      dl->AddText(p0, ImGui::GetColorU32(ImGuiCol_FrameBg), ch, ch + 1);
+    }
+    dl->PopClipRect();
+  }
+
+  // ── Vim status line ──
+  if (vimMode) {
+    ImGui::Spacing();
+    ImGui::TextUnformatted(vimEd.ModeName());
+    std::string pending = vimEd.PendingText();
+    if (!pending.empty()) {
+      ImGui::SameLine(0.0f, 24.0f);
+      ImGui::TextDisabled("%s", pending.c_str());
+    }
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 40.0f);
+    ImGui::TextDisabled("vim");
+  }
 
   ImGui::End();
 }

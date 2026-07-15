@@ -15,6 +15,7 @@
 
 #include "renderedObject.h"
 #include "mathStructs.h"
+#include "vimEditor.h"
 #include "rayTracerObject.h"
 
 // Forward declarations to avoid circular include (physicsObject.h includes renderer.h)
@@ -333,6 +334,14 @@ private:
 
   // ---- Text editor (no file I/O yet — in-memory buffer only) ----
   std::string textEditorBuf;
+  bool      vimMode{false};   // modal editing (Settings → Editor); persisted
+  VimEditor vimEd;
+  int vimStbCursor{-1};   // cursor we last wrote into the widget state
+  int vimRealCursor{-1};  // true vim cursor (differs in VISUAL mode)
+  // True while the Text Editor input owns the keyboard. Global key controls
+  // (P/V/F/T/R, WASD, arrows...) are suspended — needed because vim NORMAL
+  // mode uses a read-only field, which io.WantTextInput does not cover.
+  bool textEditorCaptured{false};
 
   void   EnsureViewportFBO(int w, int h);
   void   DestroyViewportFBO();

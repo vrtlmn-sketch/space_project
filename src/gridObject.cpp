@@ -1,9 +1,9 @@
 #include <cmath>
 #include "gridObject.h"
 
-GridObject::GridObject(float cellSize, int radius, bool showX, bool showY, bool showZ,
-                       bool adaptive) {
-  Rebuild(cellSize, radius, showX, showY, showZ, adaptive);
+GridObject::GridObject(float cellSize_, int radius_, bool showX_, bool showY_, bool showZ_,
+                       bool adaptive_) {
+  Rebuild(cellSize_, radius_, showX_, showY_, showZ_, adaptive_);
   fineMesh.setupShaders("src/shaders/gridVert.glsl", "src/shaders/gridShader.glsl");
   coarseMesh.setupShaders("src/shaders/gridVert.glsl", "src/shaders/gridShader.glsl");
 }
