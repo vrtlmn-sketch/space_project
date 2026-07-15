@@ -1689,7 +1689,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGuiID dock_center_bottom;
     ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.33f, &dock_center_bottom, &dock_main);
 
-    // Left column: Hierarchy / Spawn / Secondary View
+    // Left column: Hierarchy / Spawn / Cinematic View
     ImGuiID dock_left_bottom, dock_left_mid;
     ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.31f, &dock_left_bottom, &dock_left);
     ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.46f, &dock_left_mid, &dock_left);
@@ -1697,7 +1697,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGui::DockBuilderDockWindow("Controls",           dock_top);
     ImGui::DockBuilderDockWindow("Hierarchy",          dock_left);
     ImGui::DockBuilderDockWindow("Spawn",              dock_left_mid);
-    ImGui::DockBuilderDockWindow("Secondary View",     dock_left_bottom);
+    ImGui::DockBuilderDockWindow("Cinematic View",     dock_left_bottom);
     // Inspector + Rendering Settings share one node as tabs
     ImGui::DockBuilderDockWindow("Inspector",          dock_right);
     ImGui::DockBuilderDockWindow("Rendering Settings", dock_right);
@@ -4380,6 +4380,40 @@ void Renderer::UnbindViewportFBO() {
 // ─────────────────────────────────────────────────────────────────────────────
 // BeginSecondaryPass / EndSecondaryPass — bracket the PiP draw pass
 // ─────────────────────────────────────────────────────────────────────────────
+// Swap to the secondary-view source camera for a recording frame, forcing RT
+// accumulation. The scene must be re-drawn after this to fill rayTracedObjects.
+void Renderer::BeginRecordCamera() {
+  recSavedRayTracerView = rayTracerView;
+  rayTracerView = true;
+  recCamActive = false;
+  if (secondaryCameraSource >= 0 && secondaryCameraSource < (int)sceneCameras.size()) {
+    recCamActive = true;
+    recSavedCamTranslate[0] = cameraTranslate[0];
+    recSavedCamTranslate[1] = cameraTranslate[1];
+    recSavedCamTranslate[2] = cameraTranslate[2];
+    std::memcpy(recSavedCamMatrix, camMatrix, sizeof(camMatrix));
+    recSavedZoom = zoom;
+    const SceneCamera& c = sceneCameras[secondaryCameraSource];
+    cameraTranslate[0] = -c.position.x;
+    cameraTranslate[1] = -c.position.y;
+    cameraTranslate[2] = -c.position.z;
+    CameraViewMatrix(c.rotationDeg, camMatrix);
+    zoom = c.fov;
+  }
+}
+
+void Renderer::EndRecordCamera() {
+  rayTracerView = recSavedRayTracerView;
+  if (recCamActive) {
+    cameraTranslate[0] = recSavedCamTranslate[0];
+    cameraTranslate[1] = recSavedCamTranslate[1];
+    cameraTranslate[2] = recSavedCamTranslate[2];
+    std::memcpy(camMatrix, recSavedCamMatrix, sizeof(camMatrix));
+    zoom = recSavedZoom;
+    recCamActive = false;
+  }
+}
+
 void Renderer::BeginSecondaryPass() {
   // PiP is 1/4 of window size (half each dimension)
   int pw = fbWidth / 2;
@@ -4464,7 +4498,7 @@ void Renderer::DrawPipWindow() {
   if (pipColorTex == 0) return;
 
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
-  ImGui::Begin("Secondary View", nullptr, flags);
+  ImGui::Begin("Cinematic View", nullptr, flags);
 
   // ── View source: Freecam or a spawned camera ──
   if (secondaryCameraSource >= (int)sceneCameras.size()) secondaryCameraSource = -1;
@@ -4480,16 +4514,26 @@ void Renderer::DrawPipWindow() {
     ImGui::EndCombo();
   }
 
+  // Reserve a bottom status line, then centre the image in the remaining area
+  // (both axes) so it matches the centred Viewport when docked side by side.
+  float statusH = ImGui::GetTextLineHeightWithSpacing()
+                + (raytracerEnabled ? 0.0f : ImGui::GetTextLineHeightWithSpacing());
   ImVec2 avail = ImGui::GetContentRegionAvail();
+  float boxH = std::max(1.0f, avail.y - statusH);
   float imgW = avail.x;
   float imgH = avail.x * ((float)pipHeight / (float)pipWidth);
-  if (imgH > avail.y) { imgH = avail.y; imgW = imgH * ((float)pipWidth / (float)pipHeight); }
+  if (imgH > boxH) { imgH = boxH; imgW = imgH * ((float)pipWidth / (float)pipHeight); }
+
+  ImVec2 cur = ImGui::GetCursorPos();
+  ImGui::SetCursorPos(ImVec2(cur.x + (avail.x - imgW) * 0.5f,
+                             cur.y + (boxH  - imgH) * 0.5f));
 
   // Flip Y: OpenGL textures are bottom-up; ImGui expects top-down
   ImGui::Image((ImTextureID)(uintptr_t)pipColorTex,
                ImVec2(imgW, imgH),
                ImVec2(0, 1), ImVec2(1, 0));
 
+  ImGui::SetCursorPosY(cur.y + boxH);
   ImGui::TextDisabled("%s  %dx%d", raytracerIsMain ? "Rasterizer" : "Raytracer", pipWidth, pipHeight);
   if (!raytracerEnabled) {
     ImGui::TextDisabled("(Raytracer disabled)");
@@ -5495,7 +5539,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   // Bind the RECORDING texture as the compute output (not the display texture)
   glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
-  // Bind SSBO — rtDopplerObjects is still populated here (called before EndFrame)
+  // Upload the SSBO from the current object lists so recording honours an
+  // overridden camera (objects are camera-relative — re-accumulated per frame).
   if (dopplerMode) {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtDopplerSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
@@ -5504,6 +5549,11 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
                  GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtDopplerSSBO);
   } else {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 rayTracedObjects.size() * sizeof(RayTracerObject),
+                 rayTracedObjects.data(),
+                 GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
   }
 

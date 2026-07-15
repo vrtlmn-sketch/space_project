@@ -481,6 +481,15 @@ public:
   double savedCamTranslate[3]{};
   float  savedCamMatrix[9]{};
   float  savedZoom{45.0f};
+  // Record-camera override: swaps to the secondary-view source for the record
+  // frame (and forces RT accumulation); restored afterwards.
+  bool   recCamActive{false};
+  bool   recSavedRayTracerView{false};
+  double recSavedCamTranslate[3]{};
+  float  recSavedCamMatrix[9]{};
+  float  recSavedZoom{45.0f};
+  void BeginRecordCamera();
+  void EndRecordCamera();
   // Build a view-rotation matrix (row-major 3x3) + FOV from a camera's euler.
   void CameraViewMatrix(const vec3& rotationDeg, float out[9]) const;
   // Draw wireframe frustums for all spawned cameras (rasterized view only)

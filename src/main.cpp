@@ -612,9 +612,32 @@ int main(int argc, char** argv) {
         renderer.DispatchRaytracer(rtw, rth);
         renderer.BlitRaytracerToScreen();
       }
+    }
 
-      if (renderer.IsRecording())
-        renderer.DispatchAndCaptureRecordingFrame();
+    // ── Recording: capture the SECONDARY-view camera (freecam or a spawned
+    // camera) as an RT frame, independent of the primary view. Re-accumulate
+    // the RT objects from that camera each tick (they are camera-relative).
+    if (renderer.IsRecording() && renderer.raytracerEnabled) {
+      renderer.BeginRecordCamera();  // sets rayTracerView + record camera transform
+      renderer.rayTracedObjects.clear();
+      renderer.rtDopplerObjects.clear();
+      for (int i = 0; i < (int)physicsObjects.size(); i++) {
+        float objType = 0.0f;
+        if (physicsObjects[i].shaderType == ObjectShaderType::Star)          objType = 1.0f;
+        else if (physicsObjects[i].shaderType == ObjectShaderType::BlackHole) objType = 3.0f;
+        renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
+                                   physicsObjects[i].data.mass,
+                                   physicsObjects[i].temperature, objType,
+                                   physicsObjects[i].data.velocity,
+                                   physicsObjects[i].data.color);
+      }
+      for (auto& c : clouds) {
+        c->renderedObject.uploadTemperature(c->temperature);
+        c->renderedObject.uploadRenderMode(c->renderMode);
+        renderer.Draw(c->renderedObject);
+      }
+      renderer.DispatchAndCaptureRecordingFrame();
+      renderer.EndRecordCamera();
     }
 
     // Unbind the editor viewport FBO before the secondary pass and UI
