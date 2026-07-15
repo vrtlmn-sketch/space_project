@@ -11,6 +11,7 @@ struct alignas(16) RayTracerObject{
   vec4  color;       // xyz = RGB planet color, w = RT texture array layer (-1 = none)
   vec4  atmo;        // x = atmosphere shell radius (0 = none), y = falloff, z = intensity
   vec4  atmoScatter; // xyz = per-channel scattering ratio
+  vec4  rotation;    // xyz = orientation Euler angles in RADIANS, w unused
 };
 
 // Extended struct for Doppler-mode shaders — adds velocity (96 bytes, std430-compatible)
@@ -24,4 +25,5 @@ struct alignas(16) RayTracerObjectDoppler {
   vec4  velocity;      // xyz = world-space velocity, w = 0
   vec4  atmo;          // x = atmosphere shell radius (0 = none), y = falloff, z = intensity
   vec4  atmoScatter;   // xyz = per-channel scattering ratio
+  vec4  rotation;      // xyz = orientation Euler angles in RADIANS, w unused
 };

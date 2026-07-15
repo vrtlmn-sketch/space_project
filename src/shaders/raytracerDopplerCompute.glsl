@@ -32,6 +32,20 @@ vec3 sampleSkybox(vec3 dir)
 // color.w of each object holds the layer index (-1 = untextured, use flat color).
 layout(binding = 3) uniform sampler2DArray uPlanetTextures;
 
+// Inverse object rotation (texture UVs rotate with the surface).
+// R = Rz*Ry*Rx (matches the CPU); the inverse is transpose(R).
+vec3 invRotateN(vec4 rot, vec3 n) {
+    float cx=cos(rot.x), sx=sin(rot.x);
+    float cy=cos(rot.y), sy=sin(rot.y);
+    float cz=cos(rot.z), sz=sin(rot.z);
+    float r00=cz*cy, r01=cz*sy*sx - sz*cx, r02=cz*sy*cx + sz*sx;
+    float r10=sz*cy, r11=sz*sy*sx + cz*cx, r12=sz*sy*cx - cz*sx;
+    float r20=-sy,   r21=cy*sx,            r22=cy*cx;
+    return vec3(r00*n.x + r10*n.y + r20*n.z,
+                r01*n.x + r11*n.y + r21*n.z,
+                r02*n.x + r12*n.y + r22*n.z);
+}
+
 vec3 planetBaseColor(vec4 colorLayer, vec3 n)
 {
     if (colorLayer.w < -0.5) return colorLayer.xyz;
@@ -57,6 +71,7 @@ struct spaceObject
     vec4  velocity;     // xyz = world-space velocity, w unused
     vec4  atmo;        // x = atmosphere radius (0 = none), y = falloff, z = intensity
     vec4  atmoScatter; // xyz = per-channel scattering ratio
+    vec4  rotation;    // xyz = Euler radians
 };
 
 layout(std430, binding = 1) buffer Objects {
@@ -456,7 +471,7 @@ void main()
             vec3  cen    = objects[hitIdx].position.xyz;
             vec3  hitPos = ro + rd * tMin;
             vec3  normal = normalize(hitPos - cen);
-            vec3  lit    = shadePlanet(ro, hitPos, normal, planetBaseColor(objects[hitIdx].color, normal));
+            vec3  lit    = shadePlanet(ro, hitPos, normal, planetBaseColor(objects[hitIdx].color, invRotateN(objects[hitIdx].rotation, normal)));
             vec3  refl   = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, rd, hitPos, normal);

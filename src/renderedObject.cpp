@@ -206,7 +206,9 @@ void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::v
     mass, radius, temperature, objectType,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, 0},
-    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0}});
+    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
+    vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
+         rotationDeg.z*0.01745329252f, 0}});
 }
 void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
@@ -220,7 +222,9 @@ void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{velocity.x, velocity.y, velocity.z, 0},
     vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, 0},
-    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0}});
+    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
+    vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
+         rotationDeg.z*0.01745329252f, 0}});
 }
 
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
