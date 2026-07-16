@@ -513,6 +513,10 @@ public:
   void RemoveSceneCameraKeyframe(int camIdx, unsigned int frame);
   // Interpolate keyframed cameras' transforms to the given frame (playback)
   void UpdateSceneCameraKeyframes(unsigned int frame);
+  // Timeline keyframe drag state (retime a keyframe by dragging it on its lane)
+  int  kfDragLane{-2};    // -2 = none, -1 = freecam, >=0 = spawned camera index
+  int  kfDragIndex{-1};   // index into that lane's keyframe vector
+  bool kfDragMoved{false};// distinguishes a drag (retime) from a click (jump)
 
   // ---- Recording keyframes (auto-start/stop) ----
   int recStartFrame{-1};  // -1 = not set

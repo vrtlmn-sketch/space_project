@@ -3104,7 +3104,8 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   // so new timeline-driven objects can be added later with zero visual drift.
   // onJump restores that lane's owner to the clicked keyframe; returns the
   // keyframe index to delete (right-click), or -1.
-  auto drawKeyframeLane = [&](const char* name, std::vector<CameraKeyframe>& kfs,
+  auto drawKeyframeLane = [&](const char* name, int laneId,
+                              std::vector<CameraKeyframe>& kfs,
                               bool selected,
                               const std::function<void(const CameraKeyframe&)>& onJump) -> int {
     ImGui::TextColored(selected ? ImVec4(1.0f, 0.86f, 0.5f, 1.0f)
@@ -3116,23 +3117,56 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
                       IM_COL32(30, 30, 40, 170));
     dl->AddRect(laneP, ImVec2(laneP.x + sliderW, laneP.y + laneH),
                 selected ? IM_COL32(150, 130, 70, 200) : IM_COL32(60, 60, 72, 200));
+    float yMid = laneP.y + laneH * 0.5f;
     int delK = -1;
     for (int ki = 0; ki < (int)kfs.size(); ++ki) {
-      const CameraKeyframe& ck = kfs[ki];
+      CameraKeyframe& ck = kfs[ki];
+      bool dragging = (kfDragLane == laneId && kfDragIndex == ki);
+
+      // While dragging, retime this keyframe from the mouse X position.
+      if (dragging) {
+        float mt = (ImGui::GetMousePos().x - laneP.x) / sliderW;
+        mt = mt < 0.0f ? 0.0f : (mt > 1.0f ? 1.0f : mt);
+        unsigned int nf = (unsigned int)(mt * (float)(maxBuf - 1) + 0.5f);
+        if (nf != ck.frame) { ck.frame = nf; kfDragMoved = true; }
+      }
+
       float t = (float)ck.frame / (float)(maxBuf - 1);
-      float x = laneP.x + t * sliderW, yMid = laneP.y + laneH * 0.5f;
-      ImU32 col = selected ? IM_COL32(255, 205, 90, 240) : IM_COL32(150, 170, 210, 220);
+      float x = laneP.x + t * sliderW;
+      ImU32 col = dragging ? IM_COL32(255, 235, 150, 255)
+                : selected ? IM_COL32(255, 205, 90, 240)
+                           : IM_COL32(150, 170, 210, 220);
       dl->AddQuadFilled({x, yMid-6}, {x+6, yMid}, {x, yMid+6}, {x-6, yMid}, col);
-      if (std::abs(ImGui::GetMousePos().x - x) < 8 &&
-          std::abs(ImGui::GetMousePos().y - yMid) < 8) {
+
+      bool hovered = std::abs(ImGui::GetMousePos().x - x) < 8 &&
+                     std::abs(ImGui::GetMousePos().y - yMid) < 8;
+
+      if (dragging) {
         ImGui::BeginTooltip();
         ImGui::Text("%s @ frame %u", name, ck.frame);
         ImGui::EndTooltip();
-        if (ImGui::IsMouseClicked(0)) {
-          paused = true;
-          for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(ck.frame);
-          for (auto& c : clouds) c->setTimeframeAndRestore(ck.frame);
-          onJump(ck);
+        if (!ImGui::IsMouseDown(0)) {
+          if (!kfDragMoved) {
+            // Never moved: treat the press as a click → jump to this keyframe.
+            paused = true;
+            for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(ck.frame);
+            for (auto& c : clouds) if (c) c->setTimeframeAndRestore(ck.frame);
+            onJump(ck);
+          } else {
+            // Retimed: keep the lane sorted so interpolation stays well-ordered.
+            std::sort(kfs.begin(), kfs.end(),
+                      [](const CameraKeyframe& a, const CameraKeyframe& b) {
+                        return a.frame < b.frame;
+                      });
+          }
+          kfDragLane = -2; kfDragIndex = -1; kfDragMoved = false;
+        }
+      } else if (hovered) {
+        ImGui::BeginTooltip();
+        ImGui::Text("%s @ frame %u", name, ck.frame);
+        ImGui::EndTooltip();
+        if (ImGui::IsMouseClicked(0) && kfDragLane == -2) {
+          kfDragLane = laneId; kfDragIndex = ki; kfDragMoved = false;
         }
         if (ImGui::IsMouseClicked(1)) delK = ki;
       }
@@ -3142,7 +3176,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
 
   // Freecam lane (highlighted when no camera object is selected — that's who C targets)
   {
-    int d = drawKeyframeLane("Freecam", cameraKeyframes, SelectedCameraIndex() < 0,
+    int d = drawKeyframeLane("Freecam", -1, cameraKeyframes, SelectedCameraIndex() < 0,
       [&](const CameraKeyframe& ck) {
         cameraTranslate[0] = ck.pos[0]; cameraTranslate[1] = ck.pos[1]; cameraTranslate[2] = ck.pos[2];
         rotation = ck.rotation; pitch = ck.pitch; roll = ck.roll; zoom = ck.zoom;
@@ -3155,7 +3189,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   // Spawned-camera lanes
   for (int cami = 0; cami < (int)sceneCameras.size(); ++cami) {
     SceneCamera& cam = sceneCameras[cami];
-    int d = drawKeyframeLane(cam.name.c_str(), cam.keyframes, SelectedCameraIndex() == cami,
+    int d = drawKeyframeLane(cam.name.c_str(), cami, cam.keyframes, SelectedCameraIndex() == cami,
       [&, cami](const CameraKeyframe& ck) {
         SceneCamera& c = sceneCameras[cami];
         c.position    = dvec3(ck.pos[0], ck.pos[1], ck.pos[2]);
