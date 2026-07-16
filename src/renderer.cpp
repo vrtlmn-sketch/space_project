@@ -3023,11 +3023,37 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   for (auto& c : clouds)
     if (c && c->getBufferSize() > maxBuf) maxBuf = c->getBufferSize();
 
-  if (maxBuf == 0) {
-    ImGui::TextDisabled("No recorded frames yet.");
-    ImGui::End();
-    return;
+  // ── Editable timeline domain (independent of simulated footage) ──
+  // The ruler always exists so cameras can be keyframed before playing.
+  // Its length never drops below the simulated buffer or any existing marker,
+  // so scroll-zoom can't hide real data.
+  unsigned int minDomain = 60;
+  if (maxBuf > minDomain) minDomain = maxBuf;
+  auto bumpKf = [&](unsigned int f) { if (f + 1 > minDomain) minDomain = f + 1; };
+  for (auto& kf : cameraKeyframes) bumpKf(kf.frame);
+  for (auto& cam : sceneCameras) for (auto& kf : cam.keyframes) bumpKf(kf.frame);
+  for (auto& kp : keypoints) bumpKf(kp.frame);
+  if (recStartFrame >= 0) bumpKf((unsigned int)recStartFrame);
+  if (recStopFrame  >= 0) bumpKf((unsigned int)recStopFrame);
+
+  // Mouse-wheel over the timeline stretches (zoom in) / squishes (zoom out).
+  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+      ImGui::GetIO().MouseWheel != 0.0f) {
+    float w = ImGui::GetIO().MouseWheel;
+    double factor = (w > 0.0f) ? 0.85 : 1.18;
+    long nf = std::lround((double)timelineFrames * factor);
+    if (nf < 2) nf = 2;
+    if (nf > 2000000) nf = 2000000;
+    timelineFrames = (unsigned int)nf;
   }
+  if (timelineFrames < minDomain) timelineFrames = minDomain;
+  unsigned int domain = timelineFrames;
+  float denom = (float)(domain > 1 ? domain - 1 : 1);
+
+  // While playing the playhead follows the simulation; while paused it is
+  // owned here and edited by the slider / lane clicks.
+  if (!paused) timelinePlayhead = curFrame;
+  if (timelinePlayhead > domain - 1) timelinePlayhead = domain - 1;
 
   // Keypoint markers
   ImVec2 sliderPos = ImGui::GetCursorScreenPos();
@@ -3035,7 +3061,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   ImDrawList* dl = ImGui::GetWindowDrawList();
 
   for (auto& kp : keypoints) {
-    float t = (float)kp.frame / (float)(maxBuf - 1);
+    float t = (float)kp.frame / denom;
     float xPos = sliderPos.x + t * sliderW;
     dl->AddTriangleFilled(
       ImVec2(xPos - 4, sliderPos.y - 2),
@@ -3056,16 +3082,37 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   }
 
   // Slider
-  int frameInt = (int)curFrame;
+  int frameInt = (int)timelinePlayhead;
   ImGui::SetNextItemWidth(sliderW);
-  if (ImGui::SliderInt("##tl", &frameInt, 0, (int)(maxBuf - 1))) {
+  if (ImGui::SliderInt("##tl", &frameInt, 0, (int)(domain - 1))) {
     paused = true;
+    timelinePlayhead = (unsigned int)frameInt;
     for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)frameInt);
     for (auto& c : clouds) if (c) c->setTimeframeAndRestore((unsigned int)frameInt);
   }
+
+  // Simulated-footage indicator: shaded strip under the slider showing how
+  // much real recorded footage exists (0 .. maxBuf-1) against the full ruler.
+  {
+    ImVec2 sMin = ImGui::GetItemRectMin();
+    ImVec2 sMax = ImGui::GetItemRectMax();
+    float stripY = sMax.y + 1.0f;
+    dl->AddRectFilled(ImVec2(sMin.x, stripY), ImVec2(sMax.x, stripY + 3.0f),
+                      IM_COL32(48, 52, 62, 200));
+    if (maxBuf > 0) {
+      float tEnd = (float)(maxBuf - 1) / denom;
+      dl->AddRectFilled(ImVec2(sMin.x, stripY),
+                        ImVec2(sMin.x + tEnd * (sMax.x - sMin.x), stripY + 3.0f),
+                        IM_COL32(90, 170, 120, 230));
+    }
+  }
+
   ImGui::SameLine();
-  ImGui::Text("%d/%u  (t = %s)", frameInt, maxBuf - 1,
-              units::FormatTimeYears((double)frameInt * units::kDtYears * (double)simSpeed).c_str());
+  if (maxBuf > 0)
+    ImGui::Text("%d/%u  · sim %u  (t = %s)", frameInt, domain - 1, maxBuf - 1,
+                units::FormatTimeYears((double)frameInt * units::kDtYears * (double)simSpeed).c_str());
+  else
+    ImGui::Text("%d/%u  · no sim yet", frameInt, domain - 1);
 
   // Right-click → add keypoint
   if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
@@ -3127,11 +3174,11 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
       if (dragging) {
         float mt = (ImGui::GetMousePos().x - laneP.x) / sliderW;
         mt = mt < 0.0f ? 0.0f : (mt > 1.0f ? 1.0f : mt);
-        unsigned int nf = (unsigned int)(mt * (float)(maxBuf - 1) + 0.5f);
+        unsigned int nf = (unsigned int)(mt * denom + 0.5f);
         if (nf != ck.frame) { ck.frame = nf; kfDragMoved = true; }
       }
 
-      float t = (float)ck.frame / (float)(maxBuf - 1);
+      float t = (float)ck.frame / denom;
       float x = laneP.x + t * sliderW;
       ImU32 col = dragging ? IM_COL32(255, 235, 150, 255)
                 : selected ? IM_COL32(255, 205, 90, 240)
@@ -3231,8 +3278,8 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
 
     // Shaded region between start and stop
     if (recStartFrame >= 0 && recStopFrame >= 0 && recStartFrame < recStopFrame) {
-      float tS = (float)recStartFrame / (float)(maxBuf - 1);
-      float tE = (float)recStopFrame  / (float)(maxBuf - 1);
+      float tS = (float)recStartFrame / denom;
+      float tE = (float)recStopFrame  / denom;
       dl->AddRectFilled(
         ImVec2(recPos.x + tS * sliderW, recPos.y),
         ImVec2(recPos.x + tE * sliderW, recPos.y + recBarH),
@@ -3243,7 +3290,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
 
     // Start marker (green triangle)
     if (recStartFrame >= 0) {
-      float t = (float)recStartFrame / (float)(maxBuf - 1);
+      float t = (float)recStartFrame / denom;
       float xPos = recPos.x + t * sliderW;
       dl->AddTriangleFilled(
         ImVec2(xPos - 5, yMid - 5),
@@ -3266,7 +3313,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
 
     // Stop marker (red triangle)
     if (recStopFrame >= 0) {
-      float t = (float)recStopFrame / (float)(maxBuf - 1);
+      float t = (float)recStopFrame / denom;
       float xPos = recPos.x + t * sliderW;
       dl->AddTriangleFilled(
         ImVec2(xPos - 5, yMid - 5),

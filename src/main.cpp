@@ -703,8 +703,9 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    // Current timeline frame (0 when there are no simulated objects yet)
-    unsigned int curFrame = physicsObjects.empty() ? 0u : physicsObjects[0].getTimeframe();
+    // Timeline playhead — owned by the renderer so keyframes can be placed
+    // before any simulation has run. It follows the sim while playing.
+    unsigned int curFrame = renderer.timelinePlayhead;
 
     // ── Handle camera keyframe capture request ─────────────────────────────
     // If a spawned camera is selected, capture for THAT camera; else freecam.
@@ -730,15 +731,11 @@ int main(int argc, char** argv) {
     // ── Handle recording keyframe requests ─────────────────────────────────
     if (renderer.recStartRequested) {
       renderer.recStartRequested = false;
-      if (!physicsObjects.empty()) {
-        renderer.recStartFrame = (int)physicsObjects[0].getTimeframe();
-      }
+      renderer.recStartFrame = (int)renderer.timelinePlayhead;
     }
     if (renderer.recStopRequested) {
       renderer.recStopRequested = false;
-      if (!physicsObjects.empty()) {
-        renderer.recStopFrame = (int)physicsObjects[0].getTimeframe();
-      }
+      renderer.recStopFrame = (int)renderer.timelinePlayhead;
     }
 
     // ── Handle marker-based recording (R with both markers set) ──────────

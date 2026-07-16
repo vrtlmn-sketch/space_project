@@ -518,6 +518,13 @@ public:
   int  kfDragIndex{-1};   // index into that lane's keyframe vector
   bool kfDragMoved{false};// distinguishes a drag (retime) from a click (jump)
 
+  // Editable timeline domain, independent of how much has been simulated.
+  // timelineFrames is the ruler length (also the zoom target for scroll);
+  // timelinePlayhead is the owned playhead used for scrubbing and keyframe
+  // capture, so cameras can be keyframed before any simulation has run.
+  unsigned int timelineFrames{300};
+  unsigned int timelinePlayhead{0};
+
   // ---- Recording keyframes (auto-start/stop) ----
   int recStartFrame{-1};  // -1 = not set
   int recStopFrame{-1};   // -1 = not set
