@@ -301,33 +301,21 @@ bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
   float inv = 1.0f / maxR;
 
   // Generate smooth normals if the file omitted them.
+  // When the OBJ carries no normals we generate FLAT (per-face) normals so
+  // hard-surface models (cubes, mechanical parts) render with crisp facets
+  // instead of a rounded, smooth-averaged blob. Files WITH normals are trusted.
   bool haveNormals = !normals.empty();
-  std::vector<std::array<float,3>> genN;
-  if (!haveNormals) {
-    genN.assign(positions.size(), {0,0,0});
-    for (auto& t : tris) {
-      auto& A = positions[t[0].v]; auto& B = positions[t[1].v]; auto& C = positions[t[2].v];
-      float ux=B[0]-A[0], uy=B[1]-A[1], uz=B[2]-A[2];
-      float vx=C[0]-A[0], vy=C[1]-A[1], vz=C[2]-A[2];
-      float nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-      for (int k=0;k<3;++k){ genN[t[k].v][0]+=nx; genN[t[k].v][1]+=ny; genN[t[k].v][2]+=nz; }
-    }
-    for (auto& n : genN) {
-      float len=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]); if(len>1e-8f){n[0]/=len;n[1]/=len;n[2]/=len;}
-    }
-  }
 
-  // Emit the unit-radius buffer (pos centered+normalized, normal, uv=0).
+  // Emit the unit-radius buffer (pos centered+normalized, normal, uv).
   freeUnitBuffer.clear();
   freeUnitBuffer.reserve(tris.size() * 3 * 8);
-  auto emit = [&](const Corner& c) {
+  auto emit = [&](const Corner& c, const std::array<float,3>& faceNrm) {
     auto& p = positions[c.v];
     freeUnitBuffer.push_back((p[0]-ctr[0])*inv);
     freeUnitBuffer.push_back((p[1]-ctr[1])*inv);
     freeUnitBuffer.push_back((p[2]-ctr[2])*inv);
-    std::array<float,3> nrm{0,1,0};
+    std::array<float,3> nrm = faceNrm;
     if (haveNormals && c.n >= 0 && c.n < (int)normals.size()) nrm = normals[c.n];
-    else if (!haveNormals && c.v < (int)genN.size())          nrm = genN[c.v];
     freeUnitBuffer.push_back(nrm[0]);
     freeUnitBuffer.push_back(nrm[1]);
     freeUnitBuffer.push_back(nrm[2]);
@@ -347,7 +335,18 @@ bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
     if (t[0].v < 0 || t[0].v >= nPos ||
         t[1].v < 0 || t[1].v >= nPos ||
         t[2].v < 0 || t[2].v >= nPos) continue;   // skip malformed triangle whole
-    emit(t[0]); emit(t[1]); emit(t[2]);
+    // Flat face normal, oriented outward from the mesh center.
+    const auto& A = positions[t[0].v]; const auto& B = positions[t[1].v]; const auto& C = positions[t[2].v];
+    float ux=B[0]-A[0], uy=B[1]-A[1], uz=B[2]-A[2];
+    float vx=C[0]-A[0], vy=C[1]-A[1], vz=C[2]-A[2];
+    std::array<float,3> fn = { uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx };
+    float fcx=(A[0]+B[0]+C[0])/3.0f-ctr[0];
+    float fcy=(A[1]+B[1]+C[1])/3.0f-ctr[1];
+    float fcz=(A[2]+B[2]+C[2])/3.0f-ctr[2];
+    if (fn[0]*fcx + fn[1]*fcy + fn[2]*fcz < 0.0f) { fn[0]=-fn[0]; fn[1]=-fn[1]; fn[2]=-fn[2]; }
+    float fl=std::sqrt(fn[0]*fn[0]+fn[1]*fn[1]+fn[2]*fn[2]);
+    if (fl>1e-8f) { fn[0]/=fl; fn[1]/=fl; fn[2]/=fl; }
+    emit(t[0], fn); emit(t[1], fn); emit(t[2], fn);
     emitted += 3;
   }
   if (emitted == 0) {

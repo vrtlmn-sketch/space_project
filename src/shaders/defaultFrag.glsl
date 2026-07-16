@@ -57,10 +57,14 @@ vec3 blackbody(float tempK) {
 }
 
 void main() {
+  vec3 viewDir = normalize(-uCamera - vPos);
   vec3 norm    = normalize(vNormal);
+  // Two-sided shading (matches the raytracer): faces whose normal points away
+  // from the viewer — e.g. meshes with inward/inconsistent winding — get flipped
+  // so they're lit rather than black. Sphere front faces already face the viewer.
+  if (dot(norm, viewDir) < 0.0) norm = -norm;
   if (uHasNormalMap != 0)
     norm = perturbNormal(norm, vPos, vTexCoord);
-  vec3 viewDir = normalize(-uCamera - vPos);
 
   vec3 baseColor = (uHasTexture != 0)
     ? texture(uTexture, vTexCoord).rgb
