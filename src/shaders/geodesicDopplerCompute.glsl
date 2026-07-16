@@ -143,8 +143,8 @@ bool rayAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, float tmax) {
 // returned t is already in world units. Outputs the world-space shading normal.
 // Perturb an OBJECT-space sphere normal with the planet's normal map (equirect).
 vec3 applyPlanetNormalMap(vec3 nObj, vec4 mat) {
+    if (mat.x < -0.5) return nObj;
     int layer = int(mat.x + 0.5);
-    if (layer < 0) return nObj;
     const float PI_NM = 3.14159265358979;
     float u = fract(atan(nObj.z, nObj.x) / (2.0 * PI_NM));
     float v = acos(clamp(nObj.y, -1.0, 1.0)) / PI_NM;
@@ -158,8 +158,8 @@ vec3 applyPlanetNormalMap(vec3 nObj, vec4 mat) {
 
 // Perturb a world normal with a mesh normal map given a world tangent.
 vec3 applyMeshNormalMap(vec3 N, vec3 Tw, vec2 uv, vec4 mat) {
+    if (mat.x < -0.5) return N;
     int layer = int(mat.x + 0.5);
-    if (layer < 0) return N;
     vec3 nm = texture(uNormalTextures, vec3(uv, float(layer))).xyz * 2.0 - 1.0;
     nm.xy *= mat.y * 4.0;
     vec3 T = Tw - N * dot(N, Tw);   // Gram-Schmidt orthonormalise
@@ -919,7 +919,7 @@ void main()
         }
         else if (otype == 5)
         {
-            int dLayer = int(objects[hitIdx].color.w + 0.5);
+            int dLayer = (objects[hitIdx].color.w < -0.5) ? -1 : int(objects[hitIdx].color.w + 0.5);
             vec3 base  = (dLayer >= 0)
                          ? texture(uPlanetTextures, vec3(hitUV, float(dLayer))).rgb
                          : objects[hitIdx].color.xyz;
