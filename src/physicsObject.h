@@ -30,6 +30,11 @@ public:
 
   float temperature{0.0f}; // Kelvin — 0 for planets; e.g. 5778 for Sun
   vec3  rotationDeg{0.0f, 0.0f, 0.0f}; // object orientation (Euler X/Y/Z degrees)
+
+  // When false, the body is not gravity-simulated; its transform is driven by
+  // timeline keyframes instead (position + rotationDeg animated on playback).
+  bool  simulatePhysics{true};
+  std::vector<CameraKeyframe> keyframes;
   float schwarzschildRadius{0.05f}; // event horizon radius (editable, default = 2*G*250)
   std::string texturePath{}; // path to optional planet surface texture (empty = none)
 

@@ -499,6 +499,10 @@ public:
   int  SelectedCameraIndex() const {
     return (selectedIdx <= -1000) ? -(selectedIdx) - 1000 : -1;
   }
+  int  SelectedObjectIndex() const { return selectedIdx >= 0 ? selectedIdx : -1; }
+  int  SelectedCloudIndex() const {
+    return (selectedIdx <= -2 && selectedIdx > -1000) ? -(selectedIdx + 2) : -1;
+  }
 
   // ---- Camera keyframes ----
   std::vector<CameraKeyframe> cameraKeyframes{};
@@ -513,6 +517,18 @@ public:
   void RemoveSceneCameraKeyframe(int camIdx, unsigned int frame);
   // Interpolate keyframed cameras' transforms to the given frame (playback)
   void UpdateSceneCameraKeyframes(unsigned int frame);
+
+  // Generic transform-keyframe helpers, shared by cameras and non-simulated
+  // objects/clouds. A CameraKeyframe doubles as a transform keyframe: pos +
+  // Euler (pitch=x, rotation=y, roll=z); zoom is unused for objects/clouds.
+  static void InterpolateKeyframeTransform(const std::vector<CameraKeyframe>& kfs,
+                                           unsigned int frame,
+                                           dvec3& pos, vec3& rotDeg);
+  static void InsertTransformKeyframe(std::vector<CameraKeyframe>& kfs,
+                                      unsigned int frame,
+                                      const dvec3& pos, const vec3& rotDeg);
+  static void RemoveNearestKeyframe(std::vector<CameraKeyframe>& kfs,
+                                    unsigned int frame);
   // Timeline keyframe drag state (retime a keyframe by dragging it on its lane)
   int  kfDragLane{-2};    // -2 = none, -1 = freecam, >=0 = spawned camera index
   int  kfDragIndex{-1};   // index into that lane's keyframe vector
@@ -524,6 +540,10 @@ public:
   // capture, so cameras can be keyframed before any simulation has run.
   unsigned int timelineFrames{300};
   unsigned int timelinePlayhead{0};
+  // True when the playhead moved this frame (scrub or play). Non-simulated
+  // objects/clouds and keyframed cameras interpolate only when it moved, so a
+  // still playhead leaves them free for manual posing.
+  bool playheadMoved{false};
 
   // ---- Recording keyframes (auto-start/stop) ----
   int recStartFrame{-1};  // -1 = not set

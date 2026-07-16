@@ -274,6 +274,26 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
 
 // ── Update ──────────────────────────────────────────────────────────────────
 void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects){
+  // Keyframe-driven clouds animate the whole-cloud transform from the timeline
+  // instead of simulating particle gravity.
+  if(!simulatePhysics)
+  {
+    if(!renderer.paused || renderer.playheadMoved) {
+      dvec3 p(position.x, position.y, position.z);
+      Renderer::InterpolateKeyframeTransform(keyframes, renderer.timelinePlayhead,
+                                             p, rotationDeg);
+      position = vec3{ (float)p.x, (float)p.y, (float)p.z };
+    }
+    renderedObject.coordinates = position;
+    renderedObject.rotationDeg = rotationDeg;
+    renderedObject.uploadTemperature(temperature);
+    renderedObject.uploadRenderMode(renderMode);
+    renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
+    renderedObject.uploadParticleSizeSpread(particleSizeSpread);
+    renderer.Draw(renderedObject);
+    return;
+  }
+
   renderedObject.coordinates = position;
   renderedObject.rotationDeg = rotationDeg;
   ensureFrameStore();

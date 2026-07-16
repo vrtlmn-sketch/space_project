@@ -3014,14 +3014,26 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     paused ? "PAUSED" : (playingForward ? "FWD" : "REV"),
     raytracerIsMain ? "RT main" : "Rast main");
 
-  // Compute current / max frame
+  // Compute current / max frame. curFrame tracks the simulated bodies (all
+  // advance in lockstep); anySimulated decides whether the playhead follows
+  // the simulation or self-advances (keyframe-only / empty scenes).
   unsigned int maxBuf = 0, curFrame = 0;
+  bool anySimulated = false;
   for (auto& obj : physicsObjects) {
     if (obj.getBufferSize() > maxBuf) maxBuf = obj.getBufferSize();
-    curFrame = obj.getTimeframe();
+    if (obj.simulatePhysics) {
+      anySimulated = true;
+      if (obj.getTimeframe() > curFrame) curFrame = obj.getTimeframe();
+    }
   }
-  for (auto& c : clouds)
-    if (c && c->getBufferSize() > maxBuf) maxBuf = c->getBufferSize();
+  for (auto& c : clouds) {
+    if (!c) continue;
+    if (c->getBufferSize() > maxBuf) maxBuf = c->getBufferSize();
+    if (c->simulatePhysics) {
+      anySimulated = true;
+      if (c->getTimeframe() > curFrame) curFrame = c->getTimeframe();
+    }
+  }
 
   // ── Editable timeline domain (independent of simulated footage) ──
   // The ruler always exists so cameras can be keyframed before playing.
@@ -3032,6 +3044,8 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   auto bumpKf = [&](unsigned int f) { if (f + 1 > minDomain) minDomain = f + 1; };
   for (auto& kf : cameraKeyframes) bumpKf(kf.frame);
   for (auto& cam : sceneCameras) for (auto& kf : cam.keyframes) bumpKf(kf.frame);
+  for (auto& o : physicsObjects) if (!o.simulatePhysics) for (auto& kf : o.keyframes) bumpKf(kf.frame);
+  for (auto& c : clouds) if (c && !c->simulatePhysics) for (auto& kf : c->keyframes) bumpKf(kf.frame);
   for (auto& kp : keypoints) bumpKf(kp.frame);
   if (recStartFrame >= 0) bumpKf((unsigned int)recStartFrame);
   if (recStopFrame  >= 0) bumpKf((unsigned int)recStopFrame);
@@ -3053,8 +3067,9 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   // While playing the playhead follows the simulation when physics exists;
   // with no physics it advances on its own so keyframed cameras still animate.
   // While paused it is owned here and edited by the slider / lane clicks.
+  unsigned int playheadAtEntry = timelinePlayhead;
   if (!paused) {
-    if (!physicsObjects.empty()) {
+    if (anySimulated) {
       timelinePlayhead = curFrame;
     } else if (playingForward) {
       unsigned int adv = timelinePlayhead + (unsigned int)framesThisTick;
@@ -3101,6 +3116,10 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)frameInt);
     for (auto& c : clouds) if (c) c->setTimeframeAndRestore((unsigned int)frameInt);
   }
+
+  // Did the playhead move this frame (play-advance or scrub)? Non-simulated
+  // bodies and keyframed cameras interpolate only when it did.
+  playheadMoved = (timelinePlayhead != playheadAtEntry);
 
   // Simulated-footage indicator: shaded strip under the slider showing how
   // much real recorded footage exists (0 .. maxBuf-1) against the full ruler.
@@ -3256,6 +3275,36 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
         selectedIdx = CameraSentinel(cami);
       });
     if (d >= 0) cam.keyframes.erase(cam.keyframes.begin() + d);
+  }
+
+  // Non-simulated physics-object lanes (lane id 1000+i to avoid camera ids)
+  for (int oi = 0; oi < (int)physicsObjects.size(); ++oi) {
+    PhysicsObject& o = physicsObjects[oi];
+    if (o.simulatePhysics) continue;
+    int d = drawKeyframeLane(o.name.c_str(), 1000 + oi, o.keyframes, selectedIdx == oi,
+      [&, oi](const CameraKeyframe& ck) {
+        PhysicsObject& po = physicsObjects[oi];
+        po.data.position = dvec3(ck.pos[0], ck.pos[1], ck.pos[2]);
+        po.rotationDeg   = { ck.pitch, ck.rotation, ck.roll };
+        po.renderedObject.coordinates = po.data.position;
+        selectedIdx = oi;
+      });
+    if (d >= 0) o.keyframes.erase(o.keyframes.begin() + d);
+  }
+
+  // Non-simulated cloud lanes (lane id 2000+i)
+  for (int ci = 0; ci < (int)clouds.size(); ++ci) {
+    if (!clouds[ci] || clouds[ci]->simulatePhysics) continue;
+    char clabel[32];
+    std::snprintf(clabel, sizeof(clabel), "Cloud %d", ci);
+    int d = drawKeyframeLane(clabel, 2000 + ci, clouds[ci]->keyframes, selectedIdx == -(2 + ci),
+      [&, ci](const CameraKeyframe& ck) {
+        CloudObject* c = clouds[ci].get();
+        c->position    = vec3{ (float)ck.pos[0], (float)ck.pos[1], (float)ck.pos[2] };
+        c->rotationDeg = { ck.pitch, ck.rotation, ck.roll };
+        selectedIdx = -(2 + ci);
+      });
+    if (d >= 0) clouds[ci]->keyframes.erase(clouds[ci]->keyframes.begin() + d);
   }
 
   // ── Recording keyframe lane ──
@@ -3681,6 +3730,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::Spacing();
     ImGui::SeparatorText("Transform");
 
+    // Simulate physics: when off, the object is driven by timeline keyframes
+    // (capture with C) instead of gravity. Toggling clears its recorded frames.
+    if (ImGui::Checkbox("Simulate physics##isim", &obj.simulatePhysics)) {
+      obj.clearRecording();
+    }
+    if (!obj.simulatePhysics)
+      ImGui::TextDisabled("Keyframed — press C to capture at the playhead");
+
     // Gizmo handles shown in the scene — Move (arrows) and Rotate (rings)
     // are independent; both on by default, either can be toggled off.
     ImGui::TextUnformatted("Gizmo");
@@ -3950,6 +4007,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         cloud->boundsEstimate(center, radius);
         LocateCamera(center, radius);
       }
+
+      // Simulate physics: when off, the cloud centre is driven by timeline
+      // keyframes (capture with C) instead of particle gravity.
+      if (ImGui::Checkbox("Simulate physics##csim", &cloud->simulatePhysics)) {
+        cloud->clearRecording();
+      }
+      if (!cloud->simulatePhysics)
+        ImGui::TextDisabled("Keyframed — press C to capture at the playhead");
 
       // Position (AU) — cloud centre. Numeric field always works even when the
       // centre is at galactic distance (gizmo would be unreachable there).
@@ -5862,6 +5927,62 @@ void Renderer::UpdateSceneCameraKeyframes(unsigned int frame) {
       cam.fov         = k->zoom;
     }
   }
+}
+
+// ── Generic transform-keyframe helpers (cameras + non-simulated bodies) ──────
+void Renderer::InterpolateKeyframeTransform(const std::vector<CameraKeyframe>& kfs,
+                                            unsigned int frame,
+                                            dvec3& pos, vec3& rotDeg) {
+  if (kfs.empty()) return;
+  const CameraKeyframe* before = nullptr;
+  const CameraKeyframe* after  = nullptr;
+  for (auto& kf : kfs) {
+    if (kf.frame <= frame) before = &kf;
+    if (kf.frame >= frame && !after) after = &kf;
+  }
+  if (!before && !after) return;
+  if (before && after && before->frame != after->frame) {
+    float t = (float)(frame - before->frame) / (float)(after->frame - before->frame);
+    pos = dvec3(before->pos[0] + t*(after->pos[0]-before->pos[0]),
+                before->pos[1] + t*(after->pos[1]-before->pos[1]),
+                before->pos[2] + t*(after->pos[2]-before->pos[2]));
+    rotDeg = { before->pitch    + t*(after->pitch    - before->pitch),
+               before->rotation + t*(after->rotation - before->rotation),
+               before->roll     + t*(after->roll     - before->roll) };
+  } else {
+    const CameraKeyframe* k = before ? before : after;
+    pos    = dvec3(k->pos[0], k->pos[1], k->pos[2]);
+    rotDeg = { k->pitch, k->rotation, k->roll };
+  }
+}
+
+void Renderer::InsertTransformKeyframe(std::vector<CameraKeyframe>& kfs,
+                                       unsigned int frame,
+                                       const dvec3& pos, const vec3& rotDeg) {
+  CameraKeyframe kf;
+  kf.frame    = frame;
+  kf.pos[0]   = pos.x; kf.pos[1] = pos.y; kf.pos[2] = pos.z;
+  kf.pitch    = rotDeg.x;   // Euler stored in degrees (pitch=x, rotation=y, roll=z)
+  kf.rotation = rotDeg.y;
+  kf.roll     = rotDeg.z;
+  kf.zoom     = 0.0f;       // unused for objects/clouds
+  for (auto& k : kfs)
+    if (k.frame == frame) { k = kf; return; }
+  auto it = kfs.begin();
+  while (it != kfs.end() && it->frame < frame) ++it;
+  kfs.insert(it, kf);
+}
+
+void Renderer::RemoveNearestKeyframe(std::vector<CameraKeyframe>& kfs,
+                                     unsigned int frame) {
+  if (kfs.empty()) return;
+  int best = 0;
+  unsigned int bestD = (frame > kfs[0].frame) ? frame - kfs[0].frame : kfs[0].frame - frame;
+  for (int i = 1; i < (int)kfs.size(); ++i) {
+    unsigned int d = (frame > kfs[i].frame) ? frame - kfs[i].frame : kfs[i].frame - frame;
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  kfs.erase(kfs.begin() + best);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

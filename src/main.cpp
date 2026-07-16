@@ -43,6 +43,8 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   cloud->particleSizeSpread = cd.particleSizeSpread;
   cloud->scale              = cd.scale;
   cloud->rotationDeg        = cd.rotation;
+  cloud->simulatePhysics    = cd.simulatePhysics;
+  cloud->keyframes          = cd.keyframes;
   if (cd.scale != 1.0f)
     cloud->applyVirialScale(cd.scale);
   return cloud;
@@ -70,6 +72,8 @@ static void buildScene(
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
     physicsObjects.back().data.color = pod.color;
     physicsObjects.back().rotationDeg = pod.rotation;
+    physicsObjects.back().simulatePhysics = pod.simulatePhysics;
+    physicsObjects.back().keyframes       = pod.keyframes;
     if (!pod.texturePath.empty()) {
       physicsObjects.back().texturePath = pod.texturePath;
       physicsObjects.back().renderedObject.loadTexture(pod.texturePath);
@@ -295,6 +299,8 @@ int main(int argc, char** argv) {
       cd.particleSizeSpread = c->particleSizeSpread;
       cd.scale = c->scale;
       cd.rotation = c->rotationDeg;
+      cd.simulatePhysics = c->simulatePhysics;
+      cd.keyframes = c->keyframes;
       cloudDatas.push_back(cd);
     }
     SceneSettings s;
@@ -559,9 +565,10 @@ int main(int argc, char** argv) {
     }
 
     // ── Camera keyframe interpolation ──────────────────────────────────────
-    // When playing, interpolate the freecam between its keyframes. Driven by
-    // the timeline playhead, so it animates even with no physics simulation.
-    if (!renderer.paused && !renderer.cameraKeyframes.empty()) {
+    // Interpolate the freecam between its keyframes whenever the playhead moved
+    // (play or scrub), driven by the timeline playhead — animates even with no
+    // physics simulation.
+    if ((!renderer.paused || renderer.playheadMoved) && !renderer.cameraKeyframes.empty()) {
       unsigned int curFrame = renderer.timelinePlayhead;
       auto& kfs = renderer.cameraKeyframes;
       // Find bracketing keyframes
@@ -708,25 +715,50 @@ int main(int argc, char** argv) {
     // before any simulation has run. It follows the sim while playing.
     unsigned int curFrame = renderer.timelinePlayhead;
 
+    // Selection routing for keyframe capture: a selected non-simulated object
+    // or cloud takes priority, then a spawned camera, then the freecam.
+    int selCamIdx   = renderer.SelectedCameraIndex();
+    int selObjIdx   = renderer.SelectedObjectIndex();
+    if (selObjIdx >= (int)physicsObjects.size()) selObjIdx = -1;
+    int selCloudIdx = renderer.SelectedCloudIndex();
+    bool objKf   = selObjIdx >= 0 && !physicsObjects[selObjIdx].simulatePhysics;
+    bool cloudKf = selCloudIdx >= 0 && selCloudIdx < (int)clouds.size() &&
+                   clouds[selCloudIdx] && !clouds[selCloudIdx]->simulatePhysics;
+
     // ── Handle camera keyframe capture request ─────────────────────────────
-    // If a spawned camera is selected, capture for THAT camera; else freecam.
     if (renderer.captureRequested) {
       renderer.captureRequested = false;
-      int camIdx = renderer.SelectedCameraIndex();
-      if (camIdx >= 0) renderer.InsertSceneCameraKeyframe(camIdx, curFrame);
-      else             renderer.InsertCameraKeyframe(curFrame);
+      if (objKf) {
+        auto& o = physicsObjects[selObjIdx];
+        Renderer::InsertTransformKeyframe(o.keyframes, curFrame, o.data.position, o.rotationDeg);
+      } else if (cloudKf) {
+        auto* c = clouds[selCloudIdx].get();
+        Renderer::InsertTransformKeyframe(c->keyframes, curFrame,
+                                          dvec3(c->position.x, c->position.y, c->position.z),
+                                          c->rotationDeg);
+      } else if (selCamIdx >= 0) {
+        renderer.InsertSceneCameraKeyframe(selCamIdx, curFrame);
+      } else {
+        renderer.InsertCameraKeyframe(curFrame);
+      }
     }
 
     // ── Handle camera keyframe clear request ────────────────────────────────
     if (renderer.clearCaptureRequested) {
       renderer.clearCaptureRequested = false;
-      int camIdx = renderer.SelectedCameraIndex();
-      if (camIdx >= 0) renderer.RemoveSceneCameraKeyframe(camIdx, curFrame);
-      else             renderer.RemoveCameraKeyframe(curFrame);
+      if (objKf) {
+        Renderer::RemoveNearestKeyframe(physicsObjects[selObjIdx].keyframes, curFrame);
+      } else if (cloudKf) {
+        Renderer::RemoveNearestKeyframe(clouds[selCloudIdx]->keyframes, curFrame);
+      } else if (selCamIdx >= 0) {
+        renderer.RemoveSceneCameraKeyframe(selCamIdx, curFrame);
+      } else {
+        renderer.RemoveCameraKeyframe(curFrame);
+      }
     }
 
-    // ── Animate keyframed cameras to the current frame while playing ────────
-    if (!renderer.paused)
+    // ── Animate keyframed cameras to the current frame (play or scrub) ──────
+    if (!renderer.paused || renderer.playheadMoved)
       renderer.UpdateSceneCameraKeyframes(curFrame);
 
     // ── Handle recording keyframe requests ─────────────────────────────────

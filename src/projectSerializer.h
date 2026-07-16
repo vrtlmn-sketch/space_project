@@ -24,6 +24,8 @@ struct PhysicsObjectData {
   float atmosphereFalloff{4.0f};
   float atmosphereIntensity{1.0f};
   vec3  atmosphereColor{0.175f, 0.41f, 1.0f};
+  bool  simulatePhysics{true};
+  std::vector<CameraKeyframe> keyframes;
 };
 
 struct GridData {
@@ -50,6 +52,8 @@ struct CloudData {
   float nebulaScatterScale{0.4f};
   float particleSizeSpread{0.0f};
   float scale{1.0f};
+  bool  simulatePhysics{true};
+  std::vector<CameraKeyframe> keyframes;
 };
 
 // All non-scene renderer/camera state that is worth persisting per project

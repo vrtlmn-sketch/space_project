@@ -20,6 +20,38 @@ static dvec3 jsonToDVec3(const json& j) {
   return dvec3{j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
 }
 
+// Transform keyframes (shared by cameras and non-simulated objects/clouds)
+static json keyframesToJson(const std::vector<CameraKeyframe>& kfs) {
+  json arr = json::array();
+  for (const auto& kf : kfs) {
+    arr.push_back({
+      {"frame",    kf.frame},
+      {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
+      {"rotation", kf.rotation}, {"pitch", kf.pitch}, {"roll", kf.roll}, {"zoom", kf.zoom}
+    });
+  }
+  return arr;
+}
+static std::vector<CameraKeyframe> jsonToKeyframes(const json& arr) {
+  std::vector<CameraKeyframe> out;
+  if (!arr.is_array()) return out;
+  for (const auto& kf : arr) {
+    CameraKeyframe cf;
+    cf.frame    = kf.value("frame", 0u);
+    cf.rotation = kf.value("rotation", 0.0f);
+    cf.pitch    = kf.value("pitch", 0.0f);
+    cf.roll     = kf.value("roll", 0.0f);
+    cf.zoom     = kf.value("zoom", 0.0f);
+    if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
+      cf.pos[0] = kf["pos"][0].get<double>();
+      cf.pos[1] = kf["pos"][1].get<double>();
+      cf.pos[2] = kf["pos"][2].get<double>();
+    }
+    out.push_back(cf);
+  }
+  return out;
+}
+
 // ─── Save ────────────────────────────────────────────────────────────────────
 bool ProjectSerializer::Save(const std::string& path,
                              const std::vector<PhysicsObject>& physicsObjects,
@@ -54,6 +86,8 @@ bool ProjectSerializer::Save(const std::string& path,
     o["atmosphereFalloff"]   = obj.atmosphereFalloff;
     o["atmosphereIntensity"] = obj.atmosphereIntensity;
     o["atmosphereColor"]     = vec3ToJson(obj.atmosphereScatter);
+    o["simulatePhysics"]     = obj.simulatePhysics;
+    o["keyframes"]           = keyframesToJson(obj.keyframes);
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -87,7 +121,9 @@ bool ProjectSerializer::Save(const std::string& path,
       {"renderMode",        cloud.renderMode},
       {"nebulaScatterScale",cloud.nebulaScatterScale},
       {"particleSizeSpread",cloud.particleSizeSpread},
-      {"scale",             cloud.scale}
+      {"scale",             cloud.scale},
+      {"simulatePhysics",   cloud.simulatePhysics},
+      {"keyframes",         keyframesToJson(cloud.keyframes)}
     });
   }
   root["clouds"] = cloudsArr;
@@ -246,6 +282,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.atmosphereColor     = o.contains("atmosphereColor")
                                 ? jsonToVec3(o["atmosphereColor"])
                                 : vec3{0.175f, 0.41f, 1.0f};
+      pod.simulatePhysics     = o.value("simulatePhysics", true);
+      if (o.contains("keyframes")) pod.keyframes = jsonToKeyframes(o["keyframes"]);
       data.objects.push_back(pod);
     }
   }
@@ -280,6 +318,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
     cd.particleSizeSpread = c.value("particleSizeSpread", 0.0f);
     cd.scale              = c.value("scale",              1.0f);
+    cd.simulatePhysics    = c.value("simulatePhysics",    true);
+    if (c.contains("keyframes")) cd.keyframes = jsonToKeyframes(c["keyframes"]);
     return cd;
   };
 

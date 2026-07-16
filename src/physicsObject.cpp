@@ -86,7 +86,16 @@ void PhysicsObject::resetToInitial()
 
 void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer)
 {
-  if(!renderer.paused)
+  if(!simulatePhysics)
+  {
+    // Keyframe-driven: animate from the timeline instead of gravity. Only apply
+    // when the playhead moved, so a still playhead leaves the object free for
+    // manual posing (gizmo / inspector) before capturing a keyframe.
+    if(!renderer.paused || renderer.playheadMoved)
+      Renderer::InterpolateKeyframeTransform(keyframes, renderer.timelinePlayhead,
+                                             data.position, rotationDeg);
+  }
+  else if(!renderer.paused)
   {
     if(renderer.playingForward)
     {
