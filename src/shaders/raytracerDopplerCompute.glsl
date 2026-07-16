@@ -108,20 +108,72 @@ bool sphereHitRange(vec3 ro, vec3 rd, vec3 cen, float rad, float maxT) {
     if (d2 > r2) return false;
     float thc = sqrt(r2 - d2);
     return (tca + thc > 1e-4) && (tca - thc < maxT);
-}float rayMesh(vec3 ro, vec3 rd, int start, int count, out vec3 outN) {
-    float best = -1.0;
-    outN = vec3(0.0, 1.0, 0.0);
-    for (int i = 0; i < count; i++) {
-        Tri T = tris[start + i];
-        float u, v;
-        float t = rayTri(ro, rd, T.v0.xyz, T.v1.xyz, T.v2.xyz, u, v);
-        if (t > 1e-4 && (best < 0.0 || t < best)) {
-            best = t;
-            float w = 1.0 - u - v;
-            vec3 n = w*T.n0.xyz + u*T.n1.xyz + v*T.n2.xyz;
-            outN = (dot(n, rd) > 0.0) ? normalize(-n) : normalize(n);
+}struct BVHNode { vec4 bmin; vec4 bmax; };
+layout(std430, binding = 5) buffer NodeBuf { BVHNode nodes[]; };
+
+// Forward object rotation R*n (invRotateN gives the inverse R^T*n).
+vec3 rotateN(vec4 rot, vec3 n) {
+    float cx=cos(rot.x), sx=sin(rot.x);
+    float cy=cos(rot.y), sy=sin(rot.y);
+    float cz=cos(rot.z), sz=sin(rot.z);
+    float r00=cz*cy, r01=cz*sy*sx - sz*cx, r02=cz*sy*cx + sz*sx;
+    float r10=sz*cy, r11=sz*sy*sx + cz*cx, r12=sz*sy*cx - cz*sx;
+    float r20=-sy,   r21=cy*sx,            r22=cy*cx;
+    return vec3(r00*n.x + r01*n.y + r02*n.z,
+                r10*n.x + r11*n.y + r12*n.z,
+                r20*n.x + r21*n.y + r22*n.z);
+}
+
+// Ray/AABB slab test; true if the box is hit within [0, tmax]. rd may be unnormalized.
+bool rayAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, float tmax) {
+    vec3 inv = 1.0 / rd;
+    vec3 t0 = (bmin - ro) * inv;
+    vec3 t1 = (bmax - ro) * inv;
+    vec3 ts = min(t0, t1), tb = max(t0, t1);
+    float tnear = max(max(ts.x, ts.y), ts.z);
+    float tfar  = min(min(tb.x, tb.y), tb.z);
+    return tfar >= max(tnear, 0.0) && tnear < tmax;
+}
+
+// Intersect the ray with object oi's BVH, evaluated in the object's unit space.
+// The ray is transformed to local space with an UNNORMALIZED direction so the
+// returned t is already in world units. Outputs the world-space shading normal.
+float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN) {
+    vec4  rot    = objects[oi].rotation;
+    vec3  objPos = objects[oi].position.xyz;
+    float scale  = max(objects[oi].radius, 1e-8);
+    vec3  lo = invRotateN(rot, ro - objPos) / scale;
+    vec3  ld = invRotateN(rot, rd) / scale;
+
+    float best = 1e30;
+    vec3  bestN = vec3(0.0, 1.0, 0.0);
+    int   stack[32];
+    int   sp = 0;
+    stack[sp++] = int(objects[oi].mesh.y + 0.5);   // BVH root node
+    while (sp > 0) {
+        BVHNode nd = nodes[stack[--sp]];
+        if (!rayAABB(lo, ld, nd.bmin.xyz, nd.bmax.xyz, best)) continue;
+        int cnt = int(nd.bmax.w + 0.5);
+        if (cnt > 0) {
+            int first = int(nd.bmin.w + 0.5);
+            for (int k = 0; k < cnt; k++) {
+                Tri T = tris[first + k];
+                float u, v;
+                float t = rayTri(lo, ld, T.v0.xyz, T.v1.xyz, T.v2.xyz, u, v);
+                if (t > 1e-4 && t < best) {
+                    best = t;
+                    float w = 1.0 - u - v;
+                    bestN = w*T.n0.xyz + u*T.n1.xyz + v*T.n2.xyz;
+                }
+            }
+        } else {
+            int lc = int(nd.bmin.w + 0.5);
+            if (sp < 30) { stack[sp++] = lc; stack[sp++] = lc + 1; }
         }
     }
+    if (best >= 1e30) return -1.0;
+    vec3 nl = (dot(bestN, ld) > 0.0) ? -bestN : bestN;
+    outN = normalize(rotateN(rot, nl));
     return best;
 }
 
@@ -484,7 +536,7 @@ void main()
         float t; vec3 nrm;
         if (otype == 5) {
             t = sphereHitRange(ro, rd, objects[i].position.xyz, objects[i].radius, tMin)
-                    ? rayMesh(ro, rd, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm) : -1.0;
+                    ? rayMesh(ro, rd, i, nrm) : -1.0;
         } else {
             vec3  cen = objects[i].position.xyz;
             float rad = objects[i].radius;

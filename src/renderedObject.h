@@ -72,6 +72,11 @@ private:
   // rescaled into UVObjectMeshBuffer by SetFreeMeshRadius without reparsing.
   std::vector<float> freeUnitBuffer{};
   bool freeMesh{false};
+  // BVH over the UNIT mesh, built once on load. bvhTris is triangle-reordered
+  // to match leaf ranges; the shader transforms the ray into unit space.
+  std::vector<RtTri>   bvhTris{};
+  std::vector<BVHNode> bvhNodes{};
+  void BuildBVH();
   std::vector<vec3>  linePoints{};
   std::vector<CloudParticle> cloudParticles;
   std::vector<PhysicsObjectStructure> gridPoints;
@@ -123,7 +128,8 @@ public:
   void renderMeshRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                            float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
                            vec3 color = {0.55f, 0.25f, 0.15f},
-                           std::vector<RtTri>* triOut = nullptr);
+                           std::vector<RtTri>* triOut = nullptr,
+                           std::vector<BVHNode>* nodeOut = nullptr);
 
 void renderPlane(const double cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
                  const float viewRot[9], float fovDeg = 45.f,
@@ -151,7 +157,8 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   void renderMeshRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
                                   vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
                                   vec3 color = {0.55f, 0.25f, 0.15f},
-                                  std::vector<RtTri>* triOut = nullptr);
+                                  std::vector<RtTri>* triOut = nullptr,
+                                  std::vector<BVHNode>* nodeOut = nullptr);
   void renderCloudRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);

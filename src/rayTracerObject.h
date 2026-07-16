@@ -1,11 +1,21 @@
 #pragma once
 #include "mathStructs.h"
 
-// A single free-object triangle in camera-relative world space (matches the
-// GLSL `Tri` struct in the compute shaders). 6×vec4 = 96 bytes, std430-safe.
+// A single free-object triangle. With the BVH these live in the object's own
+// UNIT space (centered, unit bounding radius); the shader transforms the ray
+// into that space. 6×vec4 = 96 bytes, std430-safe.
 struct alignas(16) RtTri {
   vec4 v0, v1, v2;   // vertex positions (xyz used)
   vec4 n0, n1, n2;   // vertex normals   (xyz used)
+};
+
+// A BVH node (matches the GLSL `BVHNode`). Children are stored contiguously:
+// an internal node's two children are at [leftFirst, leftFirst+1].
+//   bmin.w = leftFirst : left child index (internal) OR first triangle (leaf)
+//   bmax.w = triCount  : 0 = internal node, >0 = leaf with that many triangles
+struct alignas(16) BVHNode {
+  vec4 bmin;  // xyz = AABB min, w = leftFirst
+  vec4 bmax;  // xyz = AABB max, w = triCount
 };
 
 // std430: vec4(16) + 4×float(16) + 4×vec4(64) = 96 bytes; alignas(16) ensures no padding

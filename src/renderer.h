@@ -189,6 +189,7 @@ private:
   int    rtTexWidth{0}, rtTexHeight{0};  // current output texture dimensions
   GLuint rtSSBO{0};                      // SSBO for raytracer objects (compute shader)
   GLuint rtTriSSBO{0};                   // SSBO (binding 4) for free-object triangles
+  GLuint rtNodeSSBO{0};                  // SSBO (binding 5) for free-object BVH nodes
 
   // Compute shader uniform locations (simple raytracer)
   GLint rtLocObjectCount{-1};
@@ -307,6 +308,7 @@ private:
   std::vector<RayTracerObject>        rtLastObjects;        // snapshot for memcmp
   std::vector<RayTracerObjectDoppler> rtLastDopplerObjects; // Doppler snapshot for CaptureImage
   std::vector<RtTri>                  rtLastTriangles;      // triangle snapshot for recording
+  std::vector<BVHNode>                rtLastNodes;          // BVH node snapshot for recording
   bool   rtDirty{true};                                     // force first frame
 
   // Separate output texture for recording (avoids resizing the display texture)
@@ -434,6 +436,7 @@ public:
   std::vector<RayTracerObject>        rayTracedObjects{};
   std::vector<RayTracerObjectDoppler> rtDopplerObjects{};   // populated when dopplerMode is on
   std::vector<RtTri>                  rtTriangles{};         // free-object triangles (both paths)
+  std::vector<BVHNode>                rtNodes{};             // free-object BVH nodes (both paths)
   bool rayTracerView{false};
   bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)

@@ -343,55 +343,129 @@ bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
   meshType   = MeshType::sphere;   // reuse the lit 8-float vertex path
   bufferSize = emitted;
   SetFreeMeshRadius(radius);
-  std::printf("[OBJ] loaded '%s': %d tris\n", path.c_str(), emitted / 3);
+  BuildBVH();
+  std::printf("[OBJ] loaded '%s': %d tris, %zu BVH nodes\n",
+              path.c_str(), emitted / 3, bvhNodes.size());
   return true;
 }
 
-// Transform the free mesh (already scaled by radius) into camera-relative world
-// space and append its triangles to `out`. Returns the triangle count; the
-// caller records the start index (out.size() before the call).
-static int appendFreeWorldTris(const std::vector<float>& mesh, const dvec3& coords,
-                               const vec3& rotDeg, const double camT[3],
-                               std::vector<RtTri>& out)
-{
-  const float d2r = 0.01745329252f;
-  float ca=std::cos(rotDeg.x*d2r), sa=std::sin(rotDeg.x*d2r);
-  float cb=std::cos(rotDeg.y*d2r), sb=std::sin(rotDeg.y*d2r);
-  float cc=std::cos(rotDeg.z*d2r), sc=std::sin(rotDeg.z*d2r);
-  float R[9]={ cc*cb, cc*sb*sa-sc*ca, cc*sb*ca+sc*sa,
-               sc*cb, sc*sb*sa+cc*ca, sc*sb*ca-cc*sa,
-               -sb,   cb*sa,          cb*ca };
-  float ox=(float)(coords.x+camT[0]), oy=(float)(coords.y+camT[1]), oz=(float)(coords.z+camT[2]);
-  size_t vcount = mesh.size()/8;
-  int start = (int)out.size();
-  for (size_t v = 0; v + 2 < vcount; v += 3) {
-    RtTri tri{};
-    vec4* vp[3] = { &tri.v0, &tri.v1, &tri.v2 };
-    vec4* np[3] = { &tri.n0, &tri.n1, &tri.n2 };
-    for (int k = 0; k < 3; ++k) {
-      const float* b = &mesh[(v+k)*8];
-      *vp[k] = vec4{ R[0]*b[0]+R[1]*b[1]+R[2]*b[2] + ox,
-                     R[3]*b[0]+R[4]*b[1]+R[5]*b[2] + oy,
-                     R[6]*b[0]+R[7]*b[1]+R[8]*b[2] + oz, 0.0f };
-      *np[k] = vec4{ R[0]*b[3]+R[1]*b[4]+R[2]*b[5],
-                     R[3]*b[3]+R[4]*b[4]+R[5]*b[5],
-                     R[6]*b[3]+R[7]*b[4]+R[8]*b[5], 0.0f };
-    }
-    out.push_back(tri);
+// Build a median-split BVH over the UNIT mesh (freeUnitBuffer). Children are
+// stored contiguously; bvhTris is reordered so each leaf owns a contiguous run.
+void RenderedObject::BuildBVH() {
+  bvhTris.clear();
+  bvhNodes.clear();
+  size_t triN = freeUnitBuffer.size() / 8 / 3;
+  if (triN == 0) return;
+
+  std::vector<RtTri> tris(triN);
+  std::vector<vec3>  cent(triN);
+  for (size_t f = 0; f < triN; ++f) {
+    const float* b0 = &freeUnitBuffer[(f*3+0)*8];
+    const float* b1 = &freeUnitBuffer[(f*3+1)*8];
+    const float* b2 = &freeUnitBuffer[(f*3+2)*8];
+    tris[f].v0 = vec4{b0[0],b0[1],b0[2],0}; tris[f].n0 = vec4{b0[3],b0[4],b0[5],0};
+    tris[f].v1 = vec4{b1[0],b1[1],b1[2],0}; tris[f].n1 = vec4{b1[3],b1[4],b1[5],0};
+    tris[f].v2 = vec4{b2[0],b2[1],b2[2],0}; tris[f].n2 = vec4{b2[3],b2[4],b2[5],0};
+    cent[f] = vec3{(b0[0]+b1[0]+b2[0])/3.0f,
+                   (b0[1]+b1[1]+b2[1])/3.0f,
+                   (b0[2]+b1[2]+b2[2])/3.0f};
   }
-  return (int)out.size() - start;
+  auto axisOf = [](const vec3& v, int a) { return a==0 ? v.x : (a==1 ? v.y : v.z); };
+
+  std::vector<int> idx(triN);
+  for (size_t i = 0; i < triN; ++i) idx[i] = (int)i;
+
+  bvhNodes.reserve(triN * 2);
+  bvhNodes.push_back(BVHNode{});
+  struct Range { int ni, start, count; };
+  std::vector<Range> stack;
+  stack.push_back({0, 0, (int)triN});
+  const int LEAF = 2;
+
+  while (!stack.empty()) {
+    Range r = stack.back(); stack.pop_back();
+
+    vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+    for (int s = 0; s < r.count; ++s) {
+      const RtTri& T = tris[idx[r.start+s]];
+      const vec4* vs[3] = {&T.v0, &T.v1, &T.v2};
+      for (int k = 0; k < 3; ++k) {
+        lo.x = std::min(lo.x, vs[k]->x); hi.x = std::max(hi.x, vs[k]->x);
+        lo.y = std::min(lo.y, vs[k]->y); hi.y = std::max(hi.y, vs[k]->y);
+        lo.z = std::min(lo.z, vs[k]->z); hi.z = std::max(hi.z, vs[k]->z);
+      }
+    }
+    bvhNodes[r.ni].bmin = vec4{lo.x,lo.y,lo.z,0};
+    bvhNodes[r.ni].bmax = vec4{hi.x,hi.y,hi.z,0};
+
+    if (r.count <= LEAF) {
+      bvhNodes[r.ni].bmin.w = (float)r.start;
+      bvhNodes[r.ni].bmax.w = (float)r.count;   // >0 → leaf
+      continue;
+    }
+
+    vec3 clo{1e30f,1e30f,1e30f}, chi{-1e30f,-1e30f,-1e30f};
+    for (int s = 0; s < r.count; ++s) {
+      const vec3& c = cent[idx[r.start+s]];
+      clo.x=std::min(clo.x,c.x); chi.x=std::max(chi.x,c.x);
+      clo.y=std::min(clo.y,c.y); chi.y=std::max(chi.y,c.y);
+      clo.z=std::min(clo.z,c.z); chi.z=std::max(chi.z,c.z);
+    }
+    int axis = 0;
+    float ex = chi.x-clo.x, ey = chi.y-clo.y, ez = chi.z-clo.z;
+    if (ey > ex && ey >= ez) axis = 1; else if (ez > ex && ez >= ey) axis = 2;
+    float split = 0.5f * (axisOf(clo,axis) + axisOf(chi,axis));
+
+    int i = r.start, j = r.start + r.count - 1;
+    while (i <= j) {
+      if (axisOf(cent[idx[i]], axis) < split) ++i;
+      else { std::swap(idx[i], idx[j]); --j; }
+    }
+    int leftCount = i - r.start;
+    if (leftCount == 0 || leftCount == r.count) leftCount = r.count / 2;
+
+    int left = (int)bvhNodes.size();
+    bvhNodes.push_back(BVHNode{});
+    bvhNodes.push_back(BVHNode{});
+    bvhNodes[r.ni].bmin.w = (float)left;  // internal: left child index
+    bvhNodes[r.ni].bmax.w = 0.0f;         // 0 → internal
+    stack.push_back({left+1, r.start + leftCount, r.count - leftCount});
+    stack.push_back({left,   r.start,             leftCount});
+  }
+
+  bvhTris.resize(triN);
+  for (size_t i = 0; i < triN; ++i) bvhTris[i] = tris[idx[i]];
+}
+
+// Append the object's cached UNIT-space BVH (triangles + nodes) into the global
+// buffers, offsetting node indices so leaf/child references stay valid. Returns
+// mesh info {triBase, nodeBase, triCount, 0}. The shader transforms the ray into
+// this unit space, so no per-frame world transform is needed.
+static vec4 appendBVHMesh(const std::vector<RtTri>& srcTris,
+                          const std::vector<BVHNode>& srcNodes,
+                          std::vector<RtTri>& triOut,
+                          std::vector<BVHNode>& nodeOut)
+{
+  int triBase  = (int)triOut.size();
+  int nodeBase = (int)nodeOut.size();
+  triOut.insert(triOut.end(), srcTris.begin(), srcTris.end());
+  for (const BVHNode& n : srcNodes) {
+    BVHNode g = n;
+    if (g.bmax.w > 0.5f) g.bmin.w += (float)triBase;   // leaf: offset first triangle
+    else                 g.bmin.w += (float)nodeBase;  // internal: offset left child
+    nodeOut.push_back(g);
+  }
+  return vec4{ (float)triBase, (float)nodeBase, (float)srcTris.size(), 0.0f };
 }
 
 void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                                           float mass, float temperature, float objectType, vec3 color,
-                                          std::vector<RtTri>* triOut)
+                                          std::vector<RtTri>* triOut, std::vector<BVHNode>* nodeOut)
 {
   vec4 meshInfo{0,0,0,0};
   float otype = objectType;
-  if (freeMesh && triOut) {
-    int start = (int)triOut->size();
-    int count = appendFreeWorldTris(UVObjectMeshBuffer, coordinates, rotationDeg, cameraTranslate, *triOut);
-    meshInfo = vec4{ (float)start, (float)count, 0, 0 };
+  if (freeMesh && triOut && nodeOut && !bvhNodes.empty()) {
+    meshInfo = appendBVHMesh(bvhTris, bvhNodes, *triOut, *nodeOut);
     otype = 5.0f;   // free mesh
   }
   raytracerObjectList.push_back(RayTracerObject{
@@ -409,14 +483,12 @@ void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::v
 void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
                                                 vec3 velocity, float mass, float temperature, float objectType, vec3 color,
-                                                std::vector<RtTri>* triOut)
+                                                std::vector<RtTri>* triOut, std::vector<BVHNode>* nodeOut)
 {
   vec4 meshInfo{0,0,0,0};
   float otype = objectType;
-  if (freeMesh && triOut) {
-    int start = (int)triOut->size();
-    int count = appendFreeWorldTris(UVObjectMeshBuffer, coordinates, rotationDeg, cameraTranslate, *triOut);
-    meshInfo = vec4{ (float)start, (float)count, 0, 0 };
+  if (freeMesh && triOut && nodeOut && !bvhNodes.empty()) {
+    meshInfo = appendBVHMesh(bvhTris, bvhNodes, *triOut, *nodeOut);
     otype = 5.0f;
   }
   list.push_back(RayTracerObjectDoppler{

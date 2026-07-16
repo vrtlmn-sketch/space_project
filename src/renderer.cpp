@@ -519,6 +519,7 @@ void Renderer::EndFrame() {
   rayTracedObjects.reserve(20);
   rtDopplerObjects.clear();
   rtTriangles.clear();
+  rtNodes.clear();
   rtDopplerObjects.reserve(20);
 
   // ── Frame timing ──
@@ -550,9 +551,9 @@ void Renderer::Draw(RenderedObject& ro) {
     if      (ro.meshType == MeshType::plane)  { /* no-op: DispatchRaytracer called from main */ }
     else if (ro.meshType == MeshType::sphere) {
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, 1.0f, 0.0f, 0.0f,
-                             {0.55f,0.25f,0.15f}, &rtTriangles);
+                             {0.55f,0.25f,0.15f}, &rtTriangles, &rtNodes);
       if (dopplerMode) ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, {0,0,0},
-                             1.0f, 0.0f, 0.0f, {0.55f,0.25f,0.15f}, &rtTriangles);
+                             1.0f, 0.0f, 0.0f, {0.55f,0.25f,0.15f}, &rtTriangles, &rtNodes);
     }
     else if (ro.meshType == MeshType::cloud) {
       ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
@@ -649,10 +650,10 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
   if (rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType, color,
-                             &rtTriangles);
+                             &rtTriangles, &rtNodes);
       if (dopplerMode)
         ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, velocity, mass, temperature, objectType, color,
-                                      &rtTriangles);
+                                      &rtTriangles, &rtNodes);
     }
   }
 }
@@ -4727,6 +4728,7 @@ void Renderer::BeginSecondaryPass() {
   rayTracedObjects.reserve(20);
   rtDopplerObjects.clear();
   rtTriangles.clear();
+  rtNodes.clear();
   rtDopplerObjects.reserve(20);
 
   glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
@@ -4768,6 +4770,7 @@ void Renderer::EndSecondaryPass() {
   rayTracedObjects.reserve(20);
   rtDopplerObjects.clear();
   rtTriangles.clear();
+  rtNodes.clear();
   rtDopplerObjects.reserve(20);
 }
 
@@ -4998,6 +5001,7 @@ void Renderer::InitComputeShader() {
   glGenBuffers(1, &rtSSBO);
   glGenBuffers(1, &rtDopplerSSBO);
   glGenBuffers(1, &rtTriSSBO);
+  glGenBuffers(1, &rtNodeSSBO);
 
   // ── 3. Compile blit shaders (vert + frag) ──
   GLuint bv = compileShaderFromFile("src/shaders/blitVert.glsl", GL_VERTEX_SHADER);
@@ -5071,6 +5075,7 @@ void Renderer::DestroyComputeResources() {
   if (rtOutputTex)      { glDeleteTextures(1, &rtOutputTex); rtOutputTex = 0; }
   if (rtSSBO)           { glDeleteBuffers(1, &rtSSBO);        rtSSBO = 0; }
   if (rtTriSSBO)        { glDeleteBuffers(1, &rtTriSSBO);     rtTriSSBO = 0; }
+  if (rtNodeSSBO)       { glDeleteBuffers(1, &rtNodeSSBO);    rtNodeSSBO = 0; }
   if (rtDopplerSSBO)    { glDeleteBuffers(1, &rtDopplerSSBO); rtDopplerSSBO = 0; }
   if (blitProgram)      { glDeleteProgram(blitProgram);      blitProgram = 0; }
   if (blitVAO)          { glDeleteVertexArrays(1, &blitVAO); blitVAO = 0; }
@@ -5234,6 +5239,12 @@ void Renderer::DispatchRaytracer(int width, int height) {
                rtTriangles.empty() ? nullptr : rtTriangles.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, rtTriSSBO);
 
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtNodeSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               std::max<size_t>(rtNodes.size(), 1) * sizeof(BVHNode),
+               rtNodes.empty() ? nullptr : rtNodes.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
+
   // Bind output image
   glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
@@ -5348,6 +5359,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   rtLastObjects        = rayTracedObjects;         // snapshot for memcmp
   rtLastDopplerObjects = rtDopplerObjects;         // snapshot for CaptureImage
   rtLastTriangles      = rtTriangles;              // triangle snapshot for recording
+  rtLastNodes          = rtNodes;                  // BVH node snapshot for recording
   rtDirty              = false;
 }
 
@@ -5592,6 +5604,12 @@ void Renderer::CaptureImage() {
                std::max<size_t>(rtLastTriangles.size(), 1) * sizeof(RtTri),
                rtLastTriangles.empty() ? nullptr : rtLastTriangles.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, rtTriSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtNodeSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               std::max<size_t>(rtLastNodes.size(), 1) * sizeof(BVHNode),
+               rtLastNodes.empty() ? nullptr : rtLastNodes.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
   glUseProgram(activeProgram);
   int capObjCount = dopplerMode ? (int)rtLastDopplerObjects.size() : (int)rtLastObjects.size();
   glUniform1i(locObjectCount, capObjCount);
@@ -5857,6 +5875,12 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
                std::max<size_t>(rtLastTriangles.size(), 1) * sizeof(RtTri),
                rtLastTriangles.empty() ? nullptr : rtLastTriangles.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, rtTriSSBO);
+
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtNodeSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               std::max<size_t>(rtLastNodes.size(), 1) * sizeof(BVHNode),
+               rtLastNodes.empty() ? nullptr : rtLastNodes.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
   glUseProgram(activeProgram);
 
   int recObjCount = dopplerMode ? (int)rtDopplerObjects.size() : (int)rayTracedObjects.size();
