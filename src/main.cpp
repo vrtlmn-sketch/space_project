@@ -83,6 +83,15 @@ static void buildScene(
       po.visualRadius = pod.visualRadius;
       po.renderedObject.GenerateMeshSphere(pod.visualRadius, 32, 32);
     }
+    if (!pod.meshPath.empty()) {
+      po.meshPath = pod.meshPath;
+      float r = pod.visualRadius > 0.0f ? pod.visualRadius : 0.01f;
+      po.visualRadius = r;
+      if (!po.renderedObject.LoadMeshFromOBJ(pod.meshPath, r)) {
+        po.meshPath.clear();  // parse failed → keep the sphere fallback
+        po.renderedObject.GenerateMeshSphere(r, 32, 32);
+      }
+    }
     po.atmosphereEnabled   = pod.atmosphereEnabled;
     po.atmosphereHeight    = pod.atmosphereHeight;
     po.atmosphereFalloff   = pod.atmosphereFalloff;
@@ -150,6 +159,22 @@ int main(int argc, char** argv) {
       vec3{form.velX, form.velY, form.velZ},
       vec3{form.posX, form.posY, form.posZ},
       form.mass, std::string(form.name), st, form.temperature);
+    lineObjects.emplace_back(vec3{form.posX, form.posY, form.posZ});
+  };
+
+  cb.spawnFreeObject = [&](const SpawnFormState& form) {
+    physicsObjects.emplace_back(
+      vec3{form.velX, form.velY, form.velZ},
+      vec3{form.posX, form.posY, form.posZ},
+      form.mass, std::string(form.name), ObjectShaderType::Planet, 0.0f);
+    auto& po = physicsObjects.back();
+    po.visualRadius = form.visualRadius;
+    po.meshPath     = form.meshPath;
+    if (!po.renderedObject.LoadMeshFromOBJ(po.meshPath,
+                                           po.visualRadius * renderer.activeSizeExag())) {
+      po.meshPath.clear();  // parse failed → fall back to a sphere
+      po.renderedObject.GenerateMeshSphere(po.visualRadius * renderer.activeSizeExag(), 32, 32);
+    }
     lineObjects.emplace_back(vec3{form.posX, form.posY, form.posZ});
   };
 
@@ -442,9 +467,13 @@ int main(int argc, char** argv) {
     // Must happen before any draw calls so every object ends up in the FBO.
     // Regenerate sphere meshes when the size-exaggeration toggle changes
     if (renderer.sizesDirty) {
-      for (auto& obj : physicsObjects)
-        obj.renderedObject.GenerateMeshSphere(
-          obj.visualRadius * renderer.activeSizeExag(), 32, 32);
+      for (auto& obj : physicsObjects) {
+        if (!obj.meshPath.empty())
+          obj.renderedObject.SetFreeMeshRadius(obj.visualRadius * renderer.activeSizeExag());
+        else
+          obj.renderedObject.GenerateMeshSphere(
+            obj.visualRadius * renderer.activeSizeExag(), 32, 32);
+      }
       renderer.sizesDirty = false;
       renderer.SetRtMaxSteps(renderer.GetRtMaxSteps());  // marks RT dirty
     }

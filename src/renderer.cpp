@@ -518,6 +518,7 @@ void Renderer::EndFrame() {
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
   rtDopplerObjects.clear();
+  rtTriangles.clear();
   rtDopplerObjects.reserve(20);
 
   // ── Frame timing ──
@@ -548,8 +549,10 @@ void Renderer::Draw(RenderedObject& ro) {
   if (rayTracerView) {
     if      (ro.meshType == MeshType::plane)  { /* no-op: DispatchRaytracer called from main */ }
     else if (ro.meshType == MeshType::sphere) {
-      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects);
-      if (dopplerMode) ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, {0,0,0});
+      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, 1.0f, 0.0f, 0.0f,
+                             {0.55f,0.25f,0.15f}, &rtTriangles);
+      if (dopplerMode) ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, {0,0,0},
+                             1.0f, 0.0f, 0.0f, {0.55f,0.25f,0.15f}, &rtTriangles);
     }
     else if (ro.meshType == MeshType::cloud) {
       ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
@@ -645,9 +648,11 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
   }
   if (rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
-      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType, color);
+      ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType, color,
+                             &rtTriangles);
       if (dopplerMode)
-        ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, velocity, mass, temperature, objectType, color);
+        ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, velocity, mass, temperature, objectType, color,
+                                      &rtTriangles);
     }
   }
 }
@@ -1547,6 +1552,20 @@ static std::vector<std::string> ScanFormationFiles() {
     if (ca != cb) return ca < cb;
     return a < b;
   });
+  return files;
+}
+
+static std::vector<std::string> ScanModelFiles() {
+  std::vector<std::string> files;
+  const std::string dir = "models";
+  if (!std::filesystem::exists(dir)) return files;
+  for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+    if (!entry.is_regular_file()) continue;
+    std::string ext = entry.path().extension().string();
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == ".obj") files.push_back(entry.path().filename().string());
+  }
+  std::sort(files.begin(), files.end());
   return files;
 }
 
@@ -3547,6 +3566,80 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::EndTabItem();
     }
 
+    // ── Free Object tab ──
+    if (ImGui::BeginTabItem("Free Object")) {
+      static char  foName[64]  = "Free Object";
+      static double foMass     = 3.0e-6;
+      static float  foPos[3]   = { 0.0f, 0.0f, -3.0f };
+      static float  foVel[3]   = { 0.0f, 0.0f, 0.0f };
+      static float  foRadius   = 0.01f;
+      static char   foMesh[256] = "";
+      static std::vector<std::string> modelFiles;
+      static bool   modelsScanned = false;
+      if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
+
+      ImGui::TextWrapped("A physics body (mass, gravity, keyframes) drawn from "
+                         "your own OBJ mesh. Shown in the rasterized view.");
+      ImGui::Spacing();
+
+      ImGui::InputText("Name##fo", foName, sizeof(foName));
+      {
+        double mMin = 1e-12, mMax = 1e8;
+        ImGui::DragScalar("Mass##fo", ImGuiDataType_Double, &foMass,
+                          0.01f, &mMin, &mMax, "%.4g Ms", ImGuiSliderFlags_Logarithmic);
+      }
+      ImGui::Text("Position (AU)");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::DragFloat3("##fopos", foPos, 0.1f, -50.f, 50.f, "%.2f");
+      ImGui::Text("Velocity (AU/yr)");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::DragFloat3("##fovel", foVel, 0.01f, -10.f, 10.f, "%.3f");
+      ImGui::Text("Size (AU)");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::DragFloat("##forad", &foRadius, 0.001f, 1e-5f, 5.0f, "%.4g AU",
+                       ImGuiSliderFlags_Logarithmic);
+
+      ImGui::Spacing();
+      ImGui::SeparatorText("Mesh (.obj)");
+      if (ImGui::Button("Rescan##fo")) modelFiles = ScanModelFiles();
+      ImGui::SameLine();
+      ImGui::TextDisabled("%zu in models/", modelFiles.size());
+
+      std::string curName = std::filesystem::path(foMesh).filename().string();
+      if (ImGui::BeginCombo("##fomodelsel", curName.empty() ? "(pick a model)" : curName.c_str())) {
+        for (const auto& f : modelFiles) {
+          bool sel = (curName == f);
+          if (ImGui::Selectable(f.c_str(), sel))
+            std::snprintf(foMesh, sizeof(foMesh), "models/%s", f.c_str());
+        }
+        ImGui::EndCombo();
+      }
+      ImGui::SetNextItemWidth(-1);
+      ImGui::InputTextWithHint("##fomeshpath", "models/your_model.obj or full path",
+                               foMesh, sizeof(foMesh));
+
+      ImGui::Spacing();
+      ImGui::Separator();
+      ImGui::Spacing();
+      bool hasMesh = foMesh[0] != '\0';
+      if (!hasMesh) ImGui::BeginDisabled();
+      if (ImGui::Button("Spawn Free Object", ImVec2(-1, 28))) {
+        SpawnFormState f;
+        std::snprintf(f.name, sizeof(f.name), "%s", foName);
+        f.mass = foMass;
+        f.posX = foPos[0]; f.posY = foPos[1]; f.posZ = foPos[2];
+        f.velX = foVel[0]; f.velY = foVel[1]; f.velZ = foVel[2];
+        f.visualRadius = foRadius;
+        std::snprintf(f.meshPath, sizeof(f.meshPath), "%s", foMesh);
+        if (cb.spawnFreeObject) cb.spawnFreeObject(f);
+      }
+      if (!hasMesh) {
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("Pick or type an .obj path first.");
+      }
+      ImGui::EndTabItem();
+    }
+
     // ── Camera tab ──
     if (ImGui::BeginTabItem("Camera")) {
       static float camSpawnPos[3] = { 0.0f, 0.0f, -3.0f };
@@ -3724,8 +3817,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     // Size — visual radius in AU (real, before exaggeration)
     ImGui::SetNextItemWidth(-1);
     if (ImGui::DragFloat("Size##i", &obj.visualRadius, 0.01f, 1e-7f, 2.0f, "%.4g AU",
-                         ImGuiSliderFlags_Logarithmic))
-      obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
+                         ImGuiSliderFlags_Logarithmic)) {
+      if (!obj.meshPath.empty())
+        obj.renderedObject.SetFreeMeshRadius(obj.visualRadius * activeSizeExag());
+      else
+        obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
+    }
+    if (!obj.meshPath.empty())
+      ImGui::TextDisabled("Free object · %s", obj.meshPath.c_str());
 
     ImGui::Spacing();
     ImGui::SeparatorText("Transform");
@@ -4374,15 +4473,30 @@ void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
     previewInit = true;
   }
 
+  // Free object → preview its actual mesh instead of the sphere.
+  bool useMesh = !obj.meshPath.empty();
+  if (useMesh) {
+    if (!previewMeshReady) {
+      previewMesh.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/defaultFrag.glsl");
+      previewMeshReady = true;
+    }
+    if (obj.meshPath != previewMeshPath) {
+      if (!previewMesh.LoadMeshFromOBJ(obj.meshPath, 1.0f))
+        useMesh = false;          // load failed → fall back to sphere
+      previewMeshPath = obj.meshPath;
+    }
+  }
+  RenderedObject& preview = useMesh ? previewMesh : previewSphere;
+
   // Sync texture with the inspected object (reload only on change)
-  if (obj.texturePath != previewTexPath) {
+  if (!useMesh && obj.texturePath != previewTexPath) {
     if (obj.texturePath.empty())
       previewSphere.clearTexture();
     else
       previewSphere.loadTexture(obj.texturePath);
     previewTexPath = obj.texturePath;
   }
-  previewSphere.uploadPlanetColor(obj.data.color);
+  preview.uploadPlanetColor(obj.data.color);
 
   // Slowly orbiting look-at camera (light stays fixed → planet appears to spin)
   previewYaw += ImGui::GetIO().DeltaTime * 0.5f;
@@ -4397,7 +4511,7 @@ void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
   {
     std::vector<vec3> lpos{{1.15f - cx, 0.86f - cy, 1.43f - cz}};
     std::vector<vec3> lcol{{1.0f, 1.0f, 1.0f}};
-    previewSphere.uploadStarLighting(lpos, lcol);
+    preview.uploadStarLighting(lpos, lcol);
   }
 
   vec3 b = normalize(vec3{cx, cy, cz});              // backward
@@ -4416,8 +4530,8 @@ void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST);
 
-  previewSphere.coordinates = {0, 0, 0};
-  previewSphere.renderMesh(camT, viewRot, 45.0f, PREVIEW_SIZE, PREVIEW_SIZE);
+  preview.coordinates = {0, 0, 0};
+  preview.renderMesh(camT, viewRot, 45.0f, PREVIEW_SIZE, PREVIEW_SIZE);
 
   glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
   glViewport(vp[0], vp[1], vp[2], vp[3]);
@@ -4612,6 +4726,7 @@ void Renderer::BeginSecondaryPass() {
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
   rtDopplerObjects.clear();
+  rtTriangles.clear();
   rtDopplerObjects.reserve(20);
 
   glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
@@ -4652,6 +4767,7 @@ void Renderer::EndSecondaryPass() {
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
   rtDopplerObjects.clear();
+  rtTriangles.clear();
   rtDopplerObjects.reserve(20);
 }
 
@@ -4881,6 +4997,7 @@ void Renderer::InitComputeShader() {
   // ── 2. Create SSBOs for raytracer objects ──
   glGenBuffers(1, &rtSSBO);
   glGenBuffers(1, &rtDopplerSSBO);
+  glGenBuffers(1, &rtTriSSBO);
 
   // ── 3. Compile blit shaders (vert + frag) ──
   GLuint bv = compileShaderFromFile("src/shaders/blitVert.glsl", GL_VERTEX_SHADER);
@@ -4953,6 +5070,7 @@ void Renderer::DestroyComputeResources() {
   if (acyclicDopplerComputeProgram)  { glDeleteProgram(acyclicDopplerComputeProgram);  acyclicDopplerComputeProgram = 0; }
   if (rtOutputTex)      { glDeleteTextures(1, &rtOutputTex); rtOutputTex = 0; }
   if (rtSSBO)           { glDeleteBuffers(1, &rtSSBO);        rtSSBO = 0; }
+  if (rtTriSSBO)        { glDeleteBuffers(1, &rtTriSSBO);     rtTriSSBO = 0; }
   if (rtDopplerSSBO)    { glDeleteBuffers(1, &rtDopplerSSBO); rtDopplerSSBO = 0; }
   if (blitProgram)      { glDeleteProgram(blitProgram);      blitProgram = 0; }
   if (blitVAO)          { glDeleteVertexArrays(1, &blitVAO); blitVAO = 0; }
@@ -5109,6 +5227,13 @@ void Renderer::DispatchRaytracer(int width, int height) {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
   }
 
+  // Free-object triangles (binding 4) — always keep a valid buffer bound.
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtTriSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               std::max<size_t>(rtTriangles.size(), 1) * sizeof(RtTri),
+               rtTriangles.empty() ? nullptr : rtTriangles.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, rtTriSSBO);
+
   // Bind output image
   glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
 
@@ -5222,6 +5347,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   rtLastObjectCount    = rayTracedObjects.size();
   rtLastObjects        = rayTracedObjects;         // snapshot for memcmp
   rtLastDopplerObjects = rtDopplerObjects;         // snapshot for CaptureImage
+  rtLastTriangles      = rtTriangles;              // triangle snapshot for recording
   rtDirty              = false;
 }
 
@@ -5461,6 +5587,11 @@ void Renderer::CaptureImage() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
   }
 
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtTriSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               std::max<size_t>(rtLastTriangles.size(), 1) * sizeof(RtTri),
+               rtLastTriangles.empty() ? nullptr : rtLastTriangles.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, rtTriSSBO);
   glUseProgram(activeProgram);
   int capObjCount = dopplerMode ? (int)rtLastDopplerObjects.size() : (int)rtLastObjects.size();
   glUniform1i(locObjectCount, capObjCount);
@@ -5721,6 +5852,11 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
   }
 
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtTriSSBO);
+  glBufferData(GL_SHADER_STORAGE_BUFFER,
+               std::max<size_t>(rtLastTriangles.size(), 1) * sizeof(RtTri),
+               rtLastTriangles.empty() ? nullptr : rtLastTriangles.data(), GL_DYNAMIC_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, rtTriSSBO);
   glUseProgram(activeProgram);
 
   int recObjCount = dopplerMode ? (int)rtDopplerObjects.size() : (int)rayTracedObjects.size();

@@ -73,11 +73,48 @@ struct spaceObject
     vec4  atmo;        // x = atmosphere radius (0 = none), y = falloff, z = intensity
     vec4  atmoScatter; // xyz = per-channel scattering ratio
     vec4  rotation;    // xyz = Euler radians
+    vec4  mesh;        // x = triangle start, y = triangle count (free mesh)
 };
 
 layout(std430, binding = 1) buffer Objects {
     spaceObject objects[];
 };
+
+// Free-object triangles in camera-relative world space (objectType 5).
+struct Tri { vec4 v0; vec4 v1; vec4 v2; vec4 n0; vec4 n1; vec4 n2; };
+layout(std430, binding = 4) buffer TriBuf { Tri tris[]; };
+
+float rayTri(vec3 ro, vec3 rd, vec3 a, vec3 b, vec3 c, out float u, out float v) {
+    vec3 e1 = b - a, e2 = c - a;
+    vec3 p = cross(rd, e2);
+    float det = dot(e1, p);
+    if (abs(det) < 1e-12) return -1.0;
+    float invDet = 1.0 / det;
+    vec3 tv = ro - a;
+    u = dot(tv, p) * invDet;
+    if (u < 0.0 || u > 1.0) return -1.0;
+    vec3 q = cross(tv, e1);
+    v = dot(rd, q) * invDet;
+    if (v < 0.0 || u + v > 1.0) return -1.0;
+    return dot(e2, q) * invDet;
+}
+
+float rayMesh(vec3 ro, vec3 rd, int start, int count, out vec3 outN) {
+    float best = -1.0;
+    outN = vec3(0.0, 1.0, 0.0);
+    for (int i = 0; i < count; i++) {
+        Tri T = tris[start + i];
+        float u, v;
+        float t = rayTri(ro, rd, T.v0.xyz, T.v1.xyz, T.v2.xyz, u, v);
+        if (t > 1e-4 && (best < 0.0 || t < best)) {
+            best = t;
+            float w = 1.0 - u - v;
+            vec3 n = w*T.n0.xyz + u*T.n1.xyz + v*T.n2.xyz;
+            outN = (dot(n, rd) > 0.0) ? normalize(-n) : normalize(n);
+        }
+    }
+    return best;
+}
 
 uniform vec3  uBHPos;
 uniform float uBH_RS;
@@ -571,15 +608,22 @@ void main()
 
                 float segTMin = segLen;
                 int   segHit  = -1;
+                vec3  segHitNorm = vec3(0.0, 1.0, 0.0);
 
                 for (int i = 0; i < uObjectCount; i++)
                 {
                     int otype = int(objects[i].objectType + 0.5);
                     if (otype == 2 || otype == 4) continue;
-                    vec3  cen = objects[i].position.xyz;
-                    float rad = objects[i].radius;
-                    float t   = raySphere(prevPos, segNorm, cen, rad);
-                    if (t > 0.0 && t < segTMin) { segTMin = t; segHit = i; }
+                    float t; vec3 nrm;
+                    if (otype == 5) {
+                        t = rayMesh(prevPos, segNorm, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm);
+                    } else {
+                        vec3  cen = objects[i].position.xyz;
+                        float rad = objects[i].radius;
+                        t = raySphere(prevPos, segNorm, cen, rad);
+                        if (t > 0.0) nrm = normalize((prevPos + segNorm * t) - cen);
+                    }
+                    if (t > 0.0 && t < segTMin) { segTMin = t; segHit = i; segHitNorm = nrm; }
                 }
 
                 if (segHit >= 0)
@@ -587,7 +631,8 @@ void main()
                     hitScene = true;
                     hitIdx   = segHit;
                     hitPos   = prevPos + segNorm * segTMin;
-                    hitNorm  = normalize(hitPos - objects[segHit].position.xyz);
+                    hitNorm  = (int(objects[segHit].objectType + 0.5) == 5)
+                               ? segHitNorm : normalize(hitPos - objects[segHit].position.xyz);
 
                     for (int i = 0; i < uObjectCount; i++)
                     {
@@ -761,14 +806,20 @@ void main()
         {
             int otype = int(objects[i].objectType + 0.5);
             if (otype == 2 || otype == 4) continue;
-            vec3  cen = objects[i].position.xyz;
-            float rad = objects[i].radius;
-            float t   = raySphere(finalPos, finalVel, cen, rad);
+            float t; vec3 nrm;
+            if (otype == 5) {
+                t = rayMesh(finalPos, finalVel, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm);
+            } else {
+                vec3  cen = objects[i].position.xyz;
+                float rad = objects[i].radius;
+                t = raySphere(finalPos, finalVel, cen, rad);
+                if (t > 0.0) nrm = normalize((finalPos + finalVel * t) - cen);
+            }
             if (t > 0.0 && t < escTMin)
             {
                 escTMin  = t; hitScene = true; hitIdx = i;
                 hitPos   = finalPos + finalVel * t;
-                hitNorm  = normalize(hitPos - cen);
+                hitNorm  = nrm;
             }
         }
 
@@ -908,6 +959,10 @@ void main()
             float cosA = dot(-hitNorm, finalVel);
             float limb = pow(max(cosA, 0.0), 0.5);
             color = blackbody(dopplerT(objects[hitIdx].temperature, D)) * limb * dopplerB(D);
+        }
+        else if (otype == 5)
+        {
+            color = shadePlanet(ro, hitPos, hitNorm, objects[hitIdx].color.xyz);
         }
         else
         {

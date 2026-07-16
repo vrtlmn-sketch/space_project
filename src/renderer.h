@@ -49,6 +49,8 @@ struct SpawnFormState {
   float  velX       = 0.0f, velY = 0.0f, velZ =  0.0f;   // AU/yr
   int    shaderType = 0;   // 0=Planet, 1=Star, 2=BlackHole, 3=Camera
   float  temperature = 5778.0f; // Kelvin (meaningful for stars)
+  char   meshPath[256] = "";    // free object: OBJ mesh path (empty = none)
+  float  visualRadius  = 0.01f; // free object: mesh bounding radius (AU)
 };
 
 // ---- Spawned camera object (viewpoint you can frame, keyframe and record) ----
@@ -88,6 +90,7 @@ struct CloudFormState {
 // ---- Callbacks from Renderer back to main ----
 struct SceneCallbacks {
   std::function<void(const SpawnFormState&)>              spawnPhysicsObject;
+  std::function<void(const SpawnFormState&)>              spawnFreeObject;
   std::function<void(const GridFormState&)>               applyGrid;
   std::function<void(const CloudFormState&)>              applyCloud;
   std::function<void(int index)>                          deleteObject;
@@ -185,6 +188,7 @@ private:
   GLuint rtOutputTex{0};
   int    rtTexWidth{0}, rtTexHeight{0};  // current output texture dimensions
   GLuint rtSSBO{0};                      // SSBO for raytracer objects (compute shader)
+  GLuint rtTriSSBO{0};                   // SSBO (binding 4) for free-object triangles
 
   // Compute shader uniform locations (simple raytracer)
   GLint rtLocObjectCount{-1};
@@ -302,6 +306,7 @@ private:
   size_t rtLastObjectCount{};
   std::vector<RayTracerObject>        rtLastObjects;        // snapshot for memcmp
   std::vector<RayTracerObjectDoppler> rtLastDopplerObjects; // Doppler snapshot for CaptureImage
+  std::vector<RtTri>                  rtLastTriangles;      // triangle snapshot for recording
   bool   rtDirty{true};                                     // force first frame
 
   // Separate output texture for recording (avoids resizing the display texture)
@@ -329,6 +334,9 @@ private:
   RenderedObject previewSphere;            // mesh/shaders set up lazily (needs GL context)
   bool           previewInit{false};
   std::string    previewTexPath{"\x01uninit"};  // sentinel forces first texture sync
+  RenderedObject previewMesh;              // free-object OBJ preview (lazily loaded)
+  bool           previewMeshReady{false};  // shaders set up
+  std::string    previewMeshPath{"\x01uninit"}; // last loaded free-object mesh
   float          previewYaw{0.0f};
 
   void RenderPlanetPreview(PhysicsObject& obj);
@@ -425,6 +433,7 @@ public:
   // ---- Simulation state ----
   std::vector<RayTracerObject>        rayTracedObjects{};
   std::vector<RayTracerObjectDoppler> rtDopplerObjects{};   // populated when dopplerMode is on
+  std::vector<RtTri>                  rtTriangles{};         // free-object triangles (both paths)
   bool rayTracerView{false};
   bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
   bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)

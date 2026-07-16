@@ -68,6 +68,10 @@ private:
   unsigned int ssboObjects{};
 
   std::vector<float> UVObjectMeshBuffer{};
+  // Free-object mesh cached at unit bounding radius (pos3+normal3+uv2 stride);
+  // rescaled into UVObjectMeshBuffer by SetFreeMeshRadius without reparsing.
+  std::vector<float> freeUnitBuffer{};
+  bool freeMesh{false};
   std::vector<vec3>  linePoints{};
   std::vector<CloudParticle> cloudParticles;
   std::vector<PhysicsObjectStructure> gridPoints;
@@ -118,7 +122,8 @@ public:
                         float planetRadius, float atmoRadius, float falloff, float intensity, vec3 scatter);
   void renderMeshRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                            float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
-                           vec3 color = {0.55f, 0.25f, 0.15f});
+                           vec3 color = {0.55f, 0.25f, 0.15f},
+                           std::vector<RtTri>* triOut = nullptr);
 
 void renderPlane(const double cameraTranslate[3], const std::vector<RayTracerObject>& rayTracedObjectList,
                  const float viewRot[9], float fovDeg = 45.f,
@@ -130,6 +135,14 @@ void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies, fl
 
   void GenerateMeshSphere(float radius,
                     int horizontalSubdivisions, int verticalSubdivisions);
+
+  // Load a Wavefront OBJ as this object's mesh (free object). Positions are
+  // centered and normalized to a unit bounding radius, then scaled by `radius`.
+  // Returns false if the file can't be parsed (caller should fall back).
+  bool LoadMeshFromOBJ(const std::string& path, float radius);
+  // Rescale an already-loaded free mesh to a new bounding radius.
+  void SetFreeMeshRadius(float radius);
+  bool isFreeMesh() const { return freeMesh; }
   void GenerateMeshPlane(float width, float height);
 void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size);
 void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY = true, bool showZ = true);
@@ -137,7 +150,8 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   void renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
   void renderMeshRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
                                   vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
-                                  vec3 color = {0.55f, 0.25f, 0.15f});
+                                  vec3 color = {0.55f, 0.25f, 0.15f},
+                                  std::vector<RtTri>* triOut = nullptr);
   void renderCloudRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);

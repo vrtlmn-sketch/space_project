@@ -26,6 +26,7 @@ struct PhysicsObjectData {
   vec3  atmosphereColor{0.175f, 0.41f, 1.0f};
   bool  simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
+  std::string meshPath{};  // free object: OBJ mesh path (empty = sphere object)
 };
 
 struct GridData {

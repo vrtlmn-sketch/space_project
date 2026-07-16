@@ -88,6 +88,7 @@ bool ProjectSerializer::Save(const std::string& path,
     o["atmosphereColor"]     = vec3ToJson(obj.atmosphereScatter);
     o["simulatePhysics"]     = obj.simulatePhysics;
     o["keyframes"]           = keyframesToJson(obj.keyframes);
+    o["meshPath"]            = obj.meshPath;
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -284,6 +285,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
                                 : vec3{0.175f, 0.41f, 1.0f};
       pod.simulatePhysics     = o.value("simulatePhysics", true);
       if (o.contains("keyframes")) pod.keyframes = jsonToKeyframes(o["keyframes"]);
+      pod.meshPath            = o.value("meshPath", std::string{});
       data.objects.push_back(pod);
     }
   }

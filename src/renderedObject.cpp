@@ -6,6 +6,12 @@
 #include "units.h"
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <sstream>
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <algorithm>
 
 float RenderedObject::sZNear = 0.001f;
 float RenderedObject::sZFar  = 1.0e10f;
@@ -196,35 +202,235 @@ void RenderedObject::GenerateMeshSphere(float radius,
   }
 }
 
-void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
-                                          float mass, float temperature, float objectType, vec3 color)
+// Rebuild the drawable buffer from the cached unit mesh at the given radius.
+void RenderedObject::SetFreeMeshRadius(float radius)
 {
+  if (freeUnitBuffer.empty()) return;
+  this->radius          = radius;
+  this->hasBeenRendered = false;   // force VBO re-upload
+  UVObjectMeshBuffer.assign(freeUnitBuffer.begin(), freeUnitBuffer.end());
+  for (size_t i = 0; i + 8 <= UVObjectMeshBuffer.size(); i += 8) {
+    UVObjectMeshBuffer[i    ] *= radius;
+    UVObjectMeshBuffer[i + 1] *= radius;
+    UVObjectMeshBuffer[i + 2] *= radius;
+  }
+}
+
+// Parse a Wavefront OBJ into the pos(3)+normal(3)+uv(2) triangle buffer.
+// Faces are fan-triangulated; smooth normals are generated when the file has
+// none. The mesh is centered and normalized to a unit bounding radius, then
+// scaled by `radius`. UVs are 0 (textures unsupported for now).
+bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
+{
+  std::ifstream in(path);
+  if (!in.is_open()) {
+    std::printf("[OBJ] could not open '%s'\n", path.c_str());
+    return false;
+  }
+
+  std::vector<std::array<float,3>> positions;
+  std::vector<std::array<float,3>> normals;
+  struct Corner { int v; int n; };          // 0-based, -1 = none
+  std::vector<std::array<Corner,3>> tris;
+
+  auto parseCorner = [&](const std::string& tok) -> Corner {
+    // formats: v | v/vt | v//vn | v/vt/vn  (1-based, negatives allowed)
+    Corner c{-1, -1};
+    int vi = 0, ni = 0; int field = 0; bool any = false;
+    std::string cur;
+    auto flush = [&](int f) {
+      if (cur.empty()) return;
+      int val = std::atoi(cur.c_str());
+      if (f == 0) vi = val;
+      else if (f == 2) ni = val;
+      cur.clear();
+    };
+    for (char ch : tok) {
+      if (ch == '/') { flush(field); field++; }
+      else { cur += ch; any = true; }
+    }
+    flush(field);
+    if (!any) return c;
+    if (vi != 0) c.v = (vi > 0) ? vi - 1 : (int)positions.size() + vi;
+    if (ni != 0) c.n = (ni > 0) ? ni - 1 : (int)normals.size()   + ni;
+    return c;
+  };
+
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    std::istringstream ss(line);
+    std::string tag; ss >> tag;
+    if (tag == "v") {
+      std::array<float,3> p{0,0,0}; ss >> p[0] >> p[1] >> p[2]; positions.push_back(p);
+    } else if (tag == "vn") {
+      std::array<float,3> n{0,0,0}; ss >> n[0] >> n[1] >> n[2]; normals.push_back(n);
+    } else if (tag == "f") {
+      std::vector<Corner> poly; std::string tok;
+      while (ss >> tok) poly.push_back(parseCorner(tok));
+      for (size_t i = 1; i + 1 < poly.size(); ++i)
+        tris.push_back({ poly[0], poly[i], poly[i+1] });
+    }
+  }
+  in.close();
+
+  if (positions.empty() || tris.empty()) {
+    std::printf("[OBJ] '%s' has no usable geometry\n", path.c_str());
+    return false;
+  }
+
+  // Center on the bounding-box midpoint and find the bounding radius.
+  std::array<float,3> lo = positions[0], hi = positions[0];
+  for (auto& p : positions)
+    for (int k = 0; k < 3; ++k) { lo[k] = std::min(lo[k], p[k]); hi[k] = std::max(hi[k], p[k]); }
+  std::array<float,3> ctr{ (lo[0]+hi[0])*0.5f, (lo[1]+hi[1])*0.5f, (lo[2]+hi[2])*0.5f };
+  float maxR = 1e-6f;
+  for (auto& p : positions) {
+    float dx=p[0]-ctr[0], dy=p[1]-ctr[1], dz=p[2]-ctr[2];
+    maxR = std::max(maxR, std::sqrt(dx*dx+dy*dy+dz*dz));
+  }
+  float inv = 1.0f / maxR;
+
+  // Generate smooth normals if the file omitted them.
+  bool haveNormals = !normals.empty();
+  std::vector<std::array<float,3>> genN;
+  if (!haveNormals) {
+    genN.assign(positions.size(), {0,0,0});
+    for (auto& t : tris) {
+      auto& A = positions[t[0].v]; auto& B = positions[t[1].v]; auto& C = positions[t[2].v];
+      float ux=B[0]-A[0], uy=B[1]-A[1], uz=B[2]-A[2];
+      float vx=C[0]-A[0], vy=C[1]-A[1], vz=C[2]-A[2];
+      float nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+      for (int k=0;k<3;++k){ genN[t[k].v][0]+=nx; genN[t[k].v][1]+=ny; genN[t[k].v][2]+=nz; }
+    }
+    for (auto& n : genN) {
+      float len=std::sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]); if(len>1e-8f){n[0]/=len;n[1]/=len;n[2]/=len;}
+    }
+  }
+
+  // Emit the unit-radius buffer (pos centered+normalized, normal, uv=0).
+  freeUnitBuffer.clear();
+  freeUnitBuffer.reserve(tris.size() * 3 * 8);
+  auto emit = [&](const Corner& c) {
+    auto& p = positions[c.v];
+    freeUnitBuffer.push_back((p[0]-ctr[0])*inv);
+    freeUnitBuffer.push_back((p[1]-ctr[1])*inv);
+    freeUnitBuffer.push_back((p[2]-ctr[2])*inv);
+    std::array<float,3> nrm{0,1,0};
+    if (haveNormals && c.n >= 0 && c.n < (int)normals.size()) nrm = normals[c.n];
+    else if (!haveNormals && c.v < (int)genN.size())          nrm = genN[c.v];
+    freeUnitBuffer.push_back(nrm[0]);
+    freeUnitBuffer.push_back(nrm[1]);
+    freeUnitBuffer.push_back(nrm[2]);
+    freeUnitBuffer.push_back(0.0f);
+    freeUnitBuffer.push_back(0.0f);
+  };
+  int emitted = 0;
+  const int nPos = (int)positions.size();
+  for (auto& t : tris) {
+    if (t[0].v < 0 || t[0].v >= nPos ||
+        t[1].v < 0 || t[1].v >= nPos ||
+        t[2].v < 0 || t[2].v >= nPos) continue;   // skip malformed triangle whole
+    emit(t[0]); emit(t[1]); emit(t[2]);
+    emitted += 3;
+  }
+  if (emitted == 0) {
+    std::printf("[OBJ] '%s' produced no valid triangles\n", path.c_str());
+    return false;
+  }
+
+  freeMesh   = true;
+  meshType   = MeshType::sphere;   // reuse the lit 8-float vertex path
+  bufferSize = emitted;
+  SetFreeMeshRadius(radius);
+  std::printf("[OBJ] loaded '%s': %d tris\n", path.c_str(), emitted / 3);
+  return true;
+}
+
+// Transform the free mesh (already scaled by radius) into camera-relative world
+// space and append its triangles to `out`. Returns the triangle count; the
+// caller records the start index (out.size() before the call).
+static int appendFreeWorldTris(const std::vector<float>& mesh, const dvec3& coords,
+                               const vec3& rotDeg, const double camT[3],
+                               std::vector<RtTri>& out)
+{
+  const float d2r = 0.01745329252f;
+  float ca=std::cos(rotDeg.x*d2r), sa=std::sin(rotDeg.x*d2r);
+  float cb=std::cos(rotDeg.y*d2r), sb=std::sin(rotDeg.y*d2r);
+  float cc=std::cos(rotDeg.z*d2r), sc=std::sin(rotDeg.z*d2r);
+  float R[9]={ cc*cb, cc*sb*sa-sc*ca, cc*sb*ca+sc*sa,
+               sc*cb, sc*sb*sa+cc*ca, sc*sb*ca-cc*sa,
+               -sb,   cb*sa,          cb*ca };
+  float ox=(float)(coords.x+camT[0]), oy=(float)(coords.y+camT[1]), oz=(float)(coords.z+camT[2]);
+  size_t vcount = mesh.size()/8;
+  int start = (int)out.size();
+  for (size_t v = 0; v + 2 < vcount; v += 3) {
+    RtTri tri{};
+    vec4* vp[3] = { &tri.v0, &tri.v1, &tri.v2 };
+    vec4* np[3] = { &tri.n0, &tri.n1, &tri.n2 };
+    for (int k = 0; k < 3; ++k) {
+      const float* b = &mesh[(v+k)*8];
+      *vp[k] = vec4{ R[0]*b[0]+R[1]*b[1]+R[2]*b[2] + ox,
+                     R[3]*b[0]+R[4]*b[1]+R[5]*b[2] + oy,
+                     R[6]*b[0]+R[7]*b[1]+R[8]*b[2] + oz, 0.0f };
+      *np[k] = vec4{ R[0]*b[3]+R[1]*b[4]+R[2]*b[5],
+                     R[3]*b[3]+R[4]*b[4]+R[5]*b[5],
+                     R[6]*b[3]+R[7]*b[4]+R[8]*b[5], 0.0f };
+    }
+    out.push_back(tri);
+  }
+  return (int)out.size() - start;
+}
+
+void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
+                                          float mass, float temperature, float objectType, vec3 color,
+                                          std::vector<RtTri>* triOut)
+{
+  vec4 meshInfo{0,0,0,0};
+  float otype = objectType;
+  if (freeMesh && triOut) {
+    int start = (int)triOut->size();
+    int count = appendFreeWorldTris(UVObjectMeshBuffer, coordinates, rotationDeg, cameraTranslate, *triOut);
+    meshInfo = vec4{ (float)start, (float)count, 0, 0 };
+    otype = 5.0f;   // free mesh
+  }
   raytracerObjectList.push_back(RayTracerObject{
     vec4{(float)(coordinates.x + cameraTranslate[0]),
          (float)(coordinates.y + cameraTranslate[1]),
          (float)(coordinates.z + cameraTranslate[2]), 0},
-    mass, radius, temperature, objectType,
+    mass, radius, temperature, otype,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, 0},
     vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
-         rotationDeg.z*0.01745329252f, 0}});
+         rotationDeg.z*0.01745329252f, 0},
+    meshInfo});
 }
 void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
-                                                vec3 velocity, float mass, float temperature, float objectType, vec3 color)
+                                                vec3 velocity, float mass, float temperature, float objectType, vec3 color,
+                                                std::vector<RtTri>* triOut)
 {
+  vec4 meshInfo{0,0,0,0};
+  float otype = objectType;
+  if (freeMesh && triOut) {
+    int start = (int)triOut->size();
+    int count = appendFreeWorldTris(UVObjectMeshBuffer, coordinates, rotationDeg, cameraTranslate, *triOut);
+    meshInfo = vec4{ (float)start, (float)count, 0, 0 };
+    otype = 5.0f;
+  }
   list.push_back(RayTracerObjectDoppler{
     vec4{(float)(coordinates.x + cameraTranslate[0]),
          (float)(coordinates.y + cameraTranslate[1]),
          (float)(coordinates.z + cameraTranslate[2]), 0},
-    mass, radius, temperature, objectType,
+    mass, radius, temperature, otype,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{velocity.x, velocity.y, velocity.z, 0},
     vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, 0},
     vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
-         rotationDeg.z*0.01745329252f, 0}});
+         rotationDeg.z*0.01745329252f, 0},
+    meshInfo});
 }
 
 // Build R = Rz·Ry·Rx (row-major) from Euler DEGREES — matches the CPU/GLSL

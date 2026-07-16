@@ -35,6 +35,9 @@ public:
   // timeline keyframes instead (position + rotationDeg animated on playback).
   bool  simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
+
+  // Free object: path to a user OBJ mesh. Empty = normal sphere-mesh object.
+  std::string meshPath{};
   float schwarzschildRadius{0.05f}; // event horizon radius (editable, default = 2*G*250)
   std::string texturePath{}; // path to optional planet surface texture (empty = none)
 

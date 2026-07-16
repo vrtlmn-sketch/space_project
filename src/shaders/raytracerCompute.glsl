@@ -74,11 +74,50 @@ struct spaceObject
     vec4  atmo;        // x = atmosphere radius (0 = none), y = falloff, z = intensity
     vec4  atmoScatter; // xyz = per-channel scattering ratio
     vec4  rotation;    // xyz = Euler radians
+    vec4  mesh;        // x = triangle start, y = triangle count (free mesh)
 };
 
 layout(std430, binding = 1) buffer Objects {
     spaceObject objects[];
 };
+
+// Free-object triangles in camera-relative world space (objectType 5).
+struct Tri { vec4 v0; vec4 v1; vec4 v2; vec4 n0; vec4 n1; vec4 n2; };
+layout(std430, binding = 4) buffer TriBuf { Tri tris[]; };
+
+// Möller–Trumbore ray/triangle test; returns t (>0 on hit) and barycentrics.
+float rayTri(vec3 ro, vec3 rd, vec3 a, vec3 b, vec3 c, out float u, out float v) {
+    vec3 e1 = b - a, e2 = c - a;
+    vec3 p = cross(rd, e2);
+    float det = dot(e1, p);
+    if (abs(det) < 1e-12) return -1.0;
+    float invDet = 1.0 / det;
+    vec3 tv = ro - a;
+    u = dot(tv, p) * invDet;
+    if (u < 0.0 || u > 1.0) return -1.0;
+    vec3 q = cross(tv, e1);
+    v = dot(rd, q) * invDet;
+    if (v < 0.0 || u + v > 1.0) return -1.0;
+    return dot(e2, q) * invDet;
+}
+
+// Nearest triangle hit over an object's mesh range; outputs the shading normal.
+float rayMesh(vec3 ro, vec3 rd, int start, int count, out vec3 outN) {
+    float best = -1.0;
+    outN = vec3(0.0, 1.0, 0.0);
+    for (int i = 0; i < count; i++) {
+        Tri T = tris[start + i];
+        float u, v;
+        float t = rayTri(ro, rd, T.v0.xyz, T.v1.xyz, T.v2.xyz, u, v);
+        if (t > 1e-4 && (best < 0.0 || t < best)) {
+            best = t;
+            float w = 1.0 - u - v;
+            vec3 n = w*T.n0.xyz + u*T.n1.xyz + v*T.n2.xyz;
+            outN = (dot(n, rd) > 0.0) ? normalize(-n) : normalize(n);
+        }
+    }
+    return best;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -397,19 +436,27 @@ void main()
     // -----------------------------------------------------------------------
     float tMin   = 1e30;
     int   hitIdx = -1;
+    vec3  hitNormal = vec3(0.0, 1.0, 0.0);
 
     for (int i = 0; i < uObjectCount; i++)
     {
         int otype = int(objects[i].objectType + 0.5);
         if (otype == 2 || otype == 4) continue; // skip clouds — they're volumetric
 
-        vec3  cen = objects[i].position.xyz;
-        float rad = objects[i].radius;
-        float t   = raySphere(ro, rd, cen, rad);
+        float t; vec3 nrm;
+        if (otype == 5) {
+            t = rayMesh(ro, rd, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm);
+        } else {
+            vec3  cen = objects[i].position.xyz;
+            float rad = objects[i].radius;
+            t = raySphere(ro, rd, cen, rad);
+            if (t > 0.0) nrm = normalize((ro + rd * t) - cen);
+        }
         if (t > 0.0 && t < tMin)
         {
-            tMin   = t;
-            hitIdx = i;
+            tMin      = t;
+            hitIdx    = i;
+            hitNormal = nrm;
         }
     }
 
@@ -433,6 +480,12 @@ void main()
             float cosA   = dot(-normal, rd);
             float limb   = pow(max(cosA, 0.0), 0.5);
             color = blackbody(objects[hitIdx].temperature) * limb;
+        }
+        else if (otype == 5)
+        {
+            // Free mesh — Blinn-Phong shading with the interpolated triangle normal
+            vec3 hitPos = ro + rd * tMin;
+            color = shadePlanet(ro, hitPos, hitNormal, objects[hitIdx].color.xyz);
         }
         else
         {
