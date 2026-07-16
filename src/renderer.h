@@ -90,7 +90,6 @@ struct CloudFormState {
 // ---- Callbacks from Renderer back to main ----
 struct SceneCallbacks {
   std::function<void(const SpawnFormState&)>              spawnPhysicsObject;
-  std::function<void(const SpawnFormState&)>              spawnFreeObject;
   std::function<void(const GridFormState&)>               applyGrid;
   std::function<void(const CloudFormState&)>              applyCloud;
   std::function<void(int index)>                          deleteObject;

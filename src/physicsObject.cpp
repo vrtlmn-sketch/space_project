@@ -10,7 +10,7 @@ void PhysicsObject::SetVelocity(const vec3& velocity)
 }
 
 PhysicsObject::PhysicsObject(const dvec3& velocity, const dvec3& position, double mass,
-                             const std::string& objName, ObjectShaderType sType, float temp)
+                             const std::string& objName, ObjectType sType, float temp)
   : frameStore(sizeof(dvec3))
 {
   this->data.velocity=velocity;
@@ -23,23 +23,27 @@ PhysicsObject::PhysicsObject(const dvec3& velocity, const dvec3& position, doubl
   // Real Schwarzschild radius: 2GM/c² ≈ 1.97e-8 AU per solar mass
   this->schwarzschildRadius = (float)(units::kRsAUPerMsun * mass);
   // Black holes: the mesh IS the event horizon; others use the mass heuristic
-  this->visualRadius = (sType == ObjectShaderType::BlackHole)
+  this->visualRadius = (sType == ObjectType::BlackHole)
                          ? this->schwarzschildRadius
                          : defaultRadiusForMass(mass);
   renderedObject.GenerateMeshSphere(visualRadius, 32, 32);
   renderedObject.coordinates = data.position;
-  if(sType == ObjectShaderType::Star)
-  {
-    renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/brightStartFragShader.glsl");
-  }
-  else if(sType == ObjectShaderType::BlackHole)
-  {
-    // Black hole — pure black silhouette
-    renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/blackHoleFrag.glsl");
-  }
-  else
-  {
-    renderedObject.setupShaders("src/shaders/defaultVert.glsl","src/shaders/defaultFrag.glsl");
+  ApplyShaderForType(renderedObject, sType);
+}
+
+// Single place that maps an object type to its rasterized shader pair.
+void ApplyShaderForType(RenderedObject& ro, ObjectType t)
+{
+  switch (t) {
+    case ObjectType::Star:
+      ro.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/brightStartFragShader.glsl");
+      break;
+    case ObjectType::BlackHole:
+      ro.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/blackHoleFrag.glsl");
+      break;
+    default: // Planet and FreeModel are both lit by the default surface shader
+      ro.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/defaultFrag.glsl");
+      break;
   }
 }
 
@@ -155,12 +159,10 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
   renderedObject.coordinates = data.position;
   renderedObject.rotationDeg = rotationDeg;
 
-  float objectType = 0.0f; // default: planet
-  if (shaderType == ObjectShaderType::Star)      objectType = 1.0f;
-  else if (shaderType == ObjectShaderType::BlackHole) objectType = 3.0f;
+  float objectType = RtObjectType(shaderType);
 
   // Forward atmosphere params so the RT object structs carry them
-  if (shaderType == ObjectShaderType::Planet && atmosphereEnabled) {
+  if (shaderType == ObjectType::Planet && atmosphereEnabled) {
     renderedObject.rtAtmoRadius    = renderRadius() * renderer.activeSizeExag() * (1.0f + atmosphereHeight);
     renderedObject.rtAtmoFalloff   = atmosphereFalloff;
     renderedObject.rtAtmoIntensity = atmosphereIntensity;

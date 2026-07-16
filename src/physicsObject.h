@@ -8,8 +8,34 @@
 #include "physicsObjectStructure.h"
 #include "frameStore.h"
 
-// Which visual shader to use for this object
-enum class ObjectShaderType { Planet, Star, BlackHole };
+// The kind of body. Drives shader selection, the RT object-type code, and which
+// inspector/spawn settings apply. FreeModel renders a user OBJ mesh (lit, like a
+// planet surface) — it has no atmosphere, texture, or event horizon.
+enum class ObjectType { Planet, Star, BlackHole, FreeModel };
+
+// RT object-type code handed to the compute shaders (0=planet, 1=star,
+// 3=black hole, 5=free mesh). Single source of truth for the mapping.
+inline float RtObjectType(ObjectType t) {
+  switch (t) {
+    case ObjectType::Star:      return 1.0f;
+    case ObjectType::BlackHole: return 3.0f;
+    case ObjectType::FreeModel: return 5.0f;
+    default:                    return 0.0f; // Planet
+  }
+}
+
+// Display label for a type (inspector, spawn, hierarchy).
+inline const char* TypeLabel(ObjectType t) {
+  switch (t) {
+    case ObjectType::Star:      return "Star";
+    case ObjectType::BlackHole: return "Black Hole";
+    case ObjectType::FreeModel: return "Free Model";
+    default:                    return "Planet";
+  }
+}
+
+// Assign the rasterized shader for a type (FreeModel is lit like a planet).
+void ApplyShaderForType(RenderedObject& ro, ObjectType t);
 
 class PhysicsObject
 {
@@ -23,7 +49,7 @@ private:
 public:
   unsigned int timeframe{};
   std::string name{"Object"};
-  ObjectShaderType shaderType{ObjectShaderType::Planet};
+  ObjectType shaderType{ObjectType::Planet};
 
   RenderedObject renderedObject;
   PhysicsObjectStructure data;
@@ -65,7 +91,7 @@ public:
   void Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);
   PhysicsObject(const dvec3& velocity, const dvec3& position, double mass,
                 const std::string& name = "Object",
-                ObjectShaderType shaderType = ObjectShaderType::Planet,
+                ObjectType shaderType = ObjectType::Planet,
                 float temperature = 0.0f);
 
   // Timeline accessors

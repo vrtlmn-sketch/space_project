@@ -50,6 +50,15 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   return cloud;
 }
 
+// Map a serialized/spawn-form type code to an ObjectType. A non-empty meshPath
+// always means FreeModel (also upgrades legacy free objects saved as planets).
+static ObjectType typeFromCode(int code, const std::string& meshPath) {
+  if (code == 3 || !meshPath.empty()) return ObjectType::FreeModel;
+  if (code == 1) return ObjectType::Star;
+  if (code == 2) return ObjectType::BlackHole;
+  return ObjectType::Planet;
+}
+
 static void buildScene(
   const ProjectData&                        data,
   std::vector<PhysicsObject>&               physicsObjects,
@@ -62,9 +71,7 @@ static void buildScene(
   clouds.clear();
 
   for (const auto& pod : data.objects) {
-    ObjectShaderType st = ObjectShaderType::Planet;
-    if (pod.shaderType == 1)      st = ObjectShaderType::Star;
-    else if (pod.shaderType == 2) st = ObjectShaderType::BlackHole;
+    ObjectType st = typeFromCode(pod.shaderType, pod.meshPath);
     physicsObjects.emplace_back(
       pod.velocity, pod.position,
       pod.mass, pod.name, st, pod.temperature);
@@ -152,28 +159,20 @@ int main(int argc, char** argv) {
   SceneCallbacks cb;
 
   cb.spawnPhysicsObject = [&](const SpawnFormState& form) {
-    ObjectShaderType st = ObjectShaderType::Planet;
-    if (form.shaderType == 1)      st = ObjectShaderType::Star;
-    else if (form.shaderType == 2) st = ObjectShaderType::BlackHole;
+    ObjectType st = typeFromCode(form.shaderType, form.meshPath);
     physicsObjects.emplace_back(
       vec3{form.velX, form.velY, form.velZ},
       vec3{form.posX, form.posY, form.posZ},
       form.mass, std::string(form.name), st, form.temperature);
-    lineObjects.emplace_back(vec3{form.posX, form.posY, form.posZ});
-  };
-
-  cb.spawnFreeObject = [&](const SpawnFormState& form) {
-    physicsObjects.emplace_back(
-      vec3{form.velX, form.velY, form.velZ},
-      vec3{form.posX, form.posY, form.posZ},
-      form.mass, std::string(form.name), ObjectShaderType::Planet, 0.0f);
     auto& po = physicsObjects.back();
-    po.visualRadius = form.visualRadius;
-    po.meshPath     = form.meshPath;
-    if (!po.renderedObject.LoadMeshFromOBJ(po.meshPath,
-                                           po.visualRadius * renderer.activeSizeExag())) {
-      po.meshPath.clear();  // parse failed → fall back to a sphere
-      po.renderedObject.GenerateMeshSphere(po.visualRadius * renderer.activeSizeExag(), 32, 32);
+    if (st == ObjectType::FreeModel) {
+      po.visualRadius = form.visualRadius;
+      po.meshPath     = form.meshPath;
+      if (!po.meshPath.empty() &&
+          !po.renderedObject.LoadMeshFromOBJ(po.meshPath, po.visualRadius * renderer.activeSizeExag())) {
+        po.meshPath.clear();  // parse failed → fall back to a sphere
+        po.renderedObject.GenerateMeshSphere(po.visualRadius * renderer.activeSizeExag(), 32, 32);
+      }
     }
     lineObjects.emplace_back(vec3{form.posX, form.posY, form.posZ});
   };
@@ -496,7 +495,7 @@ int main(int argc, char** argv) {
     std::vector<vec3> starPositions;
     std::vector<vec3> starColors;
     for (const auto& obj : physicsObjects) {
-      if (obj.shaderType == ObjectShaderType::Star) {
+      if (obj.shaderType == ObjectType::Star) {
         // Camera-relative (matches the camera-relative vertex positions)
         starPositions.push_back(vec3{
           (float)(obj.data.position.x + renderer.cameraTranslate[0]),
@@ -520,14 +519,14 @@ int main(int argc, char** argv) {
     }
     // Upload to all planet shaders
     for (auto& obj : physicsObjects) {
-      if (obj.shaderType == ObjectShaderType::Planet && !starPositions.empty()) {
+      if (obj.shaderType == ObjectType::Planet && !starPositions.empty()) {
         obj.renderedObject.uploadStarLighting(starPositions, starColors);
         if (obj.atmosphereEnabled) {
           obj.EnsureAtmosphere();
           obj.atmosphereObject.uploadStarLighting(starPositions, starColors);
         }
       }
-      if (obj.shaderType == ObjectShaderType::Star) {
+      if (obj.shaderType == ObjectType::Star) {
         obj.renderedObject.uploadTemperature(obj.temperature);
       }
     }
@@ -550,7 +549,7 @@ int main(int argc, char** argv) {
         lineObjects[i].AddPoint(physicsObjects[i].data.position);
       }
       // Propagate black hole Schwarzschild radius to the renderer
-      if (physicsObjects[i].shaderType == ObjectShaderType::BlackHole) {
+      if (physicsObjects[i].shaderType == ObjectType::BlackHole) {
         renderer.bhSchwarzschildRadius = physicsObjects[i].schwarzschildRadius;
       }
     }
@@ -661,9 +660,7 @@ int main(int argc, char** argv) {
       renderer.rayTracedObjects.clear();
       renderer.rtDopplerObjects.clear();
       for (int i = 0; i < (int)physicsObjects.size(); i++) {
-        float objType = 0.0f;
-        if (physicsObjects[i].shaderType == ObjectShaderType::Star)          objType = 1.0f;
-        else if (physicsObjects[i].shaderType == ObjectShaderType::BlackHole) objType = 3.0f;
+        float objType = RtObjectType(physicsObjects[i].shaderType);
         renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
                                    physicsObjects[i].data.mass,
                                    physicsObjects[i].temperature, objType,
@@ -690,9 +687,7 @@ int main(int argc, char** argv) {
     // Re-draw all objects into the FBO (no physics, just rendering)
     renderer.DrawSkybox(skybox);
     for (int i = 0; i < (int)physicsObjects.size(); i++) {
-      float objType = 0.0f;
-      if (physicsObjects[i].shaderType == ObjectShaderType::Star)      objType = 1.0f;
-      else if (physicsObjects[i].shaderType == ObjectShaderType::BlackHole) objType = 3.0f;
+      float objType = RtObjectType(physicsObjects[i].shaderType);
       renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
                                  physicsObjects[i].data.mass,
                                  physicsObjects[i].temperature,

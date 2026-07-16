@@ -142,6 +142,10 @@ void RenderedObject::GenerateMeshSphere(float radius,
   this->verticalSubdivisions   = verticalSubdivisions;
   this->radius                 = radius;
   this->hasBeenRendered        = false;
+  this->freeMesh               = false;   // a generated sphere is not a free mesh
+  freeUnitBuffer.clear();
+  bvhTris.clear();
+  bvhNodes.clear();
 
   const int stacks  = verticalSubdivisions;
   const int sectors = horizontalSubdivisions;
@@ -467,6 +471,8 @@ void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::v
   if (freeMesh && triOut && nodeOut && !bvhNodes.empty()) {
     meshInfo = appendBVHMesh(bvhTris, bvhNodes, *triOut, *nodeOut);
     otype = 5.0f;   // free mesh
+  } else if (otype == 5.0f) {
+    otype = 0.0f;   // FreeModel with no loaded mesh → render as a lit sphere
   }
   raytracerObjectList.push_back(RayTracerObject{
     vec4{(float)(coordinates.x + cameraTranslate[0]),
@@ -490,6 +496,8 @@ void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
   if (freeMesh && triOut && nodeOut && !bvhNodes.empty()) {
     meshInfo = appendBVHMesh(bvhTris, bvhNodes, *triOut, *nodeOut);
     otype = 5.0f;
+  } else if (otype == 5.0f) {
+    otype = 0.0f;   // FreeModel with no loaded mesh → render as a lit sphere
   }
   list.push_back(RayTracerObjectDoppler{
     vec4{(float)(coordinates.x + cameraTranslate[0]),

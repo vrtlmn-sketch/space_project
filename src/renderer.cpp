@@ -569,7 +569,7 @@ void Renderer::DrawSkybox(RenderedObject& ro) {
 
 void Renderer::DrawAtmosphere(PhysicsObject& obj) {
   if (rayTracerView) return;
-  if (!obj.atmosphereEnabled || obj.shaderType != ObjectShaderType::Planet) return;
+  if (!obj.atmosphereEnabled || obj.shaderType != ObjectType::Planet) return;
   obj.EnsureAtmosphere(activeSizeExag());
   obj.atmosphereObject.coordinates = obj.data.position;
   float r = obj.renderRadius() * activeSizeExag();
@@ -3453,12 +3453,13 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       }
 
       ImGui::Spacing();
-      const char* shaderItems[] = { "Planet", "Star", "Black Hole" };
+      const char* shaderItems[] = { "Planet", "Star", "Black Hole", "Free Model" };
       ImGui::SetNextItemWidth(-1);
-      if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 3)) {
+      if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 4)) {
         if (spawnForm.shaderType == 0)      spawnForm.mass = 3.0e-6;  // Earth
         else if (spawnForm.shaderType == 1) spawnForm.mass = 1.0;     // Sun
-        else                                spawnForm.mass = 4.15e6;  // Sgr A*
+        else if (spawnForm.shaderType == 2) spawnForm.mass = 4.15e6;  // Sgr A*
+        else                                spawnForm.mass = 3.0e-6;  // Free Model
       }
       if (spawnForm.shaderType == 1) {
         ImGui::SetNextItemWidth(-30);
@@ -3469,11 +3470,43 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         ImGui::ColorButton("##sbb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
       }
 
+      // Free Model: size + OBJ mesh picker
+      bool freeModel = (spawnForm.shaderType == 3);
+      if (freeModel) {
+        ImGui::Text("Size (AU)");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::DragFloat("##ssize", &spawnForm.visualRadius, 0.001f, 1e-5f, 5.0f, "%.4g AU",
+                         ImGuiSliderFlags_Logarithmic);
+        ImGui::SeparatorText("Mesh (.obj)");
+        static std::vector<std::string> modelFiles;
+        static bool modelsScanned = false;
+        if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
+        if (ImGui::SmallButton("Rescan##sfo")) modelFiles = ScanModelFiles();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu in models/", modelFiles.size());
+        std::string curName = std::filesystem::path(spawnForm.meshPath).filename().string();
+        if (ImGui::BeginCombo("##sfomodel", curName.empty() ? "(pick a model)" : curName.c_str())) {
+          for (const auto& f : modelFiles)
+            if (ImGui::Selectable(f.c_str(), curName == f))
+              std::snprintf(spawnForm.meshPath, sizeof(spawnForm.meshPath), "models/%s", f.c_str());
+          ImGui::EndCombo();
+        }
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##sfopath", "models/your_model.obj",
+                                 spawnForm.meshPath, sizeof(spawnForm.meshPath));
+      }
+
       ImGui::Spacing();
       ImGui::Separator();
       ImGui::Spacing();
+      bool canSpawn = !freeModel || spawnForm.meshPath[0] != '\0';
+      if (!canSpawn) ImGui::BeginDisabled();
       if (ImGui::Button("Spawn", ImVec2(-1, 28))) {
         if (cb.spawnPhysicsObject) cb.spawnPhysicsObject(spawnForm);
+      }
+      if (!canSpawn) {
+        ImGui::EndDisabled();
+        ImGui::TextDisabled("Pick or type an .obj path first.");
       }
       if (ImGui::Button(ghostDragActive ? "Cancel Drag" : "Place (Drag)", ImVec2(-1, 28))) {
         ghostDragActive = !ghostDragActive;
@@ -3563,80 +3596,6 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       if (ImGui::Button("Spawn Cloud", ImVec2(-1, 28))) {
         cloudForm.enabled = true;
         if (cb.applyCloud) cb.applyCloud(cloudForm);
-      }
-      ImGui::EndTabItem();
-    }
-
-    // ── Free Object tab ──
-    if (ImGui::BeginTabItem("Free Object")) {
-      static char  foName[64]  = "Free Object";
-      static double foMass     = 3.0e-6;
-      static float  foPos[3]   = { 0.0f, 0.0f, -3.0f };
-      static float  foVel[3]   = { 0.0f, 0.0f, 0.0f };
-      static float  foRadius   = 0.01f;
-      static char   foMesh[256] = "";
-      static std::vector<std::string> modelFiles;
-      static bool   modelsScanned = false;
-      if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
-
-      ImGui::TextWrapped("A physics body (mass, gravity, keyframes) drawn from "
-                         "your own OBJ mesh. Shown in the rasterized view.");
-      ImGui::Spacing();
-
-      ImGui::InputText("Name##fo", foName, sizeof(foName));
-      {
-        double mMin = 1e-12, mMax = 1e8;
-        ImGui::DragScalar("Mass##fo", ImGuiDataType_Double, &foMass,
-                          0.01f, &mMin, &mMax, "%.4g Ms", ImGuiSliderFlags_Logarithmic);
-      }
-      ImGui::Text("Position (AU)");
-      ImGui::SetNextItemWidth(-1);
-      ImGui::DragFloat3("##fopos", foPos, 0.1f, -50.f, 50.f, "%.2f");
-      ImGui::Text("Velocity (AU/yr)");
-      ImGui::SetNextItemWidth(-1);
-      ImGui::DragFloat3("##fovel", foVel, 0.01f, -10.f, 10.f, "%.3f");
-      ImGui::Text("Size (AU)");
-      ImGui::SetNextItemWidth(-1);
-      ImGui::DragFloat("##forad", &foRadius, 0.001f, 1e-5f, 5.0f, "%.4g AU",
-                       ImGuiSliderFlags_Logarithmic);
-
-      ImGui::Spacing();
-      ImGui::SeparatorText("Mesh (.obj)");
-      if (ImGui::Button("Rescan##fo")) modelFiles = ScanModelFiles();
-      ImGui::SameLine();
-      ImGui::TextDisabled("%zu in models/", modelFiles.size());
-
-      std::string curName = std::filesystem::path(foMesh).filename().string();
-      if (ImGui::BeginCombo("##fomodelsel", curName.empty() ? "(pick a model)" : curName.c_str())) {
-        for (const auto& f : modelFiles) {
-          bool sel = (curName == f);
-          if (ImGui::Selectable(f.c_str(), sel))
-            std::snprintf(foMesh, sizeof(foMesh), "models/%s", f.c_str());
-        }
-        ImGui::EndCombo();
-      }
-      ImGui::SetNextItemWidth(-1);
-      ImGui::InputTextWithHint("##fomeshpath", "models/your_model.obj or full path",
-                               foMesh, sizeof(foMesh));
-
-      ImGui::Spacing();
-      ImGui::Separator();
-      ImGui::Spacing();
-      bool hasMesh = foMesh[0] != '\0';
-      if (!hasMesh) ImGui::BeginDisabled();
-      if (ImGui::Button("Spawn Free Object", ImVec2(-1, 28))) {
-        SpawnFormState f;
-        std::snprintf(f.name, sizeof(f.name), "%s", foName);
-        f.mass = foMass;
-        f.posX = foPos[0]; f.posY = foPos[1]; f.posZ = foPos[2];
-        f.velX = foVel[0]; f.velY = foVel[1]; f.velZ = foVel[2];
-        f.visualRadius = foRadius;
-        std::snprintf(f.meshPath, sizeof(f.meshPath), "%s", foMesh);
-        if (cb.spawnFreeObject) cb.spawnFreeObject(f);
-      }
-      if (!hasMesh) {
-        ImGui::EndDisabled();
-        ImGui::TextDisabled("Pick or type an .obj path first.");
       }
       ImGui::EndTabItem();
     }
@@ -3731,15 +3690,16 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
   // Object list
   for (int i = 0; i < (int)physicsObjects.size(); i++) {
     auto& obj = physicsObjects[i];
-    const char* icon = (obj.shaderType == ObjectShaderType::Star) ? "[*]"
-                     : (obj.shaderType == ObjectShaderType::BlackHole) ? "[O]" : "[ ]";
+    const char* icon = (obj.shaderType == ObjectType::Star) ? "[*]"
+                     : (obj.shaderType == ObjectType::BlackHole) ? "[O]"
+                     : (obj.shaderType == ObjectType::FreeModel) ? "[M]" : "[ ]";
     char label[96];
     snprintf(label, sizeof(label), "%s %s  m=%.1f##o%d", icon, obj.name.c_str(), obj.data.mass, i);
 
     bool sel = (selectedIdx == i);
-    ImVec4 headerCol = (obj.shaderType == ObjectShaderType::Star)
+    ImVec4 headerCol = (obj.shaderType == ObjectType::Star)
         ? ImVec4(0.25f, 0.16f, 0.04f, 1.f)
-        : (obj.shaderType == ObjectShaderType::BlackHole)
+        : (obj.shaderType == ObjectType::BlackHole)
         ? ImVec4(0.12f, 0.06f, 0.18f, 1.f)
         : ImVec4(0.08f, 0.14f, 0.26f, 1.f);
     ImGui::PushStyleColor(ImGuiCol_Header, headerCol);
@@ -3785,25 +3745,25 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
     ImGui::Spacing();
 
-    // Type
-    int typeIdx = (obj.shaderType == ObjectShaderType::Star) ? 1
-                : (obj.shaderType == ObjectShaderType::BlackHole) ? 2 : 0;
-    const char* typeItems[] = { "Planet", "Star", "Black Hole" };
+    // Type — Planet / Star / Black Hole / Free Model
+    const ObjectType typeOrder[4] =
+      { ObjectType::Planet, ObjectType::Star, ObjectType::BlackHole, ObjectType::FreeModel };
+    int typeIdx = 0;
+    for (int k = 0; k < 4; ++k) if (obj.shaderType == typeOrder[k]) typeIdx = k;
+    const char* typeItems[] = { "Planet", "Star", "Black Hole", "Free Model" };
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##itype", &typeIdx, typeItems, 3)) {
-      if (typeIdx == 2)      obj.shaderType = ObjectShaderType::BlackHole;
-      else if (typeIdx == 1) obj.shaderType = ObjectShaderType::Star;
-      else                   obj.shaderType = ObjectShaderType::Planet;
-
-      if (obj.shaderType == ObjectShaderType::Star)
-        obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
-                                         "src/shaders/brightStartFragShader.glsl");
-      else if (obj.shaderType == ObjectShaderType::BlackHole)
-        obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
-                                         "src/shaders/blackHoleFrag.glsl");
-      else
-        obj.renderedObject.setupShaders("src/shaders/defaultVert.glsl",
-                                         "src/shaders/defaultFrag.glsl");
+    if (ImGui::Combo("##itype", &typeIdx, typeItems, 4)) {
+      ObjectType newType = typeOrder[typeIdx];
+      bool wasFree = (obj.shaderType == ObjectType::FreeModel);
+      obj.shaderType = newType;
+      ApplyShaderForType(obj.renderedObject, newType);
+      if (newType != ObjectType::FreeModel && wasFree) {
+        // Leaving Free Model → drop the mesh and go back to a sphere.
+        obj.meshPath.clear();
+        obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
+      }
+      // Entering Free Model with an existing meshPath keeps its mesh; otherwise
+      // it stays a placeholder sphere until a model is chosen below.
     }
 
     // Mass — gravity only, no longer tied to visual size (solar masses)
@@ -3819,13 +3779,11 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::SetNextItemWidth(-1);
     if (ImGui::DragFloat("Size##i", &obj.visualRadius, 0.01f, 1e-7f, 2.0f, "%.4g AU",
                          ImGuiSliderFlags_Logarithmic)) {
-      if (!obj.meshPath.empty())
+      if (obj.shaderType == ObjectType::FreeModel && !obj.meshPath.empty())
         obj.renderedObject.SetFreeMeshRadius(obj.visualRadius * activeSizeExag());
       else
         obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
     }
-    if (!obj.meshPath.empty())
-      ImGui::TextDisabled("Free object · %s", obj.meshPath.c_str());
 
     ImGui::Spacing();
     ImGui::SeparatorText("Transform");
@@ -3849,7 +3807,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     // Locate: teleport the camera in front of the object, facing it
     if (ImGui::Button("Locate##iloc", ImVec2(-1, 0))) {
       float effR = obj.renderRadius() * activeSizeExag();
-      if (obj.shaderType == ObjectShaderType::BlackHole)
+      if (obj.shaderType == ObjectType::BlackHole)
         effR = std::max(effR, obj.schwarzschildRadius * 2.6f); // shadow size
       LocateCamera(obj.data.position, effR);
     }
@@ -3892,90 +3850,131 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::Spacing();
     ImGui::SeparatorText("Appearance");
 
-    if (obj.shaderType == ObjectShaderType::BlackHole) {
-      // Schwarzschild radius (editable override)
+    // Colour editor shared by Planet and Free Model.
+    auto colorEditor = [&]() {
+      ImGui::Text("Color");
+      float col[3] = { obj.data.color.x, obj.data.color.y, obj.data.color.z };
       ImGui::SetNextItemWidth(-1);
-      ImGui::DragFloat("Rs##irs", &obj.schwarzschildRadius, 0.001f, 0.001f, 10.0f, "%.4f");
-      ImGui::TextDisabled("Photon sphere: %.4f", 1.5f * obj.schwarzschildRadius);
-    } else {
-      // Temperature
+      if (ImGui::ColorEdit3("##icolor", col, ImGuiColorEditFlags_Float)) {
+        obj.data.color.x = col[0]; obj.data.color.y = col[1]; obj.data.color.z = col[2];
+      }
+    };
+    // Live preview image shared by Planet (sphere) and Free Model (mesh).
+    auto previewImage = [&]() {
+      RenderPlanetPreview(obj);
+      float availW = ImGui::GetContentRegionAvail().x;
+      float imgSz  = std::min(availW, 220.0f);
+      ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - imgSz) * 0.5f);
+      ImGui::Image((ImTextureID)(uintptr_t)previewColorTex,
+                   ImVec2(imgSz, imgSz), ImVec2(0, 1), ImVec2(1, 0));
+    };
+    // Temperature + blackbody swatch, shared by Planet and Star.
+    auto temperatureEditor = [&]() {
       ImGui::SetNextItemWidth(-30);
       ImGui::SliderFloat("##itemp", &obj.temperature, 0.f, 50000.f, "%.0f K");
       float r, g, b;
       BlackbodyColor(obj.temperature, r, g, b);
       ImGui::SameLine();
       ImGui::ColorButton("##ibb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+    };
 
-      if (obj.shaderType == ObjectShaderType::Planet) {
-        ImGui::Spacing();
-        ImGui::Text("Color");
-        float col[3] = { obj.data.color.x, obj.data.color.y, obj.data.color.z };
+    if (obj.shaderType == ObjectType::BlackHole) {
+      ImGui::SetNextItemWidth(-1);
+      ImGui::DragFloat("Rs##irs", &obj.schwarzschildRadius, 0.001f, 0.001f, 10.0f, "%.4f");
+      ImGui::TextDisabled("Photon sphere: %.4f", 1.5f * obj.schwarzschildRadius);
+    }
+    else if (obj.shaderType == ObjectType::FreeModel) {
+      colorEditor();
+      ImGui::Spacing();
+      previewImage();
+
+      ImGui::Spacing();
+      ImGui::SeparatorText("Mesh (.obj)");
+      static std::vector<std::string> modelFiles;
+      static bool modelsScanned = false;
+      if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
+      if (ImGui::SmallButton("Rescan##imesh")) modelFiles = ScanModelFiles();
+      ImGui::SameLine();
+      ImGui::TextDisabled("%zu in models/", modelFiles.size());
+
+      std::string cur = std::filesystem::path(obj.meshPath).filename().string();
+      if (ImGui::BeginCombo("##imeshsel", cur.empty() ? "(pick a model)" : cur.c_str())) {
+        for (const auto& f : modelFiles) {
+          if (ImGui::Selectable(f.c_str(), cur == f)) {
+            std::string p = "models/" + f;
+            if (obj.renderedObject.LoadMeshFromOBJ(p, obj.visualRadius * activeSizeExag()))
+              obj.meshPath = p;
+          }
+        }
+        ImGui::EndCombo();
+      }
+      static char imeshBuf[256];
+      std::snprintf(imeshBuf, sizeof(imeshBuf), "%s", obj.meshPath.c_str());
+      ImGui::SetNextItemWidth(-1);
+      ImGui::InputTextWithHint("##imeshpath", "models/your_model.obj", imeshBuf, sizeof(imeshBuf));
+      if (ImGui::Button("Load##imeshload", ImVec2(-1, 0)) && imeshBuf[0]) {
+        if (obj.renderedObject.LoadMeshFromOBJ(imeshBuf, obj.visualRadius * activeSizeExag()))
+          obj.meshPath = imeshBuf;
+      }
+      if (obj.meshPath.empty())
+        ImGui::TextDisabled("No mesh loaded — showing a placeholder sphere.");
+    }
+    else if (obj.shaderType == ObjectType::Star) {
+      temperatureEditor();
+    }
+    else { // Planet
+      temperatureEditor();
+      ImGui::Spacing();
+      colorEditor();
+
+      ImGui::Spacing();
+      ImGui::Text("Texture");
+      previewImage();
+
+      static std::vector<std::string> texFiles;
+      static bool texScanned = false;
+      if (!texScanned) { texFiles = ScanTextureFiles(); texScanned = true; }
+      if (ImGui::SmallButton("Rescan##texscan")) texFiles = ScanTextureFiles();
+      ImGui::SameLine();
+      ImGui::TextDisabled("(%zu textures)", texFiles.size());
+
+      float listH = 7.0f * ImGui::GetTextLineHeightWithSpacing();
+      if (ImGui::BeginListBox("##texlist", ImVec2(-1, listH))) {
+        if (ImGui::Selectable("None (Color)", obj.texturePath.empty())) {
+          obj.texturePath.clear();
+          obj.renderedObject.clearTexture();
+        }
+        for (const auto& f : texFiles) {
+          std::string full = "assets/" + f;
+          bool sel = (obj.texturePath == full);
+          if (ImGui::Selectable(PrettyTexLabel(f).c_str(), sel)) {
+            obj.texturePath = full;
+            obj.renderedObject.loadTexture(full);
+          }
+        }
+        ImGui::EndListBox();
+      }
+
+      ImGui::Spacing();
+      ImGui::SeparatorText("Atmosphere");
+      ImGui::Checkbox("Enabled##iatm", &obj.atmosphereEnabled);
+      if (obj.atmosphereEnabled) {
+        ImGui::Text("Height");
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::ColorEdit3("##icolor", col, ImGuiColorEditFlags_Float))
-        {
-          obj.data.color.x = col[0];
-          obj.data.color.y = col[1];
-          obj.data.color.z = col[2];
-        }
-
-        ImGui::Spacing();
-        ImGui::Text("Texture");
-
-        // Live preview — same sphere mesh + planet shader as the scene
-        RenderPlanetPreview(obj);
-        {
-          float availW = ImGui::GetContentRegionAvail().x;
-          float imgSz  = std::min(availW, 220.0f);
-          ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - imgSz) * 0.5f);
-          ImGui::Image((ImTextureID)(uintptr_t)previewColorTex,
-                       ImVec2(imgSz, imgSz), ImVec2(0, 1), ImVec2(1, 0));
-        }
-
-        static std::vector<std::string> texFiles;
-        static bool texScanned = false;
-        if (!texScanned) { texFiles = ScanTextureFiles(); texScanned = true; }
-        if (ImGui::SmallButton("Rescan##texscan")) texFiles = ScanTextureFiles();
-        ImGui::SameLine();
-        ImGui::TextDisabled("(%zu textures)", texFiles.size());
-
-        float listH = 7.0f * ImGui::GetTextLineHeightWithSpacing();
-        if (ImGui::BeginListBox("##texlist", ImVec2(-1, listH))) {
-          if (ImGui::Selectable("None (Color)", obj.texturePath.empty())) {
-            obj.texturePath.clear();
-            obj.renderedObject.clearTexture();
-          }
-          for (const auto& f : texFiles) {
-            std::string full = "assets/" + f;
-            bool sel = (obj.texturePath == full);
-            if (ImGui::Selectable(PrettyTexLabel(f).c_str(), sel)) {
-              obj.texturePath = full;
-              obj.renderedObject.loadTexture(full);
-            }
-          }
-          ImGui::EndListBox();
-        }
-
-        ImGui::Spacing();
-        ImGui::SeparatorText("Atmosphere");
-        ImGui::Checkbox("Enabled##iatm", &obj.atmosphereEnabled);
-        if (obj.atmosphereEnabled) {
-          ImGui::Text("Height");
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##iatmh", &obj.atmosphereHeight, 0.05f, 1.0f, "%.2f");
-          ImGui::Text("Density Falloff");
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##iatmf", &obj.atmosphereFalloff, 0.5f, 15.0f, "%.1f");
-          ImGui::Text("Intensity");
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##iatmi", &obj.atmosphereIntensity, 0.05f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-          ImGui::Text("Scatter Color");
-          float atmCol[3] = { obj.atmosphereScatter.x, obj.atmosphereScatter.y, obj.atmosphereScatter.z };
-          ImGui::SetNextItemWidth(-1);
-          if (ImGui::ColorEdit3("##iatmc", atmCol, ImGuiColorEditFlags_Float)) {
-            obj.atmosphereScatter.x = atmCol[0];
-            obj.atmosphereScatter.y = atmCol[1];
-            obj.atmosphereScatter.z = atmCol[2];
-          }
+        ImGui::SliderFloat("##iatmh", &obj.atmosphereHeight, 0.05f, 1.0f, "%.2f");
+        ImGui::Text("Density Falloff");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##iatmf", &obj.atmosphereFalloff, 0.5f, 15.0f, "%.1f");
+        ImGui::Text("Intensity");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##iatmi", &obj.atmosphereIntensity, 0.05f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+        ImGui::Text("Scatter Color");
+        float atmCol[3] = { obj.atmosphereScatter.x, obj.atmosphereScatter.y, obj.atmosphereScatter.z };
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::ColorEdit3("##iatmc", atmCol, ImGuiColorEditFlags_Float)) {
+          obj.atmosphereScatter.x = atmCol[0];
+          obj.atmosphereScatter.y = atmCol[1];
+          obj.atmosphereScatter.z = atmCol[2];
         }
       }
     }
@@ -4380,7 +4379,7 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
   ImDrawList* dl = ImGui::GetForegroundDrawList();
 
   float effR = obj.renderRadius() * activeSizeExag();
-  if (obj.shaderType == ObjectShaderType::BlackHole)
+  if (obj.shaderType == ObjectType::BlackHole)
     effR = std::max(effR, obj.schwarzschildRadius * 2.6f);
 
   // Screen radius: project a point one visual radius along camera-right
