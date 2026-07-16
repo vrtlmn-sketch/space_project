@@ -85,6 +85,11 @@ static void buildScene(
       physicsObjects.back().texturePath = pod.texturePath;
       physicsObjects.back().renderedObject.loadTexture(pod.texturePath);
     }
+    if (!pod.normalMapPath.empty()) {
+      physicsObjects.back().normalMapPath = pod.normalMapPath;
+      physicsObjects.back().renderedObject.loadNormalMap(pod.normalMapPath);
+    }
+    physicsObjects.back().normalMapStrength = pod.normalMapStrength;
     auto& po = physicsObjects.back();
     if (pod.visualRadius > 0.0f) {
       po.visualRadius = pod.visualRadius;

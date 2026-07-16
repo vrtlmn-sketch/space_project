@@ -89,6 +89,8 @@ bool ProjectSerializer::Save(const std::string& path,
     o["simulatePhysics"]     = obj.simulatePhysics;
     o["keyframes"]           = keyframesToJson(obj.keyframes);
     o["meshPath"]            = obj.meshPath;
+    o["normalMapPath"]       = obj.normalMapPath;
+    o["normalMapStrength"]   = obj.normalMapStrength;
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -286,6 +288,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.simulatePhysics     = o.value("simulatePhysics", true);
       if (o.contains("keyframes")) pod.keyframes = jsonToKeyframes(o["keyframes"]);
       pod.meshPath            = o.value("meshPath", std::string{});
+      pod.normalMapPath       = o.value("normalMapPath", std::string{});
+      pod.normalMapStrength   = o.value("normalMapStrength", 1.0f);
       data.objects.push_back(pod);
     }
   }

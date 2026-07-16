@@ -234,18 +234,20 @@ bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
 
   std::vector<std::array<float,3>> positions;
   std::vector<std::array<float,3>> normals;
-  struct Corner { int v; int n; };          // 0-based, -1 = none
+  std::vector<std::array<float,2>> texcoords;
+  struct Corner { int v; int n; int t; };   // 0-based, -1 = none
   std::vector<std::array<Corner,3>> tris;
 
   auto parseCorner = [&](const std::string& tok) -> Corner {
     // formats: v | v/vt | v//vn | v/vt/vn  (1-based, negatives allowed)
-    Corner c{-1, -1};
-    int vi = 0, ni = 0; int field = 0; bool any = false;
+    Corner c{-1, -1, -1};
+    int vi = 0, ni = 0, ti = 0; int field = 0; bool any = false;
     std::string cur;
     auto flush = [&](int f) {
       if (cur.empty()) return;
       int val = std::atoi(cur.c_str());
       if (f == 0) vi = val;
+      else if (f == 1) ti = val;
       else if (f == 2) ni = val;
       cur.clear();
     };
@@ -256,6 +258,7 @@ bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
     flush(field);
     if (!any) return c;
     if (vi != 0) c.v = (vi > 0) ? vi - 1 : (int)positions.size() + vi;
+    if (ti != 0) c.t = (ti > 0) ? ti - 1 : (int)texcoords.size() + ti;
     if (ni != 0) c.n = (ni > 0) ? ni - 1 : (int)normals.size()   + ni;
     return c;
   };
@@ -269,6 +272,8 @@ bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
       std::array<float,3> p{0,0,0}; ss >> p[0] >> p[1] >> p[2]; positions.push_back(p);
     } else if (tag == "vn") {
       std::array<float,3> n{0,0,0}; ss >> n[0] >> n[1] >> n[2]; normals.push_back(n);
+    } else if (tag == "vt") {
+      std::array<float,2> t{0,0}; ss >> t[0] >> t[1]; texcoords.push_back(t);
     } else if (tag == "f") {
       std::vector<Corner> poly; std::string tok;
       while (ss >> tok) poly.push_back(parseCorner(tok));
@@ -326,8 +331,15 @@ bool RenderedObject::LoadMeshFromOBJ(const std::string& path, float radius)
     freeUnitBuffer.push_back(nrm[0]);
     freeUnitBuffer.push_back(nrm[1]);
     freeUnitBuffer.push_back(nrm[2]);
-    freeUnitBuffer.push_back(0.0f);
-    freeUnitBuffer.push_back(0.0f);
+    // Texture coords from the OBJ (V flipped for GL's bottom-left origin);
+    // 0 when the file has none.
+    float u = 0.0f, v = 0.0f;
+    if (c.t >= 0 && c.t < (int)texcoords.size()) {
+      u = texcoords[c.t][0];
+      v = 1.0f - texcoords[c.t][1];
+    }
+    freeUnitBuffer.push_back(u);
+    freeUnitBuffer.push_back(v);
   };
   int emitted = 0;
   const int nPos = (int)positions.size();
@@ -660,6 +672,18 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     glUniform1i(hasTextureUniform, 0);
   }
 
+  if (hasNormalMap && hasNormalMapUniform != (unsigned int)-1) {
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, normalMapID);
+    glUniform1i(normalMapUniform, 1);
+    glUniform1i(hasNormalMapUniform, 1);
+    if (normalStrengthUniform != (unsigned int)-1)
+      glUniform1f(normalStrengthUniform, normalStrength);
+    glActiveTexture(GL_TEXTURE0);
+  } else if (hasNormalMapUniform != (unsigned int)-1) {
+    glUniform1i(hasNormalMapUniform, 0);
+  }
+
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
 }
@@ -806,6 +830,9 @@ void RenderedObject::setupRender()
   planetColorUniform      = glGetUniformLocation(program, "uPlanetColor");
   hasTextureUniform       = glGetUniformLocation(program, "uHasTexture");
   textureSamplerUniform   = glGetUniformLocation(program, "uTexture");
+  normalMapUniform        = glGetUniformLocation(program, "uNormalMap");
+  hasNormalMapUniform     = glGetUniformLocation(program, "uHasNormalMap");
+  normalStrengthUniform   = glGetUniformLocation(program, "uNormalStrength");
 }
 
 void RenderedObject::UploadSSBOParticles(const std::vector<vec4>& points){
@@ -892,6 +919,42 @@ void RenderedObject::clearTexture()
     textureID = 0;
   }
   hasTexture = false;
+}
+
+bool RenderedObject::loadNormalMap(const std::string& path)
+{
+  clearNormalMap();
+
+  int w, h, channels;
+  stbi_set_flip_vertically_on_load(false);
+  unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+  if (!data) {
+    std::cerr << "[normalmap] failed to load '" << path << "': " << stbi_failure_reason() << "\n";
+    return false;
+  }
+
+  glGenTextures(1, &normalMapID);
+  glBindTexture(GL_TEXTURE_2D, normalMapID);
+  // Normal maps are linear data (not sRGB) — upload as plain RGBA.
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  stbi_image_free(data);
+
+  hasNormalMap = true;
+  return true;
+}
+
+void RenderedObject::clearNormalMap()
+{
+  if (normalMapID) {
+    glDeleteTextures(1, &normalMapID);
+    normalMapID = 0;
+  }
+  hasNormalMap = false;
 }
 
 void RenderedObject::uploadStarLighting(const std::vector<vec3>& positions,

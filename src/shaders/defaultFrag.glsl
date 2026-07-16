@@ -17,6 +17,27 @@ uniform vec3  uLightColors[8];
 uniform vec3      uPlanetColor;
 uniform sampler2D uTexture;
 uniform int       uHasTexture;
+uniform sampler2D uNormalMap;
+uniform int       uHasNormalMap;
+uniform float     uNormalStrength;   // relief scale (1 = as-authored)
+
+// Tangent frame from screen-space derivatives (no precomputed tangents needed).
+// Perturbs the geometric normal N with a tangent-space normal-map sample.
+vec3 perturbNormal(vec3 N, vec3 worldPos, vec2 uv) {
+  vec3 nTex = texture(uNormalMap, uv).xyz * 2.0 - 1.0;
+  // Scale the tangent-space tilt. The 4x keeps the UI value intuitive:
+  // strength 1 already reads as strong relief.
+  nTex = normalize(vec3(nTex.xy * (uNormalStrength * 4.0), max(nTex.z, 1e-4)));
+  vec3 dp1 = dFdx(worldPos), dp2 = dFdy(worldPos);
+  vec2 duv1 = dFdx(uv),      duv2 = dFdy(uv);
+  vec3 dp2perp = cross(dp2, N);
+  vec3 dp1perp = cross(N, dp1);
+  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+  float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
+  mat3 TBN = mat3(T * invmax, B * invmax, N);
+  return normalize(TBN * nTex);
+}
 
 // Charity/Krystek blackbody approximation
 vec3 blackbody(float tempK) {
@@ -37,6 +58,8 @@ vec3 blackbody(float tempK) {
 
 void main() {
   vec3 norm    = normalize(vNormal);
+  if (uHasNormalMap != 0)
+    norm = perturbNormal(norm, vPos, vTexCoord);
   vec3 viewDir = normalize(-uCamera - vPos);
 
   vec3 baseColor = (uHasTexture != 0)

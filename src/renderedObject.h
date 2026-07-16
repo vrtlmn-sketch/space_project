@@ -60,6 +60,12 @@ private:
   // texture
   GLuint textureID{0};
   bool   hasTexture{false};
+  // normal map (tangent-space; perturbs the lit normal in the raster shader)
+  GLuint normalMapID{0};
+  bool   hasNormalMap{false};
+  unsigned int normalMapUniform{};
+  unsigned int hasNormalMapUniform{};
+  unsigned int normalStrengthUniform{};
 
   //rendering stuff
   unsigned int vao{};
@@ -85,6 +91,7 @@ public:
   dvec3 coordinates;  // world position (double: galactic coords need it)
   vec3  rotationDeg{0.0f, 0.0f, 0.0f};  // object orientation (Euler X/Y/Z degrees)
   int  rtTexLayer{-1};  // layer in the RT planet texture array (-1 = untextured)
+  float normalStrength{1.0f};  // normal-map relief scale (forwarded to the shader)
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
   float rtAtmoFalloff{4.0f};
@@ -110,6 +117,9 @@ public:
   bool loadTextureHDR(const std::string& path);
   void clearTexture();
   bool textureLoaded() const { return hasTexture; }
+  bool loadNormalMap(const std::string& path);
+  void clearNormalMap();
+  bool normalMapLoaded() const { return hasNormalMap; }
   GLuint textureHandle() const { return textureID; }
   float sphereRadius() const { return radius; }
   bool  shadersReady() const { return program != 0; }

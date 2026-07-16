@@ -90,6 +90,7 @@
       "shaderType": 0,
       "temperature": 0.0,
       "texturePath": "assets/mercury.jpg",
+      "normalMapPath": "assets/mercury_normal.png",
       "velocity": [
         0.0,
         0.0,
@@ -123,6 +124,7 @@
       "shaderType": 0,
       "temperature": 0.0,
       "texturePath": "assets/venus.jpg",
+      "normalMapPath": "assets/venus_normal.png",
       "velocity": [
         -7.388,
         0.0,
@@ -156,6 +158,7 @@
       "shaderType": 0,
       "temperature": 0.0,
       "texturePath": "assets/earth.jpg",
+      "normalMapPath": "assets/earth_normal.png",
       "velocity": [
         2.149,
         0.0,
@@ -189,6 +192,7 @@
       "shaderType": 0,
       "temperature": 0.0,
       "texturePath": "assets/mars.jpg",
+      "normalMapPath": "assets/mars_normal.png",
       "velocity": [
         4.407,
         0.0,
@@ -222,6 +226,7 @@
       "shaderType": 0,
       "temperature": 0.0,
       "texturePath": "assets/jupiter.jpg",
+      "normalMapPath": "assets/jupiter_normal.png",
       "velocity": [
         -1.948,
         0.0,

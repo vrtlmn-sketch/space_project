@@ -18,6 +18,8 @@ struct PhysicsObjectData {
   float schwarzschildRadius{0.0f}; // AU; 0 = compute from mass (2GM/c²)
   vec3  color{0.55f, 0.25f, 0.15f}; // planet RGB color
   std::string texturePath{};         // path to optional surface texture (empty = none)
+  std::string normalMapPath{};       // path to optional tangent-space normal map
+  float normalMapStrength{1.0f};     // normal-map relief scale
   float visualRadius{0.0f};          // real visual radius in AU (0 = derive from mass)
   bool  atmosphereEnabled{false};
   float atmosphereHeight{0.25f};

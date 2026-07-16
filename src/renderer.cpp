@@ -3869,6 +3869,33 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::SameLine();
       ImGui::ColorButton("##ibb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
     };
+    // Image picker from assets/, shared by diffuse texture and normal map,
+    // for Planet and Free Model. `normal` chooses which slot it drives.
+    static std::vector<std::string> imgFiles;
+    static bool imgScanned = false;
+    if (!imgScanned) { imgFiles = ScanTextureFiles(); imgScanned = true; }
+    auto imagePicker = [&](const char* id, std::string& pathRef, bool normal) {
+      if (ImGui::SmallButton((std::string("Rescan##r") + id).c_str())) imgFiles = ScanTextureFiles();
+      ImGui::SameLine();
+      ImGui::TextDisabled("(%zu)", imgFiles.size());
+      float listH = 5.0f * ImGui::GetTextLineHeightWithSpacing();
+      if (ImGui::BeginListBox((std::string("##lb") + id).c_str(), ImVec2(-1, listH))) {
+        if (ImGui::Selectable((std::string("None##n") + id).c_str(), pathRef.empty())) {
+          pathRef.clear();
+          if (normal) obj.renderedObject.clearNormalMap();
+          else        obj.renderedObject.clearTexture();
+        }
+        for (const auto& f : imgFiles) {
+          std::string full = "assets/" + f;
+          if (ImGui::Selectable((PrettyTexLabel(f) + "##" + id).c_str(), pathRef == full)) {
+            pathRef = full;
+            if (normal) obj.renderedObject.loadNormalMap(full);
+            else        obj.renderedObject.loadTexture(full);
+          }
+        }
+        ImGui::EndListBox();
+      }
+    };
 
     if (obj.shaderType == ObjectType::BlackHole) {
       ImGui::SetNextItemWidth(-1);
@@ -3910,6 +3937,19 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
       if (obj.meshPath.empty())
         ImGui::TextDisabled("No mesh loaded — showing a placeholder sphere.");
+
+      ImGui::Spacing();
+      ImGui::SeparatorText("Surface");
+      ImGui::Text("Texture");
+      imagePicker("ftex", obj.texturePath, false);
+      ImGui::Text("Normal Map");
+      imagePicker("fnrm", obj.normalMapPath, true);
+      if (!obj.normalMapPath.empty()) {
+        ImGui::Text("Strength");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##fnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
+      }
+      ImGui::TextDisabled("Uses the model's UVs (needs vt in the .obj).");
     }
     else if (obj.shaderType == ObjectType::Star) {
       temperatureEditor();
@@ -3922,29 +3962,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::Spacing();
       ImGui::Text("Texture");
       previewImage();
-
-      static std::vector<std::string> texFiles;
-      static bool texScanned = false;
-      if (!texScanned) { texFiles = ScanTextureFiles(); texScanned = true; }
-      if (ImGui::SmallButton("Rescan##texscan")) texFiles = ScanTextureFiles();
-      ImGui::SameLine();
-      ImGui::TextDisabled("(%zu textures)", texFiles.size());
-
-      float listH = 7.0f * ImGui::GetTextLineHeightWithSpacing();
-      if (ImGui::BeginListBox("##texlist", ImVec2(-1, listH))) {
-        if (ImGui::Selectable("None (Color)", obj.texturePath.empty())) {
-          obj.texturePath.clear();
-          obj.renderedObject.clearTexture();
-        }
-        for (const auto& f : texFiles) {
-          std::string full = "assets/" + f;
-          bool sel = (obj.texturePath == full);
-          if (ImGui::Selectable(PrettyTexLabel(f).c_str(), sel)) {
-            obj.texturePath = full;
-            obj.renderedObject.loadTexture(full);
-          }
-        }
-        ImGui::EndListBox();
+      imagePicker("ptex", obj.texturePath, false);
+      ImGui::Text("Normal Map");
+      imagePicker("pnrm", obj.normalMapPath, true);
+      if (!obj.normalMapPath.empty()) {
+        ImGui::Text("Strength");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##pnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
       }
 
       ImGui::Spacing();

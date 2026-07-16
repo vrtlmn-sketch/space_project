@@ -65,7 +65,9 @@ public:
   // Free object: path to a user OBJ mesh. Empty = normal sphere-mesh object.
   std::string meshPath{};
   float schwarzschildRadius{0.05f}; // event horizon radius (editable, default = 2*G*250)
-  std::string texturePath{}; // path to optional planet surface texture (empty = none)
+  std::string texturePath{};    // path to optional surface texture (empty = none)
+  std::string normalMapPath{};  // path to optional tangent-space normal map (empty = none)
+  float normalMapStrength{1.0f}; // normal-map relief scale (shader applies a 4x)
 
   // ---- Atmosphere (planets only) ----
   bool  atmosphereEnabled{false};

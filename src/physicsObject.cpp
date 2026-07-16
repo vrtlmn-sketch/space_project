@@ -158,6 +158,7 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
   }
   renderedObject.coordinates = data.position;
   renderedObject.rotationDeg = rotationDeg;
+  renderedObject.normalStrength = normalMapStrength;
 
   float objectType = RtObjectType(shaderType);
 
