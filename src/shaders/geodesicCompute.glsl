@@ -637,7 +637,17 @@ void main()
         // Scale step by distance: close to BH needs small steps, far away uses large steps
         float stepScale = clamp(r / (3.0 * BH_RS), 0.1, 10.0);
         float dt = baseStep * stepScale;
-
+// Refine the step near free-object meshes: take small steps through the
+        // mesh region so the curved ray is finely sampled (reliable hit + local
+        // bending) instead of a coarse chord skipping over a small object.
+        for (int mi = 0; mi < uObjectCount; mi++) {
+            if (int(objects[mi].objectType + 0.5) != 5) continue;
+            float md = length(pos - objects[mi].position.xyz) - objects[mi].radius;
+            if (md < objects[mi].radius * 4.0) {
+                float fine = max(objects[mi].radius * 0.5, 1e-4);
+                dt = min(dt, max(fine, md * 0.5));
+            }
+        }
         // ── RK4 step (in BH-relative coordinates) ──
         RayState newState = rk4Step(relPos, vel, dt);
         vec3 prevPos = pos;
