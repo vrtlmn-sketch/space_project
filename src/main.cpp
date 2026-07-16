@@ -659,6 +659,8 @@ int main(int argc, char** argv) {
       renderer.BeginRecordCamera();  // sets rayTracerView + record camera transform
       renderer.rayTracedObjects.clear();
       renderer.rtDopplerObjects.clear();
+      renderer.rtTriangles.clear();   // re-accumulate mesh data for the record camera
+      renderer.rtNodes.clear();
       for (int i = 0; i < (int)physicsObjects.size(); i++) {
         float objType = RtObjectType(physicsObjects[i].shaderType);
         renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
@@ -795,30 +797,32 @@ int main(int argc, char** argv) {
       renderer.recStopFrame = (int)renderer.timelinePlayhead;
     }
 
-    // ── Handle marker-based recording (R with both markers set) ──────────
-    if (renderer.recMarkerRecordRequested) {
-      renderer.recMarkerRecordRequested = false;
-      if (!physicsObjects.empty() && renderer.recStartFrame >= 0 && renderer.recStopFrame >= 0) {
-        // Jump to start frame
-        for (auto& obj : physicsObjects)
-          obj.setTimeframeAndRestore((unsigned int)renderer.recStartFrame);
-        for (auto& c : clouds)
-          c->setTimeframeAndRestore((unsigned int)renderer.recStartFrame);
-        // Start recording, unpause, ensure forward playback
+    // ── Record button / R key (unified): start or stop recording ──────────
+    // Starting always plays forward; if a start marker is set, jump there first;
+    // if a stop marker is set, recording auto-stops there.
+    if (renderer.recordToggleRequested) {
+      renderer.recordToggleRequested = false;
+      if (renderer.IsRecording()) {
+        renderer.StopRecording();
+      } else {
+        if (renderer.recStartFrame >= 0) {
+          for (auto& obj : physicsObjects)
+            obj.setTimeframeAndRestore((unsigned int)renderer.recStartFrame);
+          for (auto& c : clouds)
+            c->setTimeframeAndRestore((unsigned int)renderer.recStartFrame);
+          renderer.timelinePlayhead = (unsigned int)renderer.recStartFrame;
+        }
         renderer.StartRecording();
         renderer.paused = false;
         renderer.playingForward = true;
       }
     }
 
-    // ── Auto-stop recording when playhead reaches stop marker ──────────────
-    if (!renderer.paused && renderer.IsRecording()
-        && renderer.recStopFrame >= 0 && !physicsObjects.empty()) {
-      unsigned int curFrame = physicsObjects[0].getTimeframe();
-      if ((int)curFrame >= renderer.recStopFrame) {
-        renderer.StopRecording();
-        renderer.paused = true;
-      }
+    // ── Auto-stop recording when the playhead reaches the stop marker ──────
+    if (!renderer.paused && renderer.IsRecording() && renderer.recStopFrame >= 0
+        && (int)renderer.timelinePlayhead >= renderer.recStopFrame) {
+      renderer.StopRecording();
+      renderer.paused = true;
     }
 
     renderer.EndFrame();

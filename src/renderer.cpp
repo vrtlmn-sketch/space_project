@@ -790,15 +790,7 @@ bool Renderer::UpdateInputs() {
     // Otherwise, toggle recording immediately (legacy behaviour).
     if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)  recordKeyPressed = true;
     else {
-      if (recordKeyPressed) {
-        if (recording) {
-          StopRecording();
-        } else if (recStartFrame >= 0 && recStopFrame >= 0) {
-          recMarkerRecordRequested = true;
-        } else {
-          StartRecording();
-        }
-      }
+      if (recordKeyPressed) recordToggleRequested = true;  // handled uniformly in main
       recordKeyPressed = false;
     }
 
@@ -2236,13 +2228,13 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.85f, 0.10f, 0.10f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(1.00f, 0.20f, 0.20f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.70f, 0.05f, 0.05f, 1.00f)));
-    if (ImGui::Button("Stop [R]", ImVec2(75, 0))) StopRecording();
+    if (ImGui::Button("Stop [R]", ImVec2(75, 0))) recordToggleRequested = true;
     ImGui::PopStyleColor(3);
   } else {
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.45f, 0.10f, 0.10f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.65f, 0.20f, 0.20f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.80f, 0.15f, 0.15f, 1.00f)));
-    if (ImGui::Button("Rec [R]", ImVec2(75, 0))) StartRecording();
+    if (ImGui::Button("Rec [R]", ImVec2(75, 0))) recordToggleRequested = true;
     ImGui::PopStyleColor(3);
   }
   ImGui::SameLine();
@@ -5396,9 +5388,11 @@ void Renderer::StartRecording() {
   recordWidth = w;
   recordHeight = h;
 
-  // Recording captures the compute-shader raytracer output,
-  // so force the raytracer to be the main (fullscreen) view.
-  raytracerIsMain = true;
+  // Recording captures the compute-shader raytracer into its own FBO, so the
+  // raytracer must be enabled — but we do NOT touch which view is on screen
+  // (no surprise main/PiP flip). Both are restored in StopRecording.
+  recSavedRtEnabled = raytracerEnabled;
+  raytracerEnabled  = true;
 
   char cmd[512];
   snprintf(cmd, sizeof(cmd),
@@ -5440,6 +5434,9 @@ void Renderer::StopRecording() {
   recording = false;
   recFrameStripY = -1;
   recFrameActive = false;
+
+  // Restore the raytracer-enabled state we forced on in StartRecording.
+  raytracerEnabled = recSavedRtEnabled;
 
   // Restore vsync
   glfwSwapInterval(1);
@@ -5869,16 +5866,18 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rtSSBO);
   }
 
+  // Fresh mesh buffers — re-accumulated this tick for the record camera so free
+  // meshes match the freshly-drawn objects (not the stale main-view snapshot).
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtTriSSBO);
   glBufferData(GL_SHADER_STORAGE_BUFFER,
-               std::max<size_t>(rtLastTriangles.size(), 1) * sizeof(RtTri),
-               rtLastTriangles.empty() ? nullptr : rtLastTriangles.data(), GL_DYNAMIC_DRAW);
+               std::max<size_t>(rtTriangles.size(), 1) * sizeof(RtTri),
+               rtTriangles.empty() ? nullptr : rtTriangles.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, rtTriSSBO);
 
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtNodeSSBO);
   glBufferData(GL_SHADER_STORAGE_BUFFER,
-               std::max<size_t>(rtLastNodes.size(), 1) * sizeof(BVHNode),
-               rtLastNodes.empty() ? nullptr : rtLastNodes.data(), GL_DYNAMIC_DRAW);
+               std::max<size_t>(rtNodes.size(), 1) * sizeof(BVHNode),
+               rtNodes.empty() ? nullptr : rtNodes.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
   glUseProgram(activeProgram);
 

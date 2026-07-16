@@ -561,7 +561,8 @@ public:
   int recStopFrame{-1};   // -1 = not set
   bool recStartRequested{false};
   bool recStopRequested{false};
-  bool recMarkerRecordRequested{false}; // R key when both markers set: jump to start + record
+  bool recordToggleRequested{false}; // Record button / R key: start (+jump+play) or stop
+  bool recSavedRtEnabled{false};     // raytracerEnabled before recording (restored on stop)
   bool recFrameActive{false};  // true while a recording frame is being assembled across strips
 
   // ---- Startup modal state ----
