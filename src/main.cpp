@@ -559,9 +559,10 @@ int main(int argc, char** argv) {
     }
 
     // ── Camera keyframe interpolation ──────────────────────────────────────
-    // When playing, interpolate camera between keyframes
-    if (!renderer.paused && !renderer.cameraKeyframes.empty() && !physicsObjects.empty()) {
-      unsigned int curFrame = physicsObjects[0].getTimeframe();
+    // When playing, interpolate the freecam between its keyframes. Driven by
+    // the timeline playhead, so it animates even with no physics simulation.
+    if (!renderer.paused && !renderer.cameraKeyframes.empty()) {
+      unsigned int curFrame = renderer.timelinePlayhead;
       auto& kfs = renderer.cameraKeyframes;
       // Find bracketing keyframes
       const CameraKeyframe* before = nullptr;

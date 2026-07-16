@@ -3050,9 +3050,20 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   unsigned int domain = timelineFrames;
   float denom = (float)(domain > 1 ? domain - 1 : 1);
 
-  // While playing the playhead follows the simulation; while paused it is
-  // owned here and edited by the slider / lane clicks.
-  if (!paused) timelinePlayhead = curFrame;
+  // While playing the playhead follows the simulation when physics exists;
+  // with no physics it advances on its own so keyframed cameras still animate.
+  // While paused it is owned here and edited by the slider / lane clicks.
+  if (!paused) {
+    if (!physicsObjects.empty()) {
+      timelinePlayhead = curFrame;
+    } else if (playingForward) {
+      unsigned int adv = timelinePlayhead + (unsigned int)framesThisTick;
+      timelinePlayhead = (adv > domain - 1) ? domain - 1 : adv;
+    } else {
+      unsigned int back = (unsigned int)framesThisTick;
+      timelinePlayhead = (timelinePlayhead > back) ? timelinePlayhead - back : 0;
+    }
+  }
   if (timelinePlayhead > domain - 1) timelinePlayhead = domain - 1;
 
   // Keypoint markers
