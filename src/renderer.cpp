@@ -579,34 +579,13 @@ void Renderer::DrawAtmosphere(PhysicsObject& obj) {
                                         obj.atmosphereScatter);
 }
 
-void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects) {
-  constexpr int LAYER_W = 1024, LAYER_H = 512;
-
-  std::vector<RenderedObject*> textured;
-  std::vector<std::string>     sig;
-  for (auto& obj : physicsObjects) {
-    if (obj.renderedObject.textureLoaded() && !obj.texturePath.empty()) {
-      textured.push_back(&obj.renderedObject);
-      sig.push_back(obj.texturePath);
-    } else {
-      obj.renderedObject.rtTexLayer = -1;
-    }
-  }
-
-  if (sig == rtTexArraySignature) {
-    for (int i = 0; i < (int)textured.size(); i++)
-      textured[i]->rtTexLayer = i;
-    return;
-  }
-  rtTexArraySignature = sig;
-
-  if (rtPlanetTexArray) { glDeleteTextures(1, &rtPlanetTexArray); rtPlanetTexArray = 0; }
-  if (textured.empty()) { rtDirty = true; return; }
-
-  glGenTextures(1, &rtPlanetTexArray);
-  glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
-  glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, LAYER_W, LAYER_H,
-               (GLsizei)textured.size(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+// Blit a list of 2D textures into a fresh GL_TEXTURE_2D_ARRAY (one per layer).
+static GLuint packTextureArray(const std::vector<GLuint>& sources, int LW, int LH) {
+  GLuint arr = 0;
+  glGenTextures(1, &arr);
+  glBindTexture(GL_TEXTURE_2D_ARRAY, arr);
+  glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, LW, LH,
+               (GLsizei)sources.size(), 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -615,28 +594,68 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
   GLuint readFbo = 0, drawFbo = 0;
   glGenFramebuffers(1, &readFbo);
   glGenFramebuffers(1, &drawFbo);
-
-  for (int i = 0; i < (int)textured.size(); i++) {
-    GLuint src = textured[i]->textureHandle();
-    GLint  sw = 0, sh = 0;
-    glBindTexture(GL_TEXTURE_2D, src);
+  for (int i = 0; i < (int)sources.size(); i++) {
+    GLint sw = 0, sh = 0;
+    glBindTexture(GL_TEXTURE_2D, sources[i]);
     glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,  &sw);
     glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &sh);
-
     glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sources[i], 0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFbo);
-    glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, rtPlanetTexArray, 0, i);
-    glBlitFramebuffer(0, 0, sw, sh, 0, 0, LAYER_W, LAYER_H,
-                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
-
-    textured[i]->rtTexLayer = i;
+    glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, arr, 0, i);
+    glBlitFramebuffer(0, 0, sw, sh, 0, 0, LW, LH, GL_COLOR_BUFFER_BIT, GL_LINEAR);
   }
-
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glDeleteFramebuffers(1, &readFbo);
   glDeleteFramebuffers(1, &drawFbo);
-  rtDirty = true;
+  return arr;
+}
+
+// Packs each object's diffuse texture and normal map into two GL_TEXTURE_2D_ARRAYs
+// (one layer each) and assigns rtTexLayer / rtNormalLayer. Rebuilds only when the
+// set of source images changes. Covers both planets and free models.
+void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects) {
+  constexpr int LAYER_W = 1024, LAYER_H = 512;
+
+  // ── Diffuse array ──
+  {
+    std::vector<GLuint> src; std::vector<std::string> sig;
+    for (auto& obj : physicsObjects) {
+      if (obj.renderedObject.textureLoaded() && !obj.texturePath.empty()) {
+        obj.renderedObject.rtTexLayer = (int)src.size();
+        src.push_back(obj.renderedObject.textureHandle());
+        sig.push_back(obj.texturePath);
+      } else {
+        obj.renderedObject.rtTexLayer = -1;
+      }
+    }
+    if (sig != rtTexArraySignature) {
+      rtTexArraySignature = sig;
+      if (rtPlanetTexArray) { glDeleteTextures(1, &rtPlanetTexArray); rtPlanetTexArray = 0; }
+      if (!src.empty()) rtPlanetTexArray = packTextureArray(src, LAYER_W, LAYER_H);
+      rtDirty = true;
+    }
+  }
+
+  // ── Normal-map array ──
+  {
+    std::vector<GLuint> src; std::vector<std::string> sig;
+    for (auto& obj : physicsObjects) {
+      if (obj.renderedObject.normalMapLoaded() && !obj.normalMapPath.empty()) {
+        obj.renderedObject.rtNormalLayer = (int)src.size();
+        src.push_back(obj.renderedObject.normalMapHandle());
+        sig.push_back(obj.normalMapPath);
+      } else {
+        obj.renderedObject.rtNormalLayer = -1;
+      }
+    }
+    if (sig != rtNormalArraySignature) {
+      rtNormalArraySignature = sig;
+      if (rtNormalTexArray) { glDeleteTextures(1, &rtNormalTexArray); rtNormalTexArray = 0; }
+      if (!src.empty()) rtNormalTexArray = packTextureArray(src, LAYER_W, LAYER_H);
+      rtDirty = true;
+    }
+  }
 }
 
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
@@ -5334,6 +5353,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
       glActiveTexture(GL_TEXTURE3);
       glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
     }
+    if (rtNormalTexArray) {
+      glActiveTexture(GL_TEXTURE4);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtNormalTexArray);
+    }
     glActiveTexture(GL_TEXTURE0);
   }
 
@@ -5691,6 +5714,10 @@ void Renderer::CaptureImage() {
       glActiveTexture(GL_TEXTURE3);
       glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
     }
+    if (rtNormalTexArray) {
+      glActiveTexture(GL_TEXTURE4);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtNormalTexArray);
+    }
     glActiveTexture(GL_TEXTURE0);
   }
 
@@ -5964,6 +5991,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (rtPlanetTexArray) {
       glActiveTexture(GL_TEXTURE3);
       glBindTexture(GL_TEXTURE_2D_ARRAY, rtPlanetTexArray);
+    }
+    if (rtNormalTexArray) {
+      glActiveTexture(GL_TEXTURE4);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtNormalTexArray);
     }
     glActiveTexture(GL_TEXTURE0);
   }

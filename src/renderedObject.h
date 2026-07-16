@@ -90,7 +90,8 @@ public:
   MeshType meshType{MeshType::sphere};
   dvec3 coordinates;  // world position (double: galactic coords need it)
   vec3  rotationDeg{0.0f, 0.0f, 0.0f};  // object orientation (Euler X/Y/Z degrees)
-  int  rtTexLayer{-1};  // layer in the RT planet texture array (-1 = untextured)
+  int  rtTexLayer{-1};  // layer in the RT diffuse texture array (-1 = untextured)
+  int  rtNormalLayer{-1}; // layer in the RT normal-map texture array (-1 = none)
   float normalStrength{1.0f};  // normal-map relief scale (forwarded to the shader)
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
@@ -121,6 +122,7 @@ public:
   void clearNormalMap();
   bool normalMapLoaded() const { return hasNormalMap; }
   GLuint textureHandle() const { return textureID; }
+  GLuint normalMapHandle() const { return normalMapID; }
   float sphereRadius() const { return radius; }
   bool  shadersReady() const { return program != 0; }
   void uploadTemperature(float kelvin);

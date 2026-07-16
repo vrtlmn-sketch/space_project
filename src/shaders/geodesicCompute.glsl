@@ -40,6 +40,7 @@ vec3 sampleSkybox(vec3 dir)
 // Planet surface textures — equirectangular maps packed into one array texture.
 // color.w of each object holds the layer index (-1 = untextured, use flat color).
 layout(binding = 3) uniform sampler2DArray uPlanetTextures;
+layout(binding = 4) uniform sampler2DArray uNormalTextures;
 
 // Inverse object rotation (texture UVs rotate with the surface).
 // R = Rz*Ry*Rx (matches the CPU); the inverse is transpose(R).
@@ -76,6 +77,7 @@ struct spaceObject
     vec4  atmoScatter; // xyz = per-channel scattering ratio
     vec4  rotation;    // xyz = Euler radians
     vec4  mesh;        // x = triangle start, y = triangle count (free mesh)
+    vec4  material;    // x = normal-map layer (-1 none), y = strength
 };
 
 layout(std430, binding = 1) buffer Objects {
@@ -141,7 +143,36 @@ bool rayAABB(vec3 ro, vec3 rd, vec3 bmin, vec3 bmax, float tmax) {
 // Intersect the ray with object oi's BVH, evaluated in the object's unit space.
 // The ray is transformed to local space with an UNNORMALIZED direction so the
 // returned t is already in world units. Outputs the world-space shading normal.
-float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN) {
+// Perturb an OBJECT-space sphere normal with the planet's normal map (equirect).
+vec3 applyPlanetNormalMap(vec3 nObj, vec4 mat) {
+    int layer = int(mat.x + 0.5);
+    if (layer < 0) return nObj;
+    const float PI_NM = 3.14159265358979;
+    float u = fract(atan(nObj.z, nObj.x) / (2.0 * PI_NM));
+    float v = acos(clamp(nObj.y, -1.0, 1.0)) / PI_NM;
+    vec3 nm = texture(uNormalTextures, vec3(u, v, float(layer))).xyz * 2.0 - 1.0;
+    nm.xy *= mat.y * 4.0;
+    vec3 T = normalize(vec3(-nObj.z, 0.0, nObj.x));
+    if (dot(T, T) < 1e-5) T = vec3(1.0, 0.0, 0.0);
+    vec3 B = cross(nObj, T);
+    return normalize(T*nm.x + B*nm.y + nObj*nm.z);
+}
+
+// Perturb a world normal with a mesh normal map given a world tangent.
+vec3 applyMeshNormalMap(vec3 N, vec3 Tw, vec2 uv, vec4 mat) {
+    int layer = int(mat.x + 0.5);
+    if (layer < 0) return N;
+    vec3 nm = texture(uNormalTextures, vec3(uv, float(layer))).xyz * 2.0 - 1.0;
+    nm.xy *= mat.y * 4.0;
+    vec3 T = Tw - N * dot(N, Tw);   // Gram-Schmidt orthonormalise
+    if (dot(T, T) < 1e-8) return N;
+    T = normalize(T);
+    vec3 B = cross(N, T);
+    return normalize(T*nm.x + B*nm.y + N*nm.z);
+}
+
+// BVH traversal that also outputs interpolated UV and a world-space tangent.
+float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN, out vec2 outUV, out vec3 outT) {
     vec4  rot    = objects[oi].rotation;
     vec3  objPos = objects[oi].position.xyz;
     float scale  = max(objects[oi].radius, 1e-8);
@@ -150,9 +181,11 @@ float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN) {
 
     float best = 1e30;
     vec3  bestN = vec3(0.0, 1.0, 0.0);
+    vec2  bestUV = vec2(0.0);
+    vec3  bestT = vec3(1.0, 0.0, 0.0);
     int   stack[32];
     int   sp = 0;
-    stack[sp++] = int(objects[oi].mesh.y + 0.5);   // BVH root node
+    stack[sp++] = int(objects[oi].mesh.y + 0.5);
     while (sp > 0) {
         BVHNode nd = nodes[stack[--sp]];
         if (!rayAABB(lo, ld, nd.bmin.xyz, nd.bmax.xyz, best)) continue;
@@ -166,7 +199,14 @@ float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN) {
                 if (t > 1e-4 && t < best) {
                     best = t;
                     float w = 1.0 - u - v;
-                    bestN = w*T.n0.xyz + u*T.n1.xyz + v*T.n2.xyz;
+                    bestN  = w*T.n0.xyz + u*T.n1.xyz + v*T.n2.xyz;
+                    bestUV = vec2(w*T.v0.w + u*T.v1.w + v*T.v2.w,
+                                  w*T.n0.w + u*T.n1.w + v*T.n2.w);
+                    vec3 e1 = T.v1.xyz - T.v0.xyz, e2 = T.v2.xyz - T.v0.xyz;
+                    float du1 = T.v1.w - T.v0.w, du2 = T.v2.w - T.v0.w;
+                    float dv1 = T.n1.w - T.n0.w, dv2 = T.n2.w - T.n0.w;
+                    float det = du1*dv2 - du2*dv1;
+                    bestT = (abs(det) > 1e-12) ? (e1*dv2 - e2*dv1) / det : e1;
                 }
             }
         } else {
@@ -174,10 +214,19 @@ float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN) {
             if (sp < 30) { stack[sp++] = lc; stack[sp++] = lc + 1; }
         }
     }
+    outUV = bestUV;
+    outT  = vec3(1.0, 0.0, 0.0);
     if (best >= 1e30) return -1.0;
     vec3 nl = (dot(bestN, ld) > 0.0) ? -bestN : bestN;
     outN = normalize(rotateN(rot, nl));
+    outT = normalize(rotateN(rot, bestT));
     return best;
+}
+
+// 4-arg wrapper: existing call sites that don't need UV/tangent.
+float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN) {
+    vec2 uvTmp; vec3 tTmp;
+    return rayMesh(ro, rd, oi, outN, uvTmp, tTmp);
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +652,8 @@ void main()
     float hitDist  = 0.0;
     vec3  hitPos   = vec3(0.0);
     vec3  hitNorm  = vec3(0.0);
+    vec2  hitUV    = vec2(0.0);
+    vec3  hitTangent = vec3(1.0, 0.0, 0.0);
 
     // Accumulated glow from the curved portion of the ray
     vec3  curvedGlow          = vec3(0.0);
@@ -665,16 +716,18 @@ void main()
             float segTMin = segLen; // only accept hits within segment
             int   segHit  = -1;
             vec3  segHitNorm = vec3(0.0, 1.0, 0.0);
+            vec2  segHitUV = vec2(0.0);
+            vec3  segHitTan = vec3(1.0, 0.0, 0.0);
 
             for (int i = 0; i < uObjectCount; i++)
             {
                 int otype = int(objects[i].objectType + 0.5);
                 if (otype == 2 || otype == 4) continue; // skip clouds for solid hit test
 
-                float t; vec3 nrm;
+                float t; vec3 nrm; vec2 muv = vec2(0.0); vec3 mtan = vec3(1.0, 0.0, 0.0);
                 if (otype == 5) {
                     t = sphereHitRange(prevPos, segNorm, objects[i].position.xyz, objects[i].radius, segTMin)
-                    ? rayMesh(prevPos, segNorm, i, nrm) : -1.0;
+                    ? rayMesh(prevPos, segNorm, i, nrm, muv, mtan) : -1.0;
                 } else {
                     vec3  cen = objects[i].position.xyz;
                     float rad = objects[i].radius;
@@ -686,6 +739,8 @@ void main()
                     segTMin    = t;
                     segHit     = i;
                     segHitNorm = nrm;
+                    segHitUV   = muv;
+                    segHitTan  = mtan;
                 }
             }
 
@@ -696,6 +751,8 @@ void main()
                 hitPos   = prevPos + segNorm * segTMin;
                 hitNorm  = (int(objects[segHit].objectType + 0.5) == 5)
                            ? segHitNorm : normalize(hitPos - objects[segHit].position.xyz);
+                hitUV      = segHitUV;
+                hitTangent = segHitTan;
 
                 // Accumulate glow from objects in front of the hit along this segment
                 for (int i = 0; i < uObjectCount; i++)
@@ -856,10 +913,10 @@ void main()
             int otype = int(objects[i].objectType + 0.5);
             if (otype == 2 || otype == 4) continue;
 
-            float t; vec3 nrm;
+            float t; vec3 nrm; vec2 muv = vec2(0.0); vec3 mtan = vec3(1.0, 0.0, 0.0);
             if (otype == 5) {
                 t = sphereHitRange(pos, vel, objects[i].position.xyz, objects[i].radius, escTMin)
-                    ? rayMesh(pos, vel, i, nrm) : -1.0;
+                    ? rayMesh(pos, vel, i, nrm, muv, mtan) : -1.0;
             } else {
                 vec3  cen = objects[i].position.xyz;
                 float rad = objects[i].radius;
@@ -873,6 +930,8 @@ void main()
                 hitIdx   = i;
                 hitPos   = pos + vel * t;
                 hitNorm  = nrm;
+                hitUV    = muv;
+                hitTangent = mtan;
             }
         }
 
@@ -961,16 +1020,24 @@ void main()
         }
         else if (otype == 5)
         {
-            // Free mesh — Blinn-Phong shading with the interpolated triangle normal
-            color = shadePlanet(ro, hitPos, hitNorm, objects[hitIdx].color.xyz);
+            // Free mesh — texture + normal map
+            int dLayer = int(objects[hitIdx].color.w + 0.5);
+            vec3 base  = (dLayer >= 0)
+                         ? texture(uPlanetTextures, vec3(hitUV, float(dLayer))).rgb
+                         : objects[hitIdx].color.xyz;
+            vec3 N = applyMeshNormalMap(hitNorm, hitTangent, hitUV, objects[hitIdx].material);
+            color = shadePlanet(ro, hitPos, N, base);
         }
         else
         {
-            // Planet — Blinn-Phong shading
-            vec3 lit  = shadePlanet(ro, hitPos, hitNorm, planetBaseColor(objects[hitIdx].color, invRotateN(objects[hitIdx].rotation, hitNorm)));
+            // Planet — Blinn-Phong shading with optional normal map
+            vec3 nObj = invRotateN(objects[hitIdx].rotation, hitNorm);
+            vec3 base = planetBaseColor(objects[hitIdx].color, nObj);
+            vec3 Nw   = rotateN(objects[hitIdx].rotation, applyPlanetNormalMap(nObj, objects[hitIdx].material));
+            vec3 lit  = shadePlanet(ro, hitPos, Nw, base);
             vec3 refl = vec3(0.0);
             if (uMaxBounces > 0)
-                refl = reflectionBounce(ro, vel, hitPos, hitNorm);
+                refl = reflectionBounce(ro, vel, hitPos, Nw);
             color = lit + refl * 0.1;
         }
     }

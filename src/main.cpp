@@ -522,11 +522,13 @@ int main(int argc, char** argv) {
         starColors.push_back(vec3{r, g, b});
       }
     }
-    // Upload to all planet shaders
+    // Upload to all lit surfaces (planets AND free models use the same shader)
     for (auto& obj : physicsObjects) {
-      if (obj.shaderType == ObjectType::Planet && !starPositions.empty()) {
+      bool litSurface = (obj.shaderType == ObjectType::Planet ||
+                         obj.shaderType == ObjectType::FreeModel);
+      if (litSurface && !starPositions.empty()) {
         obj.renderedObject.uploadStarLighting(starPositions, starColors);
-        if (obj.atmosphereEnabled) {
+        if (obj.shaderType == ObjectType::Planet && obj.atmosphereEnabled) {
           obj.EnsureAtmosphere();
           obj.atmosphereObject.uploadStarLighting(starPositions, starColors);
         }

@@ -178,9 +178,11 @@ private:
   // Framebuffer size
   int fbWidth{}, fbHeight{};
 
-  // ── RT planet texture array state ──
+  // ── RT texture array state (diffuse + normal maps, one layer per object) ──
   GLuint rtPlanetTexArray{0};
   std::vector<std::string> rtTexArraySignature;
+  GLuint rtNormalTexArray{0};
+  std::vector<std::string> rtNormalArraySignature;
 
   // ── Compute shader raytracer ──
   GLuint rtComputeProgram{0};

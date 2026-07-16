@@ -5,8 +5,8 @@
 // UNIT space (centered, unit bounding radius); the shader transforms the ray
 // into that space. 6×vec4 = 96 bytes, std430-safe.
 struct alignas(16) RtTri {
-  vec4 v0, v1, v2;   // vertex positions (xyz used)
-  vec4 n0, n1, n2;   // vertex normals   (xyz used)
+  vec4 v0, v1, v2;   // xyz = vertex positions,  w = texcoord U
+  vec4 n0, n1, n2;   // xyz = vertex normals,    w = texcoord V
 };
 
 // A BVH node (matches the GLSL `BVHNode`). Children are stored contiguously:
@@ -30,6 +30,7 @@ struct alignas(16) RayTracerObject{
   vec4  atmoScatter; // xyz = per-channel scattering ratio
   vec4  rotation;    // xyz = orientation Euler angles in RADIANS, w unused
   vec4  mesh;        // x = triangle start index, y = triangle count (0 = not a mesh)
+  vec4  material;    // x = normal-map array layer (-1 none), y = normal strength
 };
 
 // Extended struct for Doppler-mode shaders — adds velocity (96 bytes, std430-compatible)
@@ -45,4 +46,5 @@ struct alignas(16) RayTracerObjectDoppler {
   vec4  atmoScatter;   // xyz = per-channel scattering ratio
   vec4  rotation;      // xyz = orientation Euler angles in RADIANS, w unused
   vec4  mesh;          // x = triangle start index, y = triangle count (0 = not a mesh)
+  vec4  material;      // x = normal-map array layer (-1 none), y = normal strength
 };

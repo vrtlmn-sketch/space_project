@@ -379,9 +379,10 @@ void RenderedObject::BuildBVH() {
     const float* b0 = &freeUnitBuffer[(f*3+0)*8];
     const float* b1 = &freeUnitBuffer[(f*3+1)*8];
     const float* b2 = &freeUnitBuffer[(f*3+2)*8];
-    tris[f].v0 = vec4{b0[0],b0[1],b0[2],0}; tris[f].n0 = vec4{b0[3],b0[4],b0[5],0};
-    tris[f].v1 = vec4{b1[0],b1[1],b1[2],0}; tris[f].n1 = vec4{b1[3],b1[4],b1[5],0};
-    tris[f].v2 = vec4{b2[0],b2[1],b2[2],0}; tris[f].n2 = vec4{b2[3],b2[4],b2[5],0};
+    // w of position = texcoord U, w of normal = texcoord V (packed for the shader)
+    tris[f].v0 = vec4{b0[0],b0[1],b0[2],b0[6]}; tris[f].n0 = vec4{b0[3],b0[4],b0[5],b0[7]};
+    tris[f].v1 = vec4{b1[0],b1[1],b1[2],b1[6]}; tris[f].n1 = vec4{b1[3],b1[4],b1[5],b1[7]};
+    tris[f].v2 = vec4{b2[0],b2[1],b2[2],b2[6]}; tris[f].n2 = vec4{b2[3],b2[4],b2[5],b2[7]};
     cent[f] = vec3{(b0[0]+b1[0]+b2[0])/3.0f,
                    (b0[1]+b1[1]+b2[1])/3.0f,
                    (b0[2]+b1[2]+b2[2])/3.0f};
@@ -496,7 +497,8 @@ void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::v
     vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
          rotationDeg.z*0.01745329252f, 0},
-    meshInfo});
+    meshInfo,
+    vec4{(float)rtNormalLayer, normalStrength, 0, 0}});
 }
 void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
@@ -522,7 +524,8 @@ void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
     vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
          rotationDeg.z*0.01745329252f, 0},
-    meshInfo});
+    meshInfo,
+    vec4{(float)rtNormalLayer, normalStrength, 0, 0}});
 }
 
 // Build R = Rz·Ry·Rx (row-major) from Euler DEGREES — matches the CPU/GLSL
