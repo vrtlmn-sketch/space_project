@@ -99,7 +99,17 @@ float rayTri(vec3 ro, vec3 rd, vec3 a, vec3 b, vec3 c, out float u, out float v)
     return dot(e2, q) * invDet;
 }
 
-float rayMesh(vec3 ro, vec3 rd, int start, int count, out vec3 outN) {
+// Broad-phase: does the ray hit the mesh bounding sphere within [0, maxT]?
+// Skips the whole triangle scan for rays/segments that miss the mesh.
+bool sphereHitRange(vec3 ro, vec3 rd, vec3 cen, float rad, float maxT) {
+    vec3 oc = cen - ro;
+    float tca = dot(oc, rd);
+    float d2 = dot(oc, oc) - tca * tca;
+    float r2 = rad * rad;
+    if (d2 > r2) return false;
+    float thc = sqrt(r2 - d2);
+    return (tca + thc > 1e-4) && (tca - thc < maxT);
+}float rayMesh(vec3 ro, vec3 rd, int start, int count, out vec3 outN) {
     float best = -1.0;
     outN = vec3(0.0, 1.0, 0.0);
     for (int i = 0; i < count; i++) {
@@ -616,7 +626,8 @@ void main()
                     if (otype == 2 || otype == 4) continue;
                     float t; vec3 nrm;
                     if (otype == 5) {
-                        t = rayMesh(prevPos, segNorm, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm);
+                        t = sphereHitRange(prevPos, segNorm, objects[i].position.xyz, objects[i].radius, segTMin)
+                    ? rayMesh(prevPos, segNorm, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm) : -1.0;
                     } else {
                         vec3  cen = objects[i].position.xyz;
                         float rad = objects[i].radius;
@@ -808,7 +819,8 @@ void main()
             if (otype == 2 || otype == 4) continue;
             float t; vec3 nrm;
             if (otype == 5) {
-                t = rayMesh(finalPos, finalVel, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm);
+                t = sphereHitRange(finalPos, finalVel, objects[i].position.xyz, objects[i].radius, escTMin)
+                    ? rayMesh(finalPos, finalVel, int(objects[i].mesh.x + 0.5), int(objects[i].mesh.y + 0.5), nrm) : -1.0;
             } else {
                 vec3  cen = objects[i].position.xyz;
                 float rad = objects[i].radius;
