@@ -88,7 +88,9 @@ void PhysicsObject::resetToInitial()
   clearRecording();
 }
 
-void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer)
+void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
+                           const std::vector<PhysicsObjectStructure>& cloudSources,
+                           Renderer& renderer)
 {
   if(!simulatePhysics)
   {
@@ -134,6 +136,17 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
           if (d2 == 0) continue;
           dvec3 dir = normalize(r);
           double accel = G * other.data.mass / d2;
+          data.velocity += dir * (accel * dt);
+        }
+        // Reciprocal cloud gravity: each simulated cloud pulls on this body as a
+        // single point mass at its centre of mass (clouds pull back on planets/
+        // stars, mirroring the big-body pull on cloud particles).
+        for (const auto& src : cloudSources) {
+          dvec3 r = src.position - this->data.position;
+          double d2 = r.x*r.x + r.y*r.y + r.z*r.z;
+          if (d2 == 0) continue;
+          dvec3 dir = normalize(r);
+          double accel = G * src.mass / d2;
           data.velocity += dir * (accel * dt);
         }
         data.position += data.velocity * dt;

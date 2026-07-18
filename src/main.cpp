@@ -563,9 +563,23 @@ int main(int argc, char** argv) {
     // after the pause state is final so all objects see the same step count
     renderer.ComputeFrameAdvance();
 
+    // Simulated clouds act back on the big bodies as one COM point mass each
+    // (keyframed clouds stay inert).
+    std::vector<PhysicsObjectStructure> cloudSources;
+    for (auto& c : clouds) {
+      if (!c->simulatePhysics) continue;
+      vec3 com; float m;
+      if (c->gravitySource(com, m)) {
+        PhysicsObjectStructure src;
+        src.position = dvec3{com.x, com.y, com.z};
+        src.mass = m;
+        cloudSources.push_back(src);
+      }
+    }
+
     // Physics objects + trail lines
     for (int i = 0; i < (int)physicsObjects.size(); i++) {
-      physicsObjects[i].Update(physicsObjects, renderer);
+      physicsObjects[i].Update(physicsObjects, cloudSources, renderer);
       lineObjects[i].Update(renderer);
       // Only grow trails when simulating new frames forward
       if (!renderer.paused && renderer.playingForward) {
@@ -586,6 +600,9 @@ int main(int argc, char** argv) {
     if (grid.has_value() && currentGrid.visible)
       grid->Update(renderer, physData);
 
+    // Step all GPU Barnes-Hut clouds together against one shared octree so
+    // separate formations gravitate on each other, then draw each cloud.
+    CloudObject::SimulateSharedForward(clouds, physData, renderer);
     for (auto& c : clouds)
       c->Update(renderer, physData);
 

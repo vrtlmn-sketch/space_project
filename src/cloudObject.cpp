@@ -272,6 +272,146 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   readbackParticlesFromGPU();
 }
 
+// ── Shared Barnes-Hut across all clouds ─────────────────────────────────────
+unsigned int CloudObject::s_sharedTreeSSBO    = 0;
+unsigned int CloudObject::s_sharedBigBodySSBO = 0;
+Octree       CloudObject::s_sharedOctree;
+
+// Dispatch this cloud's particle buffer against a pre-built (shared) octree.
+// Same as dispatchBarnesHut steps 5-6, but the tree + big bodies come from
+// outside, so every cloud can be integrated against one combined tree.
+void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
+                                      unsigned int bbSSBO, int bbCount, float simSpeed) {
+  int particleCount_ = renderedObject.cloudParticleCount();
+  if (particleCount_ <= 0 || !gpuInitialized) return;
+
+  glUseProgram(bhProgram);
+  glUniform1i(locParticleCount, particleCount_);
+  glUniform1i(locNodeCount, nodeCount);
+  glUniform1i(locBigBodyCount, bbCount);
+  glUniform1f(locG, (float)units::kG);
+  glUniform1f(locDt, (float)units::kDtYears * simSpeed);
+  glUniform1f(locTheta, barnesHutTheta);
+
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sharedTree);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, bbSSBO);
+
+  int numGroups = (particleCount_ + 255) / 256;
+  glDispatchCompute(numGroups, 1, 1);
+  glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+  glUseProgram(0);
+
+  readbackParticlesFromGPU();
+}
+
+void CloudObject::SimulateSharedForward(
+    std::vector<std::unique_ptr<CloudObject>>& clouds,
+    const std::vector<PhysicsObjectStructure>& bigBodies,
+    Renderer& renderer)
+{
+  if (renderer.paused || !renderer.playingForward) return;
+  int steps = renderer.framesThisTick;
+  if (steps <= 0) return;
+
+  // Eligible = GPU Barnes-Hut clouds that are gravity-simulated. (CPU clouds and
+  // keyframed clouds are handled independently in their own Update.)
+  std::vector<CloudObject*> sim;
+  for (auto& up : clouds) {
+    CloudObject* c = up.get();
+    if (c->computeMethod != CloudComputeMethod::BarnesHutGPU) continue;
+    if (!c->simulatePhysics) continue;
+    if (!c->gpuInitialized) c->initGPU();
+    if (!c->gpuInitialized) continue;   // init failed → Update() runs CPU fallback
+    c->renderedObject.coordinates = c->position;
+    c->ensureFrameStore();
+    sim.push_back(c);
+  }
+  if (sim.empty()) return;
+
+  // Replay any already-recorded frames (no forces), then record how many fresh
+  // steps each cloud still needs this tick. In the common case all clouds share
+  // the same recording length, so these are equal.
+  std::vector<int> remaining(sim.size(), steps);
+  for (size_t k = 0; k < sim.size(); ++k) {
+    CloudObject* c = sim[k];
+    if (c->frameStore && c->frameStore->totalFrames() == 0)
+      c->initialSnaps = c->renderedObject.getParticleSnapshots();
+    unsigned int total = c->frameStore ? (unsigned int)c->frameStore->totalFrames() : 0u;
+    if (c->timeframe < total) {
+      unsigned int jump = std::min((unsigned int)steps, total - c->timeframe);
+      const void* rec = c->frameStore->get(c->timeframe + jump - 1);
+      if (rec) restoreFromRecord(rec, c->renderedObject.cloudParticleCount(), c->renderedObject);
+      c->uploadParticlesToGPU();
+      c->timeframe += jump;
+      remaining[k] = steps - (int)jump;
+    }
+  }
+
+  int maxRem = 0;
+  for (int r : remaining) maxRem = std::max(maxRem, r);
+  if (maxRem <= 0) return;
+
+  // Big bodies are constant across sub-steps → upload once.
+  if (s_sharedBigBodySSBO == 0) glGenBuffers(1, &s_sharedBigBodySSBO);
+  int bbCount = (int)bigBodies.size();
+  {
+    std::vector<GPUBigBody> gpuBB(std::max(bbCount, 1));
+    for (int i = 0; i < bbCount; ++i) {
+      gpuBB[i].px   = (float)bigBodies[i].position.x;
+      gpuBB[i].py   = (float)bigBodies[i].position.y;
+      gpuBB[i].pz   = (float)bigBodies[i].position.z;
+      gpuBB[i].mass = (float)bigBodies[i].mass;
+    }
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedBigBodySSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 std::max(bbCount, 1) * (GLsizeiptr)sizeof(GPUBigBody),
+                 gpuBB.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+  }
+  if (s_sharedTreeSSBO == 0) glGenBuffers(1, &s_sharedTreeSSBO);
+
+  // Lockstep: each sub-step rebuilds one octree over every simulated cloud's
+  // current particles, so cross-cloud gravity stays in sync as they move.
+  for (int s = 0; s < maxRem; ++s) {
+    std::vector<vec3>  allPos;
+    std::vector<float> allMass;
+    for (CloudObject* c : sim) {
+      const auto& ps = c->renderedObject.cloudParticles;
+      allPos.reserve(allPos.size() + ps.size());
+      allMass.reserve(allMass.size() + ps.size());
+      for (const auto& p : ps) {
+        allPos.push_back(vec3{p.position.x + c->position.x,
+                              p.position.y + c->position.y,
+                              p.position.z + c->position.z});
+        allMass.push_back(p.mass);
+      }
+    }
+    if (allPos.empty()) break;
+
+    vec3 zeroOffset{0.0f, 0.0f, 0.0f};
+    s_sharedOctree.build(allPos.data(), allMass.data(), (int)allPos.size(), zeroOffset);
+
+    const auto& nodes = s_sharedOctree.nodes();
+    int nodeCount = (int)nodes.size();
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedTreeSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, nodeCount * (GLsizeiptr)sizeof(OctreeNodeGPU),
+                 nodes.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    for (size_t k = 0; k < sim.size(); ++k) {
+      if (s >= remaining[k]) continue;   // this cloud already finished its steps
+      sim[k]->dispatchAgainstTree(s_sharedTreeSSBO, nodeCount,
+                                  s_sharedBigBodySSBO, bbCount, renderer.simSpeed);
+      if (sim[k]->frameStore) {
+        auto snaps = sim[k]->renderedObject.getParticleSnapshots();
+        sim[k]->frameStore->push(snaps.data());
+      }
+      sim[k]->timeframe++;
+    }
+  }
+}
+
 // ── Update ──────────────────────────────────────────────────────────────────
 void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects){
   // Keyframe-driven clouds animate the whole-cloud transform from the timeline
@@ -300,7 +440,16 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
 
   if(!renderer.paused)
   {
-    if(renderer.playingForward)
+    // GPU Barnes-Hut clouds are advanced once per frame, in lockstep across all
+    // formations, by CloudObject::SimulateSharedForward (shared octree). Skip
+    // their per-cloud forward stepping here so they aren't stepped twice.
+    bool sharedHandled = (computeMethod == CloudComputeMethod::BarnesHutGPU
+                          && gpuInitialized && renderer.playingForward);
+    if(sharedHandled)
+    {
+      // physics already advanced by the shared coordinator this frame
+    }
+    else if(renderer.playingForward)
     {
       int steps = renderer.framesThisTick;
 
@@ -497,4 +646,20 @@ void CloudObject::boundsEstimate(vec3& center, float& radius) const {
                 (float)cy + renderedObject.coordinates.y,
                 (float)cz + renderedObject.coordinates.z};
   radius = std::max(2.0f * rms, 0.1f);
+}
+
+bool CloudObject::gravitySource(vec3& comWorld, float& totalMass) const {
+  const auto& ps = renderedObject.cloudParticles;
+  double mx = 0, my = 0, mz = 0, mtot = 0;
+  for (const auto& p : ps) {
+    double m = (double)p.mass;
+    mx += (double)(p.position.x + position.x) * m;
+    my += (double)(p.position.y + position.y) * m;
+    mz += (double)(p.position.z + position.z) * m;
+    mtot += m;
+  }
+  if (mtot <= 0.0) return false;
+  comWorld  = vec3{(float)(mx / mtot), (float)(my / mtot), (float)(mz / mtot)};
+  totalMass = (float)mtot;
+  return true;
 }

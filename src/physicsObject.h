@@ -90,7 +90,9 @@ public:
   void  EnsureAtmosphere(float sizeExag = 1.0f); // (re)build shell mesh + shaders
 
   void SetVelocity(const vec3& velocity);
-  void Update(const std::vector<PhysicsObject>& physicsObjetcs, Renderer& renderer);
+  void Update(const std::vector<PhysicsObject>& physicsObjetcs,
+              const std::vector<PhysicsObjectStructure>& cloudSources,
+              Renderer& renderer);
   PhysicsObject(const dvec3& velocity, const dvec3& position, double mass,
                 const std::string& name = "Object",
                 ObjectType shaderType = ObjectType::Planet,

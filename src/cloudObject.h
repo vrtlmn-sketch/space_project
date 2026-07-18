@@ -48,8 +48,24 @@ private:
   void uploadParticlesToGPU();
   void readbackParticlesFromGPU();
   void dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& bigBodies, float simSpeed = 1.0f);
+  // Dispatch this cloud's particles against an externally-built (shared) octree.
+  void dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
+                           unsigned int sharedBigBody, int bigBodyCount, float simSpeed);
+
+  // Shared Barnes-Hut resources: one octree spanning every simulated cloud so
+  // separate formations gravitate on each other. Built/stepped in lockstep by
+  // SimulateSharedForward (below). App-lifetime GPU objects.
+  static unsigned int s_sharedTreeSSBO;
+  static unsigned int s_sharedBigBodySSBO;
+  static Octree       s_sharedOctree;
 
 public:
+  // Advance all GPU Barnes-Hut clouds one tick forward, sharing a single octree
+  // so formations interact. Call once per frame, before the per-cloud Update().
+  static void SimulateSharedForward(std::vector<std::unique_ptr<CloudObject>>& clouds,
+                                    const std::vector<PhysicsObjectStructure>& bigBodies,
+                                    Renderer& renderer);
+
   unsigned int timeframe{};
   RenderedObject renderedObject;
   vec3 position;
@@ -88,6 +104,11 @@ public:
 
   // Centroid and bounding radius of the particle cloud (world space)
   void boundsEstimate(vec3& center, float& radius) const;
+
+  // World-space centre of mass + total mass of the particles. Returns false if
+  // the cloud is empty. Lets the cloud pull back on the big bodies (one COM
+  // point mass), the reciprocal of big bodies pulling on cloud particles.
+  bool gravitySource(vec3& comWorld, float& totalMass) const;
 
   // Timeline accessors
   unsigned int getTimeframe() const { return timeframe; }
