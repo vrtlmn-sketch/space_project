@@ -519,7 +519,8 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
     return reflCol;
 }
 
-vec3 geodesicAccel(vec3 p, vec3 v)
+// Deflection from a single hole, p relative to that hole, rs its Schwarzschild radius.
+vec3 holeAccel(vec3 p, vec3 v, float rs)
 {
     float r2 = dot(p, p);
     float r  = sqrt(r2);
@@ -527,7 +528,18 @@ vec3 geodesicAccel(vec3 p, vec3 v)
     vec3  h_vec = cross(p, v);
     float h2    = dot(h_vec, h_vec);
     float r5 = r2 * r2 * r;
-    return -1.5 * BH_RS * h2 / r5 * p;
+    return -1.5 * rs * h2 / r5 * p;
+}
+
+// Superpose the deflection of every black hole in the scene (world-space pos).
+vec3 geodesicAccel(vec3 pos, vec3 vel)
+{
+    vec3 a = vec3(0.0);
+    for (int i = 0; i < uObjectCount; i++) {
+        if (int(objects[i].objectType + 0.5) != 3) continue;
+        a += holeAccel(pos - objects[i].position.xyz, vel, objects[i].radius);
+    }
+    return a;
 }
 
 struct RayState { vec3 pos; vec3 vel; };
@@ -596,17 +608,28 @@ void main()
 
     for (int step = 0; step < uMaxSteps; step++)
     {
-        vec3 relPos = pos - uBHPos;
-        float r     = length(relPos);
+        // Nearest black hole (by surface gap) drives capture, step size, escape.
+        float nearR   = 1e30;
+        float nearRs  = uBH_RS;
+        vec3  nearRel = vel;
+        bool  captHit = false;
+        for (int bi = 0; bi < uObjectCount; bi++) {
+            if (int(objects[bi].objectType + 0.5) != 3) continue;
+            vec3  rel = pos - objects[bi].position.xyz;
+            float rr  = length(rel);
+            float rs  = objects[bi].radius;
+            if (rr <= rs) captHit = true;
+            if (rr - rs < nearR - nearRs) { nearR = rr; nearRs = rs; nearRel = rel; }
+        }
 
-        if (r <= BH_RS) { captured = true; hitScene = true; break; }
+        if (captHit) { captured = true; hitScene = true; break; }
 
-        float radialVel = dot(normalize(relPos), vel);
-        vec3  accel     = geodesicAccel(relPos, vel);
+        float radialVel = dot(normalize(nearRel), vel);
+        vec3  accel     = geodesicAccel(pos, vel);
         float accelMag  = length(accel);
         if (radialVel > 0.0 && accelMag < BH_ESCAPE_ACCEL) break;
 
-        float stepScale = clamp(r / (3.0 * BH_RS), 0.1, 10.0);
+        float stepScale = clamp(nearR / (3.0 * nearRs), 0.1, 10.0);
         float dt = baseStep * stepScale;
 // Refine the step near free-object meshes: take small steps through the
         // mesh region so the curved ray is finely sampled (reliable hit + local
@@ -619,9 +642,9 @@ void main()
                 dt = min(dt, max(fine, md * 0.5));
             }
         }
-        RayState newState = rk4Step(relPos, vel, dt);
+        RayState newState = rk4Step(pos, vel, dt);
         vec3 prevPos = pos;
-        pos = newState.pos + uBHPos;
+        pos = newState.pos;
         vel = normalize(newState.vel);
 
         vec3  segDir  = pos - prevPos;
@@ -952,9 +975,14 @@ void main()
         // Nearly straight rays: march the true camera ray so atmospheres away
         // from the black hole render exactly like the simple raytracer.
         // Strongly bent rays: march the post-bend escape line (lensed image).
-        float dBH2  = closestApproachDist2(ro, rd, uBHPos);
-        float bendR = 8.0 * BH_RS;
-        if (dBH2 > bendR * bendR)
+        bool nearAnyBH = false;
+        for (int bi = 0; bi < uObjectCount; bi++) {
+            if (int(objects[bi].objectType + 0.5) != 3) continue;
+            float dBH2  = closestApproachDist2(ro, rd, objects[bi].position.xyz);
+            float bendR = 8.0 * objects[bi].radius;
+            if (dBH2 <= bendR * bendR) { nearAnyBH = true; break; }
+        }
+        if (!nearAnyBH)
             color = applyAtmospheres(ro, rd, 1e9, color);
         else
             color = applyAtmospheres(pos, vel, 1e9, color);
@@ -963,16 +991,19 @@ void main()
     color  = color * cloudTransmittance + nebulaScatter;
     color += curvedGlow;
 
-    // Photon ring
+    // Photon ring — per hole
     if (!hitScene)
     {
-        vec3 relFinal = pos - uBHPos;
-        float rFinal  = length(relFinal);
-        float ringDist = abs(rFinal - BH_PHOTON_SPHERE);
-        if (ringDist < BH_RS * 0.5)
-        {
-            float ringGlow = exp(-ringDist * ringDist / (BH_RS * BH_RS * 0.02)) * 0.3;
-            color += vec3(1.0, 0.9, 0.7) * ringGlow;
+        for (int bi = 0; bi < uObjectCount; bi++) {
+            if (int(objects[bi].objectType + 0.5) != 3) continue;
+            float rs       = objects[bi].radius;
+            float rFinal   = length(pos - objects[bi].position.xyz);
+            float ringDist = abs(rFinal - 1.5 * rs);
+            if (ringDist < rs * 0.5)
+            {
+                float ringGlow = exp(-ringDist * ringDist / (rs * rs * 0.02)) * 0.3;
+                color += vec3(1.0, 0.9, 0.7) * ringGlow;
+            }
         }
     }
 

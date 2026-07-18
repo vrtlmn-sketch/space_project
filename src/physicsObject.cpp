@@ -160,6 +160,15 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs, Ren
   renderedObject.rotationDeg = rotationDeg;
   renderedObject.normalStrength = normalMapStrength;
 
+  // Keep the event-horizon mesh (and thus the RT object radius the geodesic
+  // shaders read for lensing/capture) in sync with an edited Schwarzschild
+  // radius. Only regenerates when it actually changes.
+  if (shaderType == ObjectType::BlackHole &&
+      std::abs(visualRadius - schwarzschildRadius) > 1e-9f) {
+    visualRadius = schwarzschildRadius;
+    renderedObject.GenerateMeshSphere(visualRadius, 32, 32);
+  }
+
   float objectType = RtObjectType(shaderType);
 
   // Forward atmosphere params so the RT object structs carry them
