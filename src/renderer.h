@@ -267,6 +267,20 @@ private:
   GLuint blitVAO{0}, blitVBO{0};
   GLint  blitLocTexture{-1};
 
+  // ── HDR post-process (RT views): bloom + ACES tonemap ──
+  GLuint bloomPrefilterProgram{0}, bloomBlurProgram{0}, tonemapProgram{0};
+  GLint  bloomPreLocTex{-1}, bloomPreLocThreshold{-1};
+  GLint  bloomBlurLocTex{-1}, bloomBlurLocDir{-1};
+  GLint  tmLocScene{-1}, tmLocBloom{-1}, tmLocExposure{-1}, tmLocBloomStr{-1};
+  GLuint bloomFBO{0}, bloomTex[2]{0, 0};
+  int    bloomTexW{0}, bloomTexH{0};
+  GLuint recLdrTex{0}, recLdrFBO{0};      // 8-bit tonemapped target for recording readback
+  int    recLdrW{0}, recLdrH{0};
+  void   InitPostProcess();
+  void   EnsureBloomTargets(int w, int h);
+  void   EnsureRecLdr(int w, int h);
+  void   RunPostProcess(GLuint srcHDR, int srcW, int srcH); // composites into the bound FBO
+
   void InitComputeShader();
   void EnsureRtOutputTex(int w, int h);
   void DestroyComputeResources();
@@ -658,6 +672,11 @@ public:
   std::vector<ProjectInfo> projectList;
   bool projectsScanned{false};
   void RescanProjects();
+
+  // ---- RT photographic post-process (bloom + ACES tonemap) ----
+  float  rtExposure{1.0f};      // photographic exposure multiplier
+  float  bloomStrength{0.6f};   // how much bloom is added back
+  float  bloomThreshold{1.0f};  // brightness above which pixels bloom
 
   // ---- Spheremap background (rasterized + raytraced views) ----
   bool   spheremapEnabled{true};

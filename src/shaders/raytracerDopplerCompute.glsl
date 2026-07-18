@@ -1,7 +1,7 @@
 #version 460 core
 layout(local_size_x = 16, local_size_y = 4) in;
 
-layout(rgba8, binding = 0) uniform writeonly image2D outputImage;
+layout(rgba16f, binding = 0) uniform writeonly image2D outputImage;
 
 uniform int   uObjectCount;
 uniform mat4  uProj;
@@ -378,7 +378,7 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
     // magnitude/distance change the saturated dot SIZE (~sqrt(log(amp))·sigma),
     // never the center brightness — bright small dots.
     float amp = 20.0 * mag * strideComp * flux * resComp;
-    return min(amp * psf, 1.3);
+    return min(amp * psf, 8.0); // allow HDR cores (bloom + saturate to white)
 }
 
 // ---------------------------------------------------------------------------
@@ -759,6 +759,6 @@ void main()
     color  += cloudGlow;
     color   = color * cloudTransmittance + nebulaScatter;
 
-    color = clamp(color, 0.0, 1.0);
+    color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)
     imageStore(outputImage, pixelCoord, vec4(color, 1.0));
 }

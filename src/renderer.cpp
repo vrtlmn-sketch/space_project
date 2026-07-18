@@ -2784,6 +2784,19 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   }
 
   ImGui::Spacing();
+  ImGui::SeparatorText("Photographic (HDR)");
+  ImGui::TextDisabled("Exposure, bloom + ACES tonemap (RT views only).");
+  ImGui::Text("Exposure");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::SliderFloat("##rtexposure", &rtExposure, 0.05f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+  ImGui::Text("Bloom Strength");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::SliderFloat("##bloomstr", &bloomStrength, 0.0f, 3.0f, "%.2f");
+  ImGui::Text("Bloom Threshold");
+  ImGui::SetNextItemWidth(-1);
+  ImGui::SliderFloat("##bloomthr", &bloomThreshold, 0.0f, 5.0f, "%.2f");
+
+  ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
 
@@ -5087,6 +5100,9 @@ void Renderer::InitComputeShader() {
   glEnableVertexAttribArray(0);
   glBindVertexArray(0);
 
+  // ── 5. HDR post-process (bloom + ACES tonemap) for RT views ──
+  InitPostProcess();
+
   std::cout << "[RT] Compute shader initialised (program=" << rtComputeProgram
             << ", blit=" << blitProgram << ")\n";
 }
@@ -5101,7 +5117,7 @@ void Renderer::EnsureRtOutputTex(int w, int h) {
 
   glGenTextures(1, &rtOutputTex);
   glBindTexture(GL_TEXTURE_2D, rtOutputTex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr); // HDR
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -5124,6 +5140,15 @@ void Renderer::DestroyComputeResources() {
   if (blitProgram)      { glDeleteProgram(blitProgram);      blitProgram = 0; }
   if (blitVAO)          { glDeleteVertexArrays(1, &blitVAO); blitVAO = 0; }
   if (blitVBO)          { glDeleteBuffers(1, &blitVBO);      blitVBO = 0; }
+  if (bloomPrefilterProgram) { glDeleteProgram(bloomPrefilterProgram); bloomPrefilterProgram = 0; }
+  if (bloomBlurProgram)      { glDeleteProgram(bloomBlurProgram);      bloomBlurProgram = 0; }
+  if (tonemapProgram)        { glDeleteProgram(tonemapProgram);        tonemapProgram = 0; }
+  if (bloomFBO)         { glDeleteFramebuffers(1, &bloomFBO); bloomFBO = 0; }
+  if (bloomTex[0])      { glDeleteTextures(1, &bloomTex[0]);  bloomTex[0] = 0; }
+  if (bloomTex[1])      { glDeleteTextures(1, &bloomTex[1]);  bloomTex[1] = 0; }
+  if (recLdrFBO)        { glDeleteFramebuffers(1, &recLdrFBO); recLdrFBO = 0; }
+  if (recLdrTex)        { glDeleteTextures(1, &recLdrTex);     recLdrTex = 0; }
+  bloomTexW = bloomTexH = recLdrW = recLdrH = 0;
   rtTexWidth = rtTexHeight = 0;
 }
 
@@ -5290,7 +5315,7 @@ void Renderer::DispatchRaytracer(int width, int height) {
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
 
   // Bind output image
-  glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+  glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
   glUseProgram(activeProgram);
 
@@ -5412,23 +5437,151 @@ void Renderer::DispatchRaytracer(int width, int height) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BlitRaytracerToScreen — draw fullscreen quad sampling rtOutputTex
+// HDR post-process (RT views): bloom bright-pass + separable blur + ACES tonemap
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::BlitRaytracerToScreen() {
-  if (!blitProgram || !rtOutputTex) return;
+void Renderer::InitPostProcess() {
+  GLuint vs = compileShaderFromFile("src/shaders/blitVert.glsl", GL_VERTEX_SHADER);
+  if (!vs) { std::cerr << "[post] blitVert compile failed\n"; return; }
+
+  struct { const char* frag; GLuint* prog; } passes[] = {
+    {"src/shaders/bloomPrefilterFrag.glsl", &bloomPrefilterProgram},
+    {"src/shaders/bloomBlurFrag.glsl",      &bloomBlurProgram},
+    {"src/shaders/tonemapFrag.glsl",        &tonemapProgram},
+  };
+  for (auto& ps : passes) {
+    GLuint fs = compileShaderFromFile(ps.frag, GL_FRAGMENT_SHADER);
+    if (!fs) { std::cerr << "[post] compile " << ps.frag << " failed\n"; continue; }
+    GLuint p = glCreateProgram();
+    glAttachShader(p, vs); glAttachShader(p, fs); glLinkProgram(p);
+    GLint ok = 0; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (!ok) { char b[1024]; glGetProgramInfoLog(p, 1024, nullptr, b);
+      std::cerr << "[post] link " << ps.frag << ": " << b << "\n";
+      glDeleteProgram(p); glDeleteShader(fs); continue; }
+    glDeleteShader(fs);
+    *ps.prog = p;
+  }
+  glDeleteShader(vs);
+
+  if (bloomPrefilterProgram) {
+    bloomPreLocTex       = glGetUniformLocation(bloomPrefilterProgram, "uTexture");
+    bloomPreLocThreshold = glGetUniformLocation(bloomPrefilterProgram, "uThreshold");
+  }
+  if (bloomBlurProgram) {
+    bloomBlurLocTex = glGetUniformLocation(bloomBlurProgram, "uTexture");
+    bloomBlurLocDir = glGetUniformLocation(bloomBlurProgram, "uDir");
+  }
+  if (tonemapProgram) {
+    tmLocScene    = glGetUniformLocation(tonemapProgram, "uScene");
+    tmLocBloom    = glGetUniformLocation(tonemapProgram, "uBloom");
+    tmLocExposure = glGetUniformLocation(tonemapProgram, "uExposure");
+    tmLocBloomStr = glGetUniformLocation(tonemapProgram, "uBloomStrength");
+  }
+}
+
+void Renderer::EnsureBloomTargets(int w, int h) {
+  w = std::max(1, w); h = std::max(1, h);
+  if (w == bloomTexW && h == bloomTexH && bloomFBO && bloomTex[0] && bloomTex[1]) return;
+  if (!bloomFBO) glGenFramebuffers(1, &bloomFBO);
+  for (int i = 0; i < 2; i++) {
+    if (!bloomTex[i]) glGenTextures(1, &bloomTex[i]);
+    glBindTexture(GL_TEXTURE_2D, bloomTex[i]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  }
+  glBindTexture(GL_TEXTURE_2D, 0);
+  bloomTexW = w; bloomTexH = h;
+}
+
+void Renderer::EnsureRecLdr(int w, int h) {
+  if (w == recLdrW && h == recLdrH && recLdrFBO && recLdrTex) return;
+  if (!recLdrFBO) glGenFramebuffers(1, &recLdrFBO);
+  if (!recLdrTex) glGenTextures(1, &recLdrTex);
+  glBindTexture(GL_TEXTURE_2D, recLdrTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, recLdrTex, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  recLdrW = w; recLdrH = h;
+}
+
+// Composite srcHDR (bloom + ACES tonemap + exposure) into the currently bound
+// framebuffer/viewport. Saves and restores the caller's FBO + viewport.
+void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
+  if (!tonemapProgram || !bloomPrefilterProgram || !bloomBlurProgram) {
+    // Post chain unavailable — plain passthrough so RT still shows.
+    if (!blitProgram) return;
+    glDisable(GL_DEPTH_TEST);
+    glUseProgram(blitProgram);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, srcHDR);
+    glUniform1i(blitLocTexture, 0);
+    glBindVertexArray(blitVAO); glDrawArrays(GL_TRIANGLES, 0, 6); glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
+    return;
+  }
+
+  GLint dstFBO = 0; glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &dstFBO);
+  GLint vp[4];      glGetIntegerv(GL_VIEWPORT, vp);
+
+  int bw = std::max(1, srcW / 2), bh = std::max(1, srcH / 2);
+  EnsureBloomTargets(bw, bh);
 
   glDisable(GL_DEPTH_TEST);
-  glUseProgram(blitProgram);
+  glBindVertexArray(blitVAO);
+
+  glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO);
+  glViewport(0, 0, bw, bh);
+
+  // Bright-pass: srcHDR → bloomTex[0]
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[0], 0);
+  glUseProgram(bloomPrefilterProgram);
+  glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, srcHDR);
+  glUniform1i(bloomPreLocTex, 0);
+  glUniform1f(bloomPreLocThreshold, bloomThreshold);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+
+  // Separable Gaussian: H (tex0→tex1) then V (tex1→tex0)
+  glUseProgram(bloomBlurProgram);
+  glUniform1i(bloomBlurLocTex, 0);
+
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[1], 0);
+  glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
+  glUniform2f(bloomBlurLocDir, 1.0f / (float)bw, 0.0f);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[0], 0);
+  glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[1]);
+  glUniform2f(bloomBlurLocDir, 0.0f, 1.0f / (float)bh);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+
+  // Composite → the caller's framebuffer/viewport
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)dstFBO);
+  glViewport(vp[0], vp[1], vp[2], vp[3]);
+  glUseProgram(tonemapProgram);
+  glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, srcHDR);     glUniform1i(tmLocScene, 0);
+  glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, bloomTex[0]); glUniform1i(tmLocBloom, 1);
+  glUniform1f(tmLocExposure, rtExposure);
+  glUniform1f(tmLocBloomStr, bloomStrength);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
 
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, rtOutputTex);
-  glUniform1i(blitLocTexture, 0);
-
-  glBindVertexArray(blitVAO);
-  glDrawArrays(GL_TRIANGLES, 0, 6);
   glBindVertexArray(0);
-
   glEnable(GL_DEPTH_TEST);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BlitRaytracerToScreen — HDR bloom + ACES tonemap of rtOutputTex to the screen
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::BlitRaytracerToScreen() {
+  if (!rtOutputTex) return;
+  RunPostProcess(rtOutputTex, rtTexWidth, rtTexHeight);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5540,9 +5693,15 @@ void Renderer::CaptureFrame(int w, int h) {
   // not for CPU-side glGetTexImage — glFinish blocks until the GPU is done.
   glFinish();
 
-  // Read back from the recording output texture (separate from display)
-  glBindTexture(GL_TEXTURE_2D, recOutputTex);
+  // HDR recording output → bloom + ACES tonemap into an 8-bit target, then read.
+  EnsureRecLdr(w, h);
+  glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
+  glViewport(0, 0, w, h);
+  RunPostProcess(recOutputTex, w, h);
+  glFinish();
+  glBindTexture(GL_TEXTURE_2D, recLdrTex);
   glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   // Flip rows (OpenGL is bottom-up, ffmpeg expects top-down)
   int rowBytes = w * 4;
@@ -5633,7 +5792,7 @@ void Renderer::CaptureImage() {
 
   // Dispatch raytracer at recording resolution into recOutputTex
   EnsureRecOutputTex(w, h);
-  glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+  glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
   // Upload SSBO — use snapshot from last DispatchRaytracer call
   if (dopplerMode) {
@@ -5750,10 +5909,16 @@ void Renderer::CaptureImage() {
   // Ensure compute shader is done before CPU readback
   glFinish();
 
-  // Read back pixels from recOutputTex
+  // HDR recording output → bloom + ACES tonemap into an 8-bit target, then read.
   std::vector<uint8_t> pixels((size_t)w * h * 4);
-  glBindTexture(GL_TEXTURE_2D, recOutputTex);
+  EnsureRecLdr(w, h);
+  glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
+  glViewport(0, 0, w, h);
+  RunPostProcess(recOutputTex, w, h);
+  glFinish();
+  glBindTexture(GL_TEXTURE_2D, recLdrTex);
   glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
   // Flip vertically (OpenGL is bottom-up, ffmpeg expects top-down)
   int rowBytes = w * 4;
@@ -5824,7 +5989,7 @@ void Renderer::EnsureRecOutputTex(int w, int h) {
 
   glGenTextures(1, &recOutputTex);
   glBindTexture(GL_TEXTURE_2D, recOutputTex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr); // HDR
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -5907,7 +6072,7 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   if (!activeProgram) return;
 
   // Bind the RECORDING texture as the compute output (not the display texture)
-  glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
+  glBindImageTexture(0, recOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
   // Upload the SSBO from the current object lists so recording honours an
   // overridden camera (objects are camera-relative — re-accumulated per frame).
