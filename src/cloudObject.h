@@ -76,7 +76,7 @@ public:
   bool simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
   std::string formationFile;  // empty = procedural generation
-  CloudComputeMethod computeMethod{CloudComputeMethod::CPU};
+  CloudComputeMethod computeMethod{CloudComputeMethod::BarnesHutGPU};
   float barnesHutTheta{0.5f};
   float temperature{4500.f};      // Kelvin — blackbody colour for particles
   int   renderMode{0};            // 0=Points, 1=Nebula
