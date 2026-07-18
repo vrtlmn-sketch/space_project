@@ -68,7 +68,9 @@ bool Renderer::InitWindow(
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
-  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  // Keyboard nav is intentionally OFF: arrow keys drive the camera, and
+  // enabling it made them double as UI focus navigation (stepping the object
+  // selection). Text input still works via WantTextInput.
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
   // Monospace font: bundled DejaVu Sans Mono, ImGui default as fallback
