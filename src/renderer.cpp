@@ -1409,6 +1409,14 @@ void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
   ImGui::SetNextWindowSize(ImVec2(480, 700), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Project", &showProjectPanel)) { ImGui::End(); return; }
 
+  // ── New ──
+  if (ImGui::Button("New Empty Project", ImVec2(-1, 0)) && cb.newProject)
+    cb.newProject();
+  ImGui::TextDisabled("Clears the scene — save first if you want to keep it.");
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
   // ── Identity ──
   ImGui::Text("Name");
   ImGui::SetNextItemWidth(-1);
@@ -1722,14 +1730,14 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGuiID dock_center_bottom;
     ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.33f, &dock_center_bottom, &dock_main);
 
-    // Left column: Hierarchy / Spawn / Cinematic View
+    // Left column: Spawn / Scene / Cinematic View
     ImGuiID dock_left_bottom, dock_left_mid;
     ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.31f, &dock_left_bottom, &dock_left);
     ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.46f, &dock_left_mid, &dock_left);
 
     ImGui::DockBuilderDockWindow("Controls",           dock_top);
-    ImGui::DockBuilderDockWindow("Hierarchy",          dock_left);
-    ImGui::DockBuilderDockWindow("Spawn",              dock_left_mid);
+    ImGui::DockBuilderDockWindow("Spawn",              dock_left);
+    ImGui::DockBuilderDockWindow("Scene",              dock_left_mid);
     ImGui::DockBuilderDockWindow("Cinematic View",     dock_left_bottom);
     // Inspector + Rendering Settings share one node as tabs
     ImGui::DockBuilderDockWindow("Inspector",          dock_right);
@@ -3662,7 +3670,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& /*cb*/) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
-  ImGui::Begin("Hierarchy", nullptr, flags);
+  ImGui::Begin("Scene", nullptr, flags);
 
   // Project (name / image / save / load live in the Project panel)
   if (ImGui::Button("Project...")) showProjectPanel = true;

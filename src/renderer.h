@@ -97,6 +97,7 @@ struct SceneCallbacks {
   std::function<void(int cloudIdx, const CloudFormState&)> respawnCloud;
   std::function<void()>                                   saveProject;
   std::function<void(const std::string& path)>            loadProject;
+  std::function<void()>                                   newProject;
   std::function<void(const std::string& path)>            loadSpheremap;
   std::function<void()>                                   clearSimulation;
 };

@@ -413,6 +413,22 @@ int main(int argc, char** argv) {
     renderer.gridForm.adaptive = currentGrid.adaptive;
   };
 
+  cb.newProject = [&]() {
+    ProjectData data;  // defaults: no objects, no clouds, default grid/settings
+    renderer.showLegacyUnitsWarning = false;
+    currentGrid = data.grid;
+    buildScene(data, physicsObjects, lineObjects, grid, clouds);
+    applySettingsToRenderer(data.settings);
+    applyProjectMeta(data, "");
+    renderer.gridForm.visible  = currentGrid.visible;
+    renderer.gridForm.cellSize = currentGrid.cellSize;
+    renderer.gridForm.radius   = currentGrid.radius;
+    renderer.gridForm.showX   = currentGrid.showX;
+    renderer.gridForm.showY   = currentGrid.showY;
+    renderer.gridForm.showZ   = currentGrid.showZ;
+    renderer.gridForm.adaptive = currentGrid.adaptive;
+  };
+
   // ── Startup modal loop ────────────────────────────────────────────────────
   while (renderer.showStartupModal) {
     if (!renderer.BeginFrame()) continue;
