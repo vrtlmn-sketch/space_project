@@ -748,7 +748,9 @@ void main()
     // Dust extinction — per-channel reddening (blue absorbed more than red)
     // applied to the accumulated dust column. Dims + reddens dense regions.
     if (uDustStrength > 0.0) {
-        vec3 dExt = vec3(1.0, 1.0 + uDustReddening, 1.0 + 2.0 * uDustReddening);
+        // Steep spectral falloff: blue absorbed far more than red, so the colour
+        // swings hard toward red as the dust column thickens (Rayleigh-ish).
+        vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
         color *= exp(-uDustStrength * 0.002 * dustTau * dExt);
     }
 
