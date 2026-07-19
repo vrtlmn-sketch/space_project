@@ -320,6 +320,9 @@ uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PS
 uniform float uDustStrength;       // dust extinction amount (0 = off)
 uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
 uniform float uDustContrast;       // 1 = linear; >1 concentrates dust in dense regions
+uniform float uDustCoverage;       // fraction of (clumped) points that bear dust
+uniform float uDustInfluence;      // world-space dust radius (scaled to the cloud size)
+uniform vec3  uDustCenter;         // cloud centre (camera-relative) — anchors the clump pattern
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -705,13 +708,23 @@ void main()
                        : vec3(0.55, 0.65, 1.0);
 
         // Dust column (approx, unordered): dense cloud regions absorb + redden
-        // light behind them. Weighted by the point's represented density.
+        // light behind them.
         if (uDustStrength > 0.0) {
-            float dC  = max(length(cen + uCamera), 0.05);
-            float dA2 = d2 / (dC * dC);
-            float dW  = 0.012;
-            float sC  = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
-            dustTau  += exp(-dA2 / (dW * dW)) * sC;
+            // World-space influence radius, scaled to the cloud size (so it works
+            // whether the cloud spans 1 AU or 26,000 ly). Set from the cloud bounds.
+            float inflR = uDustInfluence;
+            float infl2 = inflR * inflR;
+            // Skip points the ray clearly misses — this also saves the exp().
+            if (d2 < infl2 * 9.0) {
+                // Clumped coverage anchored to the cloud centre (galaxy-relative, so
+                // it doesn't swim with the camera): quantise position into cells so
+                // dust forms mottled filaments; only a fraction of cells bear dust.
+                vec3 rel = cen - uDustCenter;
+                if (hash1(floor(rel / max(inflR * 3.0, 1e-6))) < uDustCoverage) {
+                    // Dust amount from an existing scalar (mass), not radius only.
+                    dustTau += objects[i].mass * exp(-d2 / infl2);
+                }
+            }
         }
 
         if (otype == 2)
@@ -746,13 +759,12 @@ void main()
     color  += cloudGlow;
     color   = color * cloudTransmittance + nebulaScatter;
 
-    // Dust extinction — per-channel reddening (blue absorbed more than red)
-    // applied to the accumulated dust column. Dims + reddens dense regions.
+    // Dust extinction — one exponential RGB multiply in linear HDR (before the
+    // post-process tonemap + bloom). Milder spectral tilt so the reddening looks
+    // natural rather than artificially red.
     if (uDustStrength > 0.0) {
-        // Steep spectral falloff: blue absorbed far more than red, so the colour
-        // swings hard toward red as the dust column thickens (Rayleigh-ish).
-        vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
-        color *= exp(-uDustStrength * 0.002 * (dustTau * pow(max(dustTau / 40.0, 1e-4), uDustContrast - 1.0)) * dExt);
+        vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
+        color *= exp(-uDustStrength * 0.15 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
     }
 
     // Clamp to [0,1] for rgba8 output

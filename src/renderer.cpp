@@ -2821,7 +2821,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::TextDisabled("Dense regions dim + redden light behind them.");
   ImGui::Text("Strength");
   ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##duststr", &dustStrength, 0.0f, 8.0f, "%.2f"))
+  if (ImGui::SliderFloat("##duststr", &dustStrength, 0.0f, 0.5f, "%.3f"))
     rtDirty = true;
   ImGui::Text("Reddening");
   ImGui::SetNextItemWidth(-1);
@@ -2832,6 +2832,11 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   if (ImGui::SliderFloat("##dustcon", &dustContrast, 1.0f, 4.0f, "%.2f"))
     rtDirty = true;
   ImGui::TextDisabled("1 = even; higher concentrates dust into dense lanes.");
+  ImGui::Text("Coverage");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##dustcov", &dustCoverage, 0.0f, 1.0f, "%.2f"))
+    rtDirty = true;
+  ImGui::TextDisabled("Fraction of clumped regions that carry dust (patchiness).");
 
   ImGui::Spacing();
   ImGui::Separator();
@@ -5418,6 +5423,12 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
     GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
+    GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
+    if (locDV >= 0) glUniform1f(locDV, dustCoverage);
+    GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
+    if (locDI >= 0) glUniform1f(locDI, dustInfluence);
+    GLint locDC = glGetUniformLocation(activeProgram, "uDustCenter");
+    if (locDC >= 0) glUniform3fv(locDC, 1, dustCenter);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -5938,6 +5949,12 @@ void Renderer::CaptureImage() {
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
     GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
+    GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
+    if (locDV >= 0) glUniform1f(locDV, dustCoverage);
+    GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
+    if (locDI >= 0) glUniform1f(locDI, dustInfluence);
+    GLint locDC = glGetUniformLocation(activeProgram, "uDustCenter");
+    if (locDC >= 0) glUniform3fv(locDC, 1, dustCenter);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -6232,6 +6249,12 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
     GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
+    GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
+    if (locDV >= 0) glUniform1f(locDV, dustCoverage);
+    GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
+    if (locDI >= 0) glUniform1f(locDI, dustInfluence);
+    GLint locDC = glGetUniformLocation(activeProgram, "uDustCenter");
+    if (locDC >= 0) glUniform3fv(locDC, 1, dustCenter);
   }
 
   // Skybox spheremap — applies to all 6 programs

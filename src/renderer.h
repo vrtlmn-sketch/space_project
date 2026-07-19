@@ -464,9 +464,12 @@ public:
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
   float unresolvedStrength{3.0f};// unresolved-star field brightness (0 = off)
   float unresolvedSize{60.0f};   // unresolved lobe angular width (x fixed PSF floor)
-  float dustStrength{0.0f};      // dust extinction amount (0 = off)
-  float dustReddening{0.6f};     // wavelength tilt (blue absorbed more than red)
-  float dustContrast{2.0f};      // 1 = linear; >1 concentrates dust in dense regions
+  float dustStrength{0.01f};     // dust extinction amount (0 = off)
+  float dustInfluence{1.0f};     // world-space dust radius, set from the cloud bounds
+  float dustReddening{0.79f};    // wavelength tilt (blue absorbed more than red)
+  float dustContrast{1.45f};     // 1 = linear; >1 concentrates dust in dense regions
+  float dustCoverage{0.55f};     // fraction of clumped regions that bear dust
+  float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──
   // simSpeed:      data resolution — dt per recorded frame = kDtYears · simSpeed

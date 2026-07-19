@@ -606,6 +606,19 @@ int main(int argc, char** argv) {
     for (auto& c : clouds)
       c->Update(renderer, physData);
 
+    // Scale the RT dust influence radius to the primary cloud's size (world
+    // units) so dust works whether the cloud spans 1 AU or 26,000 ly.
+    if (!clouds.empty()) {
+      vec3 dcen; float drad = 1.0f;
+      clouds[0]->boundsEstimate(dcen, drad);
+      renderer.dustInfluence = std::max(drad * 0.04f, 1e-6f);
+      // Camera-relative centre (RT objects are pushed camera-relative), so the
+      // clump pattern is anchored to the galaxy and doesn't swim with the camera.
+      renderer.dustCenter[0] = dcen.x + (float)renderer.cameraTranslate[0];
+      renderer.dustCenter[1] = dcen.y + (float)renderer.cameraTranslate[1];
+      renderer.dustCenter[2] = dcen.z + (float)renderer.cameraTranslate[2];
+    }
+
     // Atmosphere shells — blended pass after all solid geometry
     for (auto& obj : physicsObjects)
       renderer.DrawAtmosphere(obj);
