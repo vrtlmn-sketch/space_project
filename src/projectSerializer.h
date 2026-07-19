@@ -89,6 +89,20 @@ struct SceneSettings {
   int   rtLiveWidth{142};
   int   rtLiveHeight{80};
 
+  // Photographic HDR (RT views)
+  float rtExposure{1.0f};
+  float bloomStrength{0.6f};
+  float bloomThreshold{0.0f};
+  // Unresolved-star haze + resolved-point density
+  float unresolvedStrength{3.0f};
+  float unresolvedSize{60.0f};
+  int   rtCloudPointCap{2000};
+  // Dust
+  float dustStrength{0.01f};
+  float dustReddening{0.79f};
+  float dustContrast{1.45f};
+  float dustCoverage{0.55f};
+
   // Simulation
   float simSpeed{1.0f};
   float playbackSpeed{1.0f};

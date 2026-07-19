@@ -166,6 +166,16 @@ bool ProjectSerializer::Save(const std::string& path,
     s["rtLiveResPreset"] = settings.rtLiveResPreset;
     s["rtLiveWidth"]     = settings.rtLiveWidth;
     s["rtLiveHeight"]    = settings.rtLiveHeight;
+    s["rtExposure"]        = settings.rtExposure;
+    s["bloomStrength"]     = settings.bloomStrength;
+    s["bloomThreshold"]    = settings.bloomThreshold;
+    s["unresolvedStrength"] = settings.unresolvedStrength;
+    s["unresolvedSize"]    = settings.unresolvedSize;
+    s["rtCloudPointCap"]   = settings.rtCloudPointCap;
+    s["dustStrength"]      = settings.dustStrength;
+    s["dustReddening"]     = settings.dustReddening;
+    s["dustContrast"]      = settings.dustContrast;
+    s["dustCoverage"]      = settings.dustCoverage;
 
     // Simulation
     s["simSpeed"]      = settings.simSpeed;
@@ -375,6 +385,16 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.rtLiveResPreset = s.value("rtLiveResPreset", 1);
     st.rtLiveWidth     = s.value("rtLiveWidth",     142);
     st.rtLiveHeight    = s.value("rtLiveHeight",    80);
+    st.rtExposure         = s.value("rtExposure",         1.0f);
+    st.bloomStrength      = s.value("bloomStrength",      0.6f);
+    st.bloomThreshold     = s.value("bloomThreshold",     0.0f);
+    st.unresolvedStrength = s.value("unresolvedStrength", 3.0f);
+    st.unresolvedSize     = s.value("unresolvedSize",     60.0f);
+    st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
+    st.dustStrength       = s.value("dustStrength",       0.01f);
+    st.dustReddening      = s.value("dustReddening",      0.79f);
+    st.dustContrast       = s.value("dustContrast",       1.45f);
+    st.dustCoverage       = s.value("dustCoverage",       0.55f);
 
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);

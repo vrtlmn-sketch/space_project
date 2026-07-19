@@ -287,6 +287,16 @@ int main(int argc, char** argv) {
       renderer.skyboxTexID = skybox.textureHandle();
     }
     renderer.nebulaDetail  = s.nebulaDetail;
+    renderer.rtExposure         = s.rtExposure;
+    renderer.bloomStrength      = s.bloomStrength;
+    renderer.bloomThreshold     = s.bloomThreshold;
+    renderer.unresolvedStrength = s.unresolvedStrength;
+    renderer.unresolvedSize     = s.unresolvedSize;
+    RenderedObject::rtCloudPointCap = s.rtCloudPointCap;
+    renderer.dustStrength       = s.dustStrength;
+    renderer.dustReddening      = s.dustReddening;
+    renderer.dustContrast       = s.dustContrast;
+    renderer.dustCoverage       = s.dustCoverage;
     renderer.simSpeed        = s.simSpeed;
     renderer.pendingSimSpeed = s.simSpeed;
     renderer.playbackSpeed   = s.playbackSpeed;
@@ -351,6 +361,16 @@ int main(int argc, char** argv) {
     s.spheremapExposure = renderer.spheremapExposure;
     s.spheremapPath     = std::string(renderer.spheremapPathBuf);
     s.nebulaDetail    = renderer.nebulaDetail;
+    s.rtExposure         = renderer.rtExposure;
+    s.bloomStrength      = renderer.bloomStrength;
+    s.bloomThreshold     = renderer.bloomThreshold;
+    s.unresolvedStrength = renderer.unresolvedStrength;
+    s.unresolvedSize     = renderer.unresolvedSize;
+    s.rtCloudPointCap    = RenderedObject::rtCloudPointCap;
+    s.dustStrength       = renderer.dustStrength;
+    s.dustReddening      = renderer.dustReddening;
+    s.dustContrast       = renderer.dustContrast;
+    s.dustCoverage       = renderer.dustCoverage;
     s.rtMaxBounces    = renderer.GetRtMaxBounces();
     s.rtMaxSteps      = renderer.GetRtMaxSteps();
     s.rtLiveResPreset = renderer.GetRtLiveResPreset();
