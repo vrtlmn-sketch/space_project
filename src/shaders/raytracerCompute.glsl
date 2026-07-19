@@ -319,6 +319,7 @@ uniform float uUnresolvedStrength; // 0 = off; smooth glow from unresolved stars
 uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PSF)
 uniform float uDustStrength;       // dust extinction amount (0 = off)
 uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
+uniform float uDustContrast;       // 1 = linear; >1 concentrates dust in dense regions
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -751,7 +752,7 @@ void main()
         // Steep spectral falloff: blue absorbed far more than red, so the colour
         // swings hard toward red as the dust column thickens (Rayleigh-ish).
         vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
-        color *= exp(-uDustStrength * 0.002 * dustTau * dExt);
+        color *= exp(-uDustStrength * 0.002 * (dustTau * pow(max(dustTau / 40.0, 1e-4), uDustContrast - 1.0)) * dExt);
     }
 
     // Clamp to [0,1] for rgba8 output

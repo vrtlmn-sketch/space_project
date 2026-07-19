@@ -335,6 +335,7 @@ uniform float uUnresolvedStrength; // 0 = off; smooth glow from unresolved stars
 uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PSF)
 uniform float uDustStrength;       // dust extinction amount (0 = off)
 uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
+uniform float uDustContrast;       // 1 = linear; >1 concentrates dust in dense regions
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -1464,7 +1465,7 @@ void main()
             dustTau   += exp(-dA2 / (0.012 * 0.012)) * sC;
         }
         vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
-        color *= exp(-uDustStrength * 0.002 * dustTau * dExt);
+        color *= exp(-uDustStrength * 0.002 * (dustTau * pow(max(dustTau / 40.0, 1e-4), uDustContrast - 1.0)) * dExt);
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

@@ -466,6 +466,7 @@ public:
   float unresolvedSize{60.0f};   // unresolved lobe angular width (x fixed PSF floor)
   float dustStrength{0.0f};      // dust extinction amount (0 = off)
   float dustReddening{0.6f};     // wavelength tilt (blue absorbed more than red)
+  float dustContrast{2.0f};      // 1 = linear; >1 concentrates dust in dense regions
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──
   // simSpeed:      data resolution — dt per recorded frame = kDtYears · simSpeed

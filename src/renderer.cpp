@@ -2827,6 +2827,11 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::SetNextItemWidth(-1);
   if (ImGui::SliderFloat("##dustred", &dustReddening, 0.0f, 2.0f, "%.2f"))
     rtDirty = true;
+  ImGui::Text("Contrast");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##dustcon", &dustContrast, 1.0f, 4.0f, "%.2f"))
+    rtDirty = true;
+  ImGui::TextDisabled("1 = even; higher concentrates dust into dense lanes.");
 
   ImGui::Spacing();
   ImGui::Separator();
@@ -5411,6 +5416,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
+    GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
+    if (locDK >= 0) glUniform1f(locDK, dustContrast);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -5929,6 +5936,8 @@ void Renderer::CaptureImage() {
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
+    GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
+    if (locDK >= 0) glUniform1f(locDK, dustContrast);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -6221,6 +6230,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
+    GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
+    if (locDK >= 0) glUniform1f(locDK, dustContrast);
   }
 
   // Skybox spheremap — applies to all 6 programs
