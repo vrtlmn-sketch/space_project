@@ -354,6 +354,9 @@ uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PS
 uniform float uDustStrength;       // dust extinction amount (0 = off)
 uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
 uniform float uDustContrast;       // 1 = linear; >1 concentrates dust in dense regions
+uniform float uDustCoverage;       // fraction of (clumped) points that bear dust
+uniform float uDustInfluence;      // world-space dust radius (scaled to the cloud size)
+uniform vec3  uDustCenter;         // cloud centre (camera-relative) - anchors the clump pattern
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -734,11 +737,14 @@ void main()
         // Dust column (approx, unordered): dense cloud regions absorb + redden
         // light behind them. Weighted by the point's represented density.
         if (uDustStrength > 0.0) {
-            float dC  = max(length(cen + uCamera), 0.05);
-            float dA2 = d2 / (dC * dC);
-            float dW  = 0.012;
-            float sC  = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
-            dustTau  += exp(-dA2 / (dW * dW)) * sC;
+            float inflR = uDustInfluence;
+            float infl2 = inflR * inflR;
+            if (d2 < infl2 * 9.0) {
+                vec3 rel = cen - uDustCenter;
+                if (hash1(floor(rel / max(inflR * 3.0, 1e-6))) < uDustCoverage) {
+                    dustTau += objects[i].mass * exp(-d2 / infl2);
+                }
+            }
         }
 
         vec3  n      = normalize(ro - cen);
@@ -786,8 +792,8 @@ void main()
 
     // Dust extinction — steep per-channel reddening (blue absorbed far more).
     if (uDustStrength > 0.0) {
-        vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
-        color *= exp(-uDustStrength * 0.002 * (dustTau * pow(max(dustTau / 40.0, 1e-4), uDustContrast - 1.0)) * dExt);
+        vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
+        color *= exp(-uDustStrength * 0.15 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)
