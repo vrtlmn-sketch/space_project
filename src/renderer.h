@@ -464,6 +464,8 @@ public:
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
   float unresolvedStrength{3.0f};// unresolved-star field brightness (0 = off)
   float unresolvedSize{60.0f};   // unresolved lobe angular width (x fixed PSF floor)
+  float dustStrength{0.0f};      // dust extinction amount (0 = off)
+  float dustReddening{0.6f};     // wavelength tilt (blue absorbed more than red)
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──
   // simSpeed:      data resolution — dt per recorded frame = kDtYears · simSpeed

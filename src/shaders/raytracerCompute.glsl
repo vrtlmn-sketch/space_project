@@ -317,6 +317,8 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 // ---------------------------------------------------------------------------
 uniform float uUnresolvedStrength; // 0 = off; smooth glow from unresolved stars
 uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PSF)
+uniform float uDustStrength;       // dust extinction amount (0 = off)
+uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -354,7 +356,7 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
     // haze that the resolved cores sit on top of.
     float su     = 0.0013 * max(uUnresolvedSize, 1.0); // FIXED angular width (resolution-independent haze)
     float unrPsf = exp(-ang2 / (su * su));
-    float unrAmp = uUnresolvedStrength * 0.03 * mag * flux * max(strideComp - 1.0, 0.0);
+    float unrAmp = uUnresolvedStrength * 0.03 * mag * flux * strideComp; // full local density -> haze persists regardless of Star Points
     return core + unrAmp * unrPsf;
 }
 
@@ -684,6 +686,7 @@ void main()
     vec3  cloudGlow          = vec3(0.0);
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
+    float dustTau            = 0.0;   // accumulated dust column density
 
     for (int i = 0; i < uObjectCount; i++)
     {
@@ -699,6 +702,16 @@ void main()
         vec3  gcol  = (objects[i].temperature > 100.0)
                        ? blackbody(objects[i].temperature)
                        : vec3(0.55, 0.65, 1.0);
+
+        // Dust column (approx, unordered): dense cloud regions absorb + redden
+        // light behind them. Weighted by the point's represented density.
+        if (uDustStrength > 0.0) {
+            float dC  = max(length(cen + uCamera), 0.05);
+            float dA2 = d2 / (dC * dC);
+            float dW  = 0.012;
+            float sC  = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
+            dustTau  += exp(-dA2 / (dW * dW)) * sC;
+        }
 
         if (otype == 2)
         {
@@ -731,6 +744,13 @@ void main()
     }
     color  += cloudGlow;
     color   = color * cloudTransmittance + nebulaScatter;
+
+    // Dust extinction — per-channel reddening (blue absorbed more than red)
+    // applied to the accumulated dust column. Dims + reddens dense regions.
+    if (uDustStrength > 0.0) {
+        vec3 dExt = vec3(1.0, 1.0 + uDustReddening, 1.0 + 2.0 * uDustReddening);
+        color *= exp(-uDustStrength * 0.002 * dustTau * dExt);
+    }
 
     // Clamp to [0,1] for rgba8 output
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

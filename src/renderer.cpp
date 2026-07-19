@@ -2817,6 +2817,18 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::TextDisabled("More resolved stars — costs GPU per-pixel. Raise for stills.");
 
   ImGui::Spacing();
+  ImGui::SeparatorText("Dust");
+  ImGui::TextDisabled("Dense regions dim + redden light behind them.");
+  ImGui::Text("Strength");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##duststr", &dustStrength, 0.0f, 8.0f, "%.2f"))
+    rtDirty = true;
+  ImGui::Text("Reddening");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##dustred", &dustReddening, 0.0f, 2.0f, "%.2f"))
+    rtDirty = true;
+
+  ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
 
@@ -5395,6 +5407,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
     GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
     if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
+    GLint locDS = glGetUniformLocation(activeProgram, "uDustStrength");
+    if (locDS >= 0) glUniform1f(locDS, dustStrength);
+    GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
+    if (locDR >= 0) glUniform1f(locDR, dustReddening);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -5909,6 +5925,10 @@ void Renderer::CaptureImage() {
     if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
     GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
     if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
+    GLint locDS = glGetUniformLocation(activeProgram, "uDustStrength");
+    if (locDS >= 0) glUniform1f(locDS, dustStrength);
+    GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
+    if (locDR >= 0) glUniform1f(locDR, dustReddening);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -6197,6 +6217,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
     GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
     if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
+    GLint locDS = glGetUniformLocation(activeProgram, "uDustStrength");
+    if (locDS >= 0) glUniform1f(locDS, dustStrength);
+    GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
+    if (locDR >= 0) glUniform1f(locDR, dustReddening);
   }
 
   // Skybox spheremap — applies to all 6 programs

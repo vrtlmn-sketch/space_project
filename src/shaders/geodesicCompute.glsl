@@ -363,7 +363,7 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
     // haze that the resolved cores sit on top of.
     float su     = 0.0013 * max(uUnresolvedSize, 1.0); // FIXED angular width (resolution-independent haze)
     float unrPsf = exp(-ang2 / (su * su));
-    float unrAmp = uUnresolvedStrength * 0.03 * mag * flux * max(strideComp - 1.0, 0.0);
+    float unrAmp = uUnresolvedStrength * 0.03 * mag * flux * strideComp; // full local density -> haze persists regardless of Star Points
     return core + unrAmp * unrPsf;
 }
 
