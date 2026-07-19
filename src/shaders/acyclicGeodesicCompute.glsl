@@ -333,6 +333,8 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 // ---------------------------------------------------------------------------
 uniform float uUnresolvedStrength; // 0 = off; smooth glow from unresolved stars
 uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PSF)
+uniform float uDustStrength;       // dust extinction amount (0 = off)
+uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -1448,6 +1450,23 @@ void main()
     }
 
     // Clamp to [0,1] for rgba8 output
+    // Dust extinction (approx, straight-ray): dense cloud regions dim + redden.
+    if (uDustStrength > 0.0) {
+        float dustTau = 0.0;
+        for (int di = 0; di < uObjectCount; di++) {
+            int dt = int(objects[di].objectType + 0.5);
+            if (dt != 2 && dt != 4) continue;
+            vec3  dcen = objects[di].position.xyz;
+            float dd2  = closestApproachDist2(ro, rd, dcen);
+            float dC   = max(length(dcen + uCamera), 0.05);
+            float dA2  = dd2 / (dC * dC);
+            float sC   = clamp(objects[di].radius * objects[di].radius * 1.0e6, 1.0, 64.0);
+            dustTau   += exp(-dA2 / (0.012 * 0.012)) * sC;
+        }
+        vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
+        color *= exp(-uDustStrength * 0.002 * dustTau * dExt);
+    }
+
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)
 
     imageStore(outputImage, pixelCoord, vec4(color, 1.0));

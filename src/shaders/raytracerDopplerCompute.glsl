@@ -351,6 +351,8 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 // ---------------------------------------------------------------------------
 uniform float uUnresolvedStrength; // 0 = off; smooth glow from unresolved stars
 uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PSF)
+uniform float uDustStrength;       // dust extinction amount (0 = off)
+uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -714,6 +716,7 @@ void main()
     vec3  cloudGlow          = vec3(0.0);
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
+    float dustTau            = 0.0;   // accumulated dust column density
 
     for (int i = 0; i < uObjectCount; i++)
     {
@@ -726,6 +729,16 @@ void main()
 
         float d2    = closestApproachDist2(ro, rd, cen);
         float coreS = max(objects[i].radius * 2.0, 0.001);
+
+        // Dust column (approx, unordered): dense cloud regions absorb + redden
+        // light behind them. Weighted by the point's represented density.
+        if (uDustStrength > 0.0) {
+            float dC  = max(length(cen + uCamera), 0.05);
+            float dA2 = d2 / (dC * dC);
+            float dW  = 0.012;
+            float sC  = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
+            dustTau  += exp(-dA2 / (dW * dW)) * sC;
+        }
 
         vec3  n      = normalize(ro - cen);
         float D      = dopplerFactor(objects[i].velocity.xyz, n);
@@ -769,6 +782,12 @@ void main()
     }
     color  += cloudGlow;
     color   = color * cloudTransmittance + nebulaScatter;
+
+    // Dust extinction — steep per-channel reddening (blue absorbed far more).
+    if (uDustStrength > 0.0) {
+        vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
+        color *= exp(-uDustStrength * 0.002 * dustTau * dExt);
+    }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)
     imageStore(outputImage, pixelCoord, vec4(color, 1.0));

@@ -326,6 +326,8 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 // ---------------------------------------------------------------------------
 uniform float uUnresolvedStrength; // 0 = off; smooth glow from unresolved stars
 uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PSF)
+uniform float uDustStrength;       // dust extinction amount (0 = off)
+uniform float uDustReddening;      // wavelength tilt (blue absorbed more than red)
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -684,6 +686,7 @@ void main()
     // Accumulated glow from the curved portion of the ray
     vec3  curvedGlow          = vec3(0.0);
     float cloudTransmittance  = 1.0;
+    float dustTau             = 0.0;   // dust column, integrated along the BENT path
     vec3  nebulaScatter       = vec3(0.0);
 
     for (int step = 0; step < uMaxSteps; step++)
@@ -831,6 +834,11 @@ void main()
                                      ? blackbody(objects[i].temperature)
                                      : vec3(0.55, 0.65, 1.0);
                         curvedGlow += gcol * glowAmp;
+                        if (uDustStrength > 0.0) {
+                            float dC = max(length(cen + uCamera), 0.05);
+                            float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
+                            dustTau += exp(-(d2 / (dC * dC)) / (0.012 * 0.012)) * sC;
+                        }
                     }
                     else if (otype == 4)
                     {
@@ -909,6 +917,11 @@ void main()
                              ? blackbody(objects[i].temperature)
                              : vec3(0.55, 0.65, 1.0);
                 curvedGlow += gcol * glowAmp;
+                if (uDustStrength > 0.0) {
+                    float dC = max(length(cen + uCamera), 0.05);
+                    float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
+                    dustTau += exp(-(sd2 / (dC * dC)) / (0.012 * 0.012)) * sC;
+                }
             }
             else if (otype == 4)
             {
@@ -1012,6 +1025,11 @@ void main()
                              ? blackbody(objects[i].temperature)
                              : vec3(0.55, 0.65, 1.0);
                 curvedGlow += gcol * glowAmp;
+                if (uDustStrength > 0.0) {
+                    float dC = max(length(cen + uCamera), 0.05);
+                    float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
+                    dustTau += exp(-(d2 / (dC * dC)) / (0.012 * 0.012)) * sC;
+                }
             }
             else if (otype == 4)
             {
@@ -1134,6 +1152,13 @@ void main()
     }
 
     // Clamp to [0,1] for rgba8 output
+    // Dust extinction: reddening applied to the dust column accumulated along
+    // the BENT path during marching (blue absorbed far more than red).
+    if (uDustStrength > 0.0) {
+        vec3 dExt = vec3(1.0, 1.0 + 2.0 * uDustReddening, 1.0 + 5.0 * uDustReddening);
+        color *= exp(-uDustStrength * 0.002 * dustTau * dExt);
+    }
+
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)
 
     imageStore(outputImage, pixelCoord, vec4(color, 1.0));
