@@ -297,6 +297,8 @@ int main(int argc, char** argv) {
     renderer.dustReddening      = s.dustReddening;
     renderer.dustContrast       = s.dustContrast;
     renderer.dustCoverage       = s.dustCoverage;
+    renderer.dustClumpScale     = s.dustClumpScale;
+    renderer.dustDetail         = s.dustDetail;
     renderer.simSpeed        = s.simSpeed;
     renderer.pendingSimSpeed = s.simSpeed;
     renderer.playbackSpeed   = s.playbackSpeed;
@@ -371,6 +373,8 @@ int main(int argc, char** argv) {
     s.dustReddening      = renderer.dustReddening;
     s.dustContrast       = renderer.dustContrast;
     s.dustCoverage       = renderer.dustCoverage;
+    s.dustClumpScale     = renderer.dustClumpScale;
+    s.dustDetail         = renderer.dustDetail;
     s.rtMaxBounces    = renderer.GetRtMaxBounces();
     s.rtMaxSteps      = renderer.GetRtMaxSteps();
     s.rtLiveResPreset = renderer.GetRtLiveResPreset();
@@ -637,6 +641,11 @@ int main(int argc, char** argv) {
       renderer.dustCenter[0] = dcen.x + (float)renderer.cameraTranslate[0];
       renderer.dustCenter[1] = dcen.y + (float)renderer.cameraTranslate[1];
       renderer.dustCenter[2] = dcen.z + (float)renderer.cameraTranslate[2];
+      // Fixed dust resolution: sample ~dustDetail points regardless of how many
+      // stars are sent to the GPU, so the dust look doesn't change with Star Points.
+      int cloudPts = clouds[0]->particleCount();
+      if (RenderedObject::rtCloudPointCap < cloudPts) cloudPts = RenderedObject::rtCloudPointCap;
+      renderer.dustSampleFrac = std::clamp((float)renderer.dustDetail / (float)std::max(cloudPts, 1), 0.0f, 1.0f);
     }
 
     // Atmosphere shells — blended pass after all solid geometry

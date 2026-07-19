@@ -323,6 +323,8 @@ uniform float uDustContrast;       // 1 = linear; >1 concentrates dust in dense 
 uniform float uDustCoverage;       // fraction of (clumped) points that bear dust
 uniform float uDustInfluence;      // world-space dust radius (scaled to the cloud size)
 uniform vec3  uDustCenter;         // cloud centre (camera-relative) — anchors the clump pattern
+uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
+uniform float uDustSampleFrac;     // fraction of star points used for dust (fixed resolution)
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -714,15 +716,19 @@ void main()
             // whether the cloud spans 1 AU or 26,000 ly). Set from the cloud bounds.
             float inflR = uDustInfluence;
             float infl2 = inflR * inflR;
-            // Skip points the ray clearly misses — this also saves the exp().
-            if (d2 < infl2 * 9.0) {
+            // Fixed-resolution dust: sample a ~constant number of points regardless
+            // of how many stars are sent, so the dust keeps its sparse mottled look
+            // instead of smoothing to a wash as Star Points rises. Each sampled point
+            // is weighted up (÷ sample fraction) so the column still represents all.
+            if (d2 < infl2 * 9.0 &&
+                hash1(vec3(float(i) * 7.13, float(i) * 13.37, float(i) * 23.79)) < uDustSampleFrac) {
                 // Clumped coverage anchored to the cloud centre (galaxy-relative, so
                 // it doesn't swim with the camera): quantise position into cells so
                 // dust forms mottled filaments; only a fraction of cells bear dust.
                 vec3 rel = cen - uDustCenter;
-                if (hash1(floor(rel / max(inflR * 3.0, 1e-6))) < uDustCoverage) {
-                    // Dust amount from an existing scalar (mass), not radius only.
-                    dustTau += objects[i].mass * exp(-d2 / infl2);
+                if (hash1(floor(rel / max(inflR * uDustClumpScale, 1e-6))) < uDustCoverage) {
+                    dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6)
+                             / max(uDustSampleFrac, 1e-4) * exp(-d2 / infl2);
                 }
             }
         }
@@ -764,7 +770,7 @@ void main()
     // natural rather than artificially red.
     if (uDustStrength > 0.0) {
         vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
-        color *= exp(-uDustStrength * 0.15 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
+        color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
     }
 
     // Clamp to [0,1] for rgba8 output

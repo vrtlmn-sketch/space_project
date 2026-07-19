@@ -339,6 +339,7 @@ uniform float uDustContrast;       // 1 = linear; >1 concentrates dust in dense 
 uniform float uDustCoverage;       // fraction of (clumped) points that bear dust
 uniform float uDustInfluence;      // world-space dust radius (scaled to the cloud size)
 uniform vec3  uDustCenter;         // cloud centre (camera-relative) - anchors the clump pattern
+uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -735,7 +736,7 @@ void main()
                         if (uDustStrength > 0.0) {
                             float dC = max(length(cen + uCamera), 0.05);
                             float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
-                            { float dInfl2 = uDustInfluence * uDustInfluence; if (d2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * 3.0, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * exp(-d2 / dInfl2); }
+                            { float dInfl2 = uDustInfluence * uDustInfluence; if (d2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-d2 / dInfl2); }
                         }
                     }
                     else if (otype == 4)
@@ -818,7 +819,7 @@ void main()
                 if (uDustStrength > 0.0) {
                     float dC = max(length(cen + uCamera), 0.05);
                     float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
-                    { float dInfl2 = uDustInfluence * uDustInfluence; if (sd2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * 3.0, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * exp(-sd2 / dInfl2); }
+                    { float dInfl2 = uDustInfluence * uDustInfluence; if (sd2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-sd2 / dInfl2); }
                 }
             }
             else if (otype == 4)
@@ -921,7 +922,7 @@ void main()
                 if (uDustStrength > 0.0) {
                     float dC = max(length(cen + uCamera), 0.05);
                     float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
-                    { float dInfl2 = uDustInfluence * uDustInfluence; if (d2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * 3.0, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * exp(-d2 / dInfl2); }
+                    { float dInfl2 = uDustInfluence * uDustInfluence; if (d2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-d2 / dInfl2); }
                 }
             }
             else if (otype == 4)
@@ -1044,7 +1045,7 @@ void main()
     // the BENT path during marching (blue absorbed far more than red).
     if (uDustStrength > 0.0) {
         vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
-        color *= exp(-uDustStrength * 0.15 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
+        color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

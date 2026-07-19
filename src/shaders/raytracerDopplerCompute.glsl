@@ -357,6 +357,7 @@ uniform float uDustContrast;       // 1 = linear; >1 concentrates dust in dense 
 uniform float uDustCoverage;       // fraction of (clumped) points that bear dust
 uniform float uDustInfluence;      // world-space dust radius (scaled to the cloud size)
 uniform vec3  uDustCenter;         // cloud centre (camera-relative) - anchors the clump pattern
+uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -741,8 +742,8 @@ void main()
             float infl2 = inflR * inflR;
             if (d2 < infl2 * 9.0) {
                 vec3 rel = cen - uDustCenter;
-                if (hash1(floor(rel / max(inflR * 3.0, 1e-6))) < uDustCoverage) {
-                    dustTau += objects[i].mass * exp(-d2 / infl2);
+                if (hash1(floor(rel / max(inflR * uDustClumpScale, 1e-6))) < uDustCoverage) {
+                    dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-d2 / infl2);
                 }
             }
         }
@@ -793,7 +794,7 @@ void main()
     // Dust extinction — steep per-channel reddening (blue absorbed far more).
     if (uDustStrength > 0.0) {
         vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
-        color *= exp(-uDustStrength * 0.15 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
+        color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

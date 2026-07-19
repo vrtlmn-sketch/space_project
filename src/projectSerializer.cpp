@@ -176,6 +176,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["dustReddening"]     = settings.dustReddening;
     s["dustContrast"]      = settings.dustContrast;
     s["dustCoverage"]      = settings.dustCoverage;
+    s["dustClumpScale"]    = settings.dustClumpScale;
+    s["dustDetail"]        = settings.dustDetail;
 
     // Simulation
     s["simSpeed"]      = settings.simSpeed;
@@ -395,6 +397,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dustReddening      = s.value("dustReddening",      0.79f);
     st.dustContrast       = s.value("dustContrast",       1.45f);
     st.dustCoverage       = s.value("dustCoverage",       0.55f);
+    st.dustClumpScale     = s.value("dustClumpScale",     3.0f);
+    st.dustDetail         = s.value("dustDetail",         1500);
 
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);

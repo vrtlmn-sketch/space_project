@@ -2821,7 +2821,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::TextDisabled("Dense regions dim + redden light behind them.");
   ImGui::Text("Strength");
   ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##duststr", &dustStrength, 0.0f, 0.5f, "%.3f"))
+  if (ImGui::SliderFloat("##duststr", &dustStrength, 0.0f, 1.0f, "%.4f"))
     rtDirty = true;
   ImGui::Text("Reddening");
   ImGui::SetNextItemWidth(-1);
@@ -2837,6 +2837,16 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   if (ImGui::SliderFloat("##dustcov", &dustCoverage, 0.0f, 1.0f, "%.2f"))
     rtDirty = true;
   ImGui::TextDisabled("Fraction of clumped regions that carry dust (patchiness).");
+  ImGui::Text("Clump Size");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##dustclump", &dustClumpScale, 0.25f, 12.0f, "%.2f"))
+    rtDirty = true;
+  ImGui::TextDisabled("Size of the mottled dust patches (bigger = coarser).");
+  ImGui::Text("Detail");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderInt("##dustdetail", &dustDetail, 200, 20000))
+    rtDirty = true;
+  ImGui::TextDisabled("Dust uses this many points regardless of Star Points (fewer = more mottled).");
 
   ImGui::Spacing();
   ImGui::Separator();
@@ -5425,6 +5435,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
     GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
     if (locDV >= 0) glUniform1f(locDV, dustCoverage);
+    GLint locDL = glGetUniformLocation(activeProgram, "uDustClumpScale");
+    if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
+    GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
+    if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
     if (locDI >= 0) glUniform1f(locDI, dustInfluence);
     GLint locDC = glGetUniformLocation(activeProgram, "uDustCenter");
@@ -5951,6 +5965,10 @@ void Renderer::CaptureImage() {
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
     GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
     if (locDV >= 0) glUniform1f(locDV, dustCoverage);
+    GLint locDL = glGetUniformLocation(activeProgram, "uDustClumpScale");
+    if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
+    GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
+    if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
     if (locDI >= 0) glUniform1f(locDI, dustInfluence);
     GLint locDC = glGetUniformLocation(activeProgram, "uDustCenter");
@@ -6251,6 +6269,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
     GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
     if (locDV >= 0) glUniform1f(locDV, dustCoverage);
+    GLint locDL = glGetUniformLocation(activeProgram, "uDustClumpScale");
+    if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
+    GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
+    if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
     if (locDI >= 0) glUniform1f(locDI, dustInfluence);
     GLint locDC = glGetUniformLocation(activeProgram, "uDustCenter");
