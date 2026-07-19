@@ -2,9 +2,9 @@
   "clouds": [
     {
       "computeMethod": 0,
-      "count": 5000,
+      "count": 20000,
       "enabled": true,
-      "formationFile": "milky_way_real_5k.json",
+      "formationFile": "milky_way_real_20k.json",
       "nebulaScatterScale": 0.4000000059604645,
       "particleSizeSpread": 0.0,
       "position": [
@@ -17,7 +17,7 @@
       "sizeX": 3.0,
       "sizeY": 3.0,
       "sizeZ": 3.0,
-      "temperature": 4500.0,
+      "temperature": 11000.0,
       "theta": 0.5
     }
   ],
