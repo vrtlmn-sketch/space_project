@@ -539,6 +539,8 @@ static void eulerMat3(const vec3& deg, float R[9]) {
   R[6]=-sb;   R[7]=cb*sa;          R[8]=cb*ca;
 }
 
+int RenderedObject::rtCloudPointCap = 2000;
+
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
                                                  std::vector<RayTracerObjectDoppler>& list)
 {
@@ -548,7 +550,7 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
   bool rot = (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f);
   float R[9]; if (rot) eulerMat3(rotationDeg, R);
 
-  constexpr int RT_CLOUD_CAP = 2000;
+  int RT_CLOUD_CAP = std::max(100, rtCloudPointCap);
   int stride = (particleCount > RT_CLOUD_CAP) ? (particleCount / RT_CLOUD_CAP) : 1;
 
   float pRadius  = (cachedRenderMode == 1) ? 0.08f : 0.001f;
@@ -605,7 +607,7 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
   // the GPU watchdog even with glFinish between strips.  We uniformly subsample
   // to at most RT_CLOUD_CAP representative particles.  For nebula (Beer-Lambert)
   // mode the mass is scaled by the stride so total optical depth is preserved.
-  constexpr int RT_CLOUD_CAP = 2000;
+  int RT_CLOUD_CAP = std::max(100, rtCloudPointCap);
   int stride = (particleCount > RT_CLOUD_CAP) ? (particleCount / RT_CLOUD_CAP) : 1;
 
   bool rot = (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f);

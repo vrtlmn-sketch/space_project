@@ -335,6 +335,9 @@ float closestApproachDist2(vec3 ro, vec3 rd, vec3 center)
 // magnitudes are roughly log-distributed (most faint, a few bright). All
 // three together make clusters resolve into star-like points, not blobs.
 // ---------------------------------------------------------------------------
+uniform float uUnresolvedStrength; // 0 = off; smooth glow from unresolved stars
+uniform float uUnresolvedSize;     // angular width of the unresolved lobe (x PSF)
+
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
     float distC = max(length(cen + uCamera), 0.05);  // camera = -uCamera
@@ -342,7 +345,7 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 
     // Tight PSF (~0.075 deg), floored at half an output pixel
     float pixAng = 2.0 / (uProj[1][1] * uResolution.y);
-    float sigmaB = 0.0013;
+    float sigmaB = 0.0006; // tighter PSF -> smaller star dots
     float sigma  = max(sigmaB, 0.5 * pixAng);
     float s2     = sigma * sigma;
     float psf    = exp(-ang2 / s2) + 0.015 * exp(-ang2 / (s2 * 9.0));
@@ -363,8 +366,16 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
     // Large peak amplitude: cores CLIP to white (like a camera sensor), so
     // magnitude/distance change the saturated dot SIZE (~sqrt(log(amp))·sigma),
     // never the center brightness — bright small dots.
-    float amp = 20.0 * mag * strideComp * flux * resComp;
-    return min(amp * psf, 8.0); // allow HDR cores (bloom + saturate to white)
+    float amp = 20.0 * mag * flux * resComp; // core ~= ONE star (tight); multiplicity -> haze
+    float core = min(amp * psf, 8.0); // resolved core: HDR, saturates to white
+
+    // Unresolved-star field: the (strideComp-1) faint stars this point stands in
+    // for, spread as a wide, dim, energy-normalized lobe -> a smooth low-frequency
+    // haze that the resolved cores sit on top of.
+    float su     = 0.0013 * max(uUnresolvedSize, 1.0); // FIXED angular width (resolution-independent haze)
+    float unrPsf = exp(-ang2 / (su * su));
+    float unrAmp = uUnresolvedStrength * 0.03 * mag * flux * max(strideComp - 1.0, 0.0);
+    return core + unrAmp * unrPsf;
 }
 
 // ---------------------------------------------------------------------------

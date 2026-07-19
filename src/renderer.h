@@ -462,6 +462,8 @@ public:
   float dopplerBrightnessStr{2.0f}; // brightness exponent: brightness *= D^this
   float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
+  float unresolvedStrength{3.0f};// unresolved-star field brightness (0 = off)
+  float unresolvedSize{60.0f};   // unresolved lobe angular width (x fixed PSF floor)
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──
   // simSpeed:      data resolution — dt per recorded frame = kDtYears · simSpeed
@@ -676,7 +678,7 @@ public:
   // ---- RT photographic post-process (bloom + ACES tonemap) ----
   float  rtExposure{1.0f};      // photographic exposure multiplier
   float  bloomStrength{0.6f};   // how much bloom is added back
-  float  bloomThreshold{1.0f};  // brightness above which pixels bloom
+  float  bloomThreshold{0.0f};  // brightness above which pixels bloom
 
   // ---- Spheremap background (rasterized + raytraced views) ----
   bool   spheremapEnabled{true};

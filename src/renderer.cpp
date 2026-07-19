@@ -2797,6 +2797,26 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::SliderFloat("##bloomthr", &bloomThreshold, 0.0f, 5.0f, "%.2f");
 
   ImGui::Spacing();
+  ImGui::SeparatorText("Unresolved Stars");
+  ImGui::TextDisabled("Smooth haze from stars too dense to resolve as points.");
+  ImGui::Text("Strength");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##unrstr", &unresolvedStrength, 0.0f, 8.0f, "%.2f"))
+    rtDirty = true;
+  ImGui::Text("Size");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderFloat("##unrsize", &unresolvedSize, 1.0f, 300.0f, "%.1f"))
+    rtDirty = true;
+
+  ImGui::Spacing();
+  ImGui::Text("Star Points (RT)");
+  ImGui::SetNextItemWidth(-1);
+  if (ImGui::SliderInt("##rtpoints", &RenderedObject::rtCloudPointCap, 500, 100000, "%d",
+                       ImGuiSliderFlags_Logarithmic))
+    rtDirty = true;
+  ImGui::TextDisabled("More resolved stars — costs GPU per-pixel. Raise for stills.");
+
+  ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
 
@@ -5371,6 +5391,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
   {
     GLint locND = glGetUniformLocation(activeProgram, "uNebulaDetail");
     if (locND >= 0) glUniform1f(locND, nebulaDetail);
+    GLint locUS = glGetUniformLocation(activeProgram, "uUnresolvedStrength");
+    if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
+    GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
+    if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -5395,21 +5419,36 @@ void Renderer::DispatchRaytracer(int width, int height) {
     glActiveTexture(GL_TEXTURE0);
   }
 
-  // Dispatch the full live-preview image in a single call — no strip loop.
-  // Watchdog protection is only needed for recording (DispatchAndCaptureRecordingFrame
-  // handles that by spreading strips across app ticks). The live preview at small
-  // resolutions (80p, 240p, etc.) completes in milliseconds regardless of scene complexity.
+  // Watchdog-safe dispatch. A single dispatch of the whole image is fine at low
+  // live resolutions, but at high res (720p/1080p) it can exceed the GPU driver's
+  // timeout and reset the context — the "frozen RT" the user hit. Tall images are
+  // split into horizontal strips near a known-safe size; a glFinish between strips
+  // resets the driver's hang timer. Small images keep the single-dispatch fast
+  // path, so 80p/240p interactivity is unchanged.
   GLuint gx             = (width  + 15) / 16;
-  GLuint gy             = (height +  3) /  4;  // local_size_y = 4 in all compute shaders
   GLint  locTileOffsetY = glGetUniformLocation(activeProgram, "uTileOffsetY");
-  if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, 0);  // full image, no row offset
+
+  constexpr int STRIP_PIXELS = 160000;                    // ~480p worth per strip
+  int stripRows = std::max(4, STRIP_PIXELS / std::max(width, 1));
+  stripRows = ((stripRows + 3) / 4) * 4;                  // whole multiple of local_size_y (4)
 
   auto dispatchT0 = std::chrono::steady_clock::now();
-  glDispatchCompute(gx, gy, 1);
+  if (height <= stripRows) {
+    if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, 0);  // full image, no row offset
+    glDispatchCompute(gx, (GLuint)((height + 3) / 4), 1);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+  } else {
+    for (int y0 = 0; y0 < height; y0 += stripRows) {
+      if (locTileOffsetY >= 0) glUniform1i(locTileOffsetY, y0);
+      int rows = std::min(stripRows, height - y0);
+      glDispatchCompute(gx, (GLuint)((rows + 3) / 4), 1);
+      glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+      glFinish(); // reset the GPU watchdog timer between strips
+    }
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+  }
   bench.dispatchMs = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - dispatchT0).count();
-
-  glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
   // ── Snapshot state for dirty check next frame ──
   rtLastCamera[0] = cameraTranslate[0];
@@ -5866,6 +5905,10 @@ void Renderer::CaptureImage() {
   {
     GLint locND = glGetUniformLocation(activeProgram, "uNebulaDetail");
     if (locND >= 0) glUniform1f(locND, nebulaDetail);
+    GLint locUS = glGetUniformLocation(activeProgram, "uUnresolvedStrength");
+    if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
+    GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
+    if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
   }
 
   // Skybox spheremap — applies to all 6 programs
@@ -6150,6 +6193,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
   {
     GLint locND = glGetUniformLocation(activeProgram, "uNebulaDetail");
     if (locND >= 0) glUniform1f(locND, nebulaDetail);
+    GLint locUS = glGetUniformLocation(activeProgram, "uUnresolvedStrength");
+    if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
+    GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
+    if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
   }
 
   // Skybox spheremap — applies to all 6 programs

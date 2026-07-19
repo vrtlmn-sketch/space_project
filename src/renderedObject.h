@@ -165,6 +165,9 @@ void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies, fl
 void GenerateMeshCloud(int objectCount , float (*distributionFunction)(float x, float y, float z),const vec3& size);
 void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY = true, bool showZ = true);
 
+  // Max cloud particles sent to the RT SSBO (each is looped per-pixel, so this
+  // trades density for GPU cost). Runtime-tunable from Rendering Settings.
+  static int rtCloudPointCap;
   void renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList);
   void renderMeshRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
                                   vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
