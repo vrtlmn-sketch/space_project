@@ -388,17 +388,17 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.rtLiveWidth     = s.value("rtLiveWidth",     142);
     st.rtLiveHeight    = s.value("rtLiveHeight",    80);
     st.rtExposure         = s.value("rtExposure",         1.0f);
-    st.bloomStrength      = s.value("bloomStrength",      0.6f);
+    st.bloomStrength      = s.value("bloomStrength",      0.45f);
     st.bloomThreshold     = s.value("bloomThreshold",     0.0f);
-    st.unresolvedStrength = s.value("unresolvedStrength", 3.0f);
-    st.unresolvedSize     = s.value("unresolvedSize",     60.0f);
+    st.unresolvedStrength = s.value("unresolvedStrength", 6.83f);
+    st.unresolvedSize     = s.value("unresolvedSize",     32.4f);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
-    st.dustStrength       = s.value("dustStrength",       0.01f);
-    st.dustReddening      = s.value("dustReddening",      0.79f);
-    st.dustContrast       = s.value("dustContrast",       1.45f);
-    st.dustCoverage       = s.value("dustCoverage",       0.55f);
-    st.dustClumpScale     = s.value("dustClumpScale",     3.0f);
-    st.dustDetail         = s.value("dustDetail",         1500);
+    st.dustStrength       = s.value("dustStrength",       1.0f);
+    st.dustReddening      = s.value("dustReddening",      1.63f);
+    st.dustContrast       = s.value("dustContrast",       1.28f);
+    st.dustCoverage       = s.value("dustCoverage",       0.68f);
+    st.dustClumpScale     = s.value("dustClumpScale",     6.69f);
+    st.dustDetail         = s.value("dustDetail",         200);
 
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);

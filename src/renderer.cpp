@@ -2783,70 +2783,56 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::Unindent(8.0f);
   }
 
+  // 0..1 slider that maps to a real [lo,hi] range. dirty=true for compute-side
+  // params (need a re-dispatch); false for post-process params (live every frame).
+  auto norm01 = [&](const char* label, const char* id, float* v, float lo, float hi, bool dirty) {
+    ImGui::Text("%s", label);
+    ImGui::SetNextItemWidth(-1);
+    float n = (hi > lo) ? (*v - lo) / (hi - lo) : 0.0f;
+    n = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
+    if (ImGui::SliderFloat(id, &n, 0.0f, 1.0f, "%.2f")) {
+      *v = lo + n * (hi - lo);
+      if (dirty) rtDirty = true;
+    }
+  };
+
   ImGui::Spacing();
   ImGui::SeparatorText("Photographic (HDR)");
-  ImGui::TextDisabled("Exposure, bloom + ACES tonemap (RT views only).");
-  ImGui::Text("Exposure");
-  ImGui::SetNextItemWidth(-1);
-  ImGui::SliderFloat("##rtexposure", &rtExposure, 0.05f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-  ImGui::Text("Bloom Strength");
-  ImGui::SetNextItemWidth(-1);
-  ImGui::SliderFloat("##bloomstr", &bloomStrength, 0.0f, 3.0f, "%.2f");
-  ImGui::Text("Bloom Threshold");
-  ImGui::SetNextItemWidth(-1);
-  ImGui::SliderFloat("##bloomthr", &bloomThreshold, 0.0f, 5.0f, "%.2f");
+  ImGui::TextDisabled("Exposure, glow + ACES tonemap (RT views only).");
+  norm01("Exposure",       "##rtexposure", &rtExposure,     0.0f, 4.0f,  false);
+  norm01("Glow",           "##bloomstr",   &bloomStrength,  0.0f, 1.5f,  false);
+  norm01("Glow Threshold", "##bloomthr",   &bloomThreshold, 0.0f, 2.0f,  false);
 
   ImGui::Spacing();
-  ImGui::SeparatorText("Unresolved Stars");
-  ImGui::TextDisabled("Smooth haze from stars too dense to resolve as points.");
-  ImGui::Text("Strength");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##unrstr", &unresolvedStrength, 0.0f, 8.0f, "%.2f"))
-    rtDirty = true;
-  ImGui::Text("Size");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##unrsize", &unresolvedSize, 1.0f, 300.0f, "%.1f"))
-    rtDirty = true;
+  ImGui::SeparatorText("Star Haze");
+  ImGui::TextDisabled("Smooth glow from stars too dense to resolve as points.");
+  norm01("Brightness", "##unrstr",  &unresolvedStrength, 0.0f, 10.0f,  true);
+  norm01("Spread",     "##unrsize", &unresolvedSize,     1.0f, 100.0f, true);
 
   ImGui::Spacing();
-  ImGui::Text("Star Points (RT)");
+  ImGui::Text("Star Points");
   ImGui::SetNextItemWidth(-1);
   if (ImGui::SliderInt("##rtpoints", &RenderedObject::rtCloudPointCap, 500, 100000, "%d",
                        ImGuiSliderFlags_Logarithmic))
     rtDirty = true;
-  ImGui::TextDisabled("More resolved stars — costs GPU per-pixel. Raise for stills.");
+  ImGui::TextDisabled("How many stars render as individual points. Raise for stills.");
 
   ImGui::Spacing();
   ImGui::SeparatorText("Dust");
-  ImGui::TextDisabled("Dense regions dim + redden light behind them.");
-  ImGui::Text("Strength");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##duststr", &dustStrength, 0.0f, 1.0f, "%.4f"))
-    rtDirty = true;
-  ImGui::Text("Reddening");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##dustred", &dustReddening, 0.0f, 2.0f, "%.2f"))
-    rtDirty = true;
-  ImGui::Text("Contrast");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##dustcon", &dustContrast, 1.0f, 4.0f, "%.2f"))
-    rtDirty = true;
-  ImGui::TextDisabled("1 = even; higher concentrates dust into dense lanes.");
-  ImGui::Text("Coverage");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##dustcov", &dustCoverage, 0.0f, 1.0f, "%.2f"))
-    rtDirty = true;
-  ImGui::TextDisabled("Fraction of clumped regions that carry dust (patchiness).");
-  ImGui::Text("Clump Size");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##dustclump", &dustClumpScale, 0.25f, 12.0f, "%.2f"))
-    rtDirty = true;
-  ImGui::TextDisabled("Size of the mottled dust patches (bigger = coarser).");
-  ImGui::Text("Detail");
+  ImGui::TextDisabled("Dense regions dim + redden the light behind them.");
+  norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  1.0f,  true);
+  norm01("Reddening",     "##dustred",   &dustReddening,  0.0f,  2.0f,  true);
+  norm01("Concentration", "##dustcon",   &dustContrast,   1.0f,  4.0f,  true);
+  ImGui::TextDisabled("Higher packs dust into tighter, darker lanes.");
+  norm01("Patchiness",    "##dustcov",   &dustCoverage,   0.0f,  1.0f,  true);
+  ImGui::TextDisabled("How broken-up the dust is (lower = more gaps).");
+  norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.25f, 12.0f, true);
+  ImGui::TextDisabled("Size of the mottled dust patches.");
+  ImGui::Text("Dust Points");
   ImGui::SetNextItemWidth(-1);
   if (ImGui::SliderInt("##dustdetail", &dustDetail, 200, 20000))
     rtDirty = true;
-  ImGui::TextDisabled("Dust uses this many points regardless of Star Points (fewer = more mottled).");
+  ImGui::TextDisabled("How many points the dust samples — independent of Star Points (fewer = more mottled).");
 
   ImGui::Spacing();
   ImGui::Separator();

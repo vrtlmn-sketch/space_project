@@ -462,15 +462,15 @@ public:
   float dopplerBrightnessStr{2.0f}; // brightness exponent: brightness *= D^this
   float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
-  float unresolvedStrength{3.0f};// unresolved-star field brightness (0 = off)
-  float unresolvedSize{60.0f};   // unresolved lobe angular width (x fixed PSF floor)
-  float dustStrength{0.01f};     // dust extinction amount (0 = off)
+  float unresolvedStrength{6.83f};// unresolved-star field brightness (0 = off)
+  float unresolvedSize{32.4f};   // unresolved lobe angular width (x fixed PSF floor)
+  float dustStrength{1.0f};     // dust extinction amount (0 = off)
   float dustInfluence{1.0f};     // world-space dust radius, set from the cloud bounds
-  float dustReddening{0.79f};    // wavelength tilt (blue absorbed more than red)
-  float dustContrast{1.45f};     // 1 = linear; >1 concentrates dust in dense regions
-  float dustCoverage{0.55f};     // fraction of clumped regions that bear dust
-  float dustClumpScale{3.0f};    // dust clump cell size (x influence radius)
-  int   dustDetail{1500};        // target # of points the dust samples (fixed resolution)
+  float dustReddening{1.63f};    // wavelength tilt (blue absorbed more than red)
+  float dustContrast{1.28f};     // 1 = linear; >1 concentrates dust in dense regions
+  float dustCoverage{0.68f};     // fraction of clumped regions that bear dust
+  float dustClumpScale{6.69f};    // dust clump cell size (x influence radius)
+  int   dustDetail{200};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent
   float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
@@ -686,7 +686,7 @@ public:
 
   // ---- RT photographic post-process (bloom + ACES tonemap) ----
   float  rtExposure{1.0f};      // photographic exposure multiplier
-  float  bloomStrength{0.6f};   // how much bloom is added back
+  float  bloomStrength{0.45f};   // how much bloom is added back
   float  bloomThreshold{0.0f};  // brightness above which pixels bloom
 
   // ---- Spheremap background (rasterized + raytraced views) ----

@@ -91,19 +91,19 @@ struct SceneSettings {
 
   // Photographic HDR (RT views)
   float rtExposure{1.0f};
-  float bloomStrength{0.6f};
+  float bloomStrength{0.45f};
   float bloomThreshold{0.0f};
   // Unresolved-star haze + resolved-point density
-  float unresolvedStrength{3.0f};
-  float unresolvedSize{60.0f};
+  float unresolvedStrength{6.83f};
+  float unresolvedSize{32.4f};
   int   rtCloudPointCap{2000};
   // Dust
-  float dustStrength{0.01f};
-  float dustReddening{0.79f};
-  float dustContrast{1.45f};
-  float dustCoverage{0.55f};
-  float dustClumpScale{3.0f};
-  int   dustDetail{1500};
+  float dustStrength{1.0f};
+  float dustReddening{1.63f};
+  float dustContrast{1.28f};
+  float dustCoverage{0.68f};
+  float dustClumpScale{6.69f};
+  int   dustDetail{200};
 
   // Simulation
   float simSpeed{1.0f};
