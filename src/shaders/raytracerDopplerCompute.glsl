@@ -358,6 +358,7 @@ uniform float uDustCoverage;       // fraction of (clumped) points that bear dus
 uniform float uDustInfluence;      // world-space dust radius (scaled to the cloud size)
 uniform vec3  uDustCenter;         // cloud centre (camera-relative) - anchors the clump pattern
 uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
+uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 = glowing dust
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -722,6 +723,7 @@ void main()
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
     float dustTau            = 0.0;   // accumulated dust column density
+    vec3  dustGlowCol        = vec3(0.0); // starlight-weighted dust column (in-scatter)
 
     for (int i = 0; i < uObjectCount; i++)
     {
@@ -737,13 +739,15 @@ void main()
 
         // Dust column (approx, unordered): dense cloud regions absorb + redden
         // light behind them. Weighted by the point's represented density.
+        float dContrib = 0.0;
         if (uDustStrength > 0.0) {
             float inflR = uDustInfluence;
             float infl2 = inflR * inflR;
             if (d2 < infl2 * 9.0) {
                 vec3 rel = cen - uDustCenter;
                 if (hash1(floor(rel / max(inflR * uDustClumpScale, 1e-6))) < uDustCoverage) {
-                    dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-d2 / infl2);
+                    dContrib = objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-d2 / infl2);
+                    dustTau += dContrib;
                 }
             }
         }
@@ -755,6 +759,8 @@ void main()
         vec3 gcol = (objects[i].temperature > 100.0)
                      ? blackbody(dopplerT(objects[i].temperature, D))
                      : dopplerTint(vec3(0.55, 0.65, 1.0), D);
+
+        if (uDustGlow > 0.0 && dContrib > 0.0) dustGlowCol += dContrib * gcol;
 
         if (otype == 2)
         {
@@ -795,6 +801,14 @@ void main()
     if (uDustStrength > 0.0) {
         vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
         color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
+
+        // Stage 4 (in-scatter): dust scatters nearby starlight and glows softly.
+        if (uDustGlow > 0.0 && dustTau > 0.0) {
+            vec3  meanLit = dustGlowCol / max(dustTau, 1e-4);
+            float sat     = 1.0 - exp(-0.02 * dustTau);
+            vec3  albedo  = vec3(0.85, 0.90, 1.0);
+            color += uDustGlow * sat * albedo * meanLit;
+        }
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

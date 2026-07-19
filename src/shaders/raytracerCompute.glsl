@@ -325,6 +325,7 @@ uniform float uDustInfluence;      // world-space dust radius (scaled to the clo
 uniform vec3  uDustCenter;         // cloud centre (camera-relative) — anchors the clump pattern
 uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
 uniform float uDustSampleFrac;     // fraction of star points used for dust (fixed resolution)
+uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 = glowing dust
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -693,6 +694,7 @@ void main()
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
     float dustTau            = 0.0;   // accumulated dust column density
+    vec3  dustGlowCol        = vec3(0.0); // starlight-weighted dust column (in-scatter)
 
     for (int i = 0; i < uObjectCount; i++)
     {
@@ -727,8 +729,10 @@ void main()
                 // dust forms mottled filaments; only a fraction of cells bear dust.
                 vec3 rel = cen - uDustCenter;
                 if (hash1(floor(rel / max(inflR * uDustClumpScale, 1e-6))) < uDustCoverage) {
-                    dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6)
-                             / max(uDustSampleFrac, 1e-4) * exp(-d2 / infl2);
+                    float dContrib = objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6)
+                                   / max(uDustSampleFrac, 1e-4) * exp(-d2 / infl2);
+                    dustTau     += dContrib;
+                    dustGlowCol += dContrib * gcol;
                 }
             }
         }
@@ -771,6 +775,17 @@ void main()
     if (uDustStrength > 0.0) {
         vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
         color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
+
+        // Stage 4 (in-scatter): dust also scatters nearby starlight and glows
+        // softly. Emission saturates with column depth (Kubelka source term),
+        // tinted by the mean colour of the stars that light the dust and a
+        // slight blue reflection albedo. Kept subtle so dense lanes stay dark.
+        if (uDustGlow > 0.0 && dustTau > 0.0) {
+            vec3  meanLit = dustGlowCol / max(dustTau, 1e-4);
+            float sat     = 1.0 - exp(-0.02 * dustTau);
+            vec3  albedo  = vec3(0.85, 0.90, 1.0);
+            color += uDustGlow * sat * albedo * meanLit;
+        }
     }
 
     // Clamp to [0,1] for rgba8 output

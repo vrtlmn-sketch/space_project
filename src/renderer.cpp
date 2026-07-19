@@ -2828,6 +2828,8 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::TextDisabled("How broken-up the dust is (lower = more gaps).");
   norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.25f, 12.0f, true);
   ImGui::TextDisabled("Size of the mottled dust patches.");
+  norm01("Glow",          "##dustglow",  &dustGlow,       0.0f,  1.0f,  true);
+  ImGui::TextDisabled("Dust scatters nearby starlight and glows softly (0 = dark lanes only).");
   ImGui::Text("Dust Points");
   ImGui::SetNextItemWidth(-1);
   if (ImGui::SliderInt("##dustdetail", &dustDetail, 200, 20000))
@@ -5423,6 +5425,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locDV >= 0) glUniform1f(locDV, dustCoverage);
     GLint locDL = glGetUniformLocation(activeProgram, "uDustClumpScale");
     if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
+    GLint locDG = glGetUniformLocation(activeProgram, "uDustGlow");
+    if (locDG >= 0) glUniform1f(locDG, dustGlow);
     GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
     if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
@@ -5953,6 +5957,8 @@ void Renderer::CaptureImage() {
     if (locDV >= 0) glUniform1f(locDV, dustCoverage);
     GLint locDL = glGetUniformLocation(activeProgram, "uDustClumpScale");
     if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
+    GLint locDG = glGetUniformLocation(activeProgram, "uDustGlow");
+    if (locDG >= 0) glUniform1f(locDG, dustGlow);
     GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
     if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
@@ -6257,6 +6263,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locDV >= 0) glUniform1f(locDV, dustCoverage);
     GLint locDL = glGetUniformLocation(activeProgram, "uDustClumpScale");
     if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
+    GLint locDG = glGetUniformLocation(activeProgram, "uDustGlow");
+    if (locDG >= 0) glUniform1f(locDG, dustGlow);
     GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
     if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");

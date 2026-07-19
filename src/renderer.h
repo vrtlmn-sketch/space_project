@@ -470,6 +470,7 @@ public:
   float dustContrast{1.28f};     // 1 = linear; >1 concentrates dust in dense regions
   float dustCoverage{0.68f};     // fraction of clumped regions that bear dust
   float dustClumpScale{6.69f};    // dust clump cell size (x influence radius)
+  float dustGlow{0.15f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
   int   dustDetail{200};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent
   float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern

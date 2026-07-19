@@ -298,6 +298,7 @@ int main(int argc, char** argv) {
     renderer.dustContrast       = s.dustContrast;
     renderer.dustCoverage       = s.dustCoverage;
     renderer.dustClumpScale     = s.dustClumpScale;
+    renderer.dustGlow           = s.dustGlow;
     renderer.dustDetail         = s.dustDetail;
     renderer.simSpeed        = s.simSpeed;
     renderer.pendingSimSpeed = s.simSpeed;
@@ -374,6 +375,7 @@ int main(int argc, char** argv) {
     s.dustContrast       = renderer.dustContrast;
     s.dustCoverage       = renderer.dustCoverage;
     s.dustClumpScale     = renderer.dustClumpScale;
+    s.dustGlow           = renderer.dustGlow;
     s.dustDetail         = renderer.dustDetail;
     s.rtMaxBounces    = renderer.GetRtMaxBounces();
     s.rtMaxSteps      = renderer.GetRtMaxSteps();
