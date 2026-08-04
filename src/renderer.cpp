@@ -546,7 +546,7 @@ void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
@@ -2825,14 +2825,14 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::Spacing();
   ImGui::SeparatorText("Dust");
   ImGui::TextDisabled("Dense regions dim + redden the light behind them.");
-  norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  1.0f,  true);
-  norm01("Reddening",     "##dustred",   &dustReddening,  0.0f,  2.0f,  true);
+  norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  2.0f,  true);
+  norm01("Reddening",     "##dustred",   &dustReddening,  0.0f,  4.0f,  true);
   norm01("Concentration", "##dustcon",   &dustContrast,   1.0f,  4.0f,  true);
   ImGui::TextDisabled("Higher packs dust into tighter, darker lanes.");
   norm01("Patchiness",    "##dustcov",   &dustCoverage,   0.0f,  1.0f,  true);
   ImGui::TextDisabled("How broken-up the dust is (lower = more gaps).");
-  norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.25f, 12.0f, true);
-  ImGui::TextDisabled("Size of the mottled dust patches.");
+  norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.04f, 1.5f,  true);
+  ImGui::TextDisabled("Lane fineness — smaller hugs the star shape more tightly.");
   norm01("Glow",          "##dustglow",  &dustGlow,       0.0f,  1.0f,  true);
   ImGui::TextDisabled("Dust scatters nearby starlight and glows softly (0 = dark lanes only).");
   ImGui::Text("Dust Points");

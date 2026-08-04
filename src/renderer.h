@@ -498,10 +498,10 @@ public:
   float unresolvedSize{32.4f};   // unresolved lobe angular width (x fixed PSF floor)
   float dustStrength{1.0f};     // dust extinction amount (0 = off)
   float dustInfluence{1.0f};     // world-space dust radius, set from the cloud bounds
-  float dustReddening{1.63f};    // wavelength tilt (blue absorbed more than red)
-  float dustContrast{1.28f};     // 1 = linear; >1 concentrates dust in dense regions
-  float dustCoverage{0.68f};     // fraction of clumped regions that bear dust
-  float dustClumpScale{6.69f};    // dust clump cell size (x influence radius)
+  float dustReddening{0.72f};    // wavelength tilt (blue absorbed more than red)
+  float dustContrast{1.0f};     // 1 = linear; >1 concentrates dust in dense regions
+  float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
+  float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)
   float dustGlow{0.15f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
   int   dustDetail{200};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent

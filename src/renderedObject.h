@@ -98,6 +98,8 @@ public:
   float normalStrength{1.0f};  // normal-map relief scale (forwarded to the shader)
   bool  realisticShading{false}; // set per-draw by the Renderer for the Cinematic Performant pass
   float cinePixelScale{1.0f};    // point-size scale so sprites keep apparent size under SSAA
+  float cineHazeStrength{6.83f}; // unresolved-star haze brightness (RT Star Haze → Brightness)
+  float cineHazeSpread{32.4f};   // unresolved-star haze spread (RT Star Haze → Spread)
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
   float rtAtmoFalloff{4.0f};
@@ -133,7 +135,7 @@ public:
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadDustParams(float strength, float reddening, float coverage,
-                        float clumpScale, float influence, float glow);
+                        float clumpScale, float influence, float contrast);
   void uploadNebulaScatterScale(float scale);
   void uploadParticleSizeSpread(float spread);
   void uploadResolution(int w, int h);

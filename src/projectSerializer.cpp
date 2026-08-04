@@ -396,10 +396,10 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.unresolvedSize     = s.value("unresolvedSize",     32.4f);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
     st.dustStrength       = s.value("dustStrength",       1.0f);
-    st.dustReddening      = s.value("dustReddening",      1.63f);
-    st.dustContrast       = s.value("dustContrast",       1.28f);
-    st.dustCoverage       = s.value("dustCoverage",       0.68f);
-    st.dustClumpScale     = s.value("dustClumpScale",     6.69f);
+    st.dustReddening      = s.value("dustReddening",      0.72f);
+    st.dustContrast       = s.value("dustContrast",       1.0f);
+    st.dustCoverage       = s.value("dustCoverage",       0.30f);
+    st.dustClumpScale     = s.value("dustClumpScale",     0.13f);
     st.dustGlow           = s.value("dustGlow",           0.15f);
     st.cineSSAA           = s.value("cineSSAA",           1.5f);
     st.dustDetail         = s.value("dustDetail",         200);

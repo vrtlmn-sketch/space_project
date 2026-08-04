@@ -1,5 +1,5 @@
 #version 460 core
-layout (location = 0) in vec3 aPos;      // absolute (galaxy-local) position — used for dust clump hashing
+layout (location = 0) in vec3 aPos;      // absolute (galaxy-local) position — used for dust field
 layout (location = 1) in vec3 aRelPos;   // camera-relative position (CPU double) — used for the transform
 
 uniform mat4 uProj;
@@ -10,21 +10,26 @@ uniform mat3 uViewRot;
 uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
 uniform float uTemperature;  // Kelvin (whole-cloud base)
-uniform int   uCloudPass;    // 0 = haze, 1 = core, 2 = dust glow
+uniform int   uCloudPass;    // 0 = haze, 1 = core, 3 = dust (reddened extinction)
 uniform float uCinePixelScale; // point-size scale so sprites keep apparent size under SSAA
+uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
+uniform float uUnresolvedSize;     // star-haze spread (RT parity)
+uniform float uViewportH;          // framebuffer height (px) → perspective dust sizing
 
-// Dust (uCloudPass == 2). Clumps are anchored to the galaxy via the particle's
-// own static local position, so they never swim with the camera.
-uniform float uDustStrength;
-uniform float uDustReddening;
-uniform float uDustCoverage;
-uniform float uDustClumpScale;
-uniform float uDustInfluence;
-uniform float uDustGlow;
+// One unified dust system: a filamentary density field (FBM over galaxy-local
+// position) rendered as reddened Beer-Lambert extinction. Thin dust warms the
+// light (brown), thicker → deep red, thick → black. Same field, same sliders.
+uniform float uDustStrength;   // overall dust amount
+uniform float uDustReddening;  // warm→red tilt
+uniform float uDustCoverage;   // how much of the field is dusty (fills the lanes)
+uniform float uDustContrast;   // sharpens lanes / packs dust into dense cores
+uniform float uDustClumpScale; // dust lane scale (× influence)
+uniform float uDustInfluence;  // world-space dust scale (from cloud bounds)
 
-out vec3  vColor;   // per-particle colour (star blackbody, or warm dust)
+out vec3  vColor;   // per-particle blackbody colour (stars)
 out float vMag;     // per-particle magnitude (0..1, log-ish)
-out float vGlow;    // dust glow intensity (0 unless this is a dust sprite)
+out float vDust;    // dust density at this particle (0 = not dusty)
+out float vSeed;    // per-dust-cloud seed → unique billowing FBM shape in the frag
 
 float hash11(float p) {
   p = fract(p * 0.1031);
@@ -37,6 +42,23 @@ float hash13(vec3 p) {
   p = fract(p * 0.1031);
   p += dot(p, p.zyx + 31.32);
   return fract((p.x + p.y) * p.z);
+}
+
+// Value noise + 3-octave FBM → smooth, connected filaments (not blocky cells).
+float vnoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float n000 = hash13(i + vec3(0,0,0)), n100 = hash13(i + vec3(1,0,0));
+  float n010 = hash13(i + vec3(0,1,0)), n110 = hash13(i + vec3(1,1,0));
+  float n001 = hash13(i + vec3(0,0,1)), n101 = hash13(i + vec3(1,0,1));
+  float n011 = hash13(i + vec3(0,1,1)), n111 = hash13(i + vec3(1,1,1));
+  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
+float fbm3(vec3 p) {
+  float a = 0.5, s = 0.0;
+  for (int i = 0; i < 3; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; }
+  return s / 0.875;   // normalise ~0..1
 }
 
 vec3 blackbody(float T) {
@@ -53,9 +75,20 @@ vec3 blackbody(float T) {
   return vec3(r, g, b);
 }
 
+// Lane mask at a galaxy-local position: a soft FBM field (0 in gaps, up to 1 in
+// lanes). It is only a TEXTURE — density comes from the star particles carrying
+// it, so where stars are dense the (soft, overlapping) dust sprites compound into
+// thick lanes, and the sparse halo stays clear. Dust follows star formation.
+float dustLane(vec3 p) {
+  float scale = max(uDustInfluence * uDustClumpScale, 1e-6);
+  float n = fbm3(p / scale);
+  float thr = 0.85 - clamp(uDustCoverage, 0.0, 1.0) * 0.7;   // coverage widens the lanes
+  float d = smoothstep(thr, thr + 0.30, n);
+  return pow(d, max(uDustContrast, 0.25));                    // concentration sharpens lanes
+}
+
 void main() {
-  // Transform the camera-relative position (already double-precise from the CPU);
-  // camera sits at the origin in this space, so no huge-number cancellation.
+  // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
   gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
 
   float id = float(gl_VertexID);
@@ -65,7 +98,7 @@ void main() {
   float baseT = (uTemperature > 100.0) ? uTemperature : 5200.0;
   vColor = blackbody(baseT * (0.75 + 0.5 * h1));
   vMag   = pow(h2, 2.2);
-  vGlow  = 0.0;
+  vDust  = 0.0;
 
   if (uRealistic == 0) {
     gl_PointSize = (uRenderMode == 1) ? 8.0 : 2.0;
@@ -77,28 +110,33 @@ void main() {
   if (uCloudPass == 1) {
     // Core pass: brightness reads as size; bright stars bigger & softer (corona).
     gl_PointSize = clamp(3.0 + 5.0 * vMag, 3.0, 11.0) * ps;
-  } else if (uCloudPass == 2 || uCloudPass == 3) {
-    // Dust: pass 2 = warm additive glow, pass 3 = extinction (darkens/reddens).
-    // Same sparse, clumpy particle selection for both so they coincide.
-    float cell  = max(uDustInfluence * uDustClumpScale, 1e-6);
-    float clump = hash13(floor(aPos / cell));
-    float pick  = hash11(id * 5.3 + 2.0);
-    bool isDust = (uDustStrength > 0.0) && (clump < uDustCoverage) && (pick < 0.14);
-    if (isDust) {
-      gl_PointSize = clamp(34.0 + 46.0 * pick, 20.0, 92.0) * ps;
-      if (uCloudPass == 2) {
-        // Warm dust reflectance, deepening to brown as reddening rises (matches RT)
-        vColor = vec3(1.0, 0.75, 0.55)
-               / vec3(1.0, 1.0 + 0.25 * uDustReddening, 1.0 + 0.7 * uDustReddening);
-        vGlow  = uDustGlow * uDustStrength;   // in-scatter glow strength
-      } else {
-        vGlow  = uDustStrength;               // extinction weight
-      }
+  } else if (uCloudPass == 3) {
+    // Every star sitting in a dust lane carries a SMALL cloud sprite. Many of them
+    // overlap where stars are dense → the dust tracks the galaxy's shape (that only
+    // works with many small sprites, never a few big ones). Patch Size sets the LANE
+    // scale (structure), not the sprite pixels, so shape-following holds at any size
+    // and the sprites stay small (fast). The frag carves each into a wisp and, drawn
+    // last, they COVER the stars behind them in the dense cores.
+    float lane = dustLane(aPos);
+    if (uDustStrength > 0.0 && lane > 0.04 && gl_Position.w > 1e-4) {
+      vDust = lane;
+      vSeed = hash11(id * 9.1 + 4.0) * 20.0;
+      // WORLD-constant puff size, perspective-projected: a dust puff is a fixed
+      // fraction of the galaxy, so it shrinks with the galaxy as the camera pulls
+      // back. Coverage then stays the same at any distance — no dark central blob
+      // far away, no giant discs up close. (uProj[1][1] = 1/tan(fov/2). Note
+      // uDustInfluence is ~0.04× the galaxy radius, so the factor is >1.)
+      float worldR = uDustInfluence * 1.5;
+      float px = worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
+      gl_PointSize = clamp(px * (0.7 + 0.5 * lane), 3.0, 160.0) * ps;
     } else {
-      gl_PointSize = 0.0;   // cull non-dust particles in this pass
+      gl_PointSize = 0.0;   // not in a dust lane / behind camera
     }
   } else {
-    // Haze pass: wide faint sprite — overlaps into the continuous "milk".
-    gl_PointSize = clamp(24.0 * (0.7 + 0.6 * vMag), 12.0, 56.0) * ps;
+    // Haze pass = the unresolved-star field (RT parity): each point emits a wide,
+    // dim lobe; thousands overlap into a density-driven volumetric glow. Spread
+    // from uUnresolvedSize (like RT's su = 0.0013*uUnresolvedSize).
+    float spread = 0.3 + uUnresolvedSize * 0.03;   // default 32.4 → ~1.27
+    gl_PointSize = clamp(20.0 * (0.6 + 0.7 * vMag) * spread, 8.0, 160.0) * ps;
   }
 }

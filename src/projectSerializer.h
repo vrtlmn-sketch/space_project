@@ -99,10 +99,10 @@ struct SceneSettings {
   int   rtCloudPointCap{2000};
   // Dust
   float dustStrength{1.0f};
-  float dustReddening{1.63f};
-  float dustContrast{1.28f};
-  float dustCoverage{0.68f};
-  float dustClumpScale{6.69f};
+  float dustReddening{0.72f};
+  float dustContrast{1.0f};
+  float dustCoverage{0.30f};
+  float dustClumpScale{0.13f};
   float dustGlow{0.15f};
   float cineSSAA{1.5f};
   int   dustDetail{200};

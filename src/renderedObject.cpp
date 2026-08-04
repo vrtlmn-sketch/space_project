@@ -1009,7 +1009,7 @@ void RenderedObject::uploadRenderMode(int mode)
 }
 
 void RenderedObject::uploadDustParams(float strength, float reddening, float coverage,
-                                      float clumpScale, float influence, float glow)
+                                      float clumpScale, float influence, float contrast)
 {
   glUseProgram(program);
   GLint l;
@@ -1018,7 +1018,7 @@ void RenderedObject::uploadDustParams(float strength, float reddening, float cov
   l = glGetUniformLocation(program, "uDustCoverage");   if (l >= 0) glUniform1f(l, coverage);
   l = glGetUniformLocation(program, "uDustClumpScale"); if (l >= 0) glUniform1f(l, clumpScale);
   l = glGetUniformLocation(program, "uDustInfluence");  if (l >= 0) glUniform1f(l, influence);
-  l = glGetUniformLocation(program, "uDustGlow");       if (l >= 0) glUniform1f(l, glow);
+  l = glGetUniformLocation(program, "uDustContrast");   if (l >= 0) glUniform1f(l, contrast);
 }
 
 void RenderedObject::uploadNebulaScatterScale(float scale)
@@ -1275,6 +1275,12 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   {
     GLint psLoc = glGetUniformLocation(program, "uCinePixelScale");
     if (psLoc >= 0) glUniform1f(psLoc, cinePixelScale);
+    GLint hsLoc = glGetUniformLocation(program, "uUnresolvedStrength");
+    if (hsLoc >= 0) glUniform1f(hsLoc, cineHazeStrength);
+    GLint hzLoc = glGetUniformLocation(program, "uUnresolvedSize");
+    if (hzLoc >= 0) glUniform1f(hzLoc, cineHazeSpread);
+    GLint vhLoc = glGetUniformLocation(program, "uViewportH");
+    if (vhLoc >= 0) glUniform1f(vhLoc, (float)fbHeight);
   }
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
@@ -1294,16 +1300,19 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glDepthMask(GL_FALSE);
     GLint passLoc = glGetUniformLocation(program, "uCloudPass");
 
-    // Additive star field: haze then crisp cores.
+    // 1. Haze — the diffuse "gas" glow (density-driven from the star field).
     glBlendFunc(GL_ONE, GL_ONE);
     if (passLoc >= 0) glUniform1i(passLoc, 0);
     glDrawArrays(GL_POINTS, 0, bufferSize);
+
+    // 2. Star cores — the individual stars.
     if (passLoc >= 0) glUniform1i(passLoc, 1);
     glDrawArrays(GL_POINTS, 0, bufferSize);
 
-    // Dust extinction: multiplicative (darkens + reddens what's behind it).
-    // This alone is the dust cue — additive glow was lifting the black void to
-    // gray, so it's intentionally omitted.
+    // 3. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
+    //    glow behind it, like a real dark cloud. Many small, density-placed sprites
+    //    compound in the lanes into dark reddened clouds; thin dust just warms the
+    //    light so bright stars still show through the gaps.
     glBlendFunc(GL_ZERO, GL_SRC_COLOR);
     if (passLoc >= 0) glUniform1i(passLoc, 3);
     glDrawArrays(GL_POINTS, 0, bufferSize);

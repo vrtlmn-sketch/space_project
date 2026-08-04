@@ -4,12 +4,35 @@ out vec4 FragColor;
 uniform float uTemperature; // Kelvin (0 = default warm grey)
 uniform int   uRenderMode;  // 0 = Point, 1 = Nebula
 uniform int   uRealistic;   // 0 = nav look, 1 = Cinematic Performant (HDR, RT-like)
-uniform int   uCloudPass;   // 0 = haze, 1 = core, 2 = dust glow, 3 = dust extinction
+uniform int   uCloudPass;   // 0 = haze, 1 = core, 3 = dust (reddened extinction)
 uniform float uDustReddening;
+uniform float uDustStrength;       // overall dust amount (also gates in the vert)
+uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
 
 in vec3  vColor;            // per-particle blackbody colour (from cloudVert)
 in float vMag;              // per-particle magnitude 0..1
-in float vGlow;             // dust glow intensity (0 unless a dust sprite)
+in float vDust;             // dust density at this particle (0 = not dusty)
+in float vSeed;             // per-cloud seed → unique billowing FBM shape
+
+// 2D value-noise FBM — carves each dust sprite into a wispy cloud (soft edges),
+// so a big dust sprite is a sculpted cloud form, not a smooth disc.
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+float vnoise2(vec2 x) {
+    vec2 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i), b = hash21(i + vec2(1,0));
+    float c = hash21(i + vec2(0,1)), d = hash21(i + vec2(1,1));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+float fbm2(vec2 p) {
+    float s = 0.0, a = 0.5;
+    for (int i = 0; i < 4; i++) { s += a * vnoise2(p); p *= 2.03; a *= 0.5; }
+    return s / 0.9375;
+}
 
 vec3 blackbody(float T) {
     T = clamp(T, 1000.0, 40000.0);
@@ -26,42 +49,44 @@ vec3 blackbody(float T) {
 }
 
 void main() {
-    // ── Realistic HDR path (Cinematic Performant): two additive passes ──
-    // Pure-additive blended (GL_ONE). Core pass = tight bright dots (individual
-    // stars, clip to white via bloom). Haze pass = wide faint sprites that
-    // overlap into the continuous galactic "milk" (unresolved-star field).
+    // ── Realistic HDR path (Cinematic Performant) ──
     if (uRealistic != 0) {
         vec2  pc = gl_PointCoord * 2.0 - 1.0; // [-1,1]
         float r2 = dot(pc, pc);
         if (r2 > 1.0) discard;
 
         if (uCloudPass == 3) {
-            // Extinction: output per-channel transmittance, multiplied into the
-            // framebuffer (GL_ZERO, GL_SRC_COLOR). Blue absorbed more → reddening.
-            // Dominant dust cue: dense overlap compounds toward dark red.
-            float t = vGlow * 0.07 * exp(-r2 * 1.6);
-            vec3 trans = exp(-t * vec3(1.0, 1.0 + 0.6 * uDustReddening,
-                                            1.0 + 1.6 * uDustReddening));
-            FragColor = vec4(trans, 1.0);
+            // Carve this sprite with FBM (seeded per sprite) into a wisp with a
+            // soft edge — not a smooth disc. Many overlap into cloud volumes.
+            float env  = smoothstep(1.0, 0.1, r2);             // round envelope
+            float n    = fbm2(gl_PointCoord * 3.8 + vSeed);    // per-sprite billow
+            // Low floor → the noise carves the shape (irregular wisp), not the
+            // circle, so even an isolated puff never reads as a red disc.
+            float dens = smoothstep(0.34, 0.82, env * (0.18 + 0.95 * n));
+            if (dens <= 0.001) discard;
+
+            // Reddening-DOMINANT Beer-Lambert extinction, drawn OVER the stars
+            // (GL_ZERO, GL_SRC_COLOR). Thin dust just warms the light (tan→red) so
+            // stars still show; where sprites pile up in a lane, the optical depth
+            // grows until the dust COVERS the stars — a dark reddened cloud.
+            float t = vDust * dens * uDustStrength * 1.5;
+            vec3 dExt = vec3(1.0, 1.0 + 1.0 * uDustReddening, 1.0 + 2.6 * uDustReddening);
+            FragColor = vec4(exp(-t * dExt), 1.0);
             return;
         }
 
         vec3 c;
         if (uCloudPass == 1) {
-            // Softer, anti-aliased core: smooth Gaussian + a smoothstep edge fade
-            // across the outer sprite ring so motion doesn't make it flicker.
+            // Softer, anti-aliased core: smooth Gaussian + a smoothstep edge fade.
             float core  = exp(-r2 * 3.5);
             float edge  = smoothstep(1.0, 0.5, r2);
             float coreI = 0.30 + 3.5 * vMag;   // bright stars punch to white
             c = vColor * core * edge * coreI;
-        } else if (uCloudPass == 2) {
-            // Dust in-scatter: subtle warm wash (NOT bright balls). Kept faint and
-            // wide so it only tints, letting extinction be the dominant dust cue.
-            float blob = exp(-r2 * 0.9);
-            c = vColor * blob * vGlow * 0.25;
         } else {
+            // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.
+            // Thousands overlap → density-driven volumetric glow the dust carves into.
             float halo = exp(-r2 * 1.4);
-            c = vColor * halo * 0.05;          // faint; sums into smooth milk
+            c = vColor * halo * uUnresolvedStrength * 0.008;
         }
         FragColor = vec4(c, 1.0);
         return;

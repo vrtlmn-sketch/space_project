@@ -768,7 +768,7 @@ int main(int argc, char** argv) {
           c->renderedObject.uploadRenderMode(c->renderMode);
           c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                              renderer.dustCoverage, renderer.dustClumpScale,
-                                             renderer.dustInfluence, renderer.dustGlow);
+                                             renderer.dustInfluence, renderer.dustContrast);
           renderer.Draw(c->renderedObject);
         }
         for (auto& obj : physicsObjects)
@@ -820,7 +820,7 @@ int main(int argc, char** argv) {
         c->renderedObject.uploadRenderMode(c->renderMode);
         c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                            renderer.dustCoverage, renderer.dustClumpScale,
-                                           renderer.dustInfluence, renderer.dustGlow);
+                                           renderer.dustInfluence, renderer.dustContrast);
         renderer.Draw(c->renderedObject);
       }
       for (auto& obj : physicsObjects)
@@ -857,7 +857,7 @@ int main(int argc, char** argv) {
       c->renderedObject.uploadRenderMode(c->renderMode);
       c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                          renderer.dustCoverage, renderer.dustClumpScale,
-                                         renderer.dustInfluence, renderer.dustGlow);
+                                         renderer.dustInfluence, renderer.dustContrast);
       renderer.Draw(c->renderedObject);
     }
     for (auto& obj : physicsObjects)
