@@ -546,7 +546,7 @@ void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {

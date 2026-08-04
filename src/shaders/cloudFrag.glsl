@@ -3,6 +3,11 @@ out vec4 FragColor;
 
 uniform float uTemperature; // Kelvin (0 = default warm grey)
 uniform int   uRenderMode;  // 0 = Point, 1 = Nebula
+uniform int   uRealistic;   // 0 = nav look, 1 = Cinematic Performant (HDR, RT-like)
+uniform int   uCloudPass;   // 0 = haze (wide/dim), 1 = core (small/crisp)
+
+in vec3  vColor;            // per-particle blackbody colour (from cloudVert)
+in float vMag;              // per-particle magnitude 0..1
 
 vec3 blackbody(float T) {
     T = clamp(T, 1000.0, 40000.0);
@@ -19,6 +24,30 @@ vec3 blackbody(float T) {
 }
 
 void main() {
+    // ── Realistic HDR path (Cinematic Performant): two additive passes ──
+    // Pure-additive blended (GL_ONE). Core pass = tight bright dots (individual
+    // stars, clip to white via bloom). Haze pass = wide faint sprites that
+    // overlap into the continuous galactic "milk" (unresolved-star field).
+    if (uRealistic != 0) {
+        vec2  pc = gl_PointCoord * 2.0 - 1.0; // [-1,1]
+        float r2 = dot(pc, pc);
+        if (r2 > 1.0) discard;
+        vec3 c;
+        if (uCloudPass == 1) {
+            // Softer, anti-aliased core: smooth Gaussian + a smoothstep edge fade
+            // across the outer sprite ring so motion doesn't make it flicker.
+            float core  = exp(-r2 * 3.5);
+            float edge  = smoothstep(1.0, 0.5, r2);
+            float coreI = 0.30 + 3.5 * vMag;   // bright stars punch to white
+            c = vColor * core * edge * coreI;
+        } else {
+            float halo = exp(-r2 * 1.4);
+            c = vColor * halo * 0.035;         // faint; sums into smooth milk
+        }
+        FragColor = vec4(c, 1.0);
+        return;
+    }
+
     vec3 col;
     if (uTemperature > 100.0)
         col = blackbody(uTemperature);

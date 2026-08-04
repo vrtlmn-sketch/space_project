@@ -1206,12 +1206,34 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
   glUseProgram(program);
+  if (realisticUniform != (unsigned int)-1)
+    glUniform1i(realisticUniform, realisticShading ? 1 : 0);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
   // Check render mode: if nebula, enable blending and larger point sprites
   GLint curRenderMode = 0;
   if (renderModeUniform != (unsigned int)-1)
     glGetUniformiv(program, renderModeUniform, &curRenderMode);
+
+  if (realisticShading) {
+    // RT-like: pure-additive HDR glow, shader-controlled point size, no depth
+    // writes. Two passes: a wide faint HAZE (continuous milk) then tiny crisp
+    // CORES (individual stars).
+    glEnable(GL_PROGRAM_POINT_SIZE);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glDepthMask(GL_FALSE);
+    GLint passLoc = glGetUniformLocation(program, "uCloudPass");
+    if (passLoc >= 0) glUniform1i(passLoc, 0);   // haze
+    glDrawArrays(GL_POINTS, 0, bufferSize);
+    if (passLoc >= 0) glUniform1i(passLoc, 1);   // cores
+    glDrawArrays(GL_POINTS, 0, bufferSize);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_PROGRAM_POINT_SIZE);
+    hasBeenRendered = true;
+    return;
+  }
 
   if (curRenderMode == 1) {
     glEnable(GL_BLEND);
