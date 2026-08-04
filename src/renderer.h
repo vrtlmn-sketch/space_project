@@ -732,7 +732,7 @@ public:
   float  bloomThreshold{0.0f};  // brightness above which pixels bloom
 
   // ---- Spheremap background (rasterized + raytraced views) ----
-  bool   spheremapEnabled{true};
+  bool   spheremapEnabled{false};
   float  spheremapExposure{5.0f};
   char   spheremapPathBuf[256] = "assets/default_spheremap.hdr";
   GLuint skyboxTexID{0};  // set from main.cpp; sampled by RT compute shaders

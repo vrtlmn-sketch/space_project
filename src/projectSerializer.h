@@ -77,7 +77,7 @@ struct SceneSettings {
   float dopplerColorStr{1.0f};
 
   // Spheremap background (rasterized view)
-  bool        spheremapEnabled{true};
+  bool        spheremapEnabled{false};
   float       spheremapExposure{5.0f};
   std::string spheremapPath{"assets/default_spheremap.hdr"};
 

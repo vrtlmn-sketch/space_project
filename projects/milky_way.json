@@ -304,7 +304,7 @@
     "rtMaxSteps": 256,
     "simSpeed": 1.0,
     "sizeExagFactor": 750.0,
-    "spheremapEnabled": true,
+    "spheremapEnabled": false,
     "spheremapExposure": 5.0,
     "spheremapPath": "assets/default_spheremap.hdr"
   },

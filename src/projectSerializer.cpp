@@ -378,7 +378,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dopplerColorStr     = s.value("dopplerColorStr",     1.0f);
 
     // Spheremap
-    st.spheremapEnabled  = s.value("spheremapEnabled",  true);
+    st.spheremapEnabled  = s.value("spheremapEnabled",  false);
     st.spheremapExposure = s.value("spheremapExposure", 5.0f);
     st.spheremapPath     = s.value("spheremapPath",     std::string{"assets/default_spheremap.hdr"});
 
