@@ -20,6 +20,7 @@ uniform int       uHasTexture;
 uniform sampler2D uNormalMap;
 uniform int       uHasNormalMap;
 uniform float     uNormalStrength;   // relief scale (1 = as-authored)
+uniform int       uTwoSided;         // 1 = flip back-facing normals (free OBJ meshes); 0 = spheres
 uniform int       uRealistic;        // 0 = nav look (LDR), 1 = HDR PBR (Cinematic Performant)
 
 const float PI = 3.14159265359;
@@ -86,7 +87,7 @@ void main() {
   // Two-sided shading (matches the raytracer): faces whose normal points away
   // from the viewer — e.g. meshes with inward/inconsistent winding — get flipped
   // so they're lit rather than black. Sphere front faces already face the viewer.
-  if (dot(norm, viewDir) < 0.0) norm = -norm;
+  if (uTwoSided != 0 && dot(norm, viewDir) < 0.0) norm = -norm;
   if (uHasNormalMap != 0)
     norm = perturbNormal(norm, vPos, vTexCoord);
 

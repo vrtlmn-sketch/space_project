@@ -690,6 +690,12 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
 
   if (realisticUniform != (unsigned int)-1)
     glUniform1i(realisticUniform, realisticShading ? 1 : 0);
+  {
+    // Only free OBJ meshes need two-sided lighting; spheres don't — flipping
+    // their back-face normals lights the silhouette into a bright rim.
+    GLint tsLoc = glGetUniformLocation(program, "uTwoSided");
+    if (tsLoc >= 0) glUniform1i(tsLoc, freeMesh ? 1 : 0);
+  }
 
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
