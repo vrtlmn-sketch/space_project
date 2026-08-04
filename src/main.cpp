@@ -788,6 +788,9 @@ int main(int argc, char** argv) {
     for (auto& c : clouds) {
       c->renderedObject.uploadTemperature(c->temperature);
       c->renderedObject.uploadRenderMode(c->renderMode);
+      c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                         renderer.dustCoverage, renderer.dustClumpScale,
+                                         renderer.dustInfluence, renderer.dustGlow);
       renderer.Draw(c->renderedObject);
     }
     for (auto& obj : physicsObjects)

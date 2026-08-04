@@ -994,6 +994,19 @@ void RenderedObject::uploadRenderMode(int mode)
     glUniform1i(renderModeUniform, mode);
 }
 
+void RenderedObject::uploadDustParams(float strength, float reddening, float coverage,
+                                      float clumpScale, float influence, float glow)
+{
+  glUseProgram(program);
+  GLint l;
+  l = glGetUniformLocation(program, "uDustStrength");   if (l >= 0) glUniform1f(l, strength);
+  l = glGetUniformLocation(program, "uDustReddening");  if (l >= 0) glUniform1f(l, reddening);
+  l = glGetUniformLocation(program, "uDustCoverage");   if (l >= 0) glUniform1f(l, coverage);
+  l = glGetUniformLocation(program, "uDustClumpScale"); if (l >= 0) glUniform1f(l, clumpScale);
+  l = glGetUniformLocation(program, "uDustInfluence");  if (l >= 0) glUniform1f(l, influence);
+  l = glGetUniformLocation(program, "uDustGlow");       if (l >= 0) glUniform1f(l, glow);
+}
+
 void RenderedObject::uploadNebulaScatterScale(float scale)
 {
   cachedNebulaScatterScale = scale;
@@ -1221,13 +1234,23 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     // CORES (individual stars).
     glEnable(GL_PROGRAM_POINT_SIZE);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE);
     glDepthMask(GL_FALSE);
     GLint passLoc = glGetUniformLocation(program, "uCloudPass");
-    if (passLoc >= 0) glUniform1i(passLoc, 0);   // haze
+
+    // Additive star field: haze then crisp cores.
+    glBlendFunc(GL_ONE, GL_ONE);
+    if (passLoc >= 0) glUniform1i(passLoc, 0);
     glDrawArrays(GL_POINTS, 0, bufferSize);
-    if (passLoc >= 0) glUniform1i(passLoc, 1);   // cores
+    if (passLoc >= 0) glUniform1i(passLoc, 1);
     glDrawArrays(GL_POINTS, 0, bufferSize);
+
+    // Dust extinction: multiplicative (darkens + reddens what's behind it).
+    // This alone is the dust cue — additive glow was lifting the black void to
+    // gray, so it's intentionally omitted.
+    glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+    if (passLoc >= 0) glUniform1i(passLoc, 3);
+    glDrawArrays(GL_POINTS, 0, bufferSize);
+
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
     glDisable(GL_PROGRAM_POINT_SIZE);
