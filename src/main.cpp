@@ -304,6 +304,8 @@ int main(int argc, char** argv) {
     renderer.spikeChroma        = s.spikeChroma;
     renderer.unresolvedStrength = s.unresolvedStrength;
     renderer.unresolvedSize     = s.unresolvedSize;
+    renderer.resolvedCut        = s.resolvedCut;
+    renderer.gasStrength        = s.gasStrength;
     RenderedObject::rtCloudPointCap = s.rtCloudPointCap;
     renderer.dustStrength       = s.dustStrength;
     renderer.dustReddening      = s.dustReddening;
@@ -389,6 +391,8 @@ int main(int argc, char** argv) {
     s.spikeChroma        = renderer.spikeChroma;
     s.unresolvedStrength = renderer.unresolvedStrength;
     s.unresolvedSize     = renderer.unresolvedSize;
+    s.resolvedCut        = renderer.resolvedCut;
+    s.gasStrength        = renderer.gasStrength;
     s.rtCloudPointCap    = RenderedObject::rtCloudPointCap;
     s.dustStrength       = renderer.dustStrength;
     s.dustReddening      = renderer.dustReddening;

@@ -502,6 +502,8 @@ public:
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
   float unresolvedStrength{6.83f};// unresolved-star field brightness (0 = off)
   float unresolvedSize{32.4f};   // unresolved lobe angular width (x fixed PSF floor)
+  float resolvedCut{0.6f};       // only stars brighter than this draw as sharp cores
+  float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)
   float dustStrength{1.0f};     // dust extinction amount (0 = off)
   float dustInfluence{1.0f};     // world-space dust radius, set from the cloud bounds
   float dustReddening{0.72f};    // wavelength tilt (blue absorbed more than red)

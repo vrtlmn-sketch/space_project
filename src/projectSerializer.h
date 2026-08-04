@@ -105,6 +105,8 @@ struct SceneSettings {
   // Unresolved-star haze + resolved-point density
   float unresolvedStrength{6.83f};
   float unresolvedSize{32.4f};
+  float resolvedCut{0.6f};
+  float gasStrength{0.5f};
   int   rtCloudPointCap{2000};
   // Dust
   float dustStrength{1.0f};

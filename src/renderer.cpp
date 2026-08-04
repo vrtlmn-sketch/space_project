@@ -546,7 +546,7 @@ void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
@@ -2829,6 +2829,15 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::TextDisabled("Smooth glow from stars too dense to resolve as points.");
   norm01("Brightness", "##unrstr",  &unresolvedStrength, 0.0f, 10.0f,  true);
   norm01("Spread",     "##unrsize", &unresolvedSize,     1.0f, 100.0f, true);
+  norm01("Resolved",   "##rescut",  &resolvedCut,        0.0f, 1.0f,   true);
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("How many stars resolve as sharp points. Higher = fewer sharp\n"
+                      "stars, more unresolved glow (real telescope look).");
+
+  ImGui::Spacing();
+  ImGui::SeparatorText("Nebula Gas");
+  ImGui::TextDisabled("Glowing emission gas near hot young stars.");
+  norm01("Amount##gas", "##gasstr", &gasStrength, 0.0f, 2.0f, true);
 
   ImGui::Spacing();
   ImGui::Text("Star Points");

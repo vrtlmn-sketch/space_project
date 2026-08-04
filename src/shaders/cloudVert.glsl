@@ -15,6 +15,8 @@ uniform float uCinePixelScale; // point-size scale so sprites keep apparent size
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
 uniform float uUnresolvedSize;     // star-haze spread (RT parity)
 uniform float uViewportH;          // framebuffer height (px) → perspective dust sizing
+uniform float uResolvedCut;        // only stars brighter than this draw as sharp cores
+uniform float uGasStrength;        // glowing-gas emission near hot stars (0 = off)
 
 // One unified dust system: a filamentary density field (FBM over galaxy-local
 // position) rendered as reddened Beer-Lambert extinction. Thin dust warms the
@@ -30,6 +32,7 @@ out vec3  vColor;   // per-particle blackbody colour (stars)
 out float vMag;     // per-particle magnitude (0..1, log-ish)
 out float vDust;    // dust density at this particle (0 = not dusty)
 out float vSeed;    // per-dust-cloud seed → unique billowing FBM shape in the frag
+out float vHot;     // 1 = hot blue star (seeds glowing gas)
 
 float hash11(float p) {
   p = fract(p * 0.1031);
@@ -92,12 +95,19 @@ void main() {
   gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
 
   float id = float(gl_VertexID);
-  float h1 = hash11(id * 1.7 + 0.3);
-  float h2 = hash11(id * 3.1 + 11.0);
+  float h1 = hash11(id * 1.7 + 0.3);    // temperature selector
+  float h2 = hash11(id * 3.1 + 11.0);   // luminosity selector
 
-  float baseT = (uTemperature > 100.0) ? uTemperature : 5200.0;
-  vColor = blackbody(baseT * (0.75 + 0.5 * h1));
-  vMag   = pow(h2, 2.2);
+  float baseT = (uTemperature > 100.0) ? uTemperature : 5000.0;
+  // Broad, realistic stellar colours: mostly cool (orange/red), a hot blue-white
+  // minority (young stars). pow() skews the population toward the cool end so the
+  // field spans red → orange → yellow → white → blue instead of one warm band.
+  float T = (2600.0 + 27000.0 * pow(h1, 3.5)) * (baseT / 5000.0);
+  vColor = blackbody(T);
+  vHot   = smoothstep(9000.0, 18000.0, T);   // hot blue stars seed glowing gas
+  // Luminosity function: many faint, few bright (steep power law) → the field is
+  // dominated by faint stars that blend into haze, not equal-brightness sparkles.
+  vMag   = pow(h2, 3.0);
   vDust  = 0.0;
 
   if (uRealistic == 0) {
@@ -108,8 +118,26 @@ void main() {
   float ps = (uCinePixelScale > 0.0) ? uCinePixelScale : 1.0;  // SSAA point-size scale
 
   if (uCloudPass == 1) {
-    // Core pass: brightness reads as size; bright stars bigger & softer (corona).
-    gl_PointSize = clamp(3.0 + 5.0 * vMag, 3.0, 11.0) * ps;
+    // Core pass: ONLY resolved (bright) stars draw as sharp points; the faint
+    // majority is left to the haze, so dense regions read as smooth unresolved
+    // light instead of a continuous carpet of equal sparkles.
+    if (vMag < uResolvedCut) gl_PointSize = 0.0;
+    else gl_PointSize = clamp(3.0 + 7.0 * vMag, 3.0, 13.0) * ps;
+  } else if (uCloudPass == 4) {
+    // Glowing gas: only hot young stars seed emission nebulosity. Large soft
+    // sprite (perspective-sized like dust), FBM-carved into filaments in the frag,
+    // so the gas sits in the galaxy near its hot star-forming regions.
+    // Gate tighter (hotter + brighter) so only prominent HII regions draw, and
+    // cap the sprite smaller — overdraw scales with area, so this is most of the
+    // perf win with little visible change.
+    if (uGasStrength > 0.0 && vHot > 0.22 && vMag > 0.40 && gl_Position.w > 1e-4) {
+      vSeed = hash11(id * 12.3 + 5.0) * 20.0;
+      float worldR = uDustInfluence * 2.0;
+      float px = worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
+      gl_PointSize = clamp(px, 6.0, 150.0) * ps;
+    } else {
+      gl_PointSize = 0.0;
+    }
   } else if (uCloudPass == 3) {
     // Every star sitting in a dust lane carries a SMALL cloud sprite. Many of them
     // overlap where stars are dense → the dust tracks the galaxy's shape (that only

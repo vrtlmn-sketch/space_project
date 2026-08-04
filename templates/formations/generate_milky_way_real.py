@@ -53,35 +53,58 @@ DESC           = ("Spiral galaxy at REAL scale: 50,000 ly disc radius in AU unit
                   "inside the disc at 26,000 ly. Flat rotation curve ~46 AU/yr. 20K particles.")
 
 
+# ── Star clusters / OB associations (localized knots along the arms) ──────────
+CLUSTER_FRAC   = 0.18                 # fraction of stars bound into clusters
+NUM_CLUSTERS   = 60
+CLUSTER_SPREAD = 0.15 * H_SCALE       # cluster radius (AU)
+
+
+def _field_position():
+    """Sample one disk position (r, theta): two-component profile + spiral arms."""
+    h = EXT_SCALE if random.random() < EXT_FRAC else H_SCALE
+    while True:
+        r = -h * (math.log(random.random()) + math.log(random.random()))
+        if r <= R_MAX:
+            break
+    theta = random.uniform(0, 2 * math.pi)
+    if ARM_STRENGTH > 0:
+        wind = math.log(r / R_WIND + 0.01) * 2.5
+        best_arm_dist = min(
+            abs(((theta - 2 * math.pi * k / NUM_ARMS - wind) + math.pi) % (2 * math.pi) - math.pi)
+            for k in range(NUM_ARMS)
+        )
+        arm_weight = math.exp(-0.5 * (best_arm_dist / ARM_SPREAD) ** 2)
+        if random.random() > (1 - ARM_STRENGTH) + ARM_STRENGTH * arm_weight:
+            nearest_arm = min(range(NUM_ARMS),
+                key=lambda k: abs(((theta - 2*math.pi*k/NUM_ARMS - wind) + math.pi) % (2*math.pi) - math.pi))
+            target = 2 * math.pi * nearest_arm / NUM_ARMS + wind
+            theta = target + random.gauss(0, ARM_SPREAD * 0.5)
+    return r, theta
+
+
 def generate_particles(num_particles, seed=SEED):
     random.seed(seed)
     particles = []
+    # Cluster centres sit on the same arm-modulated disk, so the knots are tied to
+    # the galaxy's structure (star-forming regions), not scattered at random.
+    clusters = []
+    for _ in range(NUM_CLUSTERS):
+        cr, ct = _field_position()
+        clusters.append((cr * math.cos(ct), cr * math.sin(ct)))
+
     for _ in range(num_particles):
-        # Two-component exponential disk: a concentrated inner/bulge component plus
-        # an extended outer disk, each r ~ Gamma(2, H), truncated at R_MAX.
-        h = EXT_SCALE if random.random() < EXT_FRAC else H_SCALE
-        while True:
-            r = -h * (math.log(random.random()) + math.log(random.random()))
-            if r <= R_MAX:
-                break
-
-        theta = random.uniform(0, 2 * math.pi)
-
-        if ARM_STRENGTH > 0:
-            wind = math.log(r / R_WIND + 0.01) * 2.5
-            best_arm_dist = min(
-                abs(((theta - 2 * math.pi * k / NUM_ARMS - wind) + math.pi) % (2 * math.pi) - math.pi)
-                for k in range(NUM_ARMS)
-            )
-            arm_weight = math.exp(-0.5 * (best_arm_dist / ARM_SPREAD) ** 2)
-            if random.random() > (1 - ARM_STRENGTH) + ARM_STRENGTH * arm_weight:
-                nearest_arm = min(range(NUM_ARMS),
-                    key=lambda k: abs(((theta - 2*math.pi*k/NUM_ARMS - wind) + math.pi) % (2*math.pi) - math.pi))
-                target = 2 * math.pi * nearest_arm / NUM_ARMS + wind
-                theta = target + random.gauss(0, ARM_SPREAD * 0.5)
-
-        x = r * math.cos(theta)
-        z = r * math.sin(theta)
+        # Most stars fill the disk; a fraction condense into compact clusters so
+        # dense knots read as localized groups instead of continuous glitter.
+        if clusters and random.random() < CLUSTER_FRAC:
+            cx, cz = random.choice(clusters)
+            x = cx + random.gauss(0, CLUSTER_SPREAD)
+            z = cz + random.gauss(0, CLUSTER_SPREAD)
+            r = math.hypot(x, z)
+            theta = math.atan2(z, x)
+        else:
+            r, theta = _field_position()
+            x = r * math.cos(theta)
+            z = r * math.sin(theta)
         y = random.gauss(0, DISK_HEIGHT * (1 + 0.5 * (r / R_MAX)))
 
         # Flat rotation curve that rises through the core: v = V_FLAT * r/(r+R_CORE)

@@ -1331,6 +1331,10 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (hzLoc >= 0) glUniform1f(hzLoc, cineHazeSpread);
     GLint vhLoc = glGetUniformLocation(program, "uViewportH");
     if (vhLoc >= 0) glUniform1f(vhLoc, (float)fbHeight);
+    GLint rcLoc = glGetUniformLocation(program, "uResolvedCut");
+    if (rcLoc >= 0) glUniform1f(rcLoc, cineResolvedCut);
+    GLint gsLoc = glGetUniformLocation(program, "uGasStrength");
+    if (gsLoc >= 0) glUniform1f(gsLoc, cineGasStrength);
   }
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
@@ -1355,7 +1359,13 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (passLoc >= 0) glUniform1i(passLoc, 0);
     glDrawArrays(GL_POINTS, 0, bufferSize);
 
-    // 2. Star cores — the individual stars.
+    // 2. Glowing gas — emission nebulosity near hot young stars (additive).
+    if (cineGasStrength > 0.0f) {
+      if (passLoc >= 0) glUniform1i(passLoc, 4);
+      glDrawArrays(GL_POINTS, 0, bufferSize);
+    }
+
+    // 3. Star cores — the resolved (bright) individual stars only.
     if (passLoc >= 0) glUniform1i(passLoc, 1);
     glDrawArrays(GL_POINTS, 0, bufferSize);
 

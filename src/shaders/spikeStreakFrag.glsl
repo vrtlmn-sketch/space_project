@@ -14,7 +14,7 @@ uniform float uDecay;        // brightness falloff along the spike
 uniform float uSecondary;    // faint secondary (horizontal) spike pair (0 = off)
 uniform float uChroma;       // chromatic tint toward the spike tips (0 = white)
 
-const int   K      = 24;     // taps per spike
+const int   K      = 18;     // taps per spike (was 24; trimmed for perf)
 const float TWO_PI = 6.28318530718;
 
 // Accumulate one fan of `count` spikes spaced evenly around `base`.

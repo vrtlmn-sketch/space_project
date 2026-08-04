@@ -107,6 +107,8 @@ public:
   float cinePixelScale{1.0f};    // point-size scale so sprites keep apparent size under SSAA
   float cineHazeStrength{6.83f}; // unresolved-star haze brightness (RT Star Haze → Brightness)
   float cineHazeSpread{32.4f};   // unresolved-star haze spread (RT Star Haze → Spread)
+  float cineResolvedCut{0.6f};   // brightness cutoff: only brighter stars draw as sharp cores
+  float cineGasStrength{0.5f};   // glowing-gas emission brightness (0 = off)
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
   float rtAtmoFalloff{4.0f};

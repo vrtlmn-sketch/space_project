@@ -8,11 +8,13 @@ uniform int   uCloudPass;   // 0 = haze, 1 = core, 3 = dust (reddened extinction
 uniform float uDustReddening;
 uniform float uDustStrength;       // overall dust amount (also gates in the vert)
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
+uniform float uGasStrength;        // glowing-gas emission brightness
 
 in vec3  vColor;            // per-particle blackbody colour (from cloudVert)
 in float vMag;              // per-particle magnitude 0..1
 in float vDust;             // dust density at this particle (0 = not dusty)
 in float vSeed;             // per-cloud seed → unique billowing FBM shape
+in float vHot;              // 1 = hot blue star
 
 // 2D value-noise FBM — carves each dust sprite into a wispy cloud (soft edges),
 // so a big dust sprite is a sculpted cloud form, not a smooth disc.
@@ -28,10 +30,13 @@ float vnoise2(vec2 x) {
     float c = hash21(i + vec2(0,1)), d = hash21(i + vec2(1,1));
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
-float fbm2(vec2 p) {
+float fbm2(vec2 p) {   // 3 octaves — dust carving (down from 4; imperceptible, cheaper)
     float s = 0.0, a = 0.5;
-    for (int i = 0; i < 4; i++) { s += a * vnoise2(p); p *= 2.03; a *= 0.5; }
-    return s / 0.9375;
+    for (int i = 0; i < 3; i++) { s += a * vnoise2(p); p *= 2.03; a *= 0.5; }
+    return s / 0.875;
+}
+float fbm2_lite(vec2 p) {   // 2 octaves — soft gas, where fine detail doesn't read
+    return (vnoise2(p) + 0.5 * vnoise2(p * 2.03)) / 1.5;
 }
 
 vec3 blackbody(float T) {
@@ -71,7 +76,24 @@ void main() {
             // grows until the dust COVERS the stars — a dark reddened cloud.
             float t = vDust * dens * uDustStrength * 1.5;
             vec3 dExt = vec3(1.0, 1.0 + 1.0 * uDustReddening, 1.0 + 2.6 * uDustReddening);
-            FragColor = vec4(exp(-t * dExt), 1.0);
+            // Reddish floor so even the densest, most-overlapped dust reads as a
+            // deep red-brown lane (reddened light blocked by dust) rather than a
+            // pure-black "hole"/burn-mark. Red passes most, blue least.
+            vec3 trans = max(exp(-t * dExt), vec3(0.10, 0.035, 0.02));
+            FragColor = vec4(trans, 1.0);
+            return;
+        }
+
+        if (uCloudPass == 4) {
+            // Glowing gas (emission nebula) near hot young stars: FBM-carved
+            // filaments, additive. H-alpha pink/red with a cooler blue hint from
+            // the ionising star — brightest where hot stars cluster.
+            float env  = smoothstep(1.0, 0.05, r2);
+            float n    = fbm2_lite(gl_PointCoord * 3.0 + vSeed);
+            float dens = smoothstep(0.30, 0.90, env * (0.22 + 0.9 * n));
+            if (dens <= 0.001) discard;
+            vec3 gasCol = mix(vec3(1.0, 0.30, 0.45), vec3(0.45, 0.6, 1.0), 0.25 * vHot);
+            FragColor = vec4(gasCol * dens * uGasStrength * 0.02, 1.0);
             return;
         }
 

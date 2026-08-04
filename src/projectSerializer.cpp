@@ -180,6 +180,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["spikeChroma"]       = settings.spikeChroma;
     s["unresolvedStrength"] = settings.unresolvedStrength;
     s["unresolvedSize"]    = settings.unresolvedSize;
+    s["resolvedCut"]       = settings.resolvedCut;
+    s["gasStrength"]       = settings.gasStrength;
     s["rtCloudPointCap"]   = settings.rtCloudPointCap;
     s["dustStrength"]      = settings.dustStrength;
     s["dustReddening"]     = settings.dustReddening;
@@ -412,6 +414,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.spikeChroma        = s.value("spikeChroma",        0.65f);
     st.unresolvedStrength = s.value("unresolvedStrength", 6.83f);
     st.unresolvedSize     = s.value("unresolvedSize",     32.4f);
+    st.resolvedCut        = s.value("resolvedCut",        0.6f);
+    st.gasStrength        = s.value("gasStrength",        0.5f);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
     st.dustStrength       = s.value("dustStrength",       1.0f);
     st.dustReddening      = s.value("dustReddening",      0.72f);
