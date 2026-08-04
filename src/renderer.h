@@ -385,6 +385,15 @@ private:
   void   CineBeginIfActive(GLuint realTargetFBO, int w, int h);
   void   CineResolveIfActive();
 
+  // ── Performant-cinematic capture (screenshots + video of the raster view) ──
+  // A viewport-sized HDR FBO the raster scene is drawn into off-screen, then
+  // post-processed and read back (mirrors the RT recOutputTex path).
+  GLuint recRasterFBO{0}, recRasterColorTex{0}, recRasterDepthRBO{0};
+  int    recRasterW{0}, recRasterH{0};
+  GLint  recSavedDrawFBO{0};
+  int    recSavedVp[4]{0, 0, 0, 0};
+  void   EnsureRecRasterFBO(int w, int h);
+
   // ---- CLI panel state (placeholder feature) ----
   char cliInputBuf[256] = "";
   std::vector<std::string> cliLog;
@@ -670,6 +679,13 @@ public:
   void StopRecording();
   bool IsRecording() const { return recording; }
   void DispatchAndCaptureRecordingFrame();   // dispatch compute at recording resolution + capture
+
+  // Performant-cinematic capture (rasterized screenshots + video), driven from main loop
+  bool rasterSnapRequested{false};           // set by the Snap button in Performant mode
+  void BeginRecordRaster(int w, int h);      // save GL state, bind the record FBO, clear
+  void EndRecordRaster();                    // restore the saved draw FBO + viewport
+  void CaptureRecordRasterVideo(int w, int h); // post + readback → ffmpeg (one video frame)
+  void CaptureRecordRasterImage(int w, int h); // post + readback → image file (screenshot)
 
   // Public spawn/grid forms (accessed from main.cpp)
   SpawnFormState spawnForm{};

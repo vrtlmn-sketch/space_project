@@ -2999,7 +2999,10 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::Text("Screenshot Path");
   ImGui::SetNextItemWidth(-1);
   ImGui::InputText("##imgf2", imagePathBuf, sizeof(imagePathBuf));
-  if (ImGui::Button("Snap", ImVec2(-1, 0))) CaptureImage();
+  if (ImGui::Button("Snap", ImVec2(-1, 0))) {
+    if (cinematicViewEnabled && cinematicRaster) rasterSnapRequested = true; // main loop renders + saves
+    else CaptureImage();                                                     // RT snapshot
+  }
 
   ImGui::Spacing();
   ImGui::Separator();
@@ -4857,8 +4860,9 @@ void Renderer::UnbindViewportFBO() {
 void Renderer::BeginRecordCamera() {
   recSavedRayTracerView = rayTracerView;
   recSavedRealisticRasterView = realisticRasterView;
-  rayTracerView = true;
-  realisticRasterView = false;
+  // Performant records the rasterizer; Realistic records the raytracer.
+  if (cinematicRaster) { rayTracerView = false; realisticRasterView = true;  }
+  else                 { rayTracerView = true;  realisticRasterView = false; }
   cinematicBlank = false;
   recCamActive = false;
   if (secondaryCameraSource >= 0 && secondaryCameraSource < (int)sceneCameras.size()) {
@@ -5809,6 +5813,12 @@ void Renderer::BlitRaytracerToScreen() {
 void Renderer::StartRecording() {
   if (recording) return;
 
+  // Performant cinematic records at the on-screen viewport resolution.
+  if (cinematicRaster) {
+    if (sceneRenderW > 0) recordWidth  = sceneRenderW;
+    if (sceneRenderH > 0) recordHeight = sceneRenderH;
+  }
+
   // Ensure even dimensions (x264 requires it)
   int w = recordWidth  & ~1;
   int h = recordHeight & ~1;
@@ -5840,10 +5850,10 @@ void Renderer::StartRecording() {
   recFrameStripY = -1;
   recFrameActive = false;
 
-  // Disable vsync during recording — each recording frame spans many app ticks
-  // (one strip per tick) and vsync would add 16.7ms per tick at 60Hz, making a
-  // 270-strip 1080p frame ~4.5 seconds slower from waiting alone.
-  glfwSwapInterval(0);
+  // RT assembles each frame over many ticks (one strip/tick), so vsync would add
+  // huge per-tick waits — disable it. The raster path captures a whole frame per
+  // tick, so keep vsync to cap the capture rate (avoids an uncapped, fast video).
+  if (!cinematicRaster) glfwSwapInterval(0);
 
   // Reset bench recording accumulators
   bench.recDispatchTotal = 0.0;
@@ -5935,6 +5945,108 @@ void Renderer::CaptureFrame(int w, int h) {
 
   fwrite(pixelBuffer.data(), 1, pixelBuffer.size(), ffmpegPipe);
   recordedFrames++;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Performant-cinematic capture: screenshots + video of the rasterized view
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::EnsureRecRasterFBO(int w, int h) {
+  if (w == recRasterW && h == recRasterH && recRasterFBO) return;
+  if (recRasterFBO)      { glDeleteFramebuffers(1, &recRasterFBO);      recRasterFBO = 0; }
+  if (recRasterColorTex) { glDeleteTextures(1, &recRasterColorTex);     recRasterColorTex = 0; }
+  if (recRasterDepthRBO) { glDeleteRenderbuffers(1, &recRasterDepthRBO); recRasterDepthRBO = 0; }
+  recRasterW = w; recRasterH = h;
+  glGenFramebuffers(1, &recRasterFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, recRasterFBO);
+  glGenTextures(1, &recRasterColorTex);
+  glBindTexture(GL_TEXTURE_2D, recRasterColorTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, recRasterColorTex, 0);
+  glGenRenderbuffers(1, &recRasterDepthRBO);
+  glBindRenderbuffer(GL_RENDERBUFFER, recRasterDepthRBO);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, recRasterDepthRBO);
+  GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (st != GL_FRAMEBUFFER_COMPLETE)
+    std::cerr << "[recRaster] FBO incomplete: 0x" << std::hex << st << std::dec << "\n";
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void Renderer::BeginRecordRaster(int w, int h) {
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &recSavedDrawFBO);
+  glGetIntegerv(GL_VIEWPORT, recSavedVp);
+  EnsureRecRasterFBO(w, h);
+  glBindFramebuffer(GL_FRAMEBUFFER, recRasterFBO);
+  glViewport(0, 0, w, h);
+  fbWidth = w; fbHeight = h;                 // projection aspect for the record draw
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+void Renderer::EndRecordRaster() {
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)recSavedDrawFBO);
+  glViewport(recSavedVp[0], recSavedVp[1], recSavedVp[2], recSavedVp[3]);
+  fbWidth = recSavedVp[2]; fbHeight = recSavedVp[3];
+}
+
+// Shared: post-process recRasterColorTex to LDR and read it back (flipped) into dst.
+static void flipRows(uint8_t* p, int w, int h) {
+  int rb = w * 4; std::vector<uint8_t> tmp((size_t)rb);
+  for (int y = 0; y < h / 2; y++) {
+    uint8_t* t = p + (size_t)y * rb;
+    uint8_t* b = p + (size_t)(h - 1 - y) * rb;
+    std::memcpy(tmp.data(), t, rb); std::memcpy(t, b, rb); std::memcpy(b, tmp.data(), rb);
+  }
+}
+
+void Renderer::CaptureRecordRasterVideo(int w, int h) {
+  if (!recording || !ffmpegPipe) return;
+  if ((int)pixelBuffer.size() != w * h * 4) pixelBuffer.resize((size_t)w * h * 4);
+  glFinish();
+  EnsureRecLdr(w, h);
+  glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
+  glViewport(0, 0, w, h);
+  RunPostProcess(recRasterColorTex, w, h);   // bloom + ACES
+  glFinish();
+  glBindTexture(GL_TEXTURE_2D, recLdrTex);
+  glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
+  flipRows(pixelBuffer.data(), w, h);
+  fwrite(pixelBuffer.data(), 1, pixelBuffer.size(), ffmpegPipe);
+  recordedFrames++;
+}
+
+void Renderer::CaptureRecordRasterImage(int w, int h) {
+  glFinish();
+  std::vector<uint8_t> pixels((size_t)w * h * 4);
+  EnsureRecLdr(w, h);
+  glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
+  glViewport(0, 0, w, h);
+  RunPostProcess(recRasterColorTex, w, h);
+  glFinish();
+  glBindTexture(GL_TEXTURE_2D, recLdrTex);
+  glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+  flipRows(pixels.data(), w, h);
+
+  char cmd[512];
+  std::snprintf(cmd, sizeof(cmd),
+    "ffmpeg -y -f rawvideo -pix_fmt rgba -s %dx%d -i - "
+    "-frames:v 1 -update 1 \"%s\" 2>/dev/null", w, h, imagePathBuf);
+  FILE* pipe = popen(cmd, "w");
+  if (!pipe) { std::cerr << "[IMG] Failed to open ffmpeg pipe\n"; return; }
+  fwrite(pixels.data(), 1, pixels.size(), pipe);
+  pclose(pipe);
+  std::cout << "[IMG] Saved: " << imagePathBuf << " (" << w << "x" << h << ")\n";
+
+  if (projectImageBuf[0] == '\0') {
+    std::strncpy(projectImageBuf, imagePathBuf, sizeof(projectImageBuf) - 1);
+    projectImageBuf[sizeof(projectImageBuf) - 1] = '\0';
+  }
+  showImgSavedDialog = true;
+  std::snprintf(imgSavedPath, sizeof(imgSavedPath), "%s (%dx%d)", imagePathBuf, w, h);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

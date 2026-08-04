@@ -741,11 +741,65 @@ int main(int argc, char** argv) {
     // camera) as an RT frame, independent of the primary view. Re-accumulate
     // the RT objects from that camera each tick (they are camera-relative).
     if (renderer.IsRecording() && renderer.cinematicViewEnabled) {
-      renderer.BeginRecordCamera();  // sets rayTracerView + record camera transform
-      renderer.rayTracedObjects.clear();
-      renderer.rtDopplerObjects.clear();
-      renderer.rtTriangles.clear();   // re-accumulate mesh data for the record camera
-      renderer.rtNodes.clear();
+      renderer.BeginRecordCamera();  // record camera transform + view flags (RT or raster)
+      if (renderer.cinematicRaster) {
+        // Performant: rasterize the scene from the record camera off-screen, then
+        // post + capture. Single pass (no strips) — records in real time.
+        int rw = renderer.GetRecordWidth(), rh = renderer.GetRecordHeight();
+        renderer.BeginRecordRaster(rw, rh);
+        renderer.DrawSkybox(skybox);
+        for (int i = 0; i < (int)physicsObjects.size(); i++) {
+          float objType = RtObjectType(physicsObjects[i].shaderType);
+          renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
+                                     physicsObjects[i].data.mass,
+                                     physicsObjects[i].temperature, objType,
+                                     physicsObjects[i].data.velocity,
+                                     physicsObjects[i].data.color);
+        }
+        for (auto& c : clouds) {
+          c->renderedObject.uploadTemperature(c->temperature);
+          c->renderedObject.uploadRenderMode(c->renderMode);
+          c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                             renderer.dustCoverage, renderer.dustClumpScale,
+                                             renderer.dustInfluence, renderer.dustGlow);
+          renderer.Draw(c->renderedObject);
+        }
+        for (auto& obj : physicsObjects)
+          renderer.DrawAtmosphere(obj);
+        renderer.CaptureRecordRasterVideo(rw, rh);
+        renderer.EndRecordRaster();
+      } else {
+        // Realistic: RT accumulation + compute dispatch (strip-assembled).
+        renderer.rayTracedObjects.clear();
+        renderer.rtDopplerObjects.clear();
+        renderer.rtTriangles.clear();   // re-accumulate mesh data for the record camera
+        renderer.rtNodes.clear();
+        for (int i = 0; i < (int)physicsObjects.size(); i++) {
+          float objType = RtObjectType(physicsObjects[i].shaderType);
+          renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
+                                     physicsObjects[i].data.mass,
+                                     physicsObjects[i].temperature, objType,
+                                     physicsObjects[i].data.velocity,
+                                     physicsObjects[i].data.color);
+        }
+        for (auto& c : clouds) {
+          c->renderedObject.uploadTemperature(c->temperature);
+          c->renderedObject.uploadRenderMode(c->renderMode);
+          renderer.Draw(c->renderedObject);
+        }
+        renderer.DispatchAndCaptureRecordingFrame();
+      }
+      renderer.EndRecordCamera();
+    }
+
+    // ── Screenshot of the Performant cinematic view (from the current camera) ──
+    if (renderer.rasterSnapRequested) {
+      renderer.rasterSnapRequested = false;
+      bool sRt = renderer.rayTracerView, sRR = renderer.realisticRasterView;
+      renderer.rayTracerView = false; renderer.realisticRasterView = true;
+      int rw = renderer.GetFbWidth(), rh = renderer.GetFbHeight();
+      renderer.BeginRecordRaster(rw, rh);
+      renderer.DrawSkybox(skybox);
       for (int i = 0; i < (int)physicsObjects.size(); i++) {
         float objType = RtObjectType(physicsObjects[i].shaderType);
         renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
@@ -757,10 +811,16 @@ int main(int argc, char** argv) {
       for (auto& c : clouds) {
         c->renderedObject.uploadTemperature(c->temperature);
         c->renderedObject.uploadRenderMode(c->renderMode);
+        c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                           renderer.dustCoverage, renderer.dustClumpScale,
+                                           renderer.dustInfluence, renderer.dustGlow);
         renderer.Draw(c->renderedObject);
       }
-      renderer.DispatchAndCaptureRecordingFrame();
-      renderer.EndRecordCamera();
+      for (auto& obj : physicsObjects)
+        renderer.DrawAtmosphere(obj);
+      renderer.CaptureRecordRasterImage(rw, rh);
+      renderer.EndRecordRaster();
+      renderer.rayTracerView = sRt; renderer.realisticRasterView = sRR;
     }
 
     // Unbind the editor viewport FBO before the secondary pass and UI
