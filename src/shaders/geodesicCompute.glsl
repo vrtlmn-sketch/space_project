@@ -333,6 +333,8 @@ uniform float uDustCoverage;       // fraction of (clumped) points that bear dus
 uniform float uDustInfluence;      // world-space dust radius (scaled to the cloud size)
 uniform vec3  uDustCenter;         // cloud centre (camera-relative) - anchors the clump pattern
 uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
+uniform float uDustSampleFrac;     // fraction of star points used for dust (fixed resolution)
+uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 = glowing dust
 
 float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
 {
@@ -692,6 +694,7 @@ void main()
     vec3  curvedGlow          = vec3(0.0);
     float cloudTransmittance  = 1.0;
     float dustTau             = 0.0;   // dust column, integrated along the BENT path
+    vec3  dustGlowCol         = vec3(0.0); // starlight-weighted dust column (in-scatter)
     vec3  nebulaScatter       = vec3(0.0);
 
     for (int step = 0; step < uMaxSteps; step++)
@@ -842,7 +845,7 @@ void main()
                         if (uDustStrength > 0.0) {
                             float dC = max(length(cen + uCamera), 0.05);
                             float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
-                            { float dInfl2 = uDustInfluence * uDustInfluence; if (d2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-d2 / dInfl2); }
+                            { float dInfl2 = uDustInfluence * uDustInfluence; if (d2 < dInfl2 * 9.0 && hash1(vec3(float(i) * 7.13, float(i) * 13.37, float(i) * 23.79)) < uDustSampleFrac && hash1(floor((cen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) { float dC = objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) / max(uDustSampleFrac, 1e-4) * exp(-d2 / dInfl2); dustTau += dC; dustGlowCol += dC * ((objects[i].temperature > 100.0) ? blackbody(objects[i].temperature) : vec3(0.55, 0.65, 1.0)); } }
                         }
                     }
                     else if (otype == 4)
@@ -925,7 +928,7 @@ void main()
                 if (uDustStrength > 0.0) {
                     float dC = max(length(cen + uCamera), 0.05);
                     float sC = clamp(objects[i].radius * objects[i].radius * 1.0e6, 1.0, 64.0);
-                    { float dInfl2 = uDustInfluence * uDustInfluence; if (sd2 < dInfl2 * 9.0 && hash1(floor((cen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) dustTau += objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) * exp(-sd2 / dInfl2); }
+                    { float dInfl2 = uDustInfluence * uDustInfluence; if (sd2 < dInfl2 * 9.0 && hash1(vec3(float(i) * 7.13, float(i) * 13.37, float(i) * 23.79)) < uDustSampleFrac && hash1(floor((cen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) { float dC = objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6) / max(uDustSampleFrac, 1e-4) * exp(-sd2 / dInfl2); dustTau += dC; dustGlowCol += dC * ((objects[i].temperature > 100.0) ? blackbody(objects[i].temperature) : vec3(0.55, 0.65, 1.0)); } }
                 }
             }
             else if (otype == 4)
@@ -1162,6 +1165,17 @@ void main()
     if (uDustStrength > 0.0) {
         vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
         color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
+
+        // Stage 4 (in-scatter): dust scatters nearby starlight and glows softly.
+        if (uDustGlow > 0.0 && dustTau > 0.0) {
+            vec3  meanLit = dustGlowCol / max(dustTau, 1e-4);
+            float litLum  = dot(meanLit, vec3(0.2126, 0.7152, 0.0722));
+            float sat     = 1.0 - exp(-0.02 * dustTau);
+            // Warm dust reflectance, deepening toward brown as reddening rises
+            // (the same dust reddens what it scatters, not just what it transmits).
+            vec3  albedo  = vec3(1.0, 0.75, 0.55) / vec3(1.0, 1.0 + 0.25 * uDustReddening, 1.0 + 0.7 * uDustReddening);
+            color += uDustGlow * sat * albedo * litLum;
+        }
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

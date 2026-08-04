@@ -782,9 +782,12 @@ void main()
         // slight blue reflection albedo. Kept subtle so dense lanes stay dark.
         if (uDustGlow > 0.0 && dustTau > 0.0) {
             vec3  meanLit = dustGlowCol / max(dustTau, 1e-4);
+            float litLum  = dot(meanLit, vec3(0.2126, 0.7152, 0.0722));
             float sat     = 1.0 - exp(-0.02 * dustTau);
-            vec3  albedo  = vec3(0.85, 0.90, 1.0);
-            color += uDustGlow * sat * albedo * meanLit;
+            // Warm dust reflectance, deepening toward brown as reddening rises
+            // (the same dust reddens what it scatters, not just what it transmits).
+            vec3  albedo  = vec3(1.0, 0.75, 0.55) / vec3(1.0, 1.0 + 0.25 * uDustReddening, 1.0 + 0.7 * uDustReddening);
+            color += uDustGlow * sat * albedo * litLum;
         }
     }
 
