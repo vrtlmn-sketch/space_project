@@ -93,6 +93,11 @@ struct SceneSettings {
   float rtExposure{1.0f};
   float bloomStrength{0.45f};
   float bloomThreshold{0.0f};
+  float spikeStrength{0.6f};
+  int   spikeCount{6};
+  float spikeAngle{0.0f};
+  float spikeLength{0.4f};
+  float spikeDecay{1.0f};
   // Unresolved-star haze + resolved-point density
   float unresolvedStrength{6.83f};
   float unresolvedSize{32.4f};

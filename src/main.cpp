@@ -290,6 +290,11 @@ int main(int argc, char** argv) {
     renderer.rtExposure         = s.rtExposure;
     renderer.bloomStrength      = s.bloomStrength;
     renderer.bloomThreshold     = s.bloomThreshold;
+    renderer.spikeStrength      = s.spikeStrength;
+    renderer.spikeCount         = s.spikeCount;
+    renderer.spikeAngle         = s.spikeAngle;
+    renderer.spikeLength        = s.spikeLength;
+    renderer.spikeDecay         = s.spikeDecay;
     renderer.unresolvedStrength = s.unresolvedStrength;
     renderer.unresolvedSize     = s.unresolvedSize;
     RenderedObject::rtCloudPointCap = s.rtCloudPointCap;
@@ -368,6 +373,11 @@ int main(int argc, char** argv) {
     s.rtExposure         = renderer.rtExposure;
     s.bloomStrength      = renderer.bloomStrength;
     s.bloomThreshold     = renderer.bloomThreshold;
+    s.spikeStrength      = renderer.spikeStrength;
+    s.spikeCount         = renderer.spikeCount;
+    s.spikeAngle         = renderer.spikeAngle;
+    s.spikeLength        = renderer.spikeLength;
+    s.spikeDecay         = renderer.spikeDecay;
     s.unresolvedStrength = renderer.unresolvedStrength;
     s.unresolvedSize     = renderer.unresolvedSize;
     s.rtCloudPointCap    = RenderedObject::rtCloudPointCap;

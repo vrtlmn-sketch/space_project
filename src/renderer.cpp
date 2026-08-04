@@ -2809,6 +2809,18 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                       "flicker while moving, but more GPU cost (cost grows with the square).");
 
   ImGui::Spacing();
+  ImGui::SeparatorText("Diffraction Spikes");
+  ImGui::TextDisabled("Synthetic PSF — telescope star spikes on bright points.");
+  norm01("Intensity",  "##spkstr",   &spikeStrength, 0.0f, 2.0f, false);
+  ImGui::SliderInt("Spikes",     &spikeCount, 2, 8);
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("6 = JWST, 4 = Hubble.");
+  { float deg = spikeAngle * 57.29578f;
+    if (ImGui::SliderFloat("Rotation", &deg, 0.0f, 180.0f, "%.0f°"))
+      spikeAngle = deg * 0.01745329f; }
+  norm01("Length",     "##spklen",   &spikeLength, 0.05f, 1.0f, false);
+  norm01("Sharpness",  "##spkdecay", &spikeDecay,  0.3f,  4.0f, false);
+
+  ImGui::Spacing();
   ImGui::SeparatorText("Star Haze");
   ImGui::TextDisabled("Smooth glow from stars too dense to resolve as points.");
   norm01("Brightness", "##unrstr",  &unresolvedStrength, 0.0f, 10.0f,  true);
@@ -5340,9 +5352,11 @@ void Renderer::DestroyComputeResources() {
   if (bloomPrefilterProgram) { glDeleteProgram(bloomPrefilterProgram); bloomPrefilterProgram = 0; }
   if (bloomBlurProgram)      { glDeleteProgram(bloomBlurProgram);      bloomBlurProgram = 0; }
   if (tonemapProgram)        { glDeleteProgram(tonemapProgram);        tonemapProgram = 0; }
+  if (spikeProgram)          { glDeleteProgram(spikeProgram);          spikeProgram = 0; }
   if (bloomFBO)         { glDeleteFramebuffers(1, &bloomFBO); bloomFBO = 0; }
   if (bloomTex[0])      { glDeleteTextures(1, &bloomTex[0]);  bloomTex[0] = 0; }
   if (bloomTex[1])      { glDeleteTextures(1, &bloomTex[1]);  bloomTex[1] = 0; }
+  if (bloomTex[2])      { glDeleteTextures(1, &bloomTex[2]);  bloomTex[2] = 0; }
   if (recLdrFBO)        { glDeleteFramebuffers(1, &recLdrFBO); recLdrFBO = 0; }
   if (recLdrTex)        { glDeleteTextures(1, &recLdrTex);     recLdrTex = 0; }
   bloomTexW = bloomTexH = recLdrW = recLdrH = 0;
@@ -5681,6 +5695,7 @@ void Renderer::InitPostProcess() {
     {"src/shaders/bloomPrefilterFrag.glsl", &bloomPrefilterProgram},
     {"src/shaders/bloomBlurFrag.glsl",      &bloomBlurProgram},
     {"src/shaders/tonemapFrag.glsl",        &tonemapProgram},
+    {"src/shaders/spikeStreakFrag.glsl",    &spikeProgram},
   };
   for (auto& ps : passes) {
     GLuint fs = compileShaderFromFile(ps.frag, GL_FRAGMENT_SHADER);
@@ -5709,14 +5724,24 @@ void Renderer::InitPostProcess() {
     tmLocBloom    = glGetUniformLocation(tonemapProgram, "uBloom");
     tmLocExposure = glGetUniformLocation(tonemapProgram, "uExposure");
     tmLocBloomStr = glGetUniformLocation(tonemapProgram, "uBloomStrength");
+    tmLocSpike    = glGetUniformLocation(tonemapProgram, "uSpike");
+    tmLocSpikeStr = glGetUniformLocation(tonemapProgram, "uSpikeStrength");
+  }
+  if (spikeProgram) {
+    spkLocTex    = glGetUniformLocation(spikeProgram, "uTexture");
+    spkLocTexel  = glGetUniformLocation(spikeProgram, "uTexel");
+    spkLocCount  = glGetUniformLocation(spikeProgram, "uCount");
+    spkLocAngle  = glGetUniformLocation(spikeProgram, "uAngle");
+    spkLocLength = glGetUniformLocation(spikeProgram, "uLength");
+    spkLocDecay  = glGetUniformLocation(spikeProgram, "uDecay");
   }
 }
 
 void Renderer::EnsureBloomTargets(int w, int h) {
   w = std::max(1, w); h = std::max(1, h);
-  if (w == bloomTexW && h == bloomTexH && bloomFBO && bloomTex[0] && bloomTex[1]) return;
+  if (w == bloomTexW && h == bloomTexH && bloomFBO && bloomTex[0] && bloomTex[1] && bloomTex[2]) return;
   if (!bloomFBO) glGenFramebuffers(1, &bloomFBO);
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < 3; i++) {   // [0],[1] = bloom ping-pong; [2] = spike streaks
     if (!bloomTex[i]) glGenTextures(1, &bloomTex[i]);
     glBindTexture(GL_TEXTURE_2D, bloomTex[i]);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
@@ -5726,6 +5751,13 @@ void Renderer::EnsureBloomTargets(int w, int h) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   }
   glBindTexture(GL_TEXTURE_2D, 0);
+  // Clear the spike texture so a composite with spikes disabled never samples
+  // uninitialised (possibly NaN) storage.
+  glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[2], 0);
+  glClearColor(0.f, 0.f, 0.f, 1.f);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
   bloomTexW = w; bloomTexH = h;
 }
 
@@ -5781,6 +5813,22 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glUniform1f(bloomPreLocThreshold, bloomThreshold);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
+  // Diffraction spikes: streak the SHARP bright pass (bloomTex[0]) into bloomTex[2]
+  // before the blur overwrites tex0. Only when enabled — zero cost otherwise.
+  bool spikesOn = spikeProgram && spikeStrength > 0.0f && spikeCount > 0;
+  if (spikesOn) {
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[2], 0);
+    glUseProgram(spikeProgram);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
+    glUniform1i(spkLocTex, 0);
+    glUniform2f(spkLocTexel, 1.0f / (float)bw, 1.0f / (float)bh);
+    glUniform1i(spkLocCount, spikeCount);
+    glUniform1f(spkLocAngle, spikeAngle);
+    glUniform1f(spkLocLength, spikeLength * 0.5f * (float)std::min(bw, bh));
+    glUniform1f(spkLocDecay, spikeDecay);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+  }
+
   // Separable Gaussian: H (tex0→tex1) then V (tex1→tex0)
   glUseProgram(bloomBlurProgram);
   glUniform1i(bloomBlurLocTex, 0);
@@ -5801,8 +5849,10 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glUseProgram(tonemapProgram);
   glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, srcHDR);     glUniform1i(tmLocScene, 0);
   glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, bloomTex[0]); glUniform1i(tmLocBloom, 1);
+  glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, bloomTex[2]); glUniform1i(tmLocSpike, 2);
   glUniform1f(tmLocExposure, rtExposure);
   glUniform1f(tmLocBloomStr, bloomStrength);
+  glUniform1f(tmLocSpikeStr, spikesOn ? spikeStrength : 0.0f);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
   glActiveTexture(GL_TEXTURE0);

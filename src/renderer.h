@@ -269,10 +269,13 @@ private:
 
   // ── HDR post-process (RT views): bloom + ACES tonemap ──
   GLuint bloomPrefilterProgram{0}, bloomBlurProgram{0}, tonemapProgram{0};
+  GLuint spikeProgram{0};   // diffraction-spike streak pass
   GLint  bloomPreLocTex{-1}, bloomPreLocThreshold{-1};
   GLint  bloomBlurLocTex{-1}, bloomBlurLocDir{-1};
   GLint  tmLocScene{-1}, tmLocBloom{-1}, tmLocExposure{-1}, tmLocBloomStr{-1};
-  GLuint bloomFBO{0}, bloomTex[2]{0, 0};
+  GLint  tmLocSpike{-1}, tmLocSpikeStr{-1};
+  GLint  spkLocTex{-1}, spkLocTexel{-1}, spkLocCount{-1}, spkLocAngle{-1}, spkLocLength{-1}, spkLocDecay{-1};
+  GLuint bloomFBO{0}, bloomTex[3]{0, 0, 0};
   int    bloomTexW{0}, bloomTexH{0};
   GLuint recLdrTex{0}, recLdrFBO{0};      // 8-bit tonemapped target for recording readback
   int    recLdrW{0}, recLdrH{0};
@@ -730,6 +733,13 @@ public:
   float  rtExposure{1.0f};      // photographic exposure multiplier
   float  bloomStrength{0.45f};   // how much bloom is added back
   float  bloomThreshold{0.0f};  // brightness above which pixels bloom
+
+  // ---- Diffraction spikes (synthetic PSF) ----
+  float  spikeStrength{0.6f};   // spike intensity (0 = off)
+  int    spikeCount{6};         // number of spikes (6 = JWST, 4 = Hubble)
+  float  spikeAngle{0.0f};      // base rotation (radians)
+  float  spikeLength{0.4f};     // reach, fraction of the smaller bloom dimension
+  float  spikeDecay{1.0f};      // falloff along the spike (higher = shorter)
 
   // ---- Spheremap background (rasterized + raytraced views) ----
   bool   spheremapEnabled{false};

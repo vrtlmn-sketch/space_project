@@ -169,6 +169,11 @@ bool ProjectSerializer::Save(const std::string& path,
     s["rtExposure"]        = settings.rtExposure;
     s["bloomStrength"]     = settings.bloomStrength;
     s["bloomThreshold"]    = settings.bloomThreshold;
+    s["spikeStrength"]     = settings.spikeStrength;
+    s["spikeCount"]        = settings.spikeCount;
+    s["spikeAngle"]        = settings.spikeAngle;
+    s["spikeLength"]       = settings.spikeLength;
+    s["spikeDecay"]        = settings.spikeDecay;
     s["unresolvedStrength"] = settings.unresolvedStrength;
     s["unresolvedSize"]    = settings.unresolvedSize;
     s["rtCloudPointCap"]   = settings.rtCloudPointCap;
@@ -392,6 +397,11 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.rtExposure         = s.value("rtExposure",         1.0f);
     st.bloomStrength      = s.value("bloomStrength",      0.45f);
     st.bloomThreshold     = s.value("bloomThreshold",     0.0f);
+    st.spikeStrength      = s.value("spikeStrength",      0.6f);
+    st.spikeCount         = s.value("spikeCount",         6);
+    st.spikeAngle         = s.value("spikeAngle",         0.0f);
+    st.spikeLength        = s.value("spikeLength",        0.4f);
+    st.spikeDecay         = s.value("spikeDecay",         1.0f);
     st.unresolvedStrength = s.value("unresolvedStrength", 6.83f);
     st.unresolvedSize     = s.value("unresolvedSize",     32.4f);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
