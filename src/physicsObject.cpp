@@ -54,7 +54,7 @@ void PhysicsObject::EnsureAtmosphere(float sizeExag)
       std::abs(atmosphereObject.sphereRadius() - want) < 1e-7f &&
       atmosphereObject.shadersReady())
     return;
-  atmosphereObject.GenerateMeshSphere(want, 24, 24);
+  atmosphereObject.GenerateMeshSphere(want, 64, 64);  // dense shell → smooth (non-faceted) limb
   if (!atmosphereObject.shadersReady())
     atmosphereObject.setupShaders("src/shaders/defaultVert.glsl",
                                   "src/shaders/atmosphereFrag.glsl");

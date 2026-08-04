@@ -16,8 +16,8 @@ uniform int   uLightCount;
 uniform vec3  uLightPositions[8];
 uniform vec3  uLightColors[8];
 
-const int VIEW_SAMPLES  = 12;
-const int LIGHT_SAMPLES = 6;
+const int VIEW_SAMPLES  = 24;
+const int LIGHT_SAMPLES = 8;
 
 // Ray-sphere: returns (tNear, tFar); miss when tNear > tFar
 vec2 raySphere(vec3 ro, vec3 rd, vec3 c, float r)
@@ -73,9 +73,12 @@ void main()
 
     float thickness = uAtmosphereRadius - uPlanetRadius;
     float stepLen   = (t1 - t0) / float(VIEW_SAMPLES);
-    vec3  p         = camPos + rd * (t0 + stepLen * 0.5);
+    // Per-pixel dither on the first sample so residual step banding scatters into
+    // fine noise (invisible after bloom/tonemap) instead of hard concentric rings.
+    float dither    = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    vec3  p         = camPos + rd * (t0 + stepLen * dither);
 
-    vec3  coeffs    = uScatterColor * 2.0;
+    vec3  coeffs    = uScatterColor * 3.0;   // stronger extinction → sharper, redder terminator
     vec3  inScatter = vec3(0.0);
     float viewOD    = 0.0;
 
@@ -90,7 +93,7 @@ void main()
             // No stars — fixed directional fallback (matches defaultFrag)
             vec3  ldir  = normalize(vec3(0.0, 1.0, 1.0) - p);
             float mu    = dot(rd, ldir);
-            float phase = 0.75 * (1.0 + mu * mu);
+            float phase = 0.75 * (1.0 + mu * mu) + 1.5 * pow(max(mu, 0.0), 8.0);
             float lightOD = opticalDepth(p, ldir,
                 raySphere(p, ldir, center, uAtmosphereRadius).y, thickness);
             inScatter += exp(-(viewOD + lightOD) * coeffs)
@@ -108,7 +111,7 @@ void main()
             float lightOD = opticalDepth(p, ldir, lLen, thickness);
 
             float mu    = dot(rd, ldir);
-            float phase = 0.75 * (1.0 + mu * mu);   // Rayleigh phase
+            float phase = 0.75 * (1.0 + mu * mu) + 1.5 * pow(max(mu, 0.0), 8.0);   // Rayleigh phase
 
             inScatter += uLightColors[L]
                        * exp(-(viewOD + lightOD) * coeffs)
