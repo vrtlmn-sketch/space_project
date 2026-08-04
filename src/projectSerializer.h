@@ -48,7 +48,7 @@ struct CloudData {
   int   count{2000};
   float sizeX{3.f}, sizeY{3.f}, sizeZ{3.f};
   std::string formationFile;   // empty = procedural, non-empty = load from templates/formations/
-  int   computeMethod{0};      // 0=CPU, 1=Barnes-Hut GPU
+  int   computeMethod{1};      // 0=CPU, 1=Barnes-Hut GPU (default)
   float theta{0.5f};           // Barnes-Hut opening angle
   float temperature{4500.f};   // Kelvin — blackbody colour for particles
   int   renderMode{0};         // 0=Points, 1=Nebula

@@ -330,7 +330,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.sizeY         = c.value("sizeY",         5.f);
     cd.sizeZ         = c.value("sizeZ",         5.f);
     cd.formationFile = c.value("formationFile", std::string{});
-    cd.computeMethod = c.value("computeMethod", 0);
+    cd.computeMethod = c.value("computeMethod", 1);
     cd.theta         = c.value("theta",         0.5f);
     cd.temperature        = c.value("temperature",        4500.f);
     cd.renderMode         = c.value("renderMode",         0);

@@ -92,7 +92,7 @@ private:
   // ── PHYSICS ──────────────────────────────────────────────────────────────────
   float particleMass{0.02f};
   float temperature{4500.0f};
-  int   computeMethod{0};
+  int   computeMethod{1};   // 0=CPU, 1=Barnes-Hut GPU (default)
 
   // ── Preview camera (orbit around origin) ────────────────────────────────────
   float previewYaw{0.5f};
