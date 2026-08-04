@@ -121,4 +121,5 @@ public:
   // Allow main loop to propagate RAM budget
   void setRamBudget(size_t bytes) { if (frameStore) frameStore->setRamBudget(bytes); }
   size_t ramBytes() const { return frameStore ? frameStore->ramBytes() : 0; }
+  size_t recordBytes() const { return frameStore ? frameStore->recordSize() : 0; }
 };

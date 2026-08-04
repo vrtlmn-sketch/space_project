@@ -109,4 +109,5 @@ public:
   // Allow main loop to propagate RAM budget
   void setRamBudget(size_t bytes) { frameStore.setRamBudget(bytes); }
   size_t ramBytes() const { return frameStore.ramBytes(); }
+  size_t recordBytes() const { return frameStore.recordSize(); }
 };

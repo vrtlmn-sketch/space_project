@@ -661,13 +661,18 @@ int main(int argc, char** argv) {
     // ── Propagate RAM budget to all FrameStores ───────────────────────────
     {
       size_t totalBudget = static_cast<size_t>(renderer.ramBudgetGB * (1024.0 * 1024.0 * 1024.0));
-      int storeCount = (int)physicsObjects.size() + (int)clouds.size();
-      if (storeCount > 0) {
-        size_t perStore = totalBudget / (size_t)storeCount;
+      // Weight each store's RAM budget by its per-frame record size, so every
+      // store keeps a similar depth of history in RAM. An even split starved the
+      // huge galaxy cloud next to tiny (24-byte) physics stores, making it spill
+      // and evict almost immediately.
+      size_t totalRecordBytes = 0;
+      for (auto& obj : physicsObjects) totalRecordBytes += obj.recordBytes();
+      for (auto& c : clouds)           totalRecordBytes += c->recordBytes();
+      if (totalRecordBytes > 0) {
         for (auto& obj : physicsObjects)
-          obj.setRamBudget(perStore);
+          obj.setRamBudget(totalBudget * obj.recordBytes() / totalRecordBytes);
         for (auto& c : clouds)
-          c->setRamBudget(perStore);
+          c->setRamBudget(totalBudget * c->recordBytes() / totalRecordBytes);
       }
       // Trim trail lines to match the physics buffer frame count
       // (use first physics object's frame count as the reference)

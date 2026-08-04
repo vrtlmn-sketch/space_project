@@ -1219,7 +1219,9 @@ void RenderedObject::renderLine(const double cameraTranslate[3], const float vie
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, linePoints.size()*sizeof(vec3), &linePoints[0], GL_STATIC_DRAW);
+  // Re-uploaded every frame and grows with the trail length — GL_STREAM_DRAW so
+  // the driver orphans/reuses storage instead of accumulating VRAM allocations.
+  glBufferData(GL_ARRAY_BUFFER, linePoints.size()*sizeof(vec3), &linePoints[0], GL_STREAM_DRAW);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_LINE_STRIP, 0, (GLsizei)linePoints.size());
@@ -1231,7 +1233,9 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   if(!hasBeenRendered) { setupRender(); }
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
+  // Streamed every frame — GL_STREAM_DRAW (not STATIC) so the driver orphans and
+  // reuses storage instead of piling up "static" allocations in VRAM.
+  glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STREAM_DRAW);
 
   // Camera-relative particle positions computed in DOUBLE — eliminates the
   // large-world float cancellation (aPos + camera at ~1e9 AU) that made the
@@ -1262,7 +1266,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       relPosBuffer[i*3+2] = (float)(oz + r[6]*ax + r[7]*ay + r[8]*az);
     }
     glBindBuffer(GL_ARRAY_BUFFER, relVbo);
-    glBufferData(GL_ARRAY_BUFFER, relPosBuffer.size()*sizeof(float), relPosBuffer.data(), GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, relPosBuffer.size()*sizeof(float), relPosBuffer.data(), GL_STREAM_DRAW);
   }
 
   glUseProgram(program);
