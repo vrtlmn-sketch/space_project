@@ -89,7 +89,12 @@ static void buildScene(
       physicsObjects.back().normalMapPath = pod.normalMapPath;
       physicsObjects.back().renderedObject.loadNormalMap(pod.normalMapPath);
     }
+    if (!pod.nightMapPath.empty()) {
+      physicsObjects.back().nightMapPath = pod.nightMapPath;
+      physicsObjects.back().renderedObject.loadNightMap(pod.nightMapPath);
+    }
     physicsObjects.back().normalMapStrength = pod.normalMapStrength;
+    physicsObjects.back().nightMapStrength = pod.nightMapStrength;
     auto& po = physicsObjects.back();
     if (pod.visualRadius > 0.0f) {
       po.visualRadius = pod.visualRadius;
@@ -295,6 +300,8 @@ int main(int argc, char** argv) {
     renderer.spikeAngle         = s.spikeAngle;
     renderer.spikeLength        = s.spikeLength;
     renderer.spikeDecay         = s.spikeDecay;
+    renderer.spikeSecondary     = s.spikeSecondary;
+    renderer.spikeChroma        = s.spikeChroma;
     renderer.unresolvedStrength = s.unresolvedStrength;
     renderer.unresolvedSize     = s.unresolvedSize;
     RenderedObject::rtCloudPointCap = s.rtCloudPointCap;
@@ -378,6 +385,8 @@ int main(int argc, char** argv) {
     s.spikeAngle         = renderer.spikeAngle;
     s.spikeLength        = renderer.spikeLength;
     s.spikeDecay         = renderer.spikeDecay;
+    s.spikeSecondary     = renderer.spikeSecondary;
+    s.spikeChroma        = renderer.spikeChroma;
     s.unresolvedStrength = renderer.unresolvedStrength;
     s.unresolvedSize     = renderer.unresolvedSize;
     s.rtCloudPointCap    = RenderedObject::rtCloudPointCap;

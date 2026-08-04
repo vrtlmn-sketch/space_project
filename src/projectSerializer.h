@@ -19,10 +19,12 @@ struct PhysicsObjectData {
   vec3  color{0.55f, 0.25f, 0.15f}; // planet RGB color
   std::string texturePath{};         // path to optional surface texture (empty = none)
   std::string normalMapPath{};       // path to optional tangent-space normal map
+  std::string nightMapPath{};        // path to optional night-lights map
   float normalMapStrength{1.0f};     // normal-map relief scale
+  float nightMapStrength{1.6f};      // night-lights emissive brightness
   float visualRadius{0.0f};          // real visual radius in AU (0 = derive from mass)
   bool  atmosphereEnabled{false};
-  float atmosphereHeight{0.25f};
+  float atmosphereHeight{0.06f};
   float atmosphereFalloff{4.0f};
   float atmosphereIntensity{1.0f};
   vec3  atmosphereColor{0.175f, 0.41f, 1.0f};
@@ -93,11 +95,13 @@ struct SceneSettings {
   float rtExposure{1.0f};
   float bloomStrength{0.45f};
   float bloomThreshold{0.0f};
-  float spikeStrength{0.6f};
+  float spikeStrength{1.14f};
   int   spikeCount{6};
   float spikeAngle{0.0f};
-  float spikeLength{0.4f};
-  float spikeDecay{1.0f};
+  float spikeLength{0.27f};
+  float spikeDecay{1.11f};
+  float spikeSecondary{0.72f};
+  float spikeChroma{0.65f};
   // Unresolved-star haze + resolved-point density
   float unresolvedStrength{6.83f};
   float unresolvedSize{32.4f};

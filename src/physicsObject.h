@@ -67,11 +67,13 @@ public:
   float schwarzschildRadius{0.05f}; // event horizon radius (editable, default = 2*G*250)
   std::string texturePath{};    // path to optional surface texture (empty = none)
   std::string normalMapPath{};  // path to optional tangent-space normal map (empty = none)
+  std::string nightMapPath{};   // path to optional night-lights map (empty = none)
   float normalMapStrength{1.0f}; // normal-map relief scale (shader applies a 4x)
+  float nightMapStrength{1.6f};  // emissive brightness of the night-lights map
 
   // ---- Atmosphere (planets only) ----
   bool  atmosphereEnabled{false};
-  float atmosphereHeight{0.25f};    // shell thickness as fraction of planet radius
+  float atmosphereHeight{0.06f};    // shell thickness as fraction of planet radius (real Earth ~1-2%)
   float atmosphereFalloff{4.0f};    // altitude density exponent
   float atmosphereIntensity{1.0f};
   vec3  atmosphereScatter{0.175f, 0.41f, 1.0f}; // Rayleigh-like per-channel ratio

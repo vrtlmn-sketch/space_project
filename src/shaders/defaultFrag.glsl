@@ -20,6 +20,9 @@ uniform int       uHasTexture;
 uniform sampler2D uNormalMap;
 uniform int       uHasNormalMap;
 uniform float     uNormalStrength;   // relief scale (1 = as-authored)
+uniform sampler2D uNightMap;         // night-side city lights (emissive)
+uniform int       uHasNightMap;
+uniform float     uNightStrength;    // emissive brightness of the night-lights map
 uniform int       uTwoSided;         // 1 = flip back-facing normals (free OBJ meshes); 0 = spheres
 uniform int       uRealistic;        // 0 = nav look (LDR), 1 = HDR PBR (Cinematic Performant)
 
@@ -83,48 +86,83 @@ vec3 blackbody(float tempK) {
 
 void main() {
   vec3 viewDir = normalize(-uCamera - vPos);
-  vec3 norm    = normalize(vNormal);
+  vec3 geoN    = normalize(vNormal);
   // Two-sided shading (matches the raytracer): faces whose normal points away
   // from the viewer — e.g. meshes with inward/inconsistent winding — get flipped
   // so they're lit rather than black. Sphere front faces already face the viewer.
-  if (uTwoSided != 0 && dot(norm, viewDir) < 0.0) norm = -norm;
+  if (uTwoSided != 0 && dot(geoN, viewDir) < 0.0) geoN = -geoN;
+  vec3 norm = geoN;
   if (uHasNormalMap != 0)
-    norm = perturbNormal(norm, vPos, vTexCoord);
+    norm = perturbNormal(geoN, vPos, vTexCoord);
 
   vec3 baseColor = (uHasTexture != 0)
     ? texture(uTexture, vTexCoord).rgb
     : uPlanetColor;
 
-  // ── Realistic HDR PBR path (Cinematic Performant) ──
+  // ── Realistic HDR PBR path (Cinematic Performant) — photoreal planet ──
   // Outputs linear HDR radiance; the cinematic pass tonemaps + blooms it.
   if (uRealistic != 0) {
-    vec3  N = norm, V = viewDir;
-    float rough    = 0.6;
-    float metallic = 0.0;
-    vec3  F0 = mix(vec3(0.04), baseColor, metallic);
+    float NdotVg = max(dot(geoN, viewDir), 1e-3);
+    // Fade the normal-map relief toward the geometric normal at the limb, so the
+    // silhouette reads soft/real instead of crunchy CGI detail.
+    vec3  N = normalize(mix(geoN, norm, smoothstep(0.0, 0.30, NdotVg)));
+    vec3  V = viewDir;
+    float NdotV = max(dot(N, V), 1e-3);
+
+    // Ocean mask straight from the day map: water is blue-dominant and not bright
+    // (excludes white clouds/ice). Drives darker, glossier seas + a sun glint.
+    float lum     = dot(baseColor, vec3(0.299, 0.587, 0.114));
+    float blueDom = baseColor.b - max(baseColor.r, baseColor.g);
+    float ocean   = smoothstep(0.02, 0.14, blueDom) * (1.0 - smoothstep(0.32, 0.60, lum));
+
+    vec3  albedo = mix(baseColor, baseColor * 0.32, ocean);   // darker seas
+    float rough  = mix(0.62, 0.10, ocean);                    // glossy water → glint
+    vec3  F0     = vec3(mix(0.04, 0.02, ocean));
+
     int   nL = (uLightCount > 0) ? min(uLightCount, 8) : 0;
     vec3  Lo = vec3(0.0);
+    float dayMax = -1.0;                                        // brightest geometric N·L
     if (nL == 0) {
       vec3 L = normalize(vec3(0.0, 1.0, 1.0));
-      Lo = baseColor * max(dot(N, L), 0.0);
+      dayMax = dot(geoN, L);
+      Lo = albedo * max(dot(N, L), 0.0);
     } else {
       for (int i = 0; i < nL; ++i) {
         vec3  toL   = uLightPositions[i] - vPos;
         float dist2 = dot(toL, toL);
         vec3  L = normalize(toL);
         vec3  H = normalize(L + V);
-        vec3  radiance = uLightColors[i] * (1.0 / max(dist2, 1e-9));
         float NdotL = max(dot(N, L), 0.0);
+        dayMax = max(dayMax, dot(geoN, L));
+        vec3  radiance = uLightColors[i] * (1.0 / max(dist2, 1e-9));
         float D = distributionGGX(N, H, rough);
         float G = geometrySmith(N, V, L, rough);
         vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
-        vec3  spec = (D * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-4);
-        vec3  kd   = (vec3(1.0) - F) * (1.0 - metallic);
-        Lo += (kd * baseColor + spec) * radiance * NdotL;
+        vec3  spec = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-4);
+        vec3  kd   = (vec3(1.0) - F);
+        Lo += (kd * albedo + spec) * radiance * NdotL;
       }
     }
-    vec3 ambient = baseColor * 0.02;
-    FragColor = vec4(ambient + Lo, 1.0);
+
+    // Day/night from the smooth geometric terminator (not the bumpy normal), so
+    // the day/night line stays clean.
+    float day = smoothstep(-0.10, 0.12, dayMax);
+
+    // Sunset: warm the narrow band right at the terminator, on the lit side.
+    float band = exp(-pow(dayMax * 6.0, 2.0)) * day;
+    Lo *= mix(vec3(1.0), vec3(1.0, 0.5, 0.22), band * 0.6);
+
+    // Night-side city lights (emissive), fading out across the terminator.
+    vec3 night = vec3(0.0);
+    if (uHasNightMap != 0)
+      night = texture(uNightMap, vTexCoord).rgb * (1.0 - day) * uNightStrength;
+
+    // Limb darkening toward the silhouette.
+    float limbDark = mix(0.5, 1.0, smoothstep(0.0, 0.35, NdotVg));
+
+    vec3 ambient = albedo * 0.015 * day;
+    vec3 color   = (ambient + Lo) * limbDark + night;
+    FragColor = vec4(color, 1.0);
     return;
   }
 

@@ -90,7 +90,9 @@ bool ProjectSerializer::Save(const std::string& path,
     o["keyframes"]           = keyframesToJson(obj.keyframes);
     o["meshPath"]            = obj.meshPath;
     o["normalMapPath"]       = obj.normalMapPath;
+    o["nightMapPath"]        = obj.nightMapPath;
     o["normalMapStrength"]   = obj.normalMapStrength;
+    o["nightMapStrength"]    = obj.nightMapStrength;
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -174,6 +176,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["spikeAngle"]        = settings.spikeAngle;
     s["spikeLength"]       = settings.spikeLength;
     s["spikeDecay"]        = settings.spikeDecay;
+    s["spikeSecondary"]    = settings.spikeSecondary;
+    s["spikeChroma"]       = settings.spikeChroma;
     s["unresolvedStrength"] = settings.unresolvedStrength;
     s["unresolvedSize"]    = settings.unresolvedSize;
     s["rtCloudPointCap"]   = settings.rtCloudPointCap;
@@ -298,7 +302,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.texturePath  = o.value("texturePath", std::string{});
       pod.visualRadius = o.value("visualRadius", 0.0f);
       pod.atmosphereEnabled   = o.value("atmosphereEnabled",   false);
-      pod.atmosphereHeight    = o.value("atmosphereHeight",    0.25f);
+      pod.atmosphereHeight    = o.value("atmosphereHeight",    0.06f);
       pod.atmosphereFalloff   = o.value("atmosphereFalloff",   4.0f);
       pod.atmosphereIntensity = o.value("atmosphereIntensity", 1.0f);
       pod.atmosphereColor     = o.contains("atmosphereColor")
@@ -308,7 +312,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       if (o.contains("keyframes")) pod.keyframes = jsonToKeyframes(o["keyframes"]);
       pod.meshPath            = o.value("meshPath", std::string{});
       pod.normalMapPath       = o.value("normalMapPath", std::string{});
+      pod.nightMapPath        = o.value("nightMapPath", std::string{});
       pod.normalMapStrength   = o.value("normalMapStrength", 1.0f);
+      pod.nightMapStrength    = o.value("nightMapStrength", 1.6f);
       data.objects.push_back(pod);
     }
   }
@@ -397,11 +403,13 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.rtExposure         = s.value("rtExposure",         1.0f);
     st.bloomStrength      = s.value("bloomStrength",      0.45f);
     st.bloomThreshold     = s.value("bloomThreshold",     0.0f);
-    st.spikeStrength      = s.value("spikeStrength",      0.6f);
+    st.spikeStrength      = s.value("spikeStrength",      1.14f);
     st.spikeCount         = s.value("spikeCount",         6);
     st.spikeAngle         = s.value("spikeAngle",         0.0f);
-    st.spikeLength        = s.value("spikeLength",        0.4f);
-    st.spikeDecay         = s.value("spikeDecay",         1.0f);
+    st.spikeLength        = s.value("spikeLength",        0.27f);
+    st.spikeDecay         = s.value("spikeDecay",         1.11f);
+    st.spikeSecondary     = s.value("spikeSecondary",     0.72f);
+    st.spikeChroma        = s.value("spikeChroma",        0.65f);
     st.unresolvedStrength = s.value("unresolvedStrength", 6.83f);
     st.unresolvedSize     = s.value("unresolvedSize",     32.4f);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);

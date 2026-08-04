@@ -172,6 +172,7 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
   renderedObject.coordinates = data.position;
   renderedObject.rotationDeg = rotationDeg;
   renderedObject.normalStrength = normalMapStrength;
+  renderedObject.nightStrength  = nightMapStrength;
 
   // Keep the event-horizon mesh (and thus the RT object radius the geodesic
   // shaders read for lensing/capture) in sync with an edited Schwarzschild

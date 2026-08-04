@@ -159,6 +159,12 @@
       "temperature": 0.0,
       "texturePath": "assets/earth.jpg",
       "normalMapPath": "assets/earth_normal.png",
+      "nightMapPath": "assets/earth_nightmap.jpg",
+      "atmosphereEnabled": true,
+      "atmosphereHeight": 0.06,
+      "atmosphereFalloff": 4.0,
+      "atmosphereIntensity": 1.5,
+      "atmosphereColor": [0.17, 0.41, 1.0],
       "velocity": [
         2.149,
         0.0,

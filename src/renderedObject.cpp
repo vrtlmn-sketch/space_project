@@ -688,6 +688,18 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     glUniform1i(hasNormalMapUniform, 0);
   }
 
+  if (hasNightMap && hasNightMapUniform != (unsigned int)-1) {
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, nightMapID);
+    glUniform1i(nightMapUniform, 2);
+    glUniform1i(hasNightMapUniform, 1);
+    if (nightStrengthUniform != (unsigned int)-1)
+      glUniform1f(nightStrengthUniform, nightStrength);
+    glActiveTexture(GL_TEXTURE0);
+  } else if (hasNightMapUniform != (unsigned int)-1) {
+    glUniform1i(hasNightMapUniform, 0);
+  }
+
   if (realisticUniform != (unsigned int)-1)
     glUniform1i(realisticUniform, realisticShading ? 1 : 0);
   {
@@ -855,6 +867,9 @@ void RenderedObject::setupRender()
   normalMapUniform        = glGetUniformLocation(program, "uNormalMap");
   hasNormalMapUniform     = glGetUniformLocation(program, "uHasNormalMap");
   normalStrengthUniform   = glGetUniformLocation(program, "uNormalStrength");
+  nightMapUniform         = glGetUniformLocation(program, "uNightMap");
+  hasNightMapUniform      = glGetUniformLocation(program, "uHasNightMap");
+  nightStrengthUniform    = glGetUniformLocation(program, "uNightStrength");
 }
 
 void RenderedObject::UploadSSBOParticles(const std::vector<vec4>& points){
@@ -977,6 +992,41 @@ void RenderedObject::clearNormalMap()
     normalMapID = 0;
   }
   hasNormalMap = false;
+}
+
+bool RenderedObject::loadNightMap(const std::string& path)
+{
+  clearNightMap();
+
+  int w, h, channels;
+  stbi_set_flip_vertically_on_load(false);
+  unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+  if (!data) {
+    std::cerr << "[nightmap] failed to load '" << path << "': " << stbi_failure_reason() << "\n";
+    return false;
+  }
+
+  glGenTextures(1, &nightMapID);
+  glBindTexture(GL_TEXTURE_2D, nightMapID);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  stbi_image_free(data);
+
+  hasNightMap = true;
+  return true;
+}
+
+void RenderedObject::clearNightMap()
+{
+  if (nightMapID) {
+    glDeleteTextures(1, &nightMapID);
+    nightMapID = 0;
+  }
+  hasNightMap = false;
 }
 
 void RenderedObject::uploadStarLighting(const std::vector<vec3>& positions,

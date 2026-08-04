@@ -2819,6 +2819,10 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       spikeAngle = deg * 0.01745329f; }
   norm01("Length",     "##spklen",   &spikeLength, 0.05f, 1.0f, false);
   norm01("Sharpness",  "##spkdecay", &spikeDecay,  0.3f,  4.0f, false);
+  norm01("Secondary",  "##spksec",   &spikeSecondary, 0.0f, 1.0f, false);
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faint cross-spike pair (JWST strut spikes).");
+  norm01("Chroma",     "##spkchroma", &spikeChroma, 0.0f, 1.0f, false);
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rainbow tint toward the spike tips.");
 
   ImGui::Spacing();
   ImGui::SeparatorText("Star Haze");
@@ -3976,7 +3980,8 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     static std::vector<std::string> imgFiles;
     static bool imgScanned = false;
     if (!imgScanned) { imgFiles = ScanTextureFiles(); imgScanned = true; }
-    auto imagePicker = [&](const char* id, std::string& pathRef, bool normal) {
+    // kind: 0 = diffuse texture, 1 = normal map, 2 = night-lights map
+    auto imagePicker = [&](const char* id, std::string& pathRef, int kind) {
       if (ImGui::SmallButton((std::string("Rescan##r") + id).c_str())) imgFiles = ScanTextureFiles();
       ImGui::SameLine();
       ImGui::TextDisabled("(%zu)", imgFiles.size());
@@ -3984,15 +3989,17 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       if (ImGui::BeginListBox((std::string("##lb") + id).c_str(), ImVec2(-1, listH))) {
         if (ImGui::Selectable((std::string("None##n") + id).c_str(), pathRef.empty())) {
           pathRef.clear();
-          if (normal) obj.renderedObject.clearNormalMap();
-          else        obj.renderedObject.clearTexture();
+          if (kind == 1)      obj.renderedObject.clearNormalMap();
+          else if (kind == 2) obj.renderedObject.clearNightMap();
+          else                obj.renderedObject.clearTexture();
         }
         for (const auto& f : imgFiles) {
           std::string full = "assets/" + f;
           if (ImGui::Selectable((PrettyTexLabel(f) + "##" + id).c_str(), pathRef == full)) {
             pathRef = full;
-            if (normal) obj.renderedObject.loadNormalMap(full);
-            else        obj.renderedObject.loadTexture(full);
+            if (kind == 1)      obj.renderedObject.loadNormalMap(full);
+            else if (kind == 2) obj.renderedObject.loadNightMap(full);
+            else                obj.renderedObject.loadTexture(full);
           }
         }
         ImGui::EndListBox();
@@ -4043,9 +4050,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::Spacing();
       ImGui::SeparatorText("Surface");
       ImGui::Text("Texture");
-      imagePicker("ftex", obj.texturePath, false);
+      imagePicker("ftex", obj.texturePath, 0);
       ImGui::Text("Normal Map");
-      imagePicker("fnrm", obj.normalMapPath, true);
+      imagePicker("fnrm", obj.normalMapPath, 1);
       if (!obj.normalMapPath.empty()) {
         ImGui::Text("Strength");
         ImGui::SetNextItemWidth(-1);
@@ -4064,14 +4071,22 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::Spacing();
       ImGui::Text("Texture");
       previewImage();
-      imagePicker("ptex", obj.texturePath, false);
+      imagePicker("ptex", obj.texturePath, 0);
       ImGui::Text("Normal Map");
-      imagePicker("pnrm", obj.normalMapPath, true);
+      imagePicker("pnrm", obj.normalMapPath, 1);
       if (!obj.normalMapPath.empty()) {
         ImGui::Text("Strength");
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##pnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
       }
+      ImGui::Text("Night Lights");
+      imagePicker("pnight", obj.nightMapPath, 2);
+      if (!obj.nightMapPath.empty()) {
+        ImGui::Text("Brightness");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##pnightstr", &obj.nightMapStrength, 0.0f, 6.0f, "%.2f");
+      }
+      ImGui::TextDisabled("City lights on the night side (Cinematic view).");
 
       ImGui::Spacing();
       ImGui::SeparatorText("Atmosphere");
@@ -5353,6 +5368,7 @@ void Renderer::DestroyComputeResources() {
   if (bloomBlurProgram)      { glDeleteProgram(bloomBlurProgram);      bloomBlurProgram = 0; }
   if (tonemapProgram)        { glDeleteProgram(tonemapProgram);        tonemapProgram = 0; }
   if (spikeProgram)          { glDeleteProgram(spikeProgram);          spikeProgram = 0; }
+  if (spikeSourceProgram)    { glDeleteProgram(spikeSourceProgram);    spikeSourceProgram = 0; }
   if (bloomFBO)         { glDeleteFramebuffers(1, &bloomFBO); bloomFBO = 0; }
   if (bloomTex[0])      { glDeleteTextures(1, &bloomTex[0]);  bloomTex[0] = 0; }
   if (bloomTex[1])      { glDeleteTextures(1, &bloomTex[1]);  bloomTex[1] = 0; }
@@ -5696,6 +5712,7 @@ void Renderer::InitPostProcess() {
     {"src/shaders/bloomBlurFrag.glsl",      &bloomBlurProgram},
     {"src/shaders/tonemapFrag.glsl",        &tonemapProgram},
     {"src/shaders/spikeStreakFrag.glsl",    &spikeProgram},
+    {"src/shaders/spikeSourceFrag.glsl",    &spikeSourceProgram},
   };
   for (auto& ps : passes) {
     GLuint fs = compileShaderFromFile(ps.frag, GL_FRAGMENT_SHADER);
@@ -5728,12 +5745,17 @@ void Renderer::InitPostProcess() {
     tmLocSpikeStr = glGetUniformLocation(tonemapProgram, "uSpikeStrength");
   }
   if (spikeProgram) {
-    spkLocTex    = glGetUniformLocation(spikeProgram, "uTexture");
-    spkLocTexel  = glGetUniformLocation(spikeProgram, "uTexel");
-    spkLocCount  = glGetUniformLocation(spikeProgram, "uCount");
-    spkLocAngle  = glGetUniformLocation(spikeProgram, "uAngle");
-    spkLocLength = glGetUniformLocation(spikeProgram, "uLength");
-    spkLocDecay  = glGetUniformLocation(spikeProgram, "uDecay");
+    spkLocTex       = glGetUniformLocation(spikeProgram, "uTexture");
+    spkLocTexel     = glGetUniformLocation(spikeProgram, "uTexel");
+    spkLocCount     = glGetUniformLocation(spikeProgram, "uCount");
+    spkLocAngle     = glGetUniformLocation(spikeProgram, "uAngle");
+    spkLocLength    = glGetUniformLocation(spikeProgram, "uLength");
+    spkLocDecay     = glGetUniformLocation(spikeProgram, "uDecay");
+    spkLocSecondary = glGetUniformLocation(spikeProgram, "uSecondary");
+    spkLocChroma    = glGetUniformLocation(spikeProgram, "uChroma");
+  }
+  if (spikeSourceProgram) {
+    spkSrcLocTex = glGetUniformLocation(spikeSourceProgram, "uTexture");
   }
 }
 
@@ -5813,19 +5835,29 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glUniform1f(bloomPreLocThreshold, bloomThreshold);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
-  // Diffraction spikes: streak the SHARP bright pass (bloomTex[0]) into bloomTex[2]
-  // before the blur overwrites tex0. Only when enabled — zero cost otherwise.
-  bool spikesOn = spikeProgram && spikeStrength > 0.0f && spikeCount > 0;
+  // Diffraction spikes. Two cheap passes before the blur overwrites tex0:
+  //  (1) isolate point sources (bloomTex[0] → bloomTex[1]) so only stars spike —
+  //      lit planets and the far-away galaxy blob are extended, so they drop out;
+  //  (2) streak those isolated points into bloomTex[2].
+  bool spikesOn = spikeProgram && spikeSourceProgram && spikeStrength > 0.0f && spikeCount > 0;
   if (spikesOn) {
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[1], 0);
+    glUseProgram(spikeSourceProgram);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
+    glUniform1i(spkSrcLocTex, 0);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[2], 0);
     glUseProgram(spikeProgram);
-    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[1]);
     glUniform1i(spkLocTex, 0);
     glUniform2f(spkLocTexel, 1.0f / (float)bw, 1.0f / (float)bh);
     glUniform1i(spkLocCount, spikeCount);
     glUniform1f(spkLocAngle, spikeAngle);
     glUniform1f(spkLocLength, spikeLength * 0.5f * (float)std::min(bw, bh));
     glUniform1f(spkLocDecay, spikeDecay);
+    glUniform1f(spkLocSecondary, spikeSecondary);
+    glUniform1f(spkLocChroma, spikeChroma);
     glDrawArrays(GL_TRIANGLES, 0, 6);
   }
 

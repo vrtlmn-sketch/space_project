@@ -66,6 +66,12 @@ private:
   unsigned int normalMapUniform{};
   unsigned int hasNormalMapUniform{};
   unsigned int normalStrengthUniform{};
+  // night-lights map (emissive on the planet's dark side)
+  GLuint nightMapID{0};
+  bool   hasNightMap{false};
+  unsigned int nightMapUniform{};
+  unsigned int hasNightMapUniform{};
+  unsigned int nightStrengthUniform{};
   unsigned int realisticUniform{};   // uRealistic: 0 = nav look, 1 = HDR PBR (Cinematic Performant)
 
   //rendering stuff
@@ -96,6 +102,7 @@ public:
   int  rtTexLayer{-1};  // layer in the RT diffuse texture array (-1 = untextured)
   int  rtNormalLayer{-1}; // layer in the RT normal-map texture array (-1 = none)
   float normalStrength{1.0f};  // normal-map relief scale (forwarded to the shader)
+  float nightStrength{1.6f};   // night-lights emissive brightness (forwarded to the shader)
   bool  realisticShading{false}; // set per-draw by the Renderer for the Cinematic Performant pass
   float cinePixelScale{1.0f};    // point-size scale so sprites keep apparent size under SSAA
   float cineHazeStrength{6.83f}; // unresolved-star haze brightness (RT Star Haze → Brightness)
@@ -128,6 +135,9 @@ public:
   bool loadNormalMap(const std::string& path);
   void clearNormalMap();
   bool normalMapLoaded() const { return hasNormalMap; }
+  bool loadNightMap(const std::string& path);
+  void clearNightMap();
+  bool nightMapLoaded() const { return hasNightMap; }
   GLuint textureHandle() const { return textureID; }
   GLuint normalMapHandle() const { return normalMapID; }
   float sphereRadius() const { return radius; }
