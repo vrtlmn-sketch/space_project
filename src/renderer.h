@@ -371,6 +371,20 @@ private:
   bool   prevEditorViewport{true};
   bool   focusInspectorNext{false};  // one-shot: select Inspector tab after layout reset
 
+  // ── Cinematic (HDR) rasterized pass ──
+  // When the realistic HDR rasterizer runs, the scene is drawn into this RGBA16F buffer,
+  // then composited (bloom + ACES tonemap) into the real target via RunPostProcess.
+  GLuint cineFBO{0};
+  GLuint cineColorTex{0};
+  GLuint cineDepthRBO{0};
+  int    cineFboW{0}, cineFboH{0};
+  bool   cineActive{false};          // transient: HDR redirect live for the current pass
+  GLuint cineResolveTarget{0};       // real FBO to composite back into
+  int    cineResolveW{0}, cineResolveH{0};
+  void   EnsureCineFBO(int w, int h);
+  void   CineBeginIfActive(GLuint realTargetFBO, int w, int h);
+  void   CineResolveIfActive();
+
   // ---- CLI panel state (placeholder feature) ----
   char cliInputBuf[256] = "";
   std::vector<std::string> cliLog;
@@ -455,8 +469,16 @@ public:
   std::vector<BVHNode>                rtNodes{};             // free-object BVH nodes (both paths)
   bool rayTracerView{false};
   bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
-  bool raytracerEnabled{false};  // false = skip raytracer dispatch entirely (performance)
+  bool cinematicViewEnabled{false};  // master on/off for the Cinematic View (both modes). RT runs only when on + Realistic
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
+  // ── Cinematic View content ──
+  // The Cinematic View (secondary window) shows one of two things, chosen here.
+  // The Viewport (nav rasterizer) is never affected by this.
+  bool cinematicRaster{true};    // false = Realistic (raytracer), true = Performant (HDR rasterizer)
+  bool realisticRasterView{false}; // per-pass: this pass renders the realistic HDR rasterizer
+  bool cinematicBlank{false};      // per-pass: cinematic slot with the view OFF → render black
+  void SetPassView(bool cinematicSlot); // set rayTracerView / realisticRasterView / cinematicBlank
+  void CineBlankIfNeeded();        // clear the bound target to black when cinematicBlank
   bool dopplerMode{false};       // true = use Doppler shader variants
   float dopplerVelScale{1.581e-5f}; // v/c per AU/yr: 1/c = 1/63241 → physically real Doppler
   float dopplerBrightnessStr{2.0f}; // brightness exponent: brightness *= D^this
@@ -525,6 +547,7 @@ public:
   // frame (and forces RT accumulation); restored afterwards.
   bool   recCamActive{false};
   bool   recSavedRayTracerView{false};
+  bool   recSavedRealisticRasterView{false};
   double recSavedCamTranslate[3]{};
   float  recSavedCamMatrix[9]{};
   float  recSavedZoom{45.0f};
@@ -591,7 +614,7 @@ public:
   bool recStartRequested{false};
   bool recStopRequested{false};
   bool recordToggleRequested{false}; // Record button / R key: start (+jump+play) or stop
-  bool recSavedRtEnabled{false};     // raytracerEnabled before recording (restored on stop)
+  bool recSavedRtEnabled{false};     // cinematicViewEnabled before recording (restored on stop)
   bool recFrameActive{false};  // true while a recording frame is being assembled across strips
 
   // ---- Startup modal state ----

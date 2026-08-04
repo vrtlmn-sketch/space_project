@@ -272,7 +272,7 @@ int main(int argc, char** argv) {
     renderer.syncMatrixFromEuler();
     renderer.raytracerMethod  = s.raytracerMethod;
     renderer.raytracerIsMain  = s.raytracerIsMain;
-    renderer.raytracerEnabled = s.raytracerEnabled;
+    renderer.cinematicViewEnabled = s.raytracerEnabled;
     renderer.dopplerMode          = s.dopplerMode;
     renderer.dopplerVelScale      = s.dopplerVelScale;
     renderer.dopplerBrightnessStr = s.dopplerBrightnessStr;
@@ -355,7 +355,7 @@ int main(int argc, char** argv) {
     s.camZoom     = renderer.zoom;
     s.raytracerMethod  = renderer.raytracerMethod;
     s.raytracerIsMain  = renderer.raytracerIsMain;
-    s.raytracerEnabled = renderer.raytracerEnabled;
+    s.raytracerEnabled = renderer.cinematicViewEnabled;
     s.dopplerMode          = renderer.dopplerMode;
     s.dopplerVelScale      = renderer.dopplerVelScale;
     s.dopplerBrightnessStr = renderer.dopplerBrightnessStr;
@@ -507,7 +507,7 @@ int main(int argc, char** argv) {
     // Set primary view based on which view is "main"
     // raytracerIsMain=false → rasterizer fullscreen (primary), raytracer PiP (secondary)
     // raytracerIsMain=true  → raytracer fullscreen (primary), rasterizer PiP (secondary)
-    renderer.rayTracerView = renderer.raytracerIsMain;
+    renderer.SetPassView(renderer.raytracerIsMain);
 
     // In editor viewport mode, redirect all primary drawing into the viewport FBO.
     // Must happen before any draw calls so every object ends up in the FBO.
@@ -720,7 +720,8 @@ int main(int argc, char** argv) {
     background.Update(renderer);
 
     // If primary view is raytraced, dispatch compute shader + blit to screen
-    if (renderer.rayTracerView && renderer.raytracerEnabled) {
+    // (rayTracerView is only set when the Cinematic View is on + Realistic).
+    if (renderer.rayTracerView) {
       int rtw = renderer.GetRtLiveWidth();
       int rth = renderer.GetRtLiveHeight();
       if (rtw <= 0 || rth <= 0) {
@@ -739,7 +740,7 @@ int main(int argc, char** argv) {
     // ── Recording: capture the SECONDARY-view camera (freecam or a spawned
     // camera) as an RT frame, independent of the primary view. Re-accumulate
     // the RT objects from that camera each tick (they are camera-relative).
-    if (renderer.IsRecording() && renderer.raytracerEnabled) {
+    if (renderer.IsRecording() && renderer.cinematicViewEnabled) {
       renderer.BeginRecordCamera();  // sets rayTracerView + record camera transform
       renderer.rayTracedObjects.clear();
       renderer.rtDopplerObjects.clear();
@@ -794,7 +795,7 @@ int main(int argc, char** argv) {
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO
-    if (renderer.rayTracerView && renderer.raytracerEnabled && !renderer.recFrameActive) {
+    if (renderer.rayTracerView && !renderer.recFrameActive) {
       int pw = renderer.GetRtLiveWidth();
       int ph = renderer.GetRtLiveHeight();
       if (pw <= 0 || ph <= 0) {

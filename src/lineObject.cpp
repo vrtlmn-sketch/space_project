@@ -2,6 +2,8 @@
 
 void LineObject::Update(Renderer& renderer){
   //renderedObject.coordinates=position;
+  // Realistic HDR rasterizer hides editor overlays (trajectory lines).
+  if(renderer.realisticRasterView) return;
   if(!renderer.rayTracerView)
   {
     renderer.Draw(renderedObject);

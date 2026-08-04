@@ -798,9 +798,9 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)  flipKeyPressed = true;
     else { if (flipKeyPressed) raytracerIsMain = !raytracerIsMain; flipKeyPressed = false; }
 
-    // T = toggle raytracer on/off (edge-triggered)
+    // T = toggle the Cinematic View on/off (edge-triggered)
     if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)  rtToggleKeyPressed = true;
-    else { if (rtToggleKeyPressed) raytracerEnabled = !raytracerEnabled; rtToggleKeyPressed = false; }
+    else { if (rtToggleKeyPressed) cinematicViewEnabled = !cinematicViewEnabled; rtToggleKeyPressed = false; }
 
     // V = toggle editor viewport mode (edge-triggered)
     if (glfwGetKey(window, GLFW_KEY_V) == GLFW_PRESS)  viewportKeyPressed = true;
@@ -2240,14 +2240,14 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     raytracerIsMain = !raytracerIsMain;
   ImGui::SameLine();
 
-  // Raytracer enable/disable toggle
-  if (raytracerEnabled) {
-    if (ImGui::Button("RT On [T]", ImVec2(65, 0))) raytracerEnabled = false;
+  // Cinematic View master on/off (drives both Realistic/RT and Performant modes)
+  if (cinematicViewEnabled) {
+    if (ImGui::Button("Cinematic On [T]", ImVec2(115, 0))) cinematicViewEnabled = false;
   } else {
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.35f, 0.35f, 0.35f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.50f, 0.50f, 0.50f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.60f, 0.60f, 0.60f, 1.00f)));
-    if (ImGui::Button("RT Off [T]", ImVec2(65, 0))) raytracerEnabled = true;
+    if (ImGui::Button("Cinematic Off [T]", ImVec2(115, 0))) cinematicViewEnabled = true;
     ImGui::PopStyleColor(3);
   }
   ImGui::SameLine();
@@ -3033,7 +3033,7 @@ void Renderer::DrawBenchmarkPanel() {
   ImGui::TextDisabled("Objects"); ImGui::SameLine(90);
   ImGui::Text("%d RT", (int)rtLastObjectCount);
 
-  if (raytracerEnabled) {
+  if (cinematicViewEnabled && !cinematicRaster) {
     int lw = (rtLiveWidth  > 0) ? rtLiveWidth  : fbWidth;
     int lh = (rtLiveHeight > 0) ? rtLiveHeight : fbHeight;
     ImGui::TextDisabled("Live res"); ImGui::SameLine(90);
@@ -4713,8 +4713,98 @@ void Renderer::DestroyViewportFBO() {
   vpFboW = vpFboH = 0;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cinematic HDR pass — RGBA16F scene buffer routed through bloom + ACES post
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::EnsureCineFBO(int w, int h) {
+  if (w == cineFboW && h == cineFboH && cineFBO != 0) return;
+  if (cineFBO)      { glDeleteFramebuffers(1, &cineFBO);     cineFBO = 0; }
+  if (cineColorTex) { glDeleteTextures(1, &cineColorTex);    cineColorTex = 0; }
+  if (cineDepthRBO) { glDeleteRenderbuffers(1, &cineDepthRBO); cineDepthRBO = 0; }
+
+  cineFboW = w; cineFboH = h;
+
+  glGenFramebuffers(1, &cineFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
+
+  glGenTextures(1, &cineColorTex);
+  glBindTexture(GL_TEXTURE_2D, cineColorTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cineColorTex, 0);
+
+  glGenRenderbuffers(1, &cineDepthRBO);
+  glBindRenderbuffer(GL_RENDERBUFFER, cineDepthRBO);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, cineDepthRBO);
+
+  GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (status != GL_FRAMEBUFFER_COMPLETE)
+    std::cerr << "[Cine] Framebuffer incomplete: 0x" << std::hex << status << std::dec << "\n";
+
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+// Decide what a pass renders. A "cinematic slot" pass shows the Cinematic View
+// content: RT (Realistic) or the new HDR rasterizer (Performant). A non-cinematic
+// slot is always the plain nav rasterizer.
+void Renderer::SetPassView(bool cinematicSlot) {
+  rayTracerView = false; realisticRasterView = false; cinematicBlank = false;
+  if (!cinematicSlot) return;                 // Viewport → plain nav rasterizer
+  if (!cinematicViewEnabled) { cinematicBlank = true; return; } // view off → black
+  if (cinematicRaster) realisticRasterView = true;  // Performant → HDR rasterizer
+  else                 rayTracerView = true;        // Realistic → raytracer
+}
+
+// Clear the currently-bound target to black. Used for the cinematic slot when the
+// Cinematic View is off, so it shows black rather than a copy of the nav scene.
+void Renderer::CineBlankIfNeeded() {
+  if (!cinematicBlank) return;
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+// Redirect the rasterized scene into the HDR buffer for this pass (only when the
+// pass renders the realistic HDR rasterizer). No-op otherwise — leaves GL state
+// untouched so the nav rasterizer and RT paths behave exactly as before.
+void Renderer::CineBeginIfActive(GLuint realTargetFBO, int w, int h) {
+  cineActive = false;
+  if (!realisticRasterView) return;
+  if (w <= 0 || h <= 0) return;
+  EnsureCineFBO(w, h);
+  if (!cineFBO) return;
+  cineActive        = true;
+  cineResolveTarget = realTargetFBO;
+  cineResolveW      = w;
+  cineResolveH      = h;
+  glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
+  glViewport(0, 0, w, h);
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
+// Composite the HDR buffer (bloom + ACES) into the real target bound for this pass.
+void Renderer::CineResolveIfActive() {
+  if (!cineActive) return;
+  glBindFramebuffer(GL_FRAMEBUFFER, cineResolveTarget);
+  glViewport(0, 0, cineResolveW, cineResolveH);
+  RunPostProcess(cineColorTex, cineResolveW, cineResolveH);
+  cineActive = false;
+}
+
 void Renderer::BindViewportFBO() {
-  if (!editorViewport || vpWidth <= 0 || vpHeight <= 0) return;
+  if (!editorViewport || vpWidth <= 0 || vpHeight <= 0) {
+    // Fullscreen (no editor viewport): the primary target is the default
+    // framebuffer. Redirect to the HDR buffer when Cinematic is active.
+    if (!editorViewport) {
+      int w = 0, h = 0; glfwGetFramebufferSize(window, &w, &h);
+      CineBeginIfActive(0, w, h);
+    }
+    return;
+  }
 
   // Compute the largest sub-rect of the central area that matches the full window's aspect ratio.
   // This keeps the scene proportions identical to the fullscreen view.
@@ -4733,10 +4823,13 @@ void Renderer::BindViewportFBO() {
   }
 
   EnsureViewportFBO(renderW, renderH);
-  glBindFramebuffer(GL_FRAMEBUFFER, vpFBO);
-  glViewport(0, 0, renderW, renderH);
-  glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  CineBeginIfActive(vpFBO, renderW, renderH);
+  if (!cineActive) {
+    glBindFramebuffer(GL_FRAMEBUFFER, vpFBO);
+    glViewport(0, 0, renderW, renderH);
+    glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  }
   fbWidth      = renderW;
   fbHeight     = renderH;
   sceneRenderW = renderW;
@@ -4744,6 +4837,8 @@ void Renderer::BindViewportFBO() {
 }
 
 void Renderer::UnbindViewportFBO() {
+  CineResolveIfActive();
+  CineBlankIfNeeded();   // cinematic slot with view off → black (target still bound)
   if (!editorViewport) return;
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   int w = 0, h = 0;
@@ -4760,7 +4855,10 @@ void Renderer::UnbindViewportFBO() {
 // accumulation. The scene must be re-drawn after this to fill rayTracedObjects.
 void Renderer::BeginRecordCamera() {
   recSavedRayTracerView = rayTracerView;
+  recSavedRealisticRasterView = realisticRasterView;
   rayTracerView = true;
+  realisticRasterView = false;
+  cinematicBlank = false;
   recCamActive = false;
   if (secondaryCameraSource >= 0 && secondaryCameraSource < (int)sceneCameras.size()) {
     recCamActive = true;
@@ -4780,6 +4878,7 @@ void Renderer::BeginRecordCamera() {
 
 void Renderer::EndRecordCamera() {
   rayTracerView = recSavedRayTracerView;
+  realisticRasterView = recSavedRealisticRasterView;
   if (recCamActive) {
     cameraTranslate[0] = recSavedCamTranslate[0];
     cameraTranslate[1] = recSavedCamTranslate[1];
@@ -4798,8 +4897,9 @@ void Renderer::BeginSecondaryPass() {
   if (ph < 1) ph = 1;
   EnsurePipFBO(pw, ph);
 
-  // Flip to the OTHER view for the secondary pass
-  rayTracerView = !rayTracerView;
+  // Switch to the OTHER slot for the secondary pass. Secondary is the cinematic
+  // slot exactly when the Viewport (primary) is the nav rasterizer.
+  SetPassView(!raytracerIsMain);
 
   // If a spawned camera drives the secondary view, swap the freecam transform
   // to that camera's for the duration of the pass (restored in EndSecondaryPass).
@@ -4828,10 +4928,13 @@ void Renderer::BeginSecondaryPass() {
   rtNodes.clear();
   rtDopplerObjects.reserve(20);
 
-  glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
-  glViewport(0, 0, pw, ph);
-  glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  CineBeginIfActive(pipFBO, pw, ph);
+  if (!cineActive) {
+    glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
+    glViewport(0, 0, pw, ph);
+    glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  }
 
   // Override fbWidth/fbHeight so Draw calls use PiP resolution
   fbWidth = pw;
@@ -4839,6 +4942,10 @@ void Renderer::BeginSecondaryPass() {
 }
 
 void Renderer::EndSecondaryPass() {
+  // Composite the HDR buffer into the PiP FBO before unbinding (Performant only)
+  CineResolveIfActive();
+  CineBlankIfNeeded();   // cinematic slot with view off → black (pipFBO still bound)
+
   // Unbind FBO — back to default framebuffer
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -4849,8 +4956,8 @@ void Renderer::EndSecondaryPass() {
   fbWidth = fbw;
   fbHeight = fbh;
 
-  // Flip rayTracerView back to the primary view
-  rayTracerView = !rayTracerView;
+  // Restore the primary (Viewport) slot's view flags
+  SetPassView(raytracerIsMain);
 
   // Restore the freecam transform if a spawned camera drove this pass
   if (secondaryOverride) {
@@ -4884,7 +4991,14 @@ void Renderer::DrawPipWindow() {
   if (secondaryCameraSource >= (int)sceneCameras.size()) secondaryCameraSource = -1;
   const char* srcName = (secondaryCameraSource < 0) ? "Freecam"
                         : sceneCameras[secondaryCameraSource].name.c_str();
-  ImGui::SetNextItemWidth(-1);
+
+  // Rendering-style toggle sits right beside the source selector: Realistic
+  // (HDR bloom + ACES) vs Performant (plain forward shading).
+  float styleBtnW = 82.0f;
+  float srcComboW = ImGui::GetContentRegionAvail().x - (styleBtnW * 2.0f)
+                  - ImGui::GetStyle().ItemSpacing.x * 2.0f;
+  if (srcComboW < 60.0f) srcComboW = 60.0f;
+  ImGui::SetNextItemWidth(srcComboW);
   if (ImGui::BeginCombo("##pipsrc", srcName)) {
     if (ImGui::Selectable("Freecam", secondaryCameraSource < 0)) secondaryCameraSource = -1;
     for (int i = 0; i < (int)sceneCameras.size(); ++i) {
@@ -4894,10 +5008,35 @@ void Renderer::DrawPipWindow() {
     ImGui::EndCombo();
   }
 
-  // Reserve a bottom status line, then centre the image in the remaining area
+  // Realistic = raytracer (cinematicRaster false); Performant = HDR rasterizer (true).
+  // Cache the highlight state BEFORE drawing the buttons — a click mutates
+  // cinematicRaster mid-row, which would otherwise unbalance the push/pop count.
+  bool realisticActive  = !cinematicRaster;
+  bool performantActive =  cinematicRaster;
+  ImGui::SameLine();
+  if (realisticActive) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.20f, 0.45f, 0.65f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.30f, 0.55f, 0.75f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.15f, 0.38f, 0.58f, 1.00f)));
+  }
+  if (ImGui::Button("Realistic", ImVec2(styleBtnW, 0))) cinematicRaster = false;
+  if (realisticActive) ImGui::PopStyleColor(3);
+  ImGui::SameLine();
+  if (performantActive) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.20f, 0.50f, 0.20f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.30f, 0.60f, 0.30f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.15f, 0.42f, 0.15f, 1.00f)));
+  }
+  if (ImGui::Button("Performant", ImVec2(styleBtnW, 0))) cinematicRaster = true;
+  if (performantActive) ImGui::PopStyleColor(3);
+
+  // The Cinematic View shows the secondary slot; it is the cinematic slot unless
+  // the Viewport was flipped to show it (raytracerIsMain).
+  bool pipIsCinematic = !raytracerIsMain;
+
+  // Reserve one bottom status line, then centre the image in the remaining area
   // (both axes) so it matches the centred Viewport when docked side by side.
-  float statusH = ImGui::GetTextLineHeightWithSpacing()
-                + (raytracerEnabled ? 0.0f : ImGui::GetTextLineHeightWithSpacing());
+  float statusH = ImGui::GetTextLineHeightWithSpacing();
   ImVec2 avail = ImGui::GetContentRegionAvail();
   float boxH = std::max(1.0f, avail.y - statusH);
   float imgW = avail.x;
@@ -4913,11 +5052,13 @@ void Renderer::DrawPipWindow() {
                ImVec2(imgW, imgH),
                ImVec2(0, 1), ImVec2(1, 0));
 
+  const char* pipContent;
+  if (!pipIsCinematic)            pipContent = "Rasterizer";       // nav raster (flipped in)
+  else if (!cinematicViewEnabled) pipContent = "Cinematic Off";
+  else if (cinematicRaster)       pipContent = "Realistic Raster";
+  else                            pipContent = "Raytracer";
   ImGui::SetCursorPosY(cur.y + boxH);
-  ImGui::TextDisabled("%s  %dx%d", raytracerIsMain ? "Rasterizer" : "Raytracer", pipWidth, pipHeight);
-  if (!raytracerEnabled) {
-    ImGui::TextDisabled("(Raytracer disabled)");
-  }
+  ImGui::TextDisabled("%s  %dx%d", pipContent, pipWidth, pipHeight);
   ImGui::End();
 }
 
@@ -5678,8 +5819,8 @@ void Renderer::StartRecording() {
   // Recording captures the compute-shader raytracer into its own FBO, so the
   // raytracer must be enabled — but we do NOT touch which view is on screen
   // (no surprise main/PiP flip). Both are restored in StopRecording.
-  recSavedRtEnabled = raytracerEnabled;
-  raytracerEnabled  = true;
+  recSavedRtEnabled = cinematicViewEnabled;
+  cinematicViewEnabled  = true;
 
   char cmd[512];
   snprintf(cmd, sizeof(cmd),
@@ -5723,7 +5864,7 @@ void Renderer::StopRecording() {
   recFrameActive = false;
 
   // Restore the raytracer-enabled state we forced on in StartRecording.
-  raytracerEnabled = recSavedRtEnabled;
+  cinematicViewEnabled = recSavedRtEnabled;
 
   // Restore vsync
   glfwSwapInterval(1);

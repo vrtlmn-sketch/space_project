@@ -22,6 +22,9 @@ void GridObject::Rebuild(float cellSize_, int radius_, bool showX_, bool showY_,
 }
 
 void GridObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>&) {
+  // Realistic HDR rasterizer (Cinematic View): no editor overlays like the grid.
+  if (renderer.realisticRasterView) return;
+
   // Context distance: selected object, or nearest object surface (same measure
   // that drives the adaptive camera speed). Fallback for empty scenes: 3 AU.
   double d = (renderer.focusDistance > 0.0f) ? (double)renderer.focusDistance : 3.0;
