@@ -8,6 +8,7 @@ in vec2 vTexCoord;
 uniform vec3  uCamera;
 uniform vec3  uPointCoordinates;
 uniform float uTemperature; // Kelvin — default 5778 (Sun)
+uniform int   uRealistic;   // 1 = HDR emissive (Cinematic Performant), blooms via tonemap
 
 // Charity/Krystek polynomial blackbody → linear RGB approximation
 vec3 blackbody(float tempK) {
@@ -42,6 +43,9 @@ void main() {
   // Centre bloom highlight
   float bloom = pow(cosTheta, 8.0) * 0.6;
   color += starColor * bloom;
+
+  // Realistic pass: emit above 1.0 so the HDR bloom picks the star up.
+  if (uRealistic != 0) color *= 6.0;
 
   FragColor = vec4(color, 1.0);
 }

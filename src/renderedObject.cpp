@@ -688,6 +688,9 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     glUniform1i(hasNormalMapUniform, 0);
   }
 
+  if (realisticUniform != (unsigned int)-1)
+    glUniform1i(realisticUniform, realisticShading ? 1 : 0);
+
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
 }
@@ -828,6 +831,7 @@ void RenderedObject::setupRender()
   gridScaleUniform        = glGetUniformLocation(program, "uScale");
   gridAlphaUniform        = glGetUniformLocation(program, "uGridAlpha");
   gridExtentUniform       = glGetUniformLocation(program, "uGridExtent");
+  realisticUniform        = glGetUniformLocation(program, "uRealistic");
   lightCountUniform       = glGetUniformLocation(program, "uLightCount");
   lightPositionsUniform   = glGetUniformLocation(program, "uLightPositions");
   lightColorsUniform      = glGetUniformLocation(program, "uLightColors");

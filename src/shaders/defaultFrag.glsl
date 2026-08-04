@@ -20,6 +20,30 @@ uniform int       uHasTexture;
 uniform sampler2D uNormalMap;
 uniform int       uHasNormalMap;
 uniform float     uNormalStrength;   // relief scale (1 = as-authored)
+uniform int       uRealistic;        // 0 = nav look (LDR), 1 = HDR PBR (Cinematic Performant)
+
+const float PI = 3.14159265359;
+
+// ── GGX / Cook-Torrance helpers (used only in the realistic HDR path) ──
+float distributionGGX(vec3 N, vec3 H, float rough) {
+  float a  = rough * rough;
+  float a2 = a * a;
+  float NdotH = max(dot(N, H), 0.0);
+  float d = (NdotH * NdotH) * (a2 - 1.0) + 1.0;
+  return a2 / max(PI * d * d, 1e-7);
+}
+float geometrySchlickGGX(float NdotX, float rough) {
+  float r = rough + 1.0;
+  float k = (r * r) / 8.0;
+  return NdotX / (NdotX * (1.0 - k) + k);
+}
+float geometrySmith(vec3 N, vec3 V, vec3 L, float rough) {
+  return geometrySchlickGGX(max(dot(N, V), 0.0), rough)
+       * geometrySchlickGGX(max(dot(N, L), 0.0), rough);
+}
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+  return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
 
 // Tangent frame from screen-space derivatives (no precomputed tangents needed).
 // Perturbs the geometric normal N with a tangent-space normal-map sample.
@@ -69,6 +93,39 @@ void main() {
   vec3 baseColor = (uHasTexture != 0)
     ? texture(uTexture, vTexCoord).rgb
     : uPlanetColor;
+
+  // ── Realistic HDR PBR path (Cinematic Performant) ──
+  // Outputs linear HDR radiance; the cinematic pass tonemaps + blooms it.
+  if (uRealistic != 0) {
+    vec3  N = norm, V = viewDir;
+    float rough    = 0.6;
+    float metallic = 0.0;
+    vec3  F0 = mix(vec3(0.04), baseColor, metallic);
+    int   nL = (uLightCount > 0) ? min(uLightCount, 8) : 0;
+    vec3  Lo = vec3(0.0);
+    if (nL == 0) {
+      vec3 L = normalize(vec3(0.0, 1.0, 1.0));
+      Lo = baseColor * max(dot(N, L), 0.0);
+    } else {
+      for (int i = 0; i < nL; ++i) {
+        vec3  toL   = uLightPositions[i] - vPos;
+        float dist2 = dot(toL, toL);
+        vec3  L = normalize(toL);
+        vec3  H = normalize(L + V);
+        vec3  radiance = uLightColors[i] * (1.0 / max(dist2, 1e-9));
+        float NdotL = max(dot(N, L), 0.0);
+        float D = distributionGGX(N, H, rough);
+        float G = geometrySmith(N, V, L, rough);
+        vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+        vec3  spec = (D * G * F) / max(4.0 * max(dot(N, V), 0.0) * NdotL, 1e-4);
+        vec3  kd   = (vec3(1.0) - F) * (1.0 - metallic);
+        Lo += (kd * baseColor + spec) * radiance * NdotL;
+      }
+    }
+    vec3 ambient = baseColor * 0.02;
+    FragColor = vec4(ambient + Lo, 1.0);
+    return;
+  }
 
   vec3 totalLight = vec3(0.0);
   int numLights = (uLightCount > 0) ? min(uLightCount, 8) : 0;

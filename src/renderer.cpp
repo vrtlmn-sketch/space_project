@@ -544,7 +544,7 @@ void Renderer::EndFrame() {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere)  ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     if (ro.meshType == MeshType::cloud)   ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -665,6 +665,7 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
       ro.uploadPlanetColor(color);
+      ro.realisticShading = realisticRasterView;
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     }
   }
