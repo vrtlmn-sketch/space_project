@@ -71,6 +71,8 @@ private:
   //rendering stuff
   unsigned int vao{};
   unsigned int vbo{};
+  unsigned int relVbo{};                 // cloud: per-frame camera-relative positions (large-world precision)
+  std::vector<float> relPosBuffer{};     // CPU scratch for relVbo
   unsigned int ssboParticles{};
   unsigned int ssboObjects{};
 
@@ -95,6 +97,7 @@ public:
   int  rtNormalLayer{-1}; // layer in the RT normal-map texture array (-1 = none)
   float normalStrength{1.0f};  // normal-map relief scale (forwarded to the shader)
   bool  realisticShading{false}; // set per-draw by the Renderer for the Cinematic Performant pass
+  float cinePixelScale{1.0f};    // point-size scale so sprites keep apparent size under SSAA
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
   float rtAtmoFalloff{4.0f};

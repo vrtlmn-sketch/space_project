@@ -546,7 +546,7 @@ void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
@@ -2799,10 +2799,14 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
   ImGui::Spacing();
   ImGui::SeparatorText("Photographic (HDR)");
-  ImGui::TextDisabled("Exposure, glow + ACES tonemap (RT views only).");
+  ImGui::TextDisabled("Exposure, glow + ACES tonemap (cinematic views).");
   norm01("Exposure",       "##rtexposure", &rtExposure,     0.0f, 4.0f,  false);
   norm01("Glow",           "##bloomstr",   &bloomStrength,  0.0f, 1.5f,  false);
   norm01("Glow Threshold", "##bloomthr",   &bloomThreshold, 0.0f, 2.0f,  false);
+  ImGui::SliderFloat("Anti-alias", &cineSSAA, 1.0f, 2.0f, "%.2fx");
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Supersampling for the Performant view — higher = less star\n"
+                      "flicker while moving, but more GPU cost (cost grows with the square).");
 
   ImGui::Spacing();
   ImGui::SeparatorText("Star Haze");
@@ -4778,14 +4782,20 @@ void Renderer::CineBeginIfActive(GLuint realTargetFBO, int w, int h) {
   cineActive = false;
   if (!realisticRasterView) return;
   if (w <= 0 || h <= 0) return;
-  EnsureCineFBO(w, h);
+  // Supersample: draw the scene into a larger buffer; the tonemap composite in
+  // CineResolveIfActive downsamples it to (w,h), averaging out sub-pixel flicker.
+  float ss  = std::clamp(cineSSAA, 1.0f, 2.0f);
+  int   ssW = std::max(1, (int)std::lround(w * ss));
+  int   ssH = std::max(1, (int)std::lround(h * ss));
+  EnsureCineFBO(ssW, ssH);
   if (!cineFBO) return;
-  cineActive        = true;
-  cineResolveTarget = realTargetFBO;
-  cineResolveW      = w;
-  cineResolveH      = h;
+  cineActive         = true;
+  cineResolveTarget  = realTargetFBO;
+  cineResolveW       = w;              // real (downsampled) target size
+  cineResolveH       = h;
+  currentPixelScale  = ss;             // keep point sprites the same apparent size
   glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
-  glViewport(0, 0, w, h);
+  glViewport(0, 0, ssW, ssH);
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
@@ -4795,8 +4805,9 @@ void Renderer::CineResolveIfActive() {
   if (!cineActive) return;
   glBindFramebuffer(GL_FRAMEBUFFER, cineResolveTarget);
   glViewport(0, 0, cineResolveW, cineResolveH);
-  RunPostProcess(cineColorTex, cineResolveW, cineResolveH);
+  RunPostProcess(cineColorTex, cineResolveW, cineResolveH);  // samples the larger cineColorTex → downsample
   cineActive = false;
+  currentPixelScale = 1.0f;
 }
 
 void Renderer::BindViewportFBO() {
@@ -5983,6 +5994,7 @@ void Renderer::BeginRecordRaster(int w, int h) {
   glBindFramebuffer(GL_FRAMEBUFFER, recRasterFBO);
   glViewport(0, 0, w, h);
   fbWidth = w; fbHeight = h;                 // projection aspect for the record draw
+  currentPixelScale = 1.0f;                  // record FBO is not supersampled
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }

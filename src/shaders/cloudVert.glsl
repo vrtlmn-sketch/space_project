@@ -1,5 +1,6 @@
 #version 460 core
-layout (location = 0) in vec3 aPos;
+layout (location = 0) in vec3 aPos;      // absolute (galaxy-local) position — used for dust clump hashing
+layout (location = 1) in vec3 aRelPos;   // camera-relative position (CPU double) — used for the transform
 
 uniform mat4 uProj;
 uniform mat4 uWorld;
@@ -10,6 +11,7 @@ uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
 uniform float uTemperature;  // Kelvin (whole-cloud base)
 uniform int   uCloudPass;    // 0 = haze, 1 = core, 2 = dust glow
+uniform float uCinePixelScale; // point-size scale so sprites keep apparent size under SSAA
 
 // Dust (uCloudPass == 2). Clumps are anchored to the galaxy via the particle's
 // own static local position, so they never swim with the camera.
@@ -52,9 +54,9 @@ vec3 blackbody(float T) {
 }
 
 void main() {
-  vec4 p = uWorld * vec4(aPos + uCamera, 1.0);
-  p.xyz  = uViewRot * p.xyz;
-  gl_Position = uProj * p;
+  // Transform the camera-relative position (already double-precise from the CPU);
+  // camera sits at the origin in this space, so no huge-number cancellation.
+  gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
 
   float id = float(gl_VertexID);
   float h1 = hash11(id * 1.7 + 0.3);
@@ -70,9 +72,11 @@ void main() {
     return;
   }
 
+  float ps = (uCinePixelScale > 0.0) ? uCinePixelScale : 1.0;  // SSAA point-size scale
+
   if (uCloudPass == 1) {
     // Core pass: brightness reads as size; bright stars bigger & softer (corona).
-    gl_PointSize = clamp(3.0 + 5.0 * vMag, 3.0, 11.0);
+    gl_PointSize = clamp(3.0 + 5.0 * vMag, 3.0, 11.0) * ps;
   } else if (uCloudPass == 2 || uCloudPass == 3) {
     // Dust: pass 2 = warm additive glow, pass 3 = extinction (darkens/reddens).
     // Same sparse, clumpy particle selection for both so they coincide.
@@ -81,7 +85,7 @@ void main() {
     float pick  = hash11(id * 5.3 + 2.0);
     bool isDust = (uDustStrength > 0.0) && (clump < uDustCoverage) && (pick < 0.14);
     if (isDust) {
-      gl_PointSize = clamp(34.0 + 46.0 * pick, 20.0, 92.0);
+      gl_PointSize = clamp(34.0 + 46.0 * pick, 20.0, 92.0) * ps;
       if (uCloudPass == 2) {
         // Warm dust reflectance, deepening to brown as reddening rises (matches RT)
         vColor = vec3(1.0, 0.75, 0.55)
@@ -95,6 +99,6 @@ void main() {
     }
   } else {
     // Haze pass: wide faint sprite — overlaps into the continuous "milk".
-    gl_PointSize = clamp(24.0 * (0.7 + 0.6 * vMag), 12.0, 56.0);
+    gl_PointSize = clamp(24.0 * (0.7 + 0.6 * vMag), 12.0, 56.0) * ps;
   }
 }

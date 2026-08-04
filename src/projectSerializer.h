@@ -104,6 +104,7 @@ struct SceneSettings {
   float dustCoverage{0.68f};
   float dustClumpScale{6.69f};
   float dustGlow{0.15f};
+  float cineSSAA{1.5f};
   int   dustDetail{200};
 
   // Simulation

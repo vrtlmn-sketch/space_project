@@ -810,6 +810,14 @@ void RenderedObject::setupRender()
     // All other mesh types: position-only, 3 floats per vertex
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+    if (meshType == MeshType::cloud) {
+      // Attribute 1 = per-frame camera-relative position (computed in double on
+      // the CPU) so the galaxy doesn't shimmer under camera motion at 1e9 AU.
+      glGenBuffers(1, &relVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, relVbo);
+      glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+      glEnableVertexAttribArray(1);
+    }
   }
 
   glGenBuffers(1, &ssboParticles);
@@ -1218,9 +1226,46 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   glBindVertexArray(vao);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
   glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
+
+  // Camera-relative particle positions computed in DOUBLE — eliminates the
+  // large-world float cancellation (aPos + camera at ~1e9 AU) that made the
+  // galaxy structure shimmer when the camera moved. Absolute positions stay in
+  // vbo (attribute 0) for the dust clump hashing; attribute 1 gets these.
+  {
+    size_t n = UVObjectMeshBuffer.size() / 3;
+    if (relPosBuffer.size() != n * 3) relPosBuffer.resize(n * 3);
+    double r[9] = {1,0,0, 0,1,0, 0,0,1};
+    if (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f) {
+      const double d2r = 3.14159265358979323846 / 180.0;
+      double ca = std::cos(rotationDeg.x*d2r), sa = std::sin(rotationDeg.x*d2r);
+      double cb = std::cos(rotationDeg.y*d2r), sb = std::sin(rotationDeg.y*d2r);
+      double cc = std::cos(rotationDeg.z*d2r), sc = std::sin(rotationDeg.z*d2r);
+      r[0]=cc*cb; r[1]=cc*sb*sa - sc*ca; r[2]=cc*sb*ca + sc*sa;
+      r[3]=sc*cb; r[4]=sc*sb*sa + cc*ca; r[5]=sc*sb*ca - cc*sa;
+      r[6]=-sb;   r[7]=cb*sa;            r[8]=cb*ca;
+    }
+    double ox = coordinates.x + cameraTranslate[0];
+    double oy = coordinates.y + cameraTranslate[1];
+    double oz = coordinates.z + cameraTranslate[2];
+    for (size_t i = 0; i < n; i++) {
+      double ax = UVObjectMeshBuffer[i*3+0];
+      double ay = UVObjectMeshBuffer[i*3+1];
+      double az = UVObjectMeshBuffer[i*3+2];
+      relPosBuffer[i*3+0] = (float)(ox + r[0]*ax + r[1]*ay + r[2]*az);
+      relPosBuffer[i*3+1] = (float)(oy + r[3]*ax + r[4]*ay + r[5]*az);
+      relPosBuffer[i*3+2] = (float)(oz + r[6]*ax + r[7]*ay + r[8]*az);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, relVbo);
+    glBufferData(GL_ARRAY_BUFFER, relPosBuffer.size()*sizeof(float), relPosBuffer.data(), GL_DYNAMIC_DRAW);
+  }
+
   glUseProgram(program);
   if (realisticUniform != (unsigned int)-1)
     glUniform1i(realisticUniform, realisticShading ? 1 : 0);
+  {
+    GLint psLoc = glGetUniformLocation(program, "uCinePixelScale");
+    if (psLoc >= 0) glUniform1f(psLoc, cinePixelScale);
+  }
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
   // Check render mode: if nebula, enable blending and larger point sprites
@@ -1233,6 +1278,8 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     // writes. Two passes: a wide faint HAZE (continuous milk) then tiny crisp
     // CORES (individual stars).
     glEnable(GL_PROGRAM_POINT_SIZE);
+    glEnable(GL_DEPTH_CLAMP);   // clamp instead of clip at the far plane
+    glDepthFunc(GL_LEQUAL);     // far stars sit at depth ~1.0 == cleared depth; LEQUAL lets them pass
     glEnable(GL_BLEND);
     glDepthMask(GL_FALSE);
     GLint passLoc = glGetUniformLocation(program, "uCloudPass");
@@ -1254,10 +1301,14 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
     glDisable(GL_PROGRAM_POINT_SIZE);
+    glDisable(GL_DEPTH_CLAMP);
+    glDepthFunc(GL_LESS);
     hasBeenRendered = true;
     return;
   }
 
+  glEnable(GL_DEPTH_CLAMP);   // same far-plane fix for the nav point cloud
+  glDepthFunc(GL_LEQUAL);
   if (curRenderMode == 1) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE); // additive blending for nebula glow
@@ -1271,6 +1322,8 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   if (curRenderMode == 1) {
     glDisable(GL_BLEND);
   }
+  glDisable(GL_DEPTH_CLAMP);
+  glDepthFunc(GL_LESS);
   hasBeenRendered=true;
 }
 

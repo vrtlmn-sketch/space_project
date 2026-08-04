@@ -378,6 +378,7 @@ private:
   GLuint cineColorTex{0};
   GLuint cineDepthRBO{0};
   int    cineFboW{0}, cineFboH{0};
+  float  currentPixelScale{1.0f};    // transient: point-size scale for the pass being drawn (= SSAA factor)
   bool   cineActive{false};          // transient: HDR redirect live for the current pass
   GLuint cineResolveTarget{0};       // real FBO to composite back into
   int    cineResolveW{0}, cineResolveH{0};
@@ -686,6 +687,7 @@ public:
   void EndRecordRaster();                    // restore the saved draw FBO + viewport
   void CaptureRecordRasterVideo(int w, int h); // post + readback → ffmpeg (one video frame)
   void CaptureRecordRasterImage(int w, int h); // post + readback → image file (screenshot)
+  float cineSSAA{1.5f};                      // supersample factor for the Performant view (1 = off) — anti-flicker
 
   // Public spawn/grid forms (accessed from main.cpp)
   SpawnFormState spawnForm{};
