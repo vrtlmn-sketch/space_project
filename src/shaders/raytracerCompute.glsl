@@ -661,7 +661,7 @@ void main()
     float dustTau            = 0.0;   // accumulated dust column density
     vec3  dustGlowCol        = vec3(0.0); // starlight-weighted dust column (in-scatter)
     // Per-particle dust puff: world-constant radius, the raster's sprite size.
-    float dustR2 = uDustInfluence * 0.9; dustR2 *= dustR2;
+    float dustR2 = uDustInfluence * 0.35; dustR2 *= dustR2;
     float dustAcc = 0.0;              // dust column from dusty PARTICLES along the ray
 
     for (int i = 0; i < uObjectCount; i++)
@@ -736,7 +736,7 @@ void main()
     // thicker, wider, darker dust. Fixed in space → no swimming, true parallax.
     if (uDustStrength > 0.0 && dustAcc > 0.0) {
         dustTau = pow(min(dustAcc * 2.6, 1.25), 2.2) * 60.0;
-        color = gxDustExtinction(color, dustTau);
+        color = gxDustExtinction(color, dustTau, dustAcc * 2.6);   // overlap → blacker cores
     }
 
     // Clamp to [0,1] for rgba8 output

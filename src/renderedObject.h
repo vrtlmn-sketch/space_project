@@ -193,7 +193,8 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // dustLane value (color.x) so RT places dust on the SAME particles the raster does.
   void renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                             float dustInfluence = 0.0f, float dustClumpScale = 0.0f,
-                            float dustCoverage = 0.0f, float dustContrast = 1.0f);
+                            float dustCoverage = 0.0f, float dustContrast = 1.0f,
+                            double dustDetail = 14000.0);
   void renderMeshRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
                                   vec3 velocity, float mass = 1.0f, float temperature = 0.0f, float objectType = 0.0f,
                                   vec3 color = {0.55f, 0.25f, 0.15f},

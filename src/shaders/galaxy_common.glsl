@@ -66,17 +66,24 @@ float gxDustFieldDense(vec3 galLocal, float covBoost) {
 // Reddened dust extinction applied to the accumulated cloud colour, with a red
 // floor so the densest lanes read as deep red-brown (not black "holes"). The
 // floor is gated by dust column so the empty sky is never lifted.
-vec3 gxDustExtinction(vec3 color, float dustTau) {
-    // Strong spectral tilt: red passes, green/blue absorbed hard → thin dust reads
-    // bright ORANGE, thick reads deep RED, densest goes near-black (the raster's
-    // fiery-ember look), instead of a flat brown.
+// `overlap` = how many dust layers stack at this pixel (0 = single layer). The
+// raster floors each SPRITE separately, so stacked sprites MULTIPLY their floors
+// (0.1² → black): compounding the floor here reproduces that — single patches
+// bottom out warm red, overlapping patches go genuinely BLACK.
+vec3 gxDustExtinction(vec3 color, float dustTau, float overlap) {
     // The raster's exact spectral tilt + reddish floor (cloudFrag.glsl): dense
     // dust bottoms out at deep RED (fiery core), not near-black brown.
     vec3  dExt = vec3(1.0, 1.0 + uDustReddening, 1.0 + 2.6 * uDustReddening);
     float tau  = dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0);
     vec3  mult = exp(-uDustStrength * 0.042 * tau * dExt);
     vec3  floorC = vec3(0.10, 0.035, 0.02) * smoothstep(0.0, 6.0, dustTau);
+    floorC *= exp(-max(overlap - 0.8, 0.0) * 2.2);   // stacked layers → floor compounds toward black
     return color * max(mult, floorC);
+}
+
+// Single-layer wrapper (geodesic callers): floor behaves as before.
+vec3 gxDustExtinction(vec3 color, float dustTau) {
+    return gxDustExtinction(color, dustTau, 0.0);
 }
 
 // Point-source glow with core-gating (was duplicated in every RT shader; now

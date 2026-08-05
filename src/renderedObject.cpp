@@ -637,7 +637,7 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
 
 void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                                           float dustInfluence, float dustClumpScale,
-                                          float dustCoverage, float dustContrast)
+                                          float dustCoverage, float dustContrast, double dustDetail)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
   if (particleCount <= 0) return;
@@ -680,11 +680,21 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
     }
 
     float rx = UVObjectMeshBuffer[fi], ry = UVObjectMeshBuffer[fi+1], rz = UVObjectMeshBuffer[fi+2];
-    // Dust lane at the particle's RAW local position (the raster's aPos) — the
-    // exact predicate the raster's dust pass uses, so RT dust rides the SAME stars.
+    // Dust lane as the MAX over this point's stride group (the real particles it
+    // stands in for), sampled at Dust Points resolution: the point is dusty if
+    // ANY particle it represents is. Keeps the field's crisp 0-or-1 contrast,
+    // makes dust coverage track the FULL particle set (no need to raise Star
+    // Points), and reduces to plain per-particle sampling when stride = 1.
+    // Positions are RAW local (the raster's aPos): the raster's exact predicate.
     float pLane = 0.0f;
-    if (cachedRenderMode == 0 && dustInfluence > 0.0f)
-      pLane = rtDustLane(rx, ry, rz, dustInfluence, dustClumpScale, dustCoverage, dustContrast);
+    if (cachedRenderMode == 0 && dustInfluence > 0.0f) {
+      int nSamp = std::clamp((int)std::lround(dustDetail * (double)stride / (double)particleCount), 1, stride);
+      int gStep = stride / nSamp;
+      for (int j = i; j < i + stride && j < particleCount; j += gStep)
+        pLane = std::max(pLane,
+                         rtDustLane(UVObjectMeshBuffer[j*3], UVObjectMeshBuffer[j*3+1], UVObjectMeshBuffer[j*3+2],
+                                    dustInfluence, dustClumpScale, dustCoverage, dustContrast));
+    }
     if (rot) {
       float ox = R[0]*rx + R[1]*ry + R[2]*rz;
       float oy = R[3]*rx + R[4]*ry + R[5]*rz;
