@@ -655,7 +655,6 @@ void main()
     // Cloud — points mode (additive glow) and nebula mode (Beer-Lambert)
     // -----------------------------------------------------------------------
     vec3  cloudGlow          = vec3(0.0);
-    vec3  coreGlow           = vec3(0.0);   // resolved star cores — punch THROUGH the dust
     float hazeSum            = 0.0;   // smooth haze only (no star spikes) → dust band mask
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
@@ -674,7 +673,7 @@ void main()
         float d2    = closestApproachDist2(ro, rd, cen);
         float coreS = max(objects[i].radius * 2.0, 0.001);
         float hot;
-        vec3  gcol  = gxStarColor(cen - uDustCenter, objects[i].temperature, hot);  // position-keyed colour
+        vec3  gcol  = gxStarColor(float(i), objects[i].temperature, hot);  // broad per-star colour
 
         if (otype == 2)
         {
@@ -682,9 +681,8 @@ void main()
             float hazeAmt = pointSourceGlow(d2, cen, objects[i].radius, float(i), coreAmt);
             // Stars + haze all go under the dust so the dust REDDENS them — thin
             // dust → fiery orange sparkles, thick dust → dark cores (like raster).
-            cloudGlow += gcol * hazeAmt;               // haze goes UNDER the dust (reddened)
-            cloudGlow += gxGasGlow(cen - uDustCenter, d2, hot);
-            coreGlow  += gcol * coreAmt;               // resolved stars poke through the dust
+            cloudGlow += gcol * (hazeAmt + coreAmt);
+            cloudGlow += gxGasGlow(float(i), d2, hot);
             hazeSum   += hazeAmt;   // smooth band density (no star spikes)
         }
         else // otype == 4: nebula — Beer-Lambert transmittance
@@ -719,18 +717,12 @@ void main()
     // dense band). Continuous + FBM-fine → the raster's connected mottled ember
     // lanes, instead of point-sampled specks or round blobs.
     if (uDustStrength > 0.0) {
-        float bandMask = smoothstep(0.22, 0.50, hazeSum);   // dust across the band, thickest in the core
+        float bandMask = smoothstep(0.13, 0.42, hazeSum);   // SMOOTH dense band (no star spikes)
         float D   = length(uDustCenter - ro);                // galaxy distance
         vec3  cp  = ro + rd * D;                             // ray ∩ galaxy plane (spans the disk)
         float lane = gxDustField(cp - uDustCenter);          // FBM lane (0..1, smooth gradient)
-        dustTau = pow(lane, 1.3) * bandMask * 20.0;                    // gradient → clear→orange→dark lanes
+        dustTau = pow(lane, 2.5) * bandMask * 60.0;                    // gradient → clear→orange→dark lanes
         color = gxDustExtinction(color, dustTau);
-        // Resolved stars punch through the dust (raster draws sprites LAST). Thin
-        // dust still tints them, the densest lanes still cover them — partial trans.
-        float coreTrans = max(exp(-uDustStrength * 0.042 * dustTau * 0.5), 0.12);
-        color += coreGlow * coreTrans;
-    } else {
-        color += coreGlow;
     }
 
     // Clamp to [0,1] for rgba8 output
