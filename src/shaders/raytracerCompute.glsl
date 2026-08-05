@@ -660,6 +660,9 @@ void main()
     vec3  nebulaScatter      = vec3(0.0);
     float dustTau            = 0.0;   // accumulated dust column density
     vec3  dustGlowCol        = vec3(0.0); // starlight-weighted dust column (in-scatter)
+    // Per-particle dust puff: world-constant radius, the raster's sprite size.
+    float dustR2 = uDustInfluence * 0.9; dustR2 *= dustR2;
+    float dustAcc = 0.0;              // dust column from dusty PARTICLES along the ray
 
     for (int i = 0; i < uObjectCount; i++)
     {
@@ -684,6 +687,20 @@ void main()
             cloudGlow += gcol * (hazeAmt + coreAmt);
             cloudGlow += gxGasGlow(float(i), d2, hot);
             hazeSum   += hazeAmt;   // smooth band density (no star spikes)
+            // PER-PARTICLE dust (the raster's predicate): this point's dustLane
+            // value rides in color.x (CPU, raster's exact field at the particle's
+            // own position). Dusty particles cast world-fixed puffs the ray
+            // accumulates — same placement as the raster, no camera swimming.
+            float pdust = objects[i].color.x;
+            if (uDustStrength > 0.0 && pdust > 0.04 && d2 < dustR2 * 9.0) {
+                // Carve the puff with the coarse FBM field (the committed look's
+                // texture), sampled at the ray's nearest point to THIS particle —
+                // scene-anchored, so any residual drift is bounded to sub-patch
+                // scale instead of the whole pattern swimming.
+                vec3  pp    = ro + rd * max(dot(cen - ro, rd), 0.0);
+                float carve = gxDustField(pp - uDustCenter);
+                dustAcc += pdust * exp(-d2 / dustR2) * carve;
+            }
         }
         else // otype == 4: nebula — Beer-Lambert transmittance
         {
@@ -712,25 +729,13 @@ void main()
     color  += cloudGlow;
     color   = color * cloudTransmittance + nebulaScatter;
 
-    // Per-pixel CONTINUOUS dust: sample the FBM dust field where the ray crosses
-    // the galaxy, scaled by how bright the star glow is there (dust lives in the
-    // dense band). Continuous + FBM-fine → the raster's connected mottled ember
-    // lanes, instead of point-sampled specks or round blobs.
-    if (uDustStrength > 0.0) {
-        // On/off "is there galaxy here" mask ONLY — saturates at a LOW haze level so
-        // it never weights dust toward the bright centre; the FIELD decides placement
-        // (the raster's behaviour). Weighting by brightness was what pulled RT's dust
-        // to the middle while the raster's spread outward along the band.
-        float bandMask = smoothstep(0.02, 0.10, hazeSum);
-        float D   = length(uDustCenter - ro);                // galaxy distance
-        vec3  cp  = ro + rd * D;                             // ray ∩ galaxy plane (spans the disk)
-        // Raster grading, two effects of particle density (hazeSum = column proxy):
-        //  1. fill fraction rises → patches WIDEN AND MERGE in the dense centre
-        //  2. sprites stack → dust gets THICKER (sqrt-compressed: haze overweights
-        //     the centre vs the raster's sprite counts)
-        float dens = sqrt(min(hazeSum, 4.0));
-        float lane = gxDustFieldDense(cp - uDustCenter, 0.25 * dens);
-        dustTau = pow(lane, 2.5) * bandMask * dens * 75.0;
+    // PER-PARTICLE dust column, accumulated in the star loop above — the raster's
+    // own mechanism: dusty particles (dustLane at their OWN positions, CPU) cast
+    // world-fixed puffs that stack along the ray. Placement, grading, and merging
+    // all follow the particles automatically: dense regions overlap more puffs →
+    // thicker, wider, darker dust. Fixed in space → no swimming, true parallax.
+    if (uDustStrength > 0.0 && dustAcc > 0.0) {
+        dustTau = pow(min(dustAcc * 2.6, 1.25), 2.2) * 60.0;
         color = gxDustExtinction(color, dustTau);
     }
 

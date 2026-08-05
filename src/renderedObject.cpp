@@ -541,6 +541,45 @@ static void eulerMat3(const vec3& deg, float R[9]) {
 
 int RenderedObject::rtCloudPointCap = 20000;
 
+// The raster's EXACT dust field (cloudVert.glsl: hash13 → vnoise → fbm3 →
+// dustLane), evaluated on the CPU at each cloud point's raw local position.
+// RT dust then lives on the SAME particles the raster's dust sprites do.
+static float rtFract(float v) { return v - std::floor(v); }
+static float rtHash13(float x, float y, float z) {
+  float px = rtFract(x * 0.1031f), py = rtFract(y * 0.1031f), pz = rtFract(z * 0.1031f);
+  float d  = px * (pz + 31.32f) + py * (py + 31.32f) + pz * (px + 31.32f);
+  px += d; py += d; pz += d;
+  return rtFract((px + py) * pz);
+}
+static float rtVnoise(float x, float y, float z) {
+  float ix = std::floor(x), iy = std::floor(y), iz = std::floor(z);
+  float fx = x - ix, fy = y - iy, fz = z - iz;
+  fx = fx * fx * (3.f - 2.f * fx); fy = fy * fy * (3.f - 2.f * fy); fz = fz * fz * (3.f - 2.f * fz);
+  float n000 = rtHash13(ix,     iy,     iz),     n100 = rtHash13(ix+1.f, iy,     iz);
+  float n010 = rtHash13(ix,     iy+1.f, iz),     n110 = rtHash13(ix+1.f, iy+1.f, iz);
+  float n001 = rtHash13(ix,     iy,     iz+1.f), n101 = rtHash13(ix+1.f, iy,     iz+1.f);
+  float n011 = rtHash13(ix,     iy+1.f, iz+1.f), n111 = rtHash13(ix+1.f, iy+1.f, iz+1.f);
+  float nx00 = n000 + (n100 - n000) * fx, nx10 = n010 + (n110 - n010) * fx;
+  float nx01 = n001 + (n101 - n001) * fx, nx11 = n011 + (n111 - n011) * fx;
+  float nxy0 = nx00 + (nx10 - nx00) * fy, nxy1 = nx01 + (nx11 - nx01) * fy;
+  return nxy0 + (nxy1 - nxy0) * fz;
+}
+static float rtFbm3(float x, float y, float z) {
+  float a = 0.5f, s = 0.0f;
+  for (int i = 0; i < 3; i++) { s += a * rtVnoise(x, y, z); x *= 2.03f; y *= 2.03f; z *= 2.03f; a *= 0.5f; }
+  return s / 0.875f;
+}
+static float rtDustLane(float x, float y, float z,
+                        float influence, float clumpScale, float coverage, float contrast) {
+  float scale = std::max(influence * clumpScale, 1e-6f);
+  float n   = rtFbm3(x / scale, y / scale, z / scale);
+  float cov = std::clamp(coverage, 0.0f, 1.0f);
+  float thr = 0.85f - cov * 0.7f;
+  float t   = std::clamp((n - thr) / 0.30f, 0.0f, 1.0f);
+  float d   = t * t * (3.f - 2.f * t);
+  return std::pow(d, std::max(contrast, 0.25f));
+}
+
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
                                                  std::vector<RayTracerObjectDoppler>& list)
 {
@@ -596,7 +635,9 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
   }
 }
 
-void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList)
+void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
+                                          float dustInfluence, float dustClumpScale,
+                                          float dustCoverage, float dustContrast)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
   if (particleCount <= 0) return;
@@ -639,6 +680,11 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
     }
 
     float rx = UVObjectMeshBuffer[fi], ry = UVObjectMeshBuffer[fi+1], rz = UVObjectMeshBuffer[fi+2];
+    // Dust lane at the particle's RAW local position (the raster's aPos) — the
+    // exact predicate the raster's dust pass uses, so RT dust rides the SAME stars.
+    float pLane = 0.0f;
+    if (cachedRenderMode == 0 && dustInfluence > 0.0f)
+      pLane = rtDustLane(rx, ry, rz, dustInfluence, dustClumpScale, dustCoverage, dustContrast);
     if (rot) {
       float ox = R[0]*rx + R[1]*ry + R[2]*rz;
       float oy = R[3]*rx + R[4]*ry + R[5]*rz;
@@ -651,7 +697,7 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
         ry + (float)(coordinates.y + cameraTranslate[1]),
         rz + (float)(coordinates.z + cameraTranslate[2]),
         0},
-      adjustedMass, pRad, cachedTemperature, pObjType, vec4{0,0,0,0}});
+      adjustedMass, pRad, cachedTemperature, pObjType, vec4{pLane,0,0,0}});
   }
 }
 

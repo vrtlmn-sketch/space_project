@@ -558,7 +558,8 @@ void Renderer::Draw(RenderedObject& ro) {
                              1.0f, 0.0f, 0.0f, {0.55f,0.25f,0.15f}, &rtTriangles, &rtNodes);
     }
     else if (ro.meshType == MeshType::cloud) {
-      ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects);
+      ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects,
+                              dustInfluence, dustClumpScale, dustCoverage, dustContrast);
       if (dopplerMode) ro.renderCloudRaytracedDoppler(cameraTranslate, rtDopplerObjects);
     }
   }
