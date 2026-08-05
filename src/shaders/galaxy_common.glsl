@@ -73,10 +73,10 @@ float gxDustFieldDense(vec3 galLocal, float covBoost) {
 vec3 gxDustExtinction(vec3 color, float dustTau, float overlap) {
     // The raster's exact spectral tilt + reddish floor (cloudFrag.glsl): dense
     // dust bottoms out at deep RED (fiery core), not near-black brown.
-    vec3  dExt = vec3(1.0, 1.0 + uDustReddening, 1.0 + 2.6 * uDustReddening);
+    vec3  dExt = vec3(1.0, 1.0 + 1.72 * uDustReddening, 1.0 + 7.0 * uDustReddening);
     float tau  = dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0);
     vec3  mult = exp(-uDustStrength * 0.042 * tau * dExt);
-    vec3  floorC = vec3(0.10, 0.035, 0.02) * smoothstep(0.0, 6.0, dustTau);
+    vec3  floorC = vec3(0.14, 0.038, 0.016) * smoothstep(0.0, 6.0, dustTau);
     floorC *= exp(-max(overlap - 0.8, 0.0) * 2.2);   // stacked layers → floor compounds toward black
     return color * max(mult, floorC);
 }
