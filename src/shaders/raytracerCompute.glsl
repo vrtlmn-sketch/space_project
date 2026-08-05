@@ -655,7 +655,7 @@ void main()
     // Cloud — points mode (additive glow) and nebula mode (Beer-Lambert)
     // -----------------------------------------------------------------------
     vec3  cloudGlow          = vec3(0.0);
-    vec3  coreGlow           = vec3(0.0);   // half the resolved-star light punches through dust
+    vec3  coreGlow           = vec3(0.0);   // resolved star cores — punch THROUGH the dust
     float hazeSum            = 0.0;   // smooth haze only (no star spikes) → dust band mask
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
@@ -682,9 +682,9 @@ void main()
             float hazeAmt = pointSourceGlow(d2, cen, objects[i].radius, float(i), coreAmt);
             // Stars + haze all go under the dust so the dust REDDENS them — thin
             // dust → fiery orange sparkles, thick dust → dark cores (like raster).
-            cloudGlow += gcol * (hazeAmt + coreAmt * 0.5);   // half reddens under dust
-            coreGlow  += gcol * coreAmt * 0.5;               // half punches through on top
+            cloudGlow += gcol * hazeAmt;               // haze goes UNDER the dust (reddened)
             cloudGlow += gxGasGlow(cen - uDustCenter, d2, hot);
+            coreGlow  += gcol * coreAmt;               // resolved stars poke through the dust
             hazeSum   += hazeAmt;   // smooth band density (no star spikes)
         }
         else // otype == 4: nebula — Beer-Lambert transmittance
@@ -719,14 +719,19 @@ void main()
     // dense band). Continuous + FBM-fine → the raster's connected mottled ember
     // lanes, instead of point-sampled specks or round blobs.
     if (uDustStrength > 0.0) {
-        float bandMask = smoothstep(0.16, 0.42, hazeSum);   // SMOOTH dense band (no star spikes)
+        float bandMask = smoothstep(0.22, 0.50, hazeSum);   // dust across the band, thickest in the core
         float D   = length(uDustCenter - ro);                // galaxy distance
         vec3  cp  = ro + rd * D;                             // ray ∩ galaxy plane (spans the disk)
         float lane = gxDustField(cp - uDustCenter);          // FBM lane (0..1, smooth gradient)
-        dustTau = pow(lane, 1.05) * bandMask * 26.0;                    // gradient → clear→orange→dark lanes
+        dustTau = pow(lane, 1.3) * bandMask * 20.0;                    // gradient → clear→orange→dark lanes
         color = gxDustExtinction(color, dustTau);
+        // Resolved stars punch through the dust (raster draws sprites LAST). Thin
+        // dust still tints them, the densest lanes still cover them — partial trans.
+        float coreTrans = max(exp(-uDustStrength * 0.042 * dustTau * 0.5), 0.12);
+        color += coreGlow * coreTrans;
+    } else {
+        color += coreGlow;
     }
-    color += coreGlow;   // bright stars punch through the fiery dust (like the raster)
 
     // Clamp to [0,1] for rgba8 output
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

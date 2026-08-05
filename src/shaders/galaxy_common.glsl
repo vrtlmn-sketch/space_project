@@ -98,25 +98,22 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx, out float co
     float distC = max(length(cen + uCamera), 0.05);  // camera = -uCamera
     float ang2  = d2 / (distC * distC);
 
-    float pixAng = 2.0 / (uProj[1][1] * uResolution.y);
-    float sigmaB = 0.0012;   // slightly wider cores → small halos overlap into bright clusters
-    float sigma  = max(sigmaB, 0.5 * pixAng);
-    float s2     = sigma * sigma;
-    float psf    = exp(-ang2 / s2) + 0.015 * exp(-ang2 / (s2 * 9.0));
-    float resComp = sigmaB / sigma;
-
+    float pixAng     = 2.0 / (uProj[1][1] * uResolution.y);  // angular size of one output pixel
     float mag        = gxStarMag(cen - uDustCenter);         // luminosity (position-keyed)
     float strideComp = clamp(pRadius * pRadius * 1.0e6, 1.0, 64.0);
     float flux       = clamp(9.0 / (distC * distC), 0.05, 6.0);
 
-    // Resolved stars: bright, DISTANCE-INDEPENDENT dots that clip to white — the
-    // galaxy is billions of AU away, so a physical 1/r² core vanishes; the raster
-    // draws fixed-size sprites, so we match that. A sampled RT point stands for
-    // `strideComp` real stars, so denser samples resolve more often (they contain
-    // a brighter member) — this compensates for RT's low point count vs raster.
+    // SPRITE-LIKE resolved star: a bright disc the SAME on-screen size (3..13 px)
+    // and SAME profile the raster draws (exp(-r²·3.5)·edge·(0.3+3.5·mag)), so after
+    // bloom + ACES it reads as the same sharp star + diffraction spikes — not a soft
+    // glow. SAME resolve threshold as the raster core gate.
     coreOut = 0.0;
-    if (mag >= uResolvedCut * 0.12)   // lower cut: RT glows read dimmer than raster sprites
-        coreOut = min((1.2 + 5.5 * mag) * psf, 10.0);
+    if (mag >= uResolvedCut * 0.30) {
+        float sizePx = clamp(3.0 + 7.0 * mag, 3.0, 13.0);    // matches the raster sprite size
+        float r2     = ang2 / (sizePx * sizePx * 0.25 * pixAng * pixAng);  // 0 at centre, 1 at sprite edge
+        float disc   = exp(-r2 * 3.5) * smoothstep(1.0, 0.5, r2);          // raster's fragment profile
+        coreOut = disc * (0.30 + 3.5 * mag);
+    }
 
     // Unresolved haze: the faint majority as a smooth density-driven glow floor.
     float su     = 0.0013 * max(uUnresolvedSize, 1.0);
