@@ -862,7 +862,7 @@ int main(int argc, char** argv) {
     if (compareMode) {
       static int cmpFrame = 0;
       if (++cmpFrame == 3) {   // let buffers/scene settle first
-        const int W = 1152, H = 648;
+        const int W = 640, H = 360;   // 360p — matches how the good version was viewed
         // 1) Realistic (RT): accumulate RT objects, dispatch to snapshot, capture.
         renderer.rayTracerView = true;
         renderer.rayTracedObjects.clear(); renderer.rtDopplerObjects.clear();
