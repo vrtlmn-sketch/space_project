@@ -142,6 +142,14 @@ private:
   bool    rightLookActive{false};
   bool    viewportHovered{false};  // mouse over the 3D scene this frame
 
+  // Hover quick-menu state (viewport QoL: Locate / Physics / Inspector)
+  int    hoverIdx{-1};        // same encoding as selectedIdx: >=0 planet, <=-2 cloud
+  double hoverStartTime{0.0}; // when the current target began being hovered
+  double hoverLastSeen{0.0};  // grace timer: menu survives the trip to its fixed spot
+  float  hoverRowY{0.0f};     // hovered hierarchy row's screen Y (menu tracks it)
+  float  scenePanelPos[2]{0, 0};   // hierarchy panel rect (menu anchors beside it)
+  float  scenePanelSize[2]{0, 0};
+
   // Gizmo state
   int  gizmoDragAxis{-1};  // -1=none, 0=X, 1=Y, 2=Z, 3=body-free
   bool gizmoDragging{false};

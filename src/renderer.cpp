@@ -495,8 +495,14 @@ bool Renderer::BeginFrame() {
 
   // For non-editor-viewport mode the scene renders to the full framebuffer.
   // BindViewportFBO overrides these when editor viewport is active.
-  sceneRenderW   = fbw;
-  sceneRenderH   = fbh;
+  // NOTE: the UI overlay (mouse, gizmo, hover menu) lives in ImGui WINDOW
+  // coordinates (points), not framebuffer PIXELS. Whenever the two differ
+  // (display scaling, WM fullscreen quirks), mapping WorldToScreen through
+  // pixel dimensions skews every overlay sideways — so use window coords here.
+  int winW = 0, winH = 0;
+  glfwGetWindowSize(window, &winW, &winH);
+  sceneRenderW   = (winW > 0) ? winW : fbw;
+  sceneRenderH   = (winH > 0) ? winH : fbh;
   sceneImageOffX = 0.0f;
   sceneImageOffY = 0.0f;
 
@@ -2204,12 +2210,97 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
       DrawCloudHighlight(*clouds[ci]);
   }
 
+  // ── Hover quick-menu ──────────────────────────────────────────────────────
+  // Triggered by hovering rows in the hierarchy ("Scene") list — the rows set
+  // hoverIdx / hoverRowY. The menu sits at a FIXED X beside the panel; its Y
+  // follows the hovered row. A grace latch keeps it alive for the trip over.
+  bool menuHovered = false;
+  {
+    static bool menuWasHovered = false;
+    double nowT = ImGui::GetTime();
+    if (menuWasHovered) hoverLastSeen = nowT;            // parked on the menu -> keep alive
+    if (hoverIdx != -1 && nowT - hoverLastSeen > 1.0) hoverIdx = -1;
+    menuWasHovered = false;
+
+    bool showMenu = (hoverIdx != -1) && (nowT - hoverStartTime > 0.15);
+    if (showMenu) {
+      PhysicsObject* hObj   = (hoverIdx >= 0 && hoverIdx < (int)physicsObjects.size())
+                              ? &physicsObjects[hoverIdx] : nullptr;
+      CloudObject*   hCloud = nullptr;
+      int hci = -(hoverIdx + 2);
+      if (hoverIdx <= -2 && hoverIdx > -1000 && hci >= 0 && hci < (int)clouds.size())
+        hCloud = clouds[hci].get();
+
+      if (hObj || hCloud) {
+        // Viewport feedback: ring the object this row refers to (find-my-thing).
+        if (hObj) {
+          float sx, sy;
+          if (WorldToScreen(hObj->data.position, sx, sy)) {
+            float effR = hObj->renderRadius() * activeSizeExag();
+            if (hObj->shaderType == ObjectType::BlackHole)
+              effR = std::max(effR, hObj->schwarzschildRadius * 2.6f);
+            float projR = 8.0f, esx, esy;
+            if (WorldToScreen({hObj->data.position.x + camMatrix[0]*effR,
+                               hObj->data.position.y + camMatrix[1]*effR,
+                               hObj->data.position.z + camMatrix[2]*effR}, esx, esy)) {
+              float ddx = esx - sx, ddy = esy - sy;
+              projR = std::max(std::sqrt(ddx*ddx + ddy*ddy), 8.0f);
+            }
+            dl->AddCircle({sx, sy}, projR + 4.0f, IM_COL32(255, 220, 120, 150), 32, 1.2f);
+          }
+        } else if (hCloud) {
+          DrawCloudHighlight(*hCloud);
+        }
+
+        // Fixed X beside the hierarchy panel; Y tracks the hovered row.
+        float ax = scenePanelPos[0] + scenePanelSize[0] + 8.0f;
+        float ay = hoverRowY - 4.0f;
+        if (scenePanelSize[0] <= 0.0f) { ax = 12.0f; ay = 80.0f; }
+        ImGui::SetNextWindowPos({ax, ay}, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.88f);
+        ImGuiWindowFlags mf = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize |
+                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                              ImGuiWindowFlags_NoFocusOnAppearing;
+        if (ImGui::Begin("##hoverQuickMenu", nullptr, mf)) {
+          if (hObj) ImGui::TextUnformatted(hObj->name.c_str());
+          else      ImGui::Text("Cloud %d", hci);
+          ImGui::Separator();
+
+          if (ImGui::Button("Locate", ImVec2(96, 0))) {
+            selectedIdx = hoverIdx;
+            highlightMode = 0;
+            if (hObj) {
+              float effR = hObj->renderRadius() * activeSizeExag();
+              if (hObj->shaderType == ObjectType::BlackHole)
+                effR = std::max(effR, hObj->schwarzschildRadius * 2.6f);
+              LocateCamera(hObj->data.position, effR);
+            } else {
+              vec3 cen; float rad = 1.0f;
+              hCloud->boundsEstimate(cen, rad);
+              LocateCamera(dvec3{cen.x, cen.y, cen.z}, rad);
+            }
+          }
+          bool* phys = hObj ? &hObj->simulatePhysics : &hCloud->simulatePhysics;
+          ImGui::Checkbox("Physics", phys);
+          if (ImGui::Button("Inspector", ImVec2(96, 0))) {
+            selectedIdx = hoverIdx;
+            highlightMode = 0;
+            focusInspectorNext = true;
+          }
+          menuWasHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+        }
+        ImGui::End();
+        menuHovered = menuWasHovered;
+      }
+    }
+  }
+
   // ── Click-to-select ──────────────────────────────────────────────────────────
   // Fire only when: not spawning a ghost object, gizmo didn't consume the click,
   // not currently dragging, and the click landed on the 3D scene. In editor-
   // viewport mode the scene is an ImGui window (WantCaptureMouse is true over
   // it), so use the viewport-hover flag instead of !WantCaptureMouse there.
-  bool sceneClickable = editorViewport ? viewportHovered : !io.WantCaptureMouse;
+  bool sceneClickable = (editorViewport ? viewportHovered : !io.WantCaptureMouse) && !menuHovered;
   if (!ghostDragActive && !gizmoConsumedClick && !gizmoDragging &&
       sceneClickable && ImGui::IsMouseClicked(0)) {
     float mx = io.MousePos.x, my = io.MousePos.y;
@@ -3807,6 +3898,10 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& /*cb*/) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Scene", nullptr, flags);
+  // Anchor rect for the hover quick-menu ("right next to the hierarchy list").
+  { ImVec2 sp = ImGui::GetWindowPos(), ss = ImGui::GetWindowSize();
+    scenePanelPos[0] = sp.x; scenePanelPos[1] = sp.y;
+    scenePanelSize[0] = ss.x; scenePanelSize[1] = ss.y; }
 
   // Project (name / image / save / load live in the Project panel)
   if (ImGui::Button("Project...")) showProjectPanel = true;
@@ -3826,6 +3921,11 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     if (ImGui::Selectable(cloudLabel, cloudSel)) {
       selectedIdx   = cloudSel ? -1 : sentinel;
       highlightMode = 0;
+    }
+    if (ImGui::IsItemHovered()) {
+      if (hoverIdx != sentinel) { hoverIdx = sentinel; hoverStartTime = ImGui::GetTime(); }
+      hoverLastSeen = ImGui::GetTime();
+      hoverRowY     = ImGui::GetItemRectMin().y;
     }
     ImGui::PopStyleColor();
   }
@@ -3863,6 +3963,11 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     if (ImGui::Selectable(label, sel)) {
       selectedIdx   = sel ? -1 : i;
       highlightMode = 0;
+    }
+    if (ImGui::IsItemHovered()) {
+      if (hoverIdx != i) { hoverIdx = i; hoverStartTime = ImGui::GetTime(); }
+      hoverLastSeen = ImGui::GetTime();
+      hoverRowY     = ImGui::GetItemRectMin().y;
     }
     ImGui::PopStyleColor();
   }

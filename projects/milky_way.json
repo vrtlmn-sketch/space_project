@@ -167,14 +167,14 @@
    ],
    "visualRadius": 4.260000059730373e-05,
    "cloudsEnabled": true,
-   "cloudCoverage": 0.5,
+   "cloudCoverage": 0.39,
    "cloudScale": 7.0,
-   "cloudBanded": 0.0,
-   "cloudTurbulence": 0.7,
-   "cloudSoftness": 0.16,
-   "cloudAltitude": 0.02,
+   "cloudBanded": 0.09,
+   "cloudTurbulence": 0.97,
+   "cloudSoftness": 0.18,
+   "cloudAltitude": 0.035,
    "cloudWhiteness": 1.0,
-   "cloudDrift": 0.0
+   "cloudDrift": 0.05
   },
   {
    "atmosphereColor": [

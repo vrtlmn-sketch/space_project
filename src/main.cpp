@@ -771,6 +771,11 @@ int main(int argc, char** argv) {
       if (rtw <= 0 || rth <= 0) {
         rtw = renderer.GetFbWidth();
         rth = renderer.GetFbHeight();
+      } else if (renderer.GetFbHeight() > 0) {
+        // Preset height = quality; WIDTH follows the actual display aspect so
+        // the stretched blit never distorts geometry (a fixed 16:9 RT image in
+        // a non-16:9 window shifted everything sideways vs the mouse/overlay).
+        rtw = std::max(16, (int)std::lround((double)rth * renderer.GetFbWidth() / renderer.GetFbHeight()));
       }
       // Skip live display update while assembling a recording frame — the scene
       // is frozen during strip assembly so the display wouldn't change anyway,
@@ -961,6 +966,8 @@ int main(int argc, char** argv) {
       if (pw <= 0 || ph <= 0) {
         pw = renderer.GetFbWidth();
         ph = renderer.GetFbHeight();
+      } else if (renderer.GetFbHeight() > 0) {
+        pw = std::max(16, (int)std::lround((double)ph * renderer.GetFbWidth() / renderer.GetFbHeight()));
       }
       renderer.DispatchRaytracer(pw, ph);
       renderer.BlitRaytracerToScreen();
