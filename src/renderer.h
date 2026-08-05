@@ -24,6 +24,7 @@ class GridObject;
 class CloudObject;
 class LineObject;
 struct ImVec4;
+struct ImVec2;
 
 // ---- Keypoint on the timeline ----
 struct Keypoint {
@@ -158,6 +159,10 @@ private:
   void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
                         std::vector<std::unique_ptr<CloudObject>>& clouds);
   void DrawObjectHighlight(PhysicsObject& obj);
+  // Projected convex hull of a cloud's particles (screen space, subsampled).
+  // Powers both the shape outline and exact click-picking. CPU-only, ~400 pts.
+  std::vector<ImVec2> CloudScreenHull(CloudObject& c);
+  void DrawCloudHighlight(CloudObject& c);
   int  highlightMode{0};  // 0 = selected only, 1 = all objects, 2 = none
 
   // UI internal state

@@ -212,6 +212,9 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   void TrimLinePoints(size_t maxPoints);
 
   int cloudParticleCount() const { return (int)cloudParticles.size(); }
+  // Cloud particle positions (galaxy-local xyz triples) — read-only access for
+  // viewport picking/outline (projected hull), which lives in the Renderer.
+  const std::vector<float>& cloudLocalPositions() const { return UVObjectMeshBuffer; }
 
   // Cloud particle snapshot for timeline recording (pos + vel)
   std::vector<ParticleSnapshot> getParticleSnapshots() const;

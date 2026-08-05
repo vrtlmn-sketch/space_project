@@ -2197,6 +2197,12 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
              selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
     DrawObjectHighlight(physicsObjects[selectedIdx]);
   }
+  // Selected cloud: shape-hugging hull outline (CPU drawlist, no GPU cost).
+  if (selectedIdx <= -2 && selectedIdx > -1000) {
+    int ci = -(selectedIdx + 2);
+    if (ci >= 0 && ci < (int)clouds.size())
+      DrawCloudHighlight(*clouds[ci]);
+  }
 
   // ── Click-to-select ──────────────────────────────────────────────────────────
   // Fire only when: not spawning a ghost object, gizmo didn't consume the click,
@@ -2217,10 +2223,33 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
         if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
       }
     }
+    // No planet under the cursor → try the clouds: exact point-in-hull test on
+    // each cloud's projected silhouette (planets keep priority — they're small
+    // targets, clouds are huge). Smallest containing hull wins so a compact
+    // cloud in front of a giant one stays selectable.
+    int   bestCloud = -1;
+    float bestArea  = 3.4e38f;
+    if (bestIdx < 0) {
+      for (int ci = 0; ci < (int)clouds.size(); ++ci) {
+        std::vector<ImVec2> hull = CloudScreenHull(*clouds[ci]);
+        if (hull.size() < 3) continue;
+        bool inside = false;
+        float area = 0.0f;
+        for (size_t a = 0, b = hull.size() - 1; a < hull.size(); b = a++) {
+          if ((hull[a].y > my) != (hull[b].y > my) &&
+              mx < (hull[b].x - hull[a].x) * (my - hull[a].y) / (hull[b].y - hull[a].y) + hull[a].x)
+            inside = !inside;
+          area += hull[b].x * hull[a].y - hull[a].x * hull[b].y;
+        }
+        area = std::abs(area) * 0.5f;
+        if (inside && area < bestArea) { bestArea = area; bestCloud = ci; }
+      }
+    }
     // Hit → select; empty space → deselect (inspector falls back to blank,
     // leaving only Rendering Settings with content in the right dock)
-    if (bestIdx >= 0) { selectedIdx = bestIdx; highlightMode = 0; }
-    else              { selectedIdx = -1;      highlightMode = 0; }
+    if      (bestIdx   >= 0) { selectedIdx = bestIdx;           highlightMode = 0; }
+    else if (bestCloud >= 0) { selectedIdx = -(bestCloud + 2);  highlightMode = 0; }
+    else                     { selectedIdx = -1;                highlightMode = 0; }
   }
 }
 
@@ -4566,6 +4595,69 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawObjectHighlight — white outline + name/distance label for one object
 // ─────────────────────────────────────────────────────────────────────────────
+// Convex hull (Andrew's monotone chain) of the cloud's particles projected to
+// the screen — subsampled to ~400 points, pure CPU. Hugs the cloud's actual
+// silhouette (a tilted galaxy yields its ellipse), and doubles as an exact
+// pick region so clicks on empty sky near the cloud don't select it.
+std::vector<ImVec2> Renderer::CloudScreenHull(CloudObject& c) {
+  std::vector<ImVec2> pts;
+  const std::vector<float>& P = c.renderedObject.cloudLocalPositions();
+  size_t n = P.size() / 3;
+  if (n < 3) return pts;
+
+  bool rot = (c.rotationDeg.x != 0.0f || c.rotationDeg.y != 0.0f || c.rotationDeg.z != 0.0f);
+  const float d2r = 0.01745329252f;
+  float ca=std::cos(c.rotationDeg.x*d2r), sa=std::sin(c.rotationDeg.x*d2r);
+  float cb=std::cos(c.rotationDeg.y*d2r), sb=std::sin(c.rotationDeg.y*d2r);
+  float cc=std::cos(c.rotationDeg.z*d2r), sc=std::sin(c.rotationDeg.z*d2r);
+  float R[9] = { cc*cb, cc*sb*sa-sc*ca, cc*sb*ca+sc*sa,
+                 sc*cb, sc*sb*sa+cc*ca, sc*sb*ca-cc*sa,
+                 -sb,   cb*sa,          cb*ca };
+
+  size_t step = std::max<size_t>(n / 400, 1);
+  pts.reserve(n / step + 1);
+  for (size_t i = 0; i < n; i += step) {
+    float x = P[i*3], y = P[i*3+1], z = P[i*3+2];
+    if (rot) {
+      float ox = R[0]*x + R[1]*y + R[2]*z;
+      float oy = R[3]*x + R[4]*y + R[5]*z;
+      float oz = R[6]*x + R[7]*y + R[8]*z;
+      x = ox; y = oy; z = oz;
+    }
+    float sx, sy;
+    if (WorldToScreen({c.position.x + x, c.position.y + y, c.position.z + z}, sx, sy))
+      pts.push_back(ImVec2(sx, sy));
+  }
+  if (pts.size() < 3) { pts.clear(); return pts; }
+
+  std::sort(pts.begin(), pts.end(), [](const ImVec2& a, const ImVec2& b) {
+    return a.x < b.x || (a.x == b.x && a.y < b.y);
+  });
+  auto cross = [](const ImVec2& o, const ImVec2& a, const ImVec2& b) {
+    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  };
+  std::vector<ImVec2> hull(2 * pts.size());
+  size_t k = 0;
+  for (size_t i = 0; i < pts.size(); ++i) {                     // lower
+    while (k >= 2 && cross(hull[k-2], hull[k-1], pts[i]) <= 0) k--;
+    hull[k++] = pts[i];
+  }
+  for (size_t i = pts.size() - 1, t = k + 1; i-- > 0; ) {       // upper
+    while (k >= t && cross(hull[k-2], hull[k-1], pts[i]) <= 0) k--;
+    hull[k++] = pts[i];
+  }
+  hull.resize(k > 1 ? k - 1 : 0);
+  return hull;
+}
+
+void Renderer::DrawCloudHighlight(CloudObject& c) {
+  std::vector<ImVec2> hull = CloudScreenHull(c);
+  if (hull.size() < 3) return;
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  dl->AddPolyline(hull.data(), (int)hull.size(), IM_COL32(255, 255, 255, 170),
+                  ImDrawFlags_Closed, 1.5f);
+}
+
 void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
   dvec3 pos = obj.data.position;
   float bx, by;
