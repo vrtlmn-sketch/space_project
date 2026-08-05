@@ -40,15 +40,36 @@ vec3 gxGasGlow(float idx, float d2, float hot) {
 // Filamentary dust field over a galaxy-local position — the RT twin of the
 // rasterizer's dustLane (3-octave value-noise FBM, thresholded by coverage,
 // sharpened by contrast). 0 = clear … ~1 = dense lane.
+// EXACT copy of the rasterizer's dust noise (hash13/vnoise/fbm3) so RT samples the
+// SAME dust field at the SAME galaxy-local coordinates — the dust then condenses in
+// the same places as the raster, not a different pattern from a different hash.
+float gxHash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+float gxVnoise(vec3 x) {
+    vec3 i = floor(x), f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = gxHash13(i + vec3(0,0,0)), n100 = gxHash13(i + vec3(1,0,0));
+    float n010 = gxHash13(i + vec3(0,1,0)), n110 = gxHash13(i + vec3(1,1,0));
+    float n001 = gxHash13(i + vec3(0,0,1)), n101 = gxHash13(i + vec3(1,0,1));
+    float n011 = gxHash13(i + vec3(0,1,1)), n111 = gxHash13(i + vec3(1,1,1));
+    return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+               mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
 float gxFbm3(vec3 p) {
     float a = 0.5, s = 0.0;
-    for (int i = 0; i < 3; i++) { s += a * valueNoise(p); p *= 2.03; a *= 0.5; }
+    for (int i = 0; i < 3; i++) { s += a * gxVnoise(p); p *= 2.03; a *= 0.5; }
     return s / 0.875;
 }
+// Raster's exact dust noise, but sampled coarser (÷4): a per-pixel ray-plane
+// sample can't resolve the raster's fine per-particle scale without aliasing, so
+// this reads as the same mottled lanes at a slightly larger structure size.
 float gxDustField(vec3 galLocal) {
     float scale = max(uDustInfluence * uDustClumpScale, 1e-6);
-    float n   = gxFbm3(galLocal / scale / 4.0);   // coarse enough to read as mottled lanes, not per-pixel noise
-    float thr = 0.50 - clamp(uDustCoverage, 0.0, 1.0) * 0.5;   // fills more of the band (like raster's dense centre)
+    float n   = gxFbm3(galLocal / scale / 4.0);
+    float thr = 0.50 - clamp(uDustCoverage, 0.0, 1.0) * 0.5;
     float d   = smoothstep(thr, thr + 0.30, n);
     return pow(d, max(uDustContrast, 0.25));
 }
