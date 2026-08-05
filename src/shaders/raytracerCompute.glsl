@@ -327,45 +327,9 @@ uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
 uniform float uDustSampleFrac;     // fraction of star points used for dust (fixed resolution)
 uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 = glowing dust
 
-float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
-{
-    float distC = max(length(cen + uCamera), 0.05);  // camera = -uCamera
-    float ang2  = d2 / (distC * distC);
-
-    // Tight PSF (~0.075 deg), floored at half an output pixel
-    float pixAng = 2.0 / (uProj[1][1] * uResolution.y);
-    float sigmaB = 0.0006; // tighter PSF -> smaller star dots
-    float sigma  = max(sigmaB, 0.5 * pixAng);
-    float s2     = sigma * sigma;
-    float psf    = exp(-ang2 / s2) + 0.015 * exp(-ang2 / (s2 * 9.0));
-
-    // When the PSF is pixel-limited (low res), partially conserve energy so a
-    // dot occupies ~1 pixel instead of smearing a saturated multi-pixel disc.
-    float resComp = sigmaB / sigma;
-
-    // Log-distributed magnitudes
-    float mag = exp(-5.0 * hash1(vec3(idx * 17.13, idx * 31.71, idx * 47.97)));
-
-    // Subsampling packs `stride` real particles into one (radius *= sqrt(stride))
-    float strideComp = clamp(pRadius * pRadius * 1.0e6, 1.0, 64.0);
-
-    // Gentle inverse-square, clamped so stars stay visible at scene distances
-    float flux = clamp(9.0 / (distC * distC), 0.05, 6.0);
-
-    // Large peak amplitude: cores CLIP to white (like a camera sensor), so
-    // magnitude/distance change the saturated dot SIZE (~sqrt(log(amp))·sigma),
-    // never the center brightness — bright small dots.
-    float amp = 20.0 * mag * flux * resComp; // core ~= ONE star (tight); multiplicity -> haze
-    float core = min(amp * psf, 8.0); // resolved core: HDR, saturates to white
-
-    // Unresolved-star field: the (strideComp-1) faint stars this point stands in
-    // for, spread as a wide, dim, energy-normalized lobe -> a smooth low-frequency
-    // haze that the resolved cores sit on top of.
-    float su     = 0.0013 * max(uUnresolvedSize, 1.0); // FIXED angular width (resolution-independent haze)
-    float unrPsf = exp(-ang2 / (su * su));
-    float unrAmp = uUnresolvedStrength * 0.03 * mag * flux * strideComp; // full local density -> haze persists regardless of Star Points
-    return core + unrAmp * unrPsf;
-}
+// Shared galaxy look (star colours, luminosity + core-gating, FBM dust, gas,
+// pointSourceGlow) — one file, included by every RT method so they stay 1:1.
+#include "galaxy_common.glsl"
 
 // ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.
@@ -691,6 +655,7 @@ void main()
     // Cloud — points mode (additive glow) and nebula mode (Beer-Lambert)
     // -----------------------------------------------------------------------
     vec3  cloudGlow          = vec3(0.0);
+    float hazeSum            = 0.0;   // smooth haze only (no star spikes) → dust band mask
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
     float dustTau            = 0.0;   // accumulated dust column density
@@ -707,40 +672,18 @@ void main()
 
         float d2    = closestApproachDist2(ro, rd, cen);
         float coreS = max(objects[i].radius * 2.0, 0.001);
-        vec3  gcol  = (objects[i].temperature > 100.0)
-                       ? blackbody(objects[i].temperature)
-                       : vec3(0.55, 0.65, 1.0);
-
-        // Dust column (approx, unordered): dense cloud regions absorb + redden
-        // light behind them.
-        if (uDustStrength > 0.0) {
-            // World-space influence radius, scaled to the cloud size (so it works
-            // whether the cloud spans 1 AU or 26,000 ly). Set from the cloud bounds.
-            float inflR = uDustInfluence;
-            float infl2 = inflR * inflR;
-            // Fixed-resolution dust: sample a ~constant number of points regardless
-            // of how many stars are sent, so the dust keeps its sparse mottled look
-            // instead of smoothing to a wash as Star Points rises. Each sampled point
-            // is weighted up (÷ sample fraction) so the column still represents all.
-            if (d2 < infl2 * 9.0 &&
-                hash1(vec3(float(i) * 7.13, float(i) * 13.37, float(i) * 23.79)) < uDustSampleFrac) {
-                // Clumped coverage anchored to the cloud centre (galaxy-relative, so
-                // it doesn't swim with the camera): quantise position into cells so
-                // dust forms mottled filaments; only a fraction of cells bear dust.
-                vec3 rel = cen - uDustCenter;
-                if (hash1(floor(rel / max(inflR * uDustClumpScale, 1e-6))) < uDustCoverage) {
-                    float dContrib = objects[i].mass * (objects[i].radius * objects[i].radius * 1.0e6)
-                                   / max(uDustSampleFrac, 1e-4) * exp(-d2 / infl2);
-                    dustTau     += dContrib;
-                    dustGlowCol += dContrib * gcol;
-                }
-            }
-        }
+        float hot;
+        vec3  gcol  = gxStarColor(float(i), objects[i].temperature, hot);  // broad per-star colour
 
         if (otype == 2)
         {
-            float glowAmp = pointSourceGlow(d2, cen, objects[i].radius, float(i));
-            cloudGlow  += gcol * glowAmp;
+            float coreAmt;
+            float hazeAmt = pointSourceGlow(d2, cen, objects[i].radius, float(i), coreAmt);
+            // Stars + haze all go under the dust so the dust REDDENS them — thin
+            // dust → fiery orange sparkles, thick dust → dark cores (like raster).
+            cloudGlow += gcol * (hazeAmt + coreAmt);
+            cloudGlow += gxGasGlow(float(i), d2, hot);
+            hazeSum   += hazeAmt;   // smooth band density (no star spikes)
         }
         else // otype == 4: nebula — Beer-Lambert transmittance
         {
@@ -769,26 +712,17 @@ void main()
     color  += cloudGlow;
     color   = color * cloudTransmittance + nebulaScatter;
 
-    // Dust extinction — one exponential RGB multiply in linear HDR (before the
-    // post-process tonemap + bloom). Milder spectral tilt so the reddening looks
-    // natural rather than artificially red.
+    // Per-pixel CONTINUOUS dust: sample the FBM dust field where the ray crosses
+    // the galaxy, scaled by how bright the star glow is there (dust lives in the
+    // dense band). Continuous + FBM-fine → the raster's connected mottled ember
+    // lanes, instead of point-sampled specks or round blobs.
     if (uDustStrength > 0.0) {
-        vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
-        color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
-
-        // Stage 4 (in-scatter): dust also scatters nearby starlight and glows
-        // softly. Emission saturates with column depth (Kubelka source term),
-        // tinted by the mean colour of the stars that light the dust and a
-        // slight blue reflection albedo. Kept subtle so dense lanes stay dark.
-        if (uDustGlow > 0.0 && dustTau > 0.0) {
-            vec3  meanLit = dustGlowCol / max(dustTau, 1e-4);
-            float litLum  = dot(meanLit, vec3(0.2126, 0.7152, 0.0722));
-            float sat     = 1.0 - exp(-0.02 * dustTau);
-            // Warm dust reflectance, deepening toward brown as reddening rises
-            // (the same dust reddens what it scatters, not just what it transmits).
-            vec3  albedo  = vec3(1.0, 0.75, 0.55) / vec3(1.0, 1.0 + 0.25 * uDustReddening, 1.0 + 0.7 * uDustReddening);
-            color += uDustGlow * sat * albedo * litLum;
-        }
+        float bandMask = smoothstep(0.13, 0.42, hazeSum);   // SMOOTH dense band (no star spikes)
+        float D   = length(uDustCenter - ro);                // galaxy distance
+        vec3  cp  = ro + rd * D;                             // ray ∩ galaxy plane (spans the disk)
+        float lane = gxDustField(cp - uDustCenter);          // FBM lane (0..1, smooth gradient)
+        dustTau = pow(lane, 2.5) * bandMask * 60.0;                    // gradient → clear→orange→dark lanes
+        color = gxDustExtinction(color, dustTau);
     }
 
     // Clamp to [0,1] for rgba8 output

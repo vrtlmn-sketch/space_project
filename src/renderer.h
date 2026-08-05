@@ -511,7 +511,7 @@ public:
   float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
   float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)
   float dustGlow{0.15f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
-  int   dustDetail{200};        // target # of points the dust samples (fixed resolution)
+  int   dustDetail{14000};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent
   float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
@@ -695,6 +695,17 @@ public:
   void EndRecordRaster();                    // restore the saved draw FBO + viewport
   void CaptureRecordRasterVideo(int w, int h); // post + readback → ffmpeg (one video frame)
   void CaptureRecordRasterImage(int w, int h); // post + readback → image file (screenshot)
+  // A/B compare harness (--compare): capture the RT view at WxH to an image file.
+  void CaptureRTImageTo(int w, int h, const char* path) {
+    recordWidth = w; recordHeight = h;
+    std::strncpy(imagePathBuf, path, sizeof(imagePathBuf) - 1);
+    imagePathBuf[sizeof(imagePathBuf) - 1] = '\0';
+    CaptureImage();
+  }
+  void SetImagePath(const char* path) {
+    std::strncpy(imagePathBuf, path, sizeof(imagePathBuf) - 1);
+    imagePathBuf[sizeof(imagePathBuf) - 1] = '\0';
+  }
   float cineSSAA{1.5f};                      // supersample factor for the Performant view (1 = off) — anti-flicker
 
   // Public spawn/grid forms (accessed from main.cpp)

@@ -5117,10 +5117,42 @@ void Renderer::DrawPipWindow() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute shader: compile + init blit quad
 // ─────────────────────────────────────────────────────────────────────────────
-static GLuint compileShaderFromFile(const std::string& path, GLenum type) {
+// Minimal GLSL #include: replaces  #include "file.glsl"  with the file's contents
+// (resolved relative to the including file's directory). Recurses up to a small
+// depth so a shared snippet can be pulled into several shaders. Lets the RT
+// compute shaders share one galaxy_common.glsl instead of copy-pasting it.
+static std::string readShaderWithIncludes(const std::string& path, int depth = 0) {
   std::ifstream f(path);
-  if (!f) { std::cerr << "[shader] cannot open " << path << "\n"; return 0; }
+  if (!f) { std::cerr << "[shader] cannot open " << path << "\n"; return std::string(); }
   std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+  if (depth > 8) return src;
+  std::string dir; { auto p = path.find_last_of('/'); dir = (p == std::string::npos) ? "" : path.substr(0, p + 1); }
+  std::string out; out.reserve(src.size());
+  size_t i = 0;
+  while (i < src.size()) {
+    size_t nl = src.find('\n', i);
+    std::string line = src.substr(i, (nl == std::string::npos ? src.size() : nl) - i);
+    size_t inc = line.find("#include");
+    size_t q1 = (inc != std::string::npos) ? line.find('"', inc) : std::string::npos;
+    if (inc != std::string::npos && q1 != std::string::npos) {
+      size_t q2 = line.find('"', q1 + 1);
+      if (q2 != std::string::npos) {
+        std::string incName = line.substr(q1 + 1, q2 - q1 - 1);
+        out += readShaderWithIncludes(dir + incName, depth + 1);
+        out += '\n';
+        i = (nl == std::string::npos) ? src.size() : nl + 1;
+        continue;
+      }
+    }
+    out += line; out += '\n';
+    i = (nl == std::string::npos) ? src.size() : nl + 1;
+  }
+  return out;
+}
+
+static GLuint compileShaderFromFile(const std::string& path, GLenum type) {
+  std::string src = readShaderWithIncludes(path);
+  if (src.empty()) return 0;
   GLuint s = glCreateShader(type);
   const char* c = src.c_str();
   glShaderSource(s, 1, &c, nullptr);
@@ -5611,6 +5643,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
     GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
     if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
+    GLint locRC = glGetUniformLocation(activeProgram, "uResolvedCut");
+    if (locRC >= 0) glUniform1f(locRC, resolvedCut);
+    GLint locGS = glGetUniformLocation(activeProgram, "uGasStrength");
+    if (locGS >= 0) glUniform1f(locGS, gasStrength);
     GLint locDS = glGetUniformLocation(activeProgram, "uDustStrength");
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
@@ -6304,6 +6340,10 @@ void Renderer::CaptureImage() {
     if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
     GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
     if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
+    GLint locRC = glGetUniformLocation(activeProgram, "uResolvedCut");
+    if (locRC >= 0) glUniform1f(locRC, resolvedCut);
+    GLint locGS = glGetUniformLocation(activeProgram, "uGasStrength");
+    if (locGS >= 0) glUniform1f(locGS, gasStrength);
     GLint locDS = glGetUniformLocation(activeProgram, "uDustStrength");
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
@@ -6610,6 +6650,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locUS >= 0) glUniform1f(locUS, unresolvedStrength);
     GLint locUZ = glGetUniformLocation(activeProgram, "uUnresolvedSize");
     if (locUZ >= 0) glUniform1f(locUZ, unresolvedSize);
+    GLint locRC = glGetUniformLocation(activeProgram, "uResolvedCut");
+    if (locRC >= 0) glUniform1f(locRC, resolvedCut);
+    GLint locGS = glGetUniformLocation(activeProgram, "uGasStrength");
+    if (locGS >= 0) glUniform1f(locGS, gasStrength);
     GLint locDS = glGetUniformLocation(activeProgram, "uDustStrength");
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");

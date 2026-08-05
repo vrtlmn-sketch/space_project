@@ -343,45 +343,9 @@ uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
 uniform float uDustSampleFrac;     // fraction of star points used for dust (fixed resolution)
 uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 = glowing dust
 
-float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx)
-{
-    float distC = max(length(cen + uCamera), 0.05);  // camera = -uCamera
-    float ang2  = d2 / (distC * distC);
-
-    // Tight PSF (~0.075 deg), floored at half an output pixel
-    float pixAng = 2.0 / (uProj[1][1] * uResolution.y);
-    float sigmaB = 0.0006; // tighter PSF -> smaller star dots
-    float sigma  = max(sigmaB, 0.5 * pixAng);
-    float s2     = sigma * sigma;
-    float psf    = exp(-ang2 / s2) + 0.015 * exp(-ang2 / (s2 * 9.0));
-
-    // When the PSF is pixel-limited (low res), partially conserve energy so a
-    // dot occupies ~1 pixel instead of smearing a saturated multi-pixel disc.
-    float resComp = sigmaB / sigma;
-
-    // Log-distributed magnitudes
-    float mag = exp(-5.0 * hash1(vec3(idx * 17.13, idx * 31.71, idx * 47.97)));
-
-    // Subsampling packs `stride` real particles into one (radius *= sqrt(stride))
-    float strideComp = clamp(pRadius * pRadius * 1.0e6, 1.0, 64.0);
-
-    // Gentle inverse-square, clamped so stars stay visible at scene distances
-    float flux = clamp(9.0 / (distC * distC), 0.05, 6.0);
-
-    // Large peak amplitude: cores CLIP to white (like a camera sensor), so
-    // magnitude/distance change the saturated dot SIZE (~sqrt(log(amp))·sigma),
-    // never the center brightness — bright small dots.
-    float amp = 20.0 * mag * flux * resComp; // core ~= ONE star (tight); multiplicity -> haze
-    float core = min(amp * psf, 8.0); // resolved core: HDR, saturates to white
-
-    // Unresolved-star field: the (strideComp-1) faint stars this point stands in
-    // for, spread as a wide, dim, energy-normalized lobe -> a smooth low-frequency
-    // haze that the resolved cores sit on top of.
-    float su     = 0.0013 * max(uUnresolvedSize, 1.0); // FIXED angular width (resolution-independent haze)
-    float unrPsf = exp(-ang2 / (su * su));
-    float unrAmp = uUnresolvedStrength * 0.03 * mag * flux * strideComp; // full local density -> haze persists regardless of Star Points
-    return core + unrAmp * unrPsf;
-}
+// Shared galaxy look (colours, luminosity + core-gating, FBM dust, gas,
+// pointSourceGlow) — one file, included by every RT method so they stay 1:1.
+#include "galaxy_common.glsl"
 
 // ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.

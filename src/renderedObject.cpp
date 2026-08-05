@@ -539,7 +539,7 @@ static void eulerMat3(const vec3& deg, float R[9]) {
   R[6]=-sb;   R[7]=cb*sa;          R[8]=cb*ca;
 }
 
-int RenderedObject::rtCloudPointCap = 2000;
+int RenderedObject::rtCloudPointCap = 14000;
 
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
                                                  std::vector<RayTracerObjectDoppler>& list)

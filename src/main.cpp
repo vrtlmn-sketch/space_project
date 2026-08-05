@@ -136,9 +136,14 @@ int main(int argc, char** argv) {
   renderer.InitWindow("BlackholeSim", 1200, 800);
 
   // --template flag: skip startup modal and load solar system template directly
-  if (argc > 1 && std::string(argv[1]) == "--template") {
+  // --compare flag: load the template, render BOTH the Performant (raster) and
+  //   Realistic (RT) galaxy to PNGs at the template camera, then exit. A headless
+  //   A/B harness for converging the two renderers.
+  bool compareMode = false;
+  if (argc > 1 && (std::string(argv[1]) == "--template" || std::string(argv[1]) == "--compare")) {
     renderer.showStartupModal = false;
     renderer.startupChoice = Renderer::StartupChoice::Template;
+    compareMode = (std::string(argv[1]) == "--compare");
   }
 
   std::vector<PhysicsObject>               physicsObjects;
@@ -851,6 +856,52 @@ int main(int argc, char** argv) {
       renderer.CaptureRecordRasterImage(rw, rh);
       renderer.EndRecordRaster();
       renderer.rayTracerView = sRt; renderer.realisticRasterView = sRR;
+    }
+
+    // ── A/B compare harness (--compare): render both renderers to PNGs, exit ──
+    if (compareMode) {
+      static int cmpFrame = 0;
+      if (++cmpFrame == 3) {   // let buffers/scene settle first
+        const int W = 1152, H = 648;
+        // 1) Realistic (RT): accumulate RT objects, dispatch to snapshot, capture.
+        renderer.rayTracerView = true;
+        renderer.rayTracedObjects.clear(); renderer.rtDopplerObjects.clear();
+        renderer.rtTriangles.clear(); renderer.rtNodes.clear();
+        for (auto& o : physicsObjects)
+          renderer.DrawPhysicsObject(o.renderedObject, o.data.mass, o.temperature,
+                                     RtObjectType(o.shaderType), o.data.velocity, o.data.color);
+        for (auto& c : clouds) {
+          c->renderedObject.uploadTemperature(c->temperature);
+          c->renderedObject.uploadRenderMode(c->renderMode);
+          renderer.Draw(c->renderedObject);
+        }
+        renderer.DispatchRaytracer(384, 216);      // populate rtLastObjects (res discarded)
+        renderer.rayTracerView = false;
+        renderer.CaptureRTImageTo(W, H, "/tmp/cmp_rt.png");
+
+        // 2) Performant (raster): draw the cinematic raster view + capture.
+        renderer.rayTracerView = false; renderer.realisticRasterView = true;
+        renderer.BeginRecordRaster(W, H);
+        renderer.DrawSkybox(skybox);
+        for (auto& o : physicsObjects)
+          renderer.DrawPhysicsObject(o.renderedObject, o.data.mass, o.temperature,
+                                     RtObjectType(o.shaderType), o.data.velocity, o.data.color);
+        for (auto& c : clouds) {
+          c->renderedObject.uploadTemperature(c->temperature);
+          c->renderedObject.uploadRenderMode(c->renderMode);
+          c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                             renderer.dustCoverage, renderer.dustClumpScale,
+                                             renderer.dustInfluence, renderer.dustContrast);
+          renderer.Draw(c->renderedObject);
+        }
+        for (auto& obj : physicsObjects)
+          renderer.DrawAtmosphere(obj);
+        renderer.SetImagePath("/tmp/cmp_raster.png");
+        renderer.CaptureRecordRasterImage(W, H);
+        renderer.EndRecordRaster();
+        std::cout << "[compare] wrote /tmp/cmp_rt.png and /tmp/cmp_raster.png\n";
+        std::exit(0);
+      }
     }
 
     // Unbind the editor viewport FBO before the secondary pass and UI

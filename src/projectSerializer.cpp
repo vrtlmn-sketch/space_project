@@ -424,7 +424,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dustClumpScale     = s.value("dustClumpScale",     0.13f);
     st.dustGlow           = s.value("dustGlow",           0.15f);
     st.cineSSAA           = s.value("cineSSAA",           1.5f);
-    st.dustDetail         = s.value("dustDetail",         200);
+    st.dustDetail         = s.value("dustDetail",         14000);
 
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);
