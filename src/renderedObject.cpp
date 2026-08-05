@@ -637,7 +637,7 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
 
 void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                                           float dustInfluence, float dustClumpScale,
-                                          float dustCoverage, float dustContrast, double dustDetail)
+                                          float dustCoverage, float dustContrast)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
   if (particleCount <= 0) return;
@@ -680,20 +680,22 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
     }
 
     float rx = UVObjectMeshBuffer[fi], ry = UVObjectMeshBuffer[fi+1], rz = UVObjectMeshBuffer[fi+2];
-    // Dust lane as the MAX over this point's stride group (the real particles it
-    // stands in for), sampled at Dust Points resolution: the point is dusty if
-    // ANY particle it represents is. Keeps the field's crisp 0-or-1 contrast,
-    // makes dust coverage track the FULL particle set (no need to raise Star
-    // Points), and reduces to plain per-particle sampling when stride = 1.
+    // Dust lane as the MAX over this point's FULL stride group (every real
+    // particle it stands in for): the point is dusty if ANY particle it
+    // represents is. Keeps the field's crisp 0-or-1 contrast, makes dust
+    // coverage track the full particle set (independent of the Star Points
+    // cap), and reduces to plain per-particle sampling when stride = 1.
     // Positions are RAW local (the raster's aPos): the raster's exact predicate.
+    // Coverage is nudged UP slightly: at equal slider values RT reads ~0.05
+    // less covered than the raster (its per-point puffs fill less area than
+    // the raster's carved sprites), so this keeps one shared slider matching.
     float pLane = 0.0f;
     if (cachedRenderMode == 0 && dustInfluence > 0.0f) {
-      int nSamp = std::clamp((int)std::lround(dustDetail * (double)stride / (double)particleCount), 1, stride);
-      int gStep = stride / nSamp;
-      for (int j = i; j < i + stride && j < particleCount; j += gStep)
+      float covAdj = std::min(dustCoverage + 0.05f, 1.0f);
+      for (int j = i; j < i + stride && j < particleCount; ++j)
         pLane = std::max(pLane,
                          rtDustLane(UVObjectMeshBuffer[j*3], UVObjectMeshBuffer[j*3+1], UVObjectMeshBuffer[j*3+2],
-                                    dustInfluence, dustClumpScale, dustCoverage, dustContrast));
+                                    dustInfluence, dustClumpScale, covAdj, dustContrast));
     }
     if (rot) {
       float ox = R[0]*rx + R[1]*ry + R[2]*rz;

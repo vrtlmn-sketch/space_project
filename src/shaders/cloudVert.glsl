@@ -126,7 +126,9 @@ void main() {
     // majority is left to the haze, so dense regions read as smooth unresolved
     // light instead of a continuous carpet of equal sparkles.
     if (vMag < uResolvedCut) gl_PointSize = 0.0;
-    else gl_PointSize = clamp(3.0 + 7.0 * vMag, 3.0, 13.0) * ps;
+    // Smaller cores (closer to RT's PSF dots); the brightness lost to the
+    // smaller disc comes back through the stronger shared spike pass.
+    else gl_PointSize = clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps;
   } else if (uCloudPass == 4) {
     // Glowing gas: only hot young stars seed emission nebulosity. Large soft
     // sprite (perspective-sized like dust), FBM-carved into filaments in the frag,

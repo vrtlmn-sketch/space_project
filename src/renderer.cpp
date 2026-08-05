@@ -559,8 +559,7 @@ void Renderer::Draw(RenderedObject& ro) {
     }
     else if (ro.meshType == MeshType::cloud) {
       ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects,
-                              dustInfluence, dustClumpScale, dustCoverage, dustContrast,
-                              (double)dustDetail);
+                              dustInfluence, dustClumpScale, dustCoverage, dustContrast);
       if (dopplerMode) ro.renderCloudRaytracedDoppler(cameraTranslate, rtDopplerObjects);
     }
   }
@@ -5931,7 +5930,10 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, bloomTex[2]); glUniform1i(tmLocSpike, 2);
   glUniform1f(tmLocExposure, rtExposure);
   glUniform1f(tmLocBloomStr, bloomStrength);
-  glUniform1f(tmLocSpikeStr, spikesOn ? spikeStrength : 0.0f);
+  // RT star cores feed the (shared) spike source less energy than the raster's
+  // larger sprites, so RT gets a fixed boost to read as the same population.
+  float spikeGain = spikeStrength * (rayTracerView ? 1.3f : 1.0f);
+  glUniform1f(tmLocSpikeStr, spikesOn ? spikeGain : 0.0f);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
   glActiveTexture(GL_TEXTURE0);

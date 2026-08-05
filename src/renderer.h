@@ -751,7 +751,7 @@ public:
   float  bloomThreshold{0.0f};  // brightness above which pixels bloom
 
   // ---- Diffraction spikes (synthetic PSF) ----
-  float  spikeStrength{1.14f};   // spike intensity (0 = off)
+  float  spikeStrength{1.45f};   // spike intensity (0 = off)
   int    spikeCount{6};         // number of spikes (6 = JWST, 4 = Hubble)
   float  spikeAngle{0.0f};      // base rotation (radians)
   float  spikeLength{0.27f};     // reach, fraction of the smaller bloom dimension
