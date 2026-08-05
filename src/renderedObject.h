@@ -110,6 +110,11 @@ public:
   float cineHazeSpread{32.4f};   // unresolved-star haze spread (RT Star Haze → Spread)
   float cineResolvedCut{0.6f};   // brightness cutoff: only brighter stars draw as sharp cores
   float cineGasStrength{0.5f};   // glowing-gas emission brightness (0 = off)
+  // Procedural cloud layer params (shared packing, both views):
+  // P0 = (coverage, scale, bandedness, turbulence); P1 = (softness, altitude,
+  // whiteness, driftPhase). coverage 0 = clouds off.
+  vec4 rtCloudP0{0.0f, 6.0f, 0.0f, 0.5f};
+  vec4 rtCloudP1{0.18f, 0.02f, 1.0f, 0.0f};
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
   float rtAtmoFalloff{4.0f};

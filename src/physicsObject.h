@@ -78,6 +78,16 @@ public:
   float atmosphereIntensity{1.0f};
   vec3  atmosphereScatter{0.175f, 0.41f, 1.0f}; // Rayleigh-like per-channel ratio
   RenderedObject atmosphereObject;
+  // Procedural cloud layer (photoreal deck painted on the sphere; both views)
+  bool  cloudsEnabled{false};
+  float cloudCoverage{0.45f};   // how much of the sky is cloud (1 = full deck)
+  float cloudScale{6.0f};       // feature size (higher = smaller cells)
+  float cloudBanded{0.0f};      // 0 = cumulus fields (Earth) … 1 = gas-giant bands
+  float cloudTurbulence{0.5f};  // domain-warp swirl amount
+  float cloudSoftness{0.18f};   // edge softness of the deck
+  float cloudAltitude{0.02f};   // deck height (terminator offset, shadows)
+  float cloudWhiteness{1.0f};   // 1 = white clouds; 0 = tinted by planet colour (bands)
+  float cloudDrift{0.0f};       // drift speed (0 = static → RT stays cacheable)
 
   // Visual size, decoupled from mass (mass only drives gravity).
   // Defaults to the old mass-derived formula at construction.

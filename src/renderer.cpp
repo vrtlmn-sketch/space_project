@@ -4140,6 +4140,38 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
           obj.atmosphereScatter.z = atmCol[2];
         }
       }
+
+      ImGui::SeparatorText("Clouds");
+      ImGui::Checkbox("Enabled##icld", &obj.cloudsEnabled);
+      if (obj.cloudsEnabled) {
+        ImGui::Text("Coverage");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##icldcov", &obj.cloudCoverage, 0.0f, 1.0f, "%.2f");
+        ImGui::Text("Scale");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##icldsc", &obj.cloudScale, 1.0f, 24.0f, "%.1f");
+        ImGui::Text("Bandedness");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = cumulus fields (Earth), 1 = gas-giant bands (Jupiter).");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##icldband", &obj.cloudBanded, 0.0f, 1.0f, "%.2f");
+        ImGui::Text("Turbulence");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##icldturb", &obj.cloudTurbulence, 0.0f, 2.0f, "%.2f");
+        ImGui::Text("Softness");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##icldsoft", &obj.cloudSoftness, 0.02f, 0.5f, "%.2f");
+        ImGui::Text("Altitude");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##icldalt", &obj.cloudAltitude, 0.0f, 0.10f, "%.3f");
+        ImGui::Text("Whiteness");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = white clouds; 0 = tinted by the planet colour (banded palettes).");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##icldwhite", &obj.cloudWhiteness, 0.0f, 1.0f, "%.2f");
+        ImGui::Text("Drift Speed");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = static (RT stays cached); >0 animates (RT re-renders per frame).");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat("##iclddrift", &obj.cloudDrift, 0.0f, 0.2f, "%.3f");
+      }
     }
 
     ImGui::Spacing();

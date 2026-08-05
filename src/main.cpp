@@ -110,6 +110,15 @@ static void buildScene(
       }
     }
     po.atmosphereEnabled   = pod.atmosphereEnabled;
+    po.cloudsEnabled       = pod.cloudsEnabled;
+    po.cloudCoverage       = pod.cloudCoverage;
+    po.cloudScale          = pod.cloudScale;
+    po.cloudBanded         = pod.cloudBanded;
+    po.cloudTurbulence     = pod.cloudTurbulence;
+    po.cloudSoftness       = pod.cloudSoftness;
+    po.cloudAltitude       = pod.cloudAltitude;
+    po.cloudWhiteness      = pod.cloudWhiteness;
+    po.cloudDrift          = pod.cloudDrift;
     po.atmosphereHeight    = pod.atmosphereHeight;
     po.atmosphereFalloff   = pod.atmosphereFalloff;
     po.atmosphereIntensity = pod.atmosphereIntensity;

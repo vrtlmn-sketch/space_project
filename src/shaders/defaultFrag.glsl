@@ -25,8 +25,12 @@ uniform int       uHasNightMap;
 uniform float     uNightStrength;    // emissive brightness of the night-lights map
 uniform int       uTwoSided;         // 1 = flip back-facing normals (free OBJ meshes); 0 = spheres
 uniform int       uRealistic;        // 0 = nav look (LDR), 1 = HDR PBR (Cinematic Performant)
+uniform vec4      uCloudP0;          // procedural clouds: (coverage, scale, bandedness, turbulence)
+uniform vec4      uCloudP1;          // (softness, altitude, whiteness, driftPhase); coverage 0 = off
 
 const float PI = 3.14159265359;
+
+#include "clouds_common.glsl"
 
 // ── GGX / Cook-Torrance helpers (used only in the realistic HDR path) ──
 float distributionGGX(vec3 N, vec3 H, float rough) {
@@ -168,6 +172,57 @@ void main() {
 
     vec3 ambient = albedo * 0.015 * day;
     vec3 color   = (ambient + Lo) * limbDark + night;
+
+    // ── Procedural cloud layer ──
+    if (uCloudP0.x > 0.001) {
+      // Object-space sphere normal reconstructed from the equirect UV (rotates
+      // with the surface, matches the RT mapping exactly).
+      float clon = vTexCoord.x * 2.0 * PI;
+      float clatV = vTexCoord.y * PI;
+      vec3  nObj = vec3(sin(clatV) * cos(clon), cos(clatV), sin(clatV) * sin(clon));
+
+      float cd = cloudField(nObj, uCloudP0, uCloudP1);
+      if (cd > 0.002) {
+        // Cloud colour: white ↔ planet-colour-derived band palette.
+        vec3 cloudBase = mix(uPlanetColor * cloudBandTone(nObj, uCloudP0),
+                             vec3(1.0), uCloudP1.z);
+
+        // Lit with the pseudo-normal + the same lights; clouds sit at altitude
+        // so their terminator reaches slightly past the surface one.
+        vec3  Nc = cloudPseudoNormal(nObj, cd, uCloudP0, uCloudP1);
+        // rotate cloud normal into world like the surface normal (sphere: the
+        // geometric normal IS the rotated nObj, so reuse the same frame).
+        // build world cloud normal by tilting geoN with the same object-space tilt:
+        vec3  tilt = Nc - nObj;
+        vec3  Ncw  = normalize(geoN + tilt);
+
+        float dayC = smoothstep(-0.10 - uCloudP1.y * 3.0, 0.12, dayMax);
+        vec3  cloudLo = vec3(0.0);
+        if (nL == 0) {
+          cloudLo = cloudBase * max(dot(Ncw, normalize(vec3(0.0, 1.0, 1.0))), 0.0);
+        } else {
+          for (int i = 0; i < nL; ++i) {
+            vec3  toL   = uLightPositions[i] - vPos;
+            float dist2 = dot(toL, toL);
+            vec3  L     = normalize(toL);
+            cloudLo += cloudBase * uLightColors[i] * (max(dot(Ncw, L), 0.0) / max(dist2, 1e-9));
+          }
+        }
+        // Self-shadow: thick decks darken away from the sun (1 tap toward light).
+        float selfSh = cloudField(normalize(nObj * 0.985 + vec3(0.0, 0.12, 0.0)), uCloudP0, uCloudP1);
+        cloudLo *= mix(1.0, 0.55, clamp(selfSh - cd, 0.0, 1.0) * 2.0);
+        // Sunset band warms the clouds too.
+        cloudLo *= mix(vec3(1.0), vec3(1.0, 0.55, 0.28), band * 0.7);
+
+        // Ground shadow: surface darkened where clouds sit between it and the sun.
+        color *= mix(1.0, 0.55, cd * 0.8 * day);
+        // City lights dim under cloud cover.
+        color -= night * cd * 0.8;
+
+        color = mix(color, cloudLo * dayC * limbDark, cd);
+      }
+    }
+
     FragColor = vec4(color, 1.0);
     return;
   }

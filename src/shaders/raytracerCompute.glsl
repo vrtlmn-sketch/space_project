@@ -331,6 +331,7 @@ uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 =
 // Shared galaxy look (star colours, luminosity + core-gating, FBM dust, gas,
 // pointSourceGlow) — one file, included by every RT method so they stay 1:1.
 #include "galaxy_common.glsl"
+#include "clouds_common.glsl"
 
 // ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.
@@ -442,7 +443,8 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 // GGX PBR with ocean mask + sun glint, terminator sunset band, limb darkening,
 // DAY-GATED ambient (night side goes genuinely black), and emissive night-side
 // city lights (nightEm, pre-sampled by the caller; vec3(0) = none).
-vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 nightEm)
+vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 nightEm,
+                 vec3 nObj, vec3 pColor, vec4 rot, vec4 cloudP0, vec4 cloudP1)
 {
     vec3  V      = normalize(ro - hitPos);
     float NdotVg = max(dot(geoN, V), 1e-3);
@@ -497,7 +499,46 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 n
     float limbDark = mix(0.5, 1.0, smoothstep(0.0, 0.35, NdotVg));
 
     vec3 ambient = albedo * 0.015 * day;
-    return (ambient + Lo) * limbDark + nightEm * (1.0 - day);
+    vec3 color   = (ambient + Lo) * limbDark + nightEm * (1.0 - day);
+
+    // ── Procedural cloud layer (same model + packing as the raster) ──
+    if (cloudP0.x > 0.001) {
+        float cd = cloudField(nObj, cloudP0, cloudP1);
+        if (cd > 0.002) {
+            vec3 cloudBase = mix(pColor * cloudBandTone(nObj, cloudP0),
+                                 vec3(1.0), cloudP1.z);
+            vec3 Nc  = cloudPseudoNormal(nObj, cd, cloudP0, cloudP1);
+            vec3 Ncw = rotateN(rot, Nc);
+
+            float dayC = smoothstep(-0.10 - cloudP1.y * 3.0, 0.12, dayMax);
+            vec3  cloudLo = vec3(0.0);
+            int   cnL = 0;
+            for (int i = 0; i < uObjectCount; i++) {
+                if (int(objects[i].objectType + 0.5) != 1) continue;
+                vec3  toL   = objects[i].position.xyz - hitPos;
+                float dist2 = dot(toL, toL);
+                vec3  L     = normalize(toL);
+                float lT    = objects[i].temperature;
+                vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
+                cloudLo += cloudBase * lCol * (max(dot(Ncw, L), 0.0) / max(dist2, 1e-9));
+                cnL++;
+            }
+            if (cnL == 0)
+                cloudLo = cloudBase * max(dot(Ncw, normalize(vec3(0.0, 1.0, 1.0))), 0.0);
+
+            // Self-shadow (thick decks darken away from the sun) + sunset warmth.
+            float selfSh = cloudField(normalize(nObj * 0.985 + vec3(0.0, 0.12, 0.0)), cloudP0, cloudP1);
+            cloudLo *= mix(1.0, 0.55, clamp(selfSh - cd, 0.0, 1.0) * 2.0);
+            cloudLo *= mix(vec3(1.0), vec3(1.0, 0.55, 0.28), band * 0.7);
+
+            // Ground shadow + city lights dimming under the deck.
+            color *= mix(1.0, 0.55, cd * 0.8 * day);
+            color -= nightEm * (1.0 - day) * cd * 0.8;
+
+            color = mix(color, cloudLo * dayC * limbDark, cd);
+        }
+    }
+    return color;
 }
 
 // City-lights emission for a planet, sampled by object-space normal (equirect,
@@ -538,7 +579,8 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
             }
             else
             {
-                reflCol = shadePlanet(ro, rHit, rNorm, rNorm, objects[i].color.xyz, vec3(0.0));
+                reflCol = shadePlanet(ro, rHit, rNorm, rNorm, objects[i].color.xyz, vec3(0.0),
+                                      rNorm, objects[i].color.xyz, objects[i].rotation, vec4(0.0), vec4(0.0));
             }
             break;
         }
@@ -639,7 +681,8 @@ void main()
                           ? texture(uPlanetTextures, vec3(hitUV, float(dLayer))).rgb
                           : objects[hitIdx].color.xyz;
             vec3 N = applyMeshNormalMap(hitNormal, hitTangent, hitUV, objects[hitIdx].material);
-            color = shadePlanet(ro, hitPos, hitNormal, N, base, vec3(0.0));
+            color = shadePlanet(ro, hitPos, hitNormal, N, base, vec3(0.0),
+                                hitNormal, objects[hitIdx].color.xyz, objects[hitIdx].rotation, vec4(0.0), vec4(0.0));
         }
         else
         {
@@ -651,7 +694,14 @@ void main()
             vec3  base   = planetBaseColor(objects[hitIdx].color, nObj);
             vec3  Nw     = rotateN(objects[hitIdx].rotation, applyPlanetNormalMap(nObj, objects[hitIdx].material));
             vec3  nightEm = planetNightLights(nObj, objects[hitIdx].material);
-            vec3  lit    = shadePlanet(ro, hitPos, normal, Nw, base, nightEm);
+            // Cloud params ride the sphere's unused slots: mesh = P0; the free
+            // .w lanes = P1 (atmo.w softness, atmoScatter.w altitude,
+            // rotation.w whiteness, position.w drift phase).
+            vec4  cldP0  = objects[hitIdx].mesh;
+            vec4  cldP1  = vec4(objects[hitIdx].atmo.w, objects[hitIdx].atmoScatter.w,
+                                objects[hitIdx].rotation.w, objects[hitIdx].position.w);
+            vec3  lit    = shadePlanet(ro, hitPos, normal, Nw, base, nightEm,
+                                       nObj, objects[hitIdx].color.xyz, objects[hitIdx].rotation, cldP0, cldP1);
             vec3  refl   = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, rd, hitPos, Nw);

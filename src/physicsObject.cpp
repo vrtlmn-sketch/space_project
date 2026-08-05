@@ -185,6 +185,17 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
 
   float objectType = RtObjectType(shaderType);
 
+  // Forward the cloud-layer params (both views read the same packing). Drift
+  // phase is computed here so a zero drift keeps the RT snapshot unchanged.
+  if (shaderType == ObjectType::Planet && cloudsEnabled) {
+    float phase = (cloudDrift != 0.0f) ? cloudDrift * (float)glfwGetTime() : 0.0f;
+    renderedObject.rtCloudP0 = vec4{cloudCoverage, cloudScale, cloudBanded, cloudTurbulence};
+    renderedObject.rtCloudP1 = vec4{cloudSoftness, cloudAltitude, cloudWhiteness, phase};
+  } else {
+    renderedObject.rtCloudP0 = vec4{0, 0, 0, 0};
+    renderedObject.rtCloudP1 = vec4{0, 0, 0, 0};
+  }
+
   // Forward atmosphere params so the RT object structs carry them
   if (shaderType == ObjectType::Planet && atmosphereEnabled) {
     renderedObject.rtAtmoRadius    = renderRadius() * renderer.activeSizeExag() * (1.0f + atmosphereHeight);

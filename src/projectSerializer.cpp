@@ -86,6 +86,15 @@ bool ProjectSerializer::Save(const std::string& path,
     o["atmosphereFalloff"]   = obj.atmosphereFalloff;
     o["atmosphereIntensity"] = obj.atmosphereIntensity;
     o["atmosphereColor"]     = vec3ToJson(obj.atmosphereScatter);
+    o["cloudsEnabled"]       = obj.cloudsEnabled;
+    o["cloudCoverage"]       = obj.cloudCoverage;
+    o["cloudScale"]          = obj.cloudScale;
+    o["cloudBanded"]         = obj.cloudBanded;
+    o["cloudTurbulence"]     = obj.cloudTurbulence;
+    o["cloudSoftness"]       = obj.cloudSoftness;
+    o["cloudAltitude"]       = obj.cloudAltitude;
+    o["cloudWhiteness"]      = obj.cloudWhiteness;
+    o["cloudDrift"]          = obj.cloudDrift;
     o["simulatePhysics"]     = obj.simulatePhysics;
     o["keyframes"]           = keyframesToJson(obj.keyframes);
     o["meshPath"]            = obj.meshPath;
@@ -310,6 +319,15 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.atmosphereColor     = o.contains("atmosphereColor")
                                 ? jsonToVec3(o["atmosphereColor"])
                                 : vec3{0.175f, 0.41f, 1.0f};
+      pod.cloudsEnabled       = o.value("cloudsEnabled",       false);
+      pod.cloudCoverage       = o.value("cloudCoverage",       0.45f);
+      pod.cloudScale          = o.value("cloudScale",          6.0f);
+      pod.cloudBanded         = o.value("cloudBanded",         0.0f);
+      pod.cloudTurbulence     = o.value("cloudTurbulence",     0.5f);
+      pod.cloudSoftness       = o.value("cloudSoftness",       0.18f);
+      pod.cloudAltitude       = o.value("cloudAltitude",       0.02f);
+      pod.cloudWhiteness      = o.value("cloudWhiteness",      1.0f);
+      pod.cloudDrift          = o.value("cloudDrift",          0.0f);
       pod.simulatePhysics     = o.value("simulatePhysics", true);
       if (o.contains("keyframes")) pod.keyframes = jsonToKeyframes(o["keyframes"]);
       pod.meshPath            = o.value("meshPath", std::string{});

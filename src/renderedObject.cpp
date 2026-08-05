@@ -486,16 +486,20 @@ void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::v
   } else if (otype == 5.0f) {
     otype = 0.0f;   // FreeModel with no loaded mesh → render as a lit sphere
   }
+  // Spheres don't use the mesh slot → it carries the cloud params (P0), and the
+  // free .w lanes carry P1: atmo.w = softness, atmoScatter.w = altitude,
+  // rotation.w = whiteness, position.w = drift phase.
+  if (!freeMesh) meshInfo = rtCloudP0;
   raytracerObjectList.push_back(RayTracerObject{
     vec4{(float)(coordinates.x + cameraTranslate[0]),
          (float)(coordinates.y + cameraTranslate[1]),
-         (float)(coordinates.z + cameraTranslate[2]), 0},
+         (float)(coordinates.z + cameraTranslate[2]), rtCloudP1.w},
     mass, radius, temperature, otype,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
-    vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, 0},
-    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
+    vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, rtCloudP1.x},
+    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, rtCloudP1.y},
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
-         rotationDeg.z*0.01745329252f, 0},
+         rotationDeg.z*0.01745329252f, rtCloudP1.z},
     meshInfo,
     vec4{(float)rtNormalLayer, normalStrength, (float)rtNightLayer, nightStrength}});
 }
@@ -765,6 +769,13 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     // their back-face normals lights the silhouette into a bright rim.
     GLint tsLoc = glGetUniformLocation(program, "uTwoSided");
     if (tsLoc >= 0) glUniform1i(tsLoc, freeMesh ? 1 : 0);
+  }
+  {
+    // Procedural cloud layer (coverage 0 = off). Per-draw lookup, cost-free.
+    GLint c0 = glGetUniformLocation(program, "uCloudP0");
+    if (c0 >= 0) glUniform4f(c0, rtCloudP0.x, rtCloudP0.y, rtCloudP0.z, rtCloudP0.w);
+    GLint c1 = glGetUniformLocation(program, "uCloudP1");
+    if (c1 >= 0) glUniform4f(c1, rtCloudP1.x, rtCloudP1.y, rtCloudP1.z, rtCloudP1.w);
   }
 
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
@@ -1146,24 +1157,34 @@ void RenderedObject::uploadResolution(int w, int h)
     glUniform2f(resolutionUniform, (float)w, (float)h);
 }
 
+// Minimal #include support for raster shaders (mirrors the renderer's compute
+// loader): lines of the form  #include "file.glsl"  are inlined relative to the
+// including file's directory. Lets defaultFrag share clouds_common.glsl with RT.
+static std::string readRasterShaderWithIncludes(const std::string& path, int depth = 0) {
+  std::string out;
+  if (depth > 4) return out;
+  std::ifstream f(path);
+  std::string dir = path.substr(0, path.find_last_of('/') + 1);
+  std::string line;
+  while (std::getline(f, line)) {
+    size_t h = line.find("#include");
+    if (h != std::string::npos) {
+      size_t q1 = line.find('"', h);
+      size_t q2 = (q1 == std::string::npos) ? std::string::npos : line.find('"', q1 + 1);
+      if (q2 != std::string::npos) {
+        out += readRasterShaderWithIncludes(dir + line.substr(q1 + 1, q2 - q1 - 1), depth + 1);
+        continue;
+      }
+    }
+    out += line + "\n";
+  }
+  return out;
+}
+
 void RenderedObject::setupShaders(const std::string& vertPath, const std::string& fragPath){
 
-  // Clear previous shader source strings so re-calls don't accumulate
-  fragShader.clear();
-  vertShader.clear();
-
-  std::ifstream defaultFragFile(fragPath);
-  std::ifstream defaultVertFile(vertPath);
-
-  std::string temp;
-  while(std::getline(defaultFragFile, temp))
-  {
-    fragShader.append(temp +"\n");
-  }
-  while(std::getline(defaultVertFile, temp))
-  {
-    vertShader.append(temp+"\n");
-  }
+  fragShader = readRasterShaderWithIncludes(fragPath);
+  vertShader = readRasterShaderWithIncludes(vertPath);
 
   // Delete old GPU objects if they exist
   if (program)       { glDeleteProgram(program);          program = 0; }

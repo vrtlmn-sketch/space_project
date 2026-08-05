@@ -28,6 +28,15 @@ struct PhysicsObjectData {
   float atmosphereFalloff{4.0f};
   float atmosphereIntensity{1.0f};
   vec3  atmosphereColor{0.175f, 0.41f, 1.0f};
+  bool  cloudsEnabled{false};
+  float cloudCoverage{0.45f};
+  float cloudScale{6.0f};
+  float cloudBanded{0.0f};
+  float cloudTurbulence{0.5f};
+  float cloudSoftness{0.18f};
+  float cloudAltitude{0.02f};
+  float cloudWhiteness{1.0f};
+  float cloudDrift{0.0f};
   bool  simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
   std::string meshPath{};  // free object: OBJ mesh path (empty = sphere object)
