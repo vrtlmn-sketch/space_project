@@ -717,7 +717,11 @@ void main()
     // dense band). Continuous + FBM-fine → the raster's connected mottled ember
     // lanes, instead of point-sampled specks or round blobs.
     if (uDustStrength > 0.0) {
-        float bandMask = smoothstep(0.13, 0.42, hazeSum);   // SMOOTH dense band (no star spikes)
+        // On/off "is there galaxy here" mask ONLY — saturates at a LOW haze level so
+        // it never weights dust toward the bright centre; the FIELD decides placement
+        // (the raster's behaviour). Weighting by brightness was what pulled RT's dust
+        // to the middle while the raster's spread outward along the band.
+        float bandMask = smoothstep(0.02, 0.10, hazeSum);
         float D   = length(uDustCenter - ro);                // galaxy distance
         vec3  cp  = ro + rd * D;                             // ray ∩ galaxy plane (spans the disk)
         float lane = gxDustField(cp - uDustCenter);          // FBM lane (0..1, smooth gradient)
