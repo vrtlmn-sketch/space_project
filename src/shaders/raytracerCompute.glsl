@@ -724,8 +724,13 @@ void main()
         float bandMask = smoothstep(0.02, 0.10, hazeSum);
         float D   = length(uDustCenter - ro);                // galaxy distance
         vec3  cp  = ro + rd * D;                             // ray ∩ galaxy plane (spans the disk)
-        float lane = gxDustField(cp - uDustCenter);          // FBM lane (0..1, smooth gradient)
-        dustTau = pow(lane, 2.5) * bandMask * 60.0;                    // gradient → clear→orange→dark lanes
+        // Raster grading, two effects of particle density (hazeSum = column proxy):
+        //  1. fill fraction rises → patches WIDEN AND MERGE in the dense centre
+        //  2. sprites stack → dust gets THICKER (sqrt-compressed: haze overweights
+        //     the centre vs the raster's sprite counts)
+        float dens = sqrt(min(hazeSum, 4.0));
+        float lane = gxDustFieldDense(cp - uDustCenter, 0.25 * dens);
+        dustTau = pow(lane, 2.5) * bandMask * dens * 75.0;
         color = gxDustExtinction(color, dustTau);
     }
 

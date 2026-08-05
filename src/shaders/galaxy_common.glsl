@@ -52,6 +52,16 @@ float gxDustField(vec3 galLocal) {
     float d   = smoothstep(thr, thr + 0.30, n);
     return pow(d, max(uDustContrast, 0.25));
 }
+// Density-aware variant: where the particle column is thick, the raster's many
+// overlapping sprites raise the FILL FRACTION and patches merge into contiguous
+// complexes. covBoost (0..~0.5) mimics that by widening the lane threshold.
+float gxDustFieldDense(vec3 galLocal, float covBoost) {
+    float scale = max(uDustInfluence * uDustClumpScale, 1e-6);
+    float n   = gxFbm3(galLocal / scale / 4.0);
+    float thr = 0.62 - clamp(uDustCoverage + covBoost, 0.0, 1.0) * 0.5;
+    float d   = smoothstep(thr, thr + 0.30, n);
+    return pow(d, max(uDustContrast, 0.25));
+}
 
 // Reddened dust extinction applied to the accumulated cloud colour, with a red
 // floor so the densest lanes read as deep red-brown (not black "holes"). The
@@ -60,10 +70,12 @@ vec3 gxDustExtinction(vec3 color, float dustTau) {
     // Strong spectral tilt: red passes, green/blue absorbed hard → thin dust reads
     // bright ORANGE, thick reads deep RED, densest goes near-black (the raster's
     // fiery-ember look), instead of a flat brown.
-    vec3  dExt = vec3(1.0, 1.0 + 2.2 * uDustReddening, 1.0 + 7.0 * uDustReddening);
+    // The raster's exact spectral tilt + reddish floor (cloudFrag.glsl): dense
+    // dust bottoms out at deep RED (fiery core), not near-black brown.
+    vec3  dExt = vec3(1.0, 1.0 + uDustReddening, 1.0 + 2.6 * uDustReddening);
     float tau  = dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0);
     vec3  mult = exp(-uDustStrength * 0.042 * tau * dExt);
-    vec3  floorC = vec3(0.02, 0.005, 0.002) * smoothstep(0.0, 6.0, dustTau);  // near-black red core
+    vec3  floorC = vec3(0.10, 0.035, 0.02) * smoothstep(0.0, 6.0, dustTau);
     return color * max(mult, floorC);
 }
 
