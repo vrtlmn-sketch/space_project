@@ -153,9 +153,15 @@ void main() {
     Lo *= mix(vec3(1.0), vec3(1.0, 0.5, 0.22), band * 0.6);
 
     // Night-side city lights (emissive), fading out across the terminator.
+    // Luma-thresholded to the actual CITY pixels: Black-Marble-style maps tint
+    // the oceans blue ("moonlight"), which read as an unrealistic blue night —
+    // only the bright warm lights should emit.
     vec3 night = vec3(0.0);
-    if (uHasNightMap != 0)
-      night = texture(uNightMap, vTexCoord).rgb * (1.0 - day) * uNightStrength;
+    if (uHasNightMap != 0) {
+      vec3 nc = textureLod(uNightMap, vTexCoord, 0.0).rgb;   // mip 0: mips average cities below the threshold
+      nc *= smoothstep(0.05, 0.15, dot(nc, vec3(0.299, 0.587, 0.114)));
+      night = nc * (1.0 - day) * uNightStrength;
+    }
 
     // Limb darkening toward the silhouette.
     float limbDark = mix(0.5, 1.0, smoothstep(0.0, 0.35, NdotVg));

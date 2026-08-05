@@ -101,6 +101,7 @@ public:
   vec3  rotationDeg{0.0f, 0.0f, 0.0f};  // object orientation (Euler X/Y/Z degrees)
   int  rtTexLayer{-1};  // layer in the RT diffuse texture array (-1 = untextured)
   int  rtNormalLayer{-1}; // layer in the RT normal-map texture array (-1 = none)
+  int  rtNightLayer{-1};  // layer in the RT night-lights texture array (-1 = none)
   float normalStrength{1.0f};  // normal-map relief scale (forwarded to the shader)
   float nightStrength{1.6f};   // night-lights emissive brightness (forwarded to the shader)
   bool  realisticShading{false}; // set per-draw by the Renderer for the Cinematic Performant pass
@@ -142,6 +143,7 @@ public:
   bool nightMapLoaded() const { return hasNightMap; }
   GLuint textureHandle() const { return textureID; }
   GLuint normalMapHandle() const { return normalMapID; }
+  GLuint nightMapHandle() const { return nightMapID; }
   float sphereRadius() const { return radius; }
   bool  shadersReady() const { return program != 0; }
   void uploadTemperature(float kelvin);

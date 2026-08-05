@@ -40,6 +40,7 @@ vec3 sampleSkybox(vec3 dir)
 // color.w of each object holds the layer index (-1 = untextured, use flat color).
 layout(binding = 3) uniform sampler2DArray uPlanetTextures;
 layout(binding = 4) uniform sampler2DArray uNormalTextures;
+layout(binding = 5) uniform sampler2DArray uNightTextures;   // night-side city lights
 
 // Inverse object rotation (texture UVs rotate with the surface).
 // R = Rz*Ry*Rx (matches the CPU); the inverse is transpose(R).
@@ -417,50 +418,99 @@ vec3 applyAtmospheres(vec3 ro, vec3 rd, float maxT, vec3 col)
 // Shading
 // ---------------------------------------------------------------------------
 
-vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor)
-{
-    // Mirrors the rasterizer's defaultFrag.glsl lighting exactly:
-    // strong distance falloff + tiny ambient = harsh space lighting.
-    vec3 viewDir    = normalize(ro - hitPos);
-    vec3 totalLight = vec3(0.0);
-    int  lightCount = 0;
+// GGX/PBR helpers (mirror defaultFrag.glsl)
+float distributionGGX(vec3 N, vec3 H, float rough) {
+    float a  = rough * rough;
+    float a2 = a * a;
+    float NdotH = max(dot(N, H), 0.0);
+    float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / max(3.14159265 * d * d, 1e-6);
+}
+float geometrySchlickGGX(float NdotV, float rough) {
+    float k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+float geometrySmith(vec3 N, vec3 V, vec3 L, float rough) {
+    return geometrySchlickGGX(max(dot(N, V), 0.0), rough)
+         * geometrySchlickGGX(max(dot(N, L), 0.0), rough);
+}
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
 
+// Photoreal planet shading — port of defaultFrag.glsl's realistic branch:
+// GGX PBR with ocean mask + sun glint, terminator sunset band, limb darkening,
+// DAY-GATED ambient (night side goes genuinely black), and emissive night-side
+// city lights (nightEm, pre-sampled by the caller; vec3(0) = none).
+vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 nightEm)
+{
+    vec3  V      = normalize(ro - hitPos);
+    float NdotVg = max(dot(geoN, V), 1e-3);
+    float NdotV  = max(dot(N, V), 1e-3);
+
+    // Ocean mask straight from the day map: blue-dominant, not bright.
+    float lum     = dot(baseColor, vec3(0.299, 0.587, 0.114));
+    float blueDom = baseColor.b - max(baseColor.r, baseColor.g);
+    float ocean   = smoothstep(0.02, 0.14, blueDom) * (1.0 - smoothstep(0.32, 0.60, lum));
+
+    vec3  albedo = mix(baseColor, baseColor * 0.32, ocean);   // darker seas
+    float rough  = mix(0.62, 0.10, ocean);                    // glossy water → glint
+    vec3  F0     = vec3(mix(0.04, 0.02, ocean));
+
+    vec3  Lo     = vec3(0.0);
+    float dayMax = -1.0;                                      // brightest geometric N·L
+    int   nL     = 0;
     for (int i = 0; i < uObjectCount; i++)
     {
-        int otype = int(objects[i].objectType + 0.5);
-        if (otype != 1) continue;
-
-        vec3  lpos  = objects[i].position.xyz;
+        if (int(objects[i].objectType + 0.5) != 1) continue;
+        vec3  toL   = objects[i].position.xyz - hitPos;
+        float dist2 = dot(toL, toL);
+        vec3  L     = normalize(toL);
+        vec3  H     = normalize(L + V);
+        float NdotL = max(dot(N, L), 0.0);
+        dayMax      = max(dayMax, dot(geoN, L));
         float lT    = objects[i].temperature;
         vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
-
-        vec3  toLight = lpos - hitPos;
-        float dist2   = dot(toLight, toLight);
-        vec3  ldir    = normalize(toLight);
-
-        // Inverse square, normalised: full brightness at 1 AU from a star
-        float attenuation = 1.0 / max(dist2, 1e-9);
-
-        float diff  = max(dot(normal, ldir), 0.0);
-        vec3  half_ = normalize(ldir + viewDir);
-        float spec  = pow(max(dot(normal, half_), 0.0), 32.0);
-
-        totalLight += lCol * (diff + spec * 0.25) * attenuation;
-        lightCount++;
+        vec3  radiance = lCol * (1.0 / max(dist2, 1e-9));
+        float D = distributionGGX(N, H, rough);
+        float G = geometrySmith(N, V, L, rough);
+        vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
+        vec3  spec = (D * G * F) / max(4.0 * NdotV * NdotL, 1e-4);
+        vec3  kd   = (vec3(1.0) - F);
+        Lo += (kd * albedo + spec) * radiance * NdotL;
+        nL++;
+    }
+    if (nL == 0) {   // no stars — fixed directional fallback (matches defaultFrag)
+        vec3 L = normalize(vec3(0.0, 1.0, 1.0));
+        dayMax = dot(geoN, L);
+        Lo = albedo * max(dot(N, L), 0.0);
     }
 
-    // No stars in scene — fixed directional fallback (matches defaultFrag)
-    if (lightCount == 0)
-    {
-        vec3  lightDir = normalize(vec3(0.0, 1.0, 1.0) - hitPos);
-        float diff     = max(dot(normal, lightDir), 0.0);
-        vec3  reflDir  = reflect(-lightDir, normal);
-        float spec     = pow(max(dot(reflDir, viewDir), 0.0), 32.0);
-        totalLight     = vec3(1.0) * (diff + spec * 0.3);
-    }
+    // Day/night from the smooth geometric terminator (clean day/night line).
+    float day = smoothstep(-0.10, 0.12, dayMax);
 
-    vec3 ambient = baseColor * 0.05;
-    return baseColor * totalLight + ambient;
+    // Sunset: warm the narrow band right at the terminator, on the lit side.
+    float band = exp(-pow(dayMax * 6.0, 2.0)) * day;
+    Lo *= mix(vec3(1.0), vec3(1.0, 0.5, 0.22), band * 0.6);
+
+    // Limb darkening toward the silhouette.
+    float limbDark = mix(0.5, 1.0, smoothstep(0.0, 0.35, NdotVg));
+
+    vec3 ambient = albedo * 0.015 * day;
+    return (ambient + Lo) * limbDark + nightEm * (1.0 - day);
+}
+
+// City-lights emission for a planet, sampled by object-space normal (equirect,
+// same mapping as planetBaseColor). Thresholded to the actual CITY pixels so a
+// blue-tinted "moonlit ocean" night map doesn't wash the dark side blue.
+vec3 planetNightLights(vec3 nObj, vec4 mat) {
+    if (mat.z < -0.5) return vec3(0.0);
+    const float PI_NL = 3.14159265358979;
+    float u = fract(atan(nObj.z, nObj.x) / (2.0 * PI_NL));
+    float v = acos(clamp(nObj.y, -1.0, 1.0)) / PI_NL;
+    vec3 nc = textureLod(uNightTextures, vec3(u, v, mat.z), 0.0).rgb;
+    nc *= smoothstep(0.05, 0.15, dot(nc, vec3(0.299, 0.587, 0.114)));
+    return nc * mat.w;
 }
 
 vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
@@ -488,7 +538,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
             }
             else
             {
-                reflCol = shadePlanet(ro, rHit, rNorm, objects[i].color.xyz);
+                reflCol = shadePlanet(ro, rHit, rNorm, rNorm, objects[i].color.xyz, vec3(0.0));
             }
             break;
         }
@@ -589,7 +639,7 @@ void main()
                           ? texture(uPlanetTextures, vec3(hitUV, float(dLayer))).rgb
                           : objects[hitIdx].color.xyz;
             vec3 N = applyMeshNormalMap(hitNormal, hitTangent, hitUV, objects[hitIdx].material);
-            color = shadePlanet(ro, hitPos, N, base);
+            color = shadePlanet(ro, hitPos, hitNormal, N, base, vec3(0.0));
         }
         else
         {
@@ -600,7 +650,8 @@ void main()
             vec3  nObj   = invRotateN(objects[hitIdx].rotation, normal);
             vec3  base   = planetBaseColor(objects[hitIdx].color, nObj);
             vec3  Nw     = rotateN(objects[hitIdx].rotation, applyPlanetNormalMap(nObj, objects[hitIdx].material));
-            vec3  lit    = shadePlanet(ro, hitPos, Nw, base);
+            vec3  nightEm = planetNightLights(nObj, objects[hitIdx].material);
+            vec3  lit    = shadePlanet(ro, hitPos, normal, Nw, base, nightEm);
             vec3  refl   = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, rd, hitPos, Nw);

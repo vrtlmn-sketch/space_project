@@ -497,7 +497,7 @@ void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::v
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
          rotationDeg.z*0.01745329252f, 0},
     meshInfo,
-    vec4{(float)rtNormalLayer, normalStrength, 0, 0}});
+    vec4{(float)rtNormalLayer, normalStrength, (float)rtNightLayer, nightStrength}});
 }
 void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
                                                 std::vector<RayTracerObjectDoppler>& list,
@@ -524,7 +524,7 @@ void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
          rotationDeg.z*0.01745329252f, 0},
     meshInfo,
-    vec4{(float)rtNormalLayer, normalStrength, 0, 0}});
+    vec4{(float)rtNormalLayer, normalStrength, (float)rtNightLayer, nightStrength}});
 }
 
 // Build R = Rz·Ry·Rx (row-major) from Euler DEGREES — matches the CPU/GLSL

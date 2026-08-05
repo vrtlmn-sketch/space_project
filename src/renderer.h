@@ -184,6 +184,8 @@ private:
   std::vector<std::string> rtTexArraySignature;
   GLuint rtNormalTexArray{0};
   std::vector<std::string> rtNormalArraySignature;
+  GLuint rtNightTexArray{0};
+  std::vector<std::string> rtNightArraySignature;
 
   // ── Compute shader raytracer ──
   GLuint rtComputeProgram{0};

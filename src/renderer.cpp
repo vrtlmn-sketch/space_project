@@ -659,6 +659,26 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
       rtDirty = true;
     }
   }
+
+  // ── Night-lights array ──
+  {
+    std::vector<GLuint> src; std::vector<std::string> sig;
+    for (auto& obj : physicsObjects) {
+      if (obj.renderedObject.nightMapLoaded() && !obj.nightMapPath.empty()) {
+        obj.renderedObject.rtNightLayer = (int)src.size();
+        src.push_back(obj.renderedObject.nightMapHandle());
+        sig.push_back(obj.nightMapPath);
+      } else {
+        obj.renderedObject.rtNightLayer = -1;
+      }
+    }
+    if (sig != rtNightArraySignature) {
+      rtNightArraySignature = sig;
+      if (rtNightTexArray) { glDeleteTextures(1, &rtNightTexArray); rtNightTexArray = 0; }
+      if (!src.empty()) rtNightTexArray = packTextureArray(src, LAYER_W, LAYER_H);
+      rtDirty = true;
+    }
+  }
 }
 
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
@@ -5687,6 +5707,10 @@ void Renderer::DispatchRaytracer(int width, int height) {
       glActiveTexture(GL_TEXTURE4);
       glBindTexture(GL_TEXTURE_2D_ARRAY, rtNormalTexArray);
     }
+    if (rtNightTexArray) {
+      glActiveTexture(GL_TEXTURE5);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtNightTexArray);
+    }
     glActiveTexture(GL_TEXTURE0);
   }
 
@@ -6387,6 +6411,10 @@ void Renderer::CaptureImage() {
       glActiveTexture(GL_TEXTURE4);
       glBindTexture(GL_TEXTURE_2D_ARRAY, rtNormalTexArray);
     }
+    if (rtNightTexArray) {
+      glActiveTexture(GL_TEXTURE5);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtNightTexArray);
+    }
     glActiveTexture(GL_TEXTURE0);
   }
 
@@ -6696,6 +6724,10 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (rtNormalTexArray) {
       glActiveTexture(GL_TEXTURE4);
       glBindTexture(GL_TEXTURE_2D_ARRAY, rtNormalTexArray);
+    }
+    if (rtNightTexArray) {
+      glActiveTexture(GL_TEXTURE5);
+      glBindTexture(GL_TEXTURE_2D_ARRAY, rtNightTexArray);
     }
     glActiveTexture(GL_TEXTURE0);
   }
