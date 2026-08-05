@@ -7,16 +7,26 @@
 uniform float uResolvedCut;   // only stars brighter than this resolve as sharp cores
 uniform float uGasStrength;   // glowing-gas emission near hot young stars (0 = off)
 
-// Luminosity function: many faint, few bright (matches raster pow(h,3)).
-float gxStarMag(float idx) {
-    float h = hash1(vec3(idx * 3.1 + 11.0, idx * 5.7 + 2.0, idx * 1.3 + 7.7));
+// Position hash (identical to the rasterizer's hash13). Star attributes are hashed
+// on the star's GALAXY-LOCAL POSITION, so the SAME physical star gets the SAME
+// magnitude/colour in BOTH renderers → bright stars land on the same pixels.
+float gxHash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
+}
+
+// Luminosity function (many faint, few bright), keyed to the star's position.
+float gxStarMag(vec3 gpos) {
+    vec3 hp = gpos / uDustInfluence + 17.0;
+    float h = gxHash13(hp + vec3(11.0, 2.0, 7.7));
     return pow(h, 3.0);
 }
 
-// Broad per-star colour: red→orange→white→blue, skewed cool, scaled by the
-// cloud's base temperature. `hot` (0..1) flags blue stars (they seed gas).
-vec3 gxStarColor(float idx, float baseT, out float hot) {
-    float h  = hash1(vec3(idx * 1.7 + 0.3, idx * 2.3 + 1.1, idx * 0.7 + 5.5));
+// Broad per-star colour (red→blue, skewed cool), keyed to the star's position.
+vec3 gxStarColor(vec3 gpos, float baseT, out float hot) {
+    vec3 hp = gpos / uDustInfluence + 17.0;
+    float h  = gxHash13(hp + vec3(0.3, 1.1, 5.5));
     float bt = (baseT > 100.0) ? baseT : 5000.0;
     float T  = (2600.0 + 27000.0 * pow(h, 3.5)) * (bt / 5000.0);
     hot = smoothstep(9000.0, 18000.0, T);
@@ -28,10 +38,8 @@ vec3 gxGasColor(float hot) {
     return mix(vec3(1.0, 0.30, 0.45), vec3(0.45, 0.6, 1.0), 0.25 * hot);
 }
 
-// Glowing gas contribution near a hot young star. Small, faint blob (RT sums it
-// along the ray over many stars, so it MUST stay subtle or the galaxy washes pink).
-vec3 gxGasGlow(float idx, float d2, float hot) {
-    if (uGasStrength <= 0.0 || hot < 0.25 || gxStarMag(idx) < 0.45) return vec3(0.0);
+vec3 gxGasGlow(vec3 gpos, float d2, float hot) {
+    if (uGasStrength <= 0.0 || hot < 0.25 || gxStarMag(gpos) < 0.45) return vec3(0.0);
     float gscale = uDustInfluence * 0.30;          // localized HII region, not galaxy-wide
     float gd = exp(-d2 / (gscale * gscale));
     return gxGasColor(hot) * gd * uGasStrength * 0.10;
@@ -40,14 +48,7 @@ vec3 gxGasGlow(float idx, float d2, float hot) {
 // Filamentary dust field over a galaxy-local position — the RT twin of the
 // rasterizer's dustLane (3-octave value-noise FBM, thresholded by coverage,
 // sharpened by contrast). 0 = clear … ~1 = dense lane.
-// EXACT copy of the rasterizer's dust noise (hash13/vnoise/fbm3) so RT samples the
-// SAME dust field at the SAME galaxy-local coordinates — the dust then condenses in
-// the same places as the raster, not a different pattern from a different hash.
-float gxHash13(vec3 p) {
-    p = fract(p * 0.1031);
-    p += dot(p, p.zyx + 31.32);
-    return fract((p.x + p.y) * p.z);
-}
+// Raster's exact dust noise (vnoise/fbm3 on gxHash13) — RT samples the SAME field.
 float gxVnoise(vec3 x) {
     vec3 i = floor(x), f = fract(x);
     f = f * f * (3.0 - 2.0 * f);
@@ -104,7 +105,7 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx, out float co
     float psf    = exp(-ang2 / s2) + 0.015 * exp(-ang2 / (s2 * 9.0));
     float resComp = sigmaB / sigma;
 
-    float mag        = gxStarMag(idx);                       // luminosity function
+    float mag        = gxStarMag(cen - uDustCenter);         // luminosity (position-keyed)
     float strideComp = clamp(pRadius * pRadius * 1.0e6, 1.0, 64.0);
     float flux       = clamp(9.0 / (distC * distC), 0.05, 6.0);
 
@@ -114,8 +115,8 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx, out float co
     // `strideComp` real stars, so denser samples resolve more often (they contain
     // a brighter member) — this compensates for RT's low point count vs raster.
     coreOut = 0.0;
-    if (mag >= uResolvedCut * 0.10)   // uniform across the band → dense AND spread out
-        coreOut = min((1.0 + 5.5 * mag) * psf, 9.0);
+    if (mag >= uResolvedCut * 0.12)   // lower cut: RT glows read dimmer than raster sprites
+        coreOut = min((1.2 + 5.5 * mag) * psf, 10.0);
 
     // Unresolved haze: the faint majority as a smooth density-driven glow floor.
     float su     = 0.0013 * max(uUnresolvedSize, 1.0);

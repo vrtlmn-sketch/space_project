@@ -674,7 +674,7 @@ void main()
         float d2    = closestApproachDist2(ro, rd, cen);
         float coreS = max(objects[i].radius * 2.0, 0.001);
         float hot;
-        vec3  gcol  = gxStarColor(float(i), objects[i].temperature, hot);  // broad per-star colour
+        vec3  gcol  = gxStarColor(cen - uDustCenter, objects[i].temperature, hot);  // position-keyed colour
 
         if (otype == 2)
         {
@@ -682,9 +682,9 @@ void main()
             float hazeAmt = pointSourceGlow(d2, cen, objects[i].radius, float(i), coreAmt);
             // Stars + haze all go under the dust so the dust REDDENS them — thin
             // dust → fiery orange sparkles, thick dust → dark cores (like raster).
-            cloudGlow += gcol * (hazeAmt + coreAmt * 0.68);  // most star light reddens under dust
-            coreGlow  += gcol * coreAmt * 0.32;              // some punches through on top
-            cloudGlow += gxGasGlow(float(i), d2, hot);
+            cloudGlow += gcol * (hazeAmt + coreAmt * 0.5);   // half reddens under dust
+            coreGlow  += gcol * coreAmt * 0.5;               // half punches through on top
+            cloudGlow += gxGasGlow(cen - uDustCenter, d2, hot);
             hazeSum   += hazeAmt;   // smooth band density (no star spikes)
         }
         else // otype == 4: nebula — Beer-Lambert transmittance

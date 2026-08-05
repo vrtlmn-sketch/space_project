@@ -95,8 +95,12 @@ void main() {
   gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
 
   float id = float(gl_VertexID);
-  float h1 = hash11(id * 1.7 + 0.3);    // temperature selector
-  float h2 = hash11(id * 3.1 + 11.0);   // luminosity selector
+  // Star attributes hashed on the star's normalized galaxy-local POSITION (not the
+  // vertex index), with the SAME hash13 the raytracer uses → the same physical star
+  // gets the same colour/magnitude in both renderers (bright stars align pixel-wise).
+  vec3  hp = aPos / uDustInfluence + 17.0;
+  float h1 = hash13(hp + vec3(0.3, 1.1, 5.5));    // temperature selector
+  float h2 = hash13(hp + vec3(11.0, 2.0, 7.7));   // luminosity selector
 
   float baseT = (uTemperature > 100.0) ? uTemperature : 5000.0;
   // Broad, realistic stellar colours: mostly cool (orange/red), a hot blue-white
