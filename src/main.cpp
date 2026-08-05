@@ -863,6 +863,13 @@ int main(int argc, char** argv) {
       static int cmpFrame = 0;
       if (++cmpFrame == 3) {   // let buffers/scene settle first
         const int W = 640, H = 360;   // 360p — matches how the good version was viewed
+        // Optional camera offset (AU): --compare dx dy dz — for testing whether
+        // structures stay attached to the scene (parallax) or swim with the camera.
+        if (argc >= 5) {
+          renderer.cameraTranslate[0] += std::atof(argv[2]);
+          renderer.cameraTranslate[1] += std::atof(argv[3]);
+          renderer.cameraTranslate[2] += std::atof(argv[4]);
+        }
         // 1) Realistic (RT): accumulate RT objects, dispatch to snapshot, capture.
         renderer.rayTracerView = true;
         renderer.rayTracedObjects.clear(); renderer.rtDopplerObjects.clear();
