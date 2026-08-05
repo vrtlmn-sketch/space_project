@@ -48,7 +48,7 @@ float gxFbm3(vec3 p) {
 float gxDustField(vec3 galLocal) {
     float scale = max(uDustInfluence * uDustClumpScale, 1e-6);
     float n   = gxFbm3(galLocal / scale / 4.0);   // coarse enough to read as mottled lanes, not per-pixel noise
-    float thr = 0.62 - clamp(uDustCoverage, 0.0, 1.0) * 0.5;   // fills more of the band (like raster's dense centre)
+    float thr = 0.50 - clamp(uDustCoverage, 0.0, 1.0) * 0.5;   // fills more of the band (like raster's dense centre)
     float d   = smoothstep(thr, thr + 0.30, n);
     return pow(d, max(uDustContrast, 0.25));
 }
@@ -60,7 +60,7 @@ vec3 gxDustExtinction(vec3 color, float dustTau) {
     // Strong spectral tilt: red passes, green/blue absorbed hard → thin dust reads
     // bright ORANGE, thick reads deep RED, densest goes near-black (the raster's
     // fiery-ember look), instead of a flat brown.
-    vec3  dExt = vec3(1.0, 1.0 + 2.2 * uDustReddening, 1.0 + 7.0 * uDustReddening);
+    vec3  dExt = vec3(1.0, 1.0 + 3.4 * uDustReddening, 1.0 + 13.0 * uDustReddening);
     float tau  = dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0);
     vec3  mult = exp(-uDustStrength * 0.042 * tau * dExt);
     vec3  floorC = vec3(0.02, 0.005, 0.002) * smoothstep(0.0, 6.0, dustTau);  // near-black red core
@@ -99,7 +99,7 @@ float pointSourceGlow(float d2, vec3 cen, float pRadius, float idx, out float co
     // Unresolved haze: the faint majority as a smooth density-driven glow floor.
     float su     = 0.0013 * max(uUnresolvedSize, 1.0);
     float unrPsf = exp(-ang2 / (su * su));
-    float unrAmp = uUnresolvedStrength * 0.03 * 0.4 * mag * flux * strideComp;  // haze floor
+    float unrAmp = uUnresolvedStrength * 0.03 * 0.78 * mag * flux * strideComp;  // haze floor
     return unrAmp * unrPsf;
 }
 
