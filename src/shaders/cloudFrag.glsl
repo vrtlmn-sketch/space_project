@@ -5,6 +5,7 @@ uniform float uTemperature; // Kelvin (0 = default warm grey)
 uniform int   uRenderMode;  // 0 = Point, 1 = Nebula
 uniform int   uRealistic;   // 0 = nav look, 1 = Cinematic Performant (HDR, RT-like)
 uniform int   uCloudPass;   // 0 = haze, 1 = core, 3 = dust (reddened extinction)
+uniform int   uDensityOnly; // 1 = dust pass writes DENSITY (screen-space rim-light map)
 uniform float uDustReddening;
 uniform float uDustStrength;       // overall dust amount (also gates in the vert)
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
@@ -69,6 +70,13 @@ void main() {
             // circle, so even an isolated puff never reads as a red disc.
             float dens = smoothstep(0.34, 0.82, env * (0.18 + 0.95 * n));
             if (dens <= 0.001) discard;
+
+            // Rim-light map mode: accumulate raw density (additive) instead of
+            // extinction — feeds the screen-space edge-light pass in the tonemap.
+            if (uDensityOnly != 0) {
+                FragColor = vec4(vDust * dens, 0.0, 0.0, 1.0);
+                return;
+            }
 
             // Reddening-DOMINANT Beer-Lambert extinction, drawn OVER the stars
             // (GL_ZERO, GL_SRC_COLOR). Thin dust just warms the light (tan→red) so

@@ -310,6 +310,7 @@ int main(int argc, char** argv) {
     renderer.bloomStrength      = s.bloomStrength;
     renderer.bloomThreshold     = s.bloomThreshold;
     renderer.spikeStrength      = s.spikeStrength;
+    renderer.edgeLightStrength  = s.edgeLightStrength;
     renderer.spikeCount         = s.spikeCount;
     renderer.spikeAngle         = s.spikeAngle;
     renderer.spikeLength        = s.spikeLength;
@@ -397,6 +398,7 @@ int main(int argc, char** argv) {
     s.bloomStrength      = renderer.bloomStrength;
     s.bloomThreshold     = renderer.bloomThreshold;
     s.spikeStrength      = renderer.spikeStrength;
+    s.edgeLightStrength  = renderer.edgeLightStrength;
     s.spikeCount         = renderer.spikeCount;
     s.spikeAngle         = renderer.spikeAngle;
     s.spikeLength        = renderer.spikeLength;

@@ -587,6 +587,38 @@ static float rtDustLane(float x, float y, float z,
   return std::pow(d, std::max(contrast, 0.25f));
 }
 
+// Dust-density map pass (screen-space rim light): draw the dust sprites once
+// more, additively, with the frag in density-only mode. Runs right after the
+// main cloud draw each frame, so buffers/uniforms are already current.
+void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],
+                                            float fovDeg, int fbWidth, int fbHeight)
+{
+  if (!hasBeenRendered || !program) return;
+  glBindVertexArray(vao);
+  glUseProgram(program);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+  glUniform1i(glGetUniformLocation(program, "uRealistic"),   1);
+  glUniform1i(glGetUniformLocation(program, "uCloudPass"),   3);
+  glUniform1i(glGetUniformLocation(program, "uDensityOnly"), 1);
+  glUniform1f(glGetUniformLocation(program, "uCinePixelScale"), 1.0f);
+  glUniform1f(glGetUniformLocation(program, "uViewportH"), (float)fbHeight);
+
+  glEnable(GL_PROGRAM_POINT_SIZE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_ONE, GL_ONE);
+  glDisable(GL_DEPTH_TEST);
+  glDrawArrays(GL_POINTS, 0, bufferSize);
+  glEnable(GL_DEPTH_TEST);
+  // The post chain (bloom/tonemap) relies on overwrite semantics — leaking
+  // additive blending here makes every later pass ACCUMULATE frame over frame
+  // (runaway brightness), so restore the default state.
+  glDisable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  glUniform1i(glGetUniformLocation(program, "uDensityOnly"), 0);
+  glBindVertexArray(0);
+}
+
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
                                                  std::vector<RayTracerObjectDoppler>& list,
                                                  float dustInfluence, float dustClumpScale,

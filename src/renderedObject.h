@@ -161,6 +161,11 @@ public:
   void renderMesh(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderLine(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderCloud(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  // Draw ONLY the dust pass, additively, writing raw density — the screen-space
+  // rim-light map. Reuses this frame's cloud program/VBO state; vpH = density
+  // target height so sprite sizes match the smaller buffer.
+  void renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],
+                              float fovDeg, int fbWidth, int fbHeight);
   void renderGrid(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderSkybox(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight, float exposure);
   void renderAtmosphere(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
