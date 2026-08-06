@@ -566,7 +566,8 @@ void Renderer::Draw(RenderedObject& ro) {
     else if (ro.meshType == MeshType::cloud) {
       ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects,
                               dustInfluence, dustClumpScale, dustCoverage, dustContrast);
-      if (dopplerMode) ro.renderCloudRaytracedDoppler(cameraTranslate, rtDopplerObjects);
+      if (dopplerMode) ro.renderCloudRaytracedDoppler(cameraTranslate, rtDopplerObjects,
+                              dustInfluence, dustClumpScale, dustCoverage, dustContrast);
     }
   }
 }
@@ -2910,10 +2911,21 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
   if (dopplerMode) {
     ImGui::Indent(8.0f);
-    ImGui::Text("Vel Scale (1/c)");
+    ImGui::Text("Velocity Exaggeration");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("1x = physically real Doppler for AU/yr velocities.\nHigher exaggerates the effect artistically.");
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##dvel", &dopplerVelScale, 1e-6f, 10.0f, "%.2e", ImGuiSliderFlags_Logarithmic))
-      rtDirty = true;
+    {
+      // Stored value is the raw v->beta multiplier; the slider edits it as a
+      // multiple of the PHYSICAL 1/c (63,241 AU/yr) so 1x sits mid-range and
+      // the whole travel is usable instead of skyrocketing past the first tick.
+      const float kPhys = 1.581e-5f;
+      float exag = dopplerVelScale / kPhys;
+      if (ImGui::SliderFloat("##dvel", &exag, 0.05f, 200.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
+        dopplerVelScale = exag * kPhys;
+        rtDirty = true;
+      }
+    }
     ImGui::Text("Brightness Str");
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderFloat("##dbrightness", &dopplerBrightnessStr, 0.0f, 6.0f, "%.2f"))

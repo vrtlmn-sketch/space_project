@@ -516,17 +516,20 @@ void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
   } else if (otype == 5.0f) {
     otype = 0.0f;   // FreeModel with no loaded mesh → render as a lit sphere
   }
+  // Same cloud-param packing as the plain variant: spheres carry P0 in the mesh
+  // slot and P1 in the free .w lanes.
+  if (!freeMesh) meshInfo = rtCloudP0;
   list.push_back(RayTracerObjectDoppler{
     vec4{(float)(coordinates.x + cameraTranslate[0]),
          (float)(coordinates.y + cameraTranslate[1]),
-         (float)(coordinates.z + cameraTranslate[2]), 0},
+         (float)(coordinates.z + cameraTranslate[2]), rtCloudP1.w},
     mass, radius, temperature, otype,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{velocity.x, velocity.y, velocity.z, 0},
-    vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, 0},
-    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, 0},
+    vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, rtCloudP1.x},
+    vec4{rtAtmoScatter.x, rtAtmoScatter.y, rtAtmoScatter.z, rtCloudP1.y},
     vec4{rotationDeg.x*0.01745329252f, rotationDeg.y*0.01745329252f,
-         rotationDeg.z*0.01745329252f, 0},
+         rotationDeg.z*0.01745329252f, rtCloudP1.z},
     meshInfo,
     vec4{(float)rtNormalLayer, normalStrength, (float)rtNightLayer, nightStrength}});
 }
@@ -585,7 +588,9 @@ static float rtDustLane(float x, float y, float z,
 }
 
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
-                                                 std::vector<RayTracerObjectDoppler>& list)
+                                                 std::vector<RayTracerObjectDoppler>& list,
+                                                 float dustInfluence, float dustClumpScale,
+                                                 float dustCoverage, float dustContrast)
 {
   int particleCount = (int)UVObjectMeshBuffer.size() / 3;
   if (particleCount <= 0) return;
@@ -621,6 +626,16 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
 
     vec3 vel = (i < (int)cloudParticles.size()) ? cloudParticles[i].velocity : vec3{0,0,0};
     float rx = UVObjectMeshBuffer[fi], ry = UVObjectMeshBuffer[fi+1], rz = UVObjectMeshBuffer[fi+2];
+    // Per-particle dust lane (raster's predicate, same group-max + coverage
+    // calibration as renderCloudRaytraced) so Doppler RT places dust identically.
+    float pLane = 0.0f;
+    if (cachedRenderMode == 0 && dustInfluence > 0.0f) {
+      float covAdj = std::min(dustCoverage + 0.05f, 1.0f);
+      for (int j = i; j < i + stride && j < particleCount; ++j)
+        pLane = std::max(pLane,
+                         rtDustLane(UVObjectMeshBuffer[j*3], UVObjectMeshBuffer[j*3+1], UVObjectMeshBuffer[j*3+2],
+                                    dustInfluence, dustClumpScale, covAdj, dustContrast));
+    }
     if (rot) {
       float ox = R[0]*rx + R[1]*ry + R[2]*rz;
       float oy = R[3]*rx + R[4]*ry + R[5]*rz;
@@ -634,7 +649,7 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
         rz + (float)(coordinates.z + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType,
-      vec4{0,0,0,0},
+      vec4{pLane,0,0,0},
       vec4{vel.x, vel.y, vel.z, 0}});
   }
 }

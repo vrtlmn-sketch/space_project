@@ -206,7 +206,9 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
                                   vec3 color = {0.55f, 0.25f, 0.15f},
                                   std::vector<RtTri>* triOut = nullptr,
                                   std::vector<BVHNode>* nodeOut = nullptr);
-  void renderCloudRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list);
+  void renderCloudRaytracedDoppler(const double cameraTranslate[3], std::vector<RayTracerObjectDoppler>& list,
+                                   float dustInfluence = 0.0f, float dustClumpScale = 0.0f,
+                                   float dustCoverage = 0.0f, float dustContrast = 1.0f);
   void GenerateMeshLine(vec3&& origin);
   void AddPointToLine(const vec3& point);
   void TrimLinePoints(size_t maxPoints);

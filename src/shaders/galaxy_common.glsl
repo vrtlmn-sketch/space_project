@@ -15,12 +15,17 @@ float gxStarMag(float idx) {
 
 // Broad per-star colour: red→orange→white→blue, skewed cool, scaled by the
 // cloud's base temperature. `hot` (0..1) flags blue stars (they seed gas).
-vec3 gxStarColor(float idx, float baseT, out float hot) {
+vec3 gxStarColorT(float idx, float baseT, out float hot, out float T) {
     float h  = hash1(vec3(idx * 1.7 + 0.3, idx * 2.3 + 1.1, idx * 0.7 + 5.5));
     float bt = (baseT > 100.0) ? baseT : 5000.0;
-    float T  = (2600.0 + 27000.0 * pow(h, 3.5)) * (bt / 5000.0);
+    T   = (2600.0 + 27000.0 * pow(h, 3.5)) * (bt / 5000.0);
     hot = smoothstep(9000.0, 18000.0, T);
     return blackbody(T);
+}
+// Wrapper for callers that don't need the temperature (Doppler shaders shift T
+// thermally, so they use gxStarColorT + blackbody(dopplerT(T, D)) instead).
+vec3 gxStarColor(float idx, float baseT, out float hot) {
+    float T; return gxStarColorT(idx, baseT, hot, T);
 }
 
 // Emission-nebula colour near a hot star (H-alpha pink, cooler as the star heats).
