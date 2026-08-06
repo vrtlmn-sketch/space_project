@@ -5,9 +5,14 @@ out vec4 FragColor;
 uniform sampler2D uScene;        // HDR raytracer output
 uniform sampler2D uBloom;        // blurred bright pass
 uniform sampler2D uSpike;        // diffraction-spike streaks
-uniform sampler2D uDustDens;     // screen-space dust density (rim-light map)
-uniform float     uEdgeLight;    // rim-light strength (0 = off)
+uniform sampler2D uDustDens;     // screen-space dust density (sharp: wisp texture)
+uniform sampler2D uDustDensBlur; // blurred density (clump ENVELOPE: silhouettes)
+uniform float     uEdgeLight;    // thin rim-light strength (0 = off)
+uniform float     uFringe;       // lit-fringe (crescent body) strength (0 = off)
 uniform vec2      uTexelD;       // texel of the density/bloom maps
+uniform int       uOccCount;     // solid-body screen discs (planets + atmo)
+uniform vec4      uOccDiscs[8];  // (px, py, radius_px, used) — glow suppressed inside
+uniform vec2      uSceneSize;    // render-target pixels (disc math)
 uniform float     uExposure;     // photographic exposure multiplier
 uniform float     uBloomStrength;
 uniform float     uSpikeStrength; // 0 = spikes off
@@ -32,11 +37,20 @@ void main() {
   if (uEdgeLight > 0.0) {
     // Overlapping sprites SUM in the density map (values 0..20+); compress to
     // 0..1 so edges/shell work on optical thickness, not raw sprite count.
+    // Multi-scale gradient: up close a cloud edge widens over many texels and
+    // a 1-texel difference starves — sample at 1x and 3x steps and keep the
+    // stronger, so rims survive approach instead of fading out.
     float dl = 1.0 - exp(-texture(uDustDens, vUV - vec2(uTexelD.x, 0.0)).r * 0.6);
     float dr = 1.0 - exp(-texture(uDustDens, vUV + vec2(uTexelD.x, 0.0)).r * 0.6);
     float db = 1.0 - exp(-texture(uDustDens, vUV - vec2(0.0, uTexelD.y)).r * 0.6);
     float dt = 1.0 - exp(-texture(uDustDens, vUV + vec2(0.0, uTexelD.y)).r * 0.6);
-    vec2  gradD = vec2(dr - dl, dt - db);          // points INTO the cloud
+    vec2  grad1 = vec2(dr - dl, dt - db);
+    float dl3 = 1.0 - exp(-texture(uDustDens, vUV - vec2(uTexelD.x * 3.0, 0.0)).r * 0.6);
+    float dr3 = 1.0 - exp(-texture(uDustDens, vUV + vec2(uTexelD.x * 3.0, 0.0)).r * 0.6);
+    float db3 = 1.0 - exp(-texture(uDustDens, vUV - vec2(0.0, uTexelD.y * 3.0)).r * 0.6);
+    float dt3 = 1.0 - exp(-texture(uDustDens, vUV + vec2(0.0, uTexelD.y * 3.0)).r * 0.6);
+    vec2  grad3 = vec2(dr3 - dl3, dt3 - db3) * 0.5;
+    vec2  gradD = (dot(grad1, grad1) >= dot(grad3, grad3)) ? grad1 : grad3;  // points INTO the cloud
     float edge  = length(gradD);
     if (edge > 1e-4) {
       float lum_l = dot(texture(uBloom, vUV - vec2(uTexelD.x, 0.0)).rgb, vec3(0.333));
@@ -62,6 +76,42 @@ void main() {
               * uEdgeLight * vec3(1.0, 0.86, 0.72);
       }
     }
+  }
+
+  // ── Lit faces (true 3D dust lighting) ────────────────────────────────────
+  // The G channel of the density maps carries density x WORLD-space facing
+  // (per-particle surface normal from the 3D density grid, dotted with the
+  // light direction). Glow = starlight x that facing x dust presence — so a
+  // face-on view lights the WHOLE facing surface, and an edge-on view
+  // compresses the same lit face into a natural rim. No screen-space band:
+  // the rim is an emergent projection effect, exactly like real nebulae.
+  if (uFringe > 0.0) {
+    vec2  eb  = texture(uDustDensBlur, vUV).rg;
+    float env = 1.0 - exp(-eb.r * 0.25);
+    float presence = smoothstep(0.05, 0.30, env);
+    if (presence > 0.002) {
+      // G/R (density-weighted surface-ness x directional shading) lives in
+      // ~0.05..0.35 — remap that ACTUAL range to 0..1, else any pow() crushes
+      // the whole effect to a whisper. Shadow flanks land near 0, lit flanks
+      // near 1 → the volumetric one-side-lit read.
+      float worldLit = eb.g / max(eb.r, 1e-4);
+      // Harsh directional response: direct-lit surfaces pop, grazing light
+      // falls off fast → the SHAPE carves the lighting (not overall gain).
+      float lit = smoothstep(0.08, 0.35, worldLit);
+      lit = lit * lit * (0.5 + 0.5 * lit);
+      // The cloud's own fine structure textures the light (sharp vs envelope).
+      float wisp = clamp(texture(uDustDens, vUV).r / max(eb.r, 1e-3), 0.0, 2.0);
+      wisp = 0.35 + 0.65 * smoothstep(0.4, 1.4, wisp);
+      rim += bloom * presence * lit * wisp * uFringe * vec3(1.0, 0.84, 0.66) * 1.6;
+    }
+  }
+
+  // No dust glow on top of solid bodies: fade the whole rim/fringe term
+  // out inside each planet disc (padded to its atmosphere shell).
+  for (int oi = 0; oi < uOccCount; oi++) {
+    if (uOccDiscs[oi].w < 0.5) continue;
+    float dpx = distance(vUV * uSceneSize, uOccDiscs[oi].xy);
+    rim *= smoothstep(uOccDiscs[oi].z * 0.92, uOccDiscs[oi].z * 1.18, dpx);
   }
 
   vec3 c = (hdr + bloom * uBloomStrength + spike * uSpikeStrength + rim) * uExposure;

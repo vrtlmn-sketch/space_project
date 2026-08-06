@@ -163,7 +163,8 @@ private:
   // Screen-space rim-lit dust (raster view): clouds drawn this frame + the
   // half-res density target the tonemap samples for edge lighting.
   std::vector<RenderedObject*> rimClouds;
-  GLuint dustDensFBO{0}, dustDensTex{0};
+  std::vector<vec4> rimOccluders;      // solid bodies (xyz cam-rel, w radius) that cancel dust glow
+  GLuint dustDensFBO{0}, dustDensTex{0}, dustDensBlurTex{0};
   int    dustDensW{0}, dustDensH{0};
 
   int   sceneRenderW{0}, sceneRenderH{0};
@@ -299,6 +300,8 @@ private:
   GLint tmLocDustDens{-1};
   GLint tmLocEdgeLight{-1};
   GLint tmLocTexelD{-1};
+  GLint tmLocDensBlur{-1};
+  GLint tmLocFringe{-1};
   GLint  spkLocTex{-1}, spkLocTexel{-1}, spkLocCount{-1}, spkLocAngle{-1}, spkLocLength{-1}, spkLocDecay{-1};
   GLint  spkLocSecondary{-1}, spkLocChroma{-1};
   GLint  spkSrcLocTex{-1};
@@ -537,7 +540,8 @@ public:
   float dustGlow{0.15f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
   int   dustDetail{14000};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent
-  float edgeLightStrength{1.0f};  // screen-space rim light on dust edges (0 = off)
+  float edgeLightStrength{2.15f}; // screen-space rim light on dust edges (0 = off)
+  float rimSpriteStrength{5.0f};  // lit-fringe strength (surface glow on dust)
   float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──

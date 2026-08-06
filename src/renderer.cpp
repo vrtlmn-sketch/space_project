@@ -524,6 +524,7 @@ void Renderer::EndFrame() {
 
   glfwSwapBuffers(window);
   rimClouds.clear();
+  rimOccluders.clear();
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
   rtDopplerObjects.clear();
@@ -551,9 +552,14 @@ void Renderer::EndFrame() {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
+    if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+                                            if (realisticRasterView)
+                                              rimOccluders.push_back(vec4{(float)ro.coordinates.x,
+                                                                          (float)ro.coordinates.y,
+                                                                          (float)ro.coordinates.z,
+                                                                          ro.sphereRadius()}); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; if (realisticRasterView && (edgeLightStrength > 0.0f || rimSpriteStrength > 0.0f)) ro.updateCloudRimFactors();
                                             ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             if (realisticRasterView) rimClouds.push_back(&ro); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -2968,6 +2974,9 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::SeparatorText("Diffraction Spikes");
   ImGui::TextDisabled("Synthetic PSF — telescope star spikes on bright points.");
   norm01("Edge Light", "##edgelight", &edgeLightStrength, 0.0f, 5.0f, false);
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thin screen-space rim light on dust edges.");
+  norm01("Lit Fringe", "##rimsprites", &rimSpriteStrength, 0.0f, 5.0f, false);
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wide lit fringe on dark-clump silhouettes facing the light (crescent body).");
   if (ImGui::IsItemHovered()) ImGui::SetTooltip("Screen-space rim light: dust edges facing bright stars glow (raster view).");
   norm01("Intensity",  "##spkstr",   &spikeStrength, 0.0f, 2.0f, false);
   ImGui::SliderInt("Spikes",     &spikeCount, 2, 8);
@@ -6062,6 +6071,8 @@ void Renderer::InitPostProcess() {
     tmLocDustDens = glGetUniformLocation(tonemapProgram, "uDustDens");
     tmLocEdgeLight= glGetUniformLocation(tonemapProgram, "uEdgeLight");
     tmLocTexelD   = glGetUniformLocation(tonemapProgram, "uTexelD");
+    tmLocDensBlur = glGetUniformLocation(tonemapProgram, "uDustDensBlur");
+    tmLocFringe   = glGetUniformLocation(tonemapProgram, "uFringe");
   }
   if (spikeProgram) {
     spkLocTex       = glGetUniformLocation(spikeProgram, "uTexture");
@@ -6144,7 +6155,7 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   // Re-draw this frame's cloud dust sprites, additively, into a half-res
   // single-channel target. The tonemap turns its gradient + the blurred bloom
   // (the aggregated starlight field) into lit cloud edges.
-  bool rimOn = edgeLightStrength > 0.0f && !rimClouds.empty();
+  bool rimOn = (edgeLightStrength > 0.0f || rimSpriteStrength > 0.0f) && !rimClouds.empty();
   if (rimOn) {
     if (bw != dustDensW || bh != dustDensH || !dustDensFBO) {
       if (!dustDensFBO) glGenFramebuffers(1, &dustDensFBO);
@@ -6157,14 +6168,66 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
       glBindFramebuffer(GL_FRAMEBUFFER, dustDensFBO);
       glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dustDensTex, 0);
+      if (!dustDensBlurTex) glGenTextures(1, &dustDensBlurTex);
+      glBindTexture(GL_TEXTURE_2D, dustDensBlurTex);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, bw, bh, 0, GL_RG, GL_FLOAT, nullptr);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
       dustDensW = bw; dustDensH = bh;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, dustDensFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dustDensTex, 0);
     glViewport(0, 0, bw, bh);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     for (RenderedObject* rc : rimClouds)
       rc->renderCloudDustDensity(cameraTranslate, camMatrix, zoom, bw, bh);
+
+    // Blur the density into its ENVELOPE (borrowing the bloom's separable
+    // Gaussian + its scratch texture, unused this early in the chain). The
+    // crescents read this: its gradients mark clump SILHOUETTES, not the
+    // wisp texture inside them — which is what kept misplacing the glow.
+    glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(blitVAO);
+    glUseProgram(bloomBlurProgram);
+    glUniform1i(bloomBlurLocTex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[1], 0);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, dustDensTex);
+    glUniform2f(bloomBlurLocDir, 2.0f / (float)bw, 0.0f);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dustDensBlurTex, 0);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[1]);
+    glUniform2f(bloomBlurLocDir, 0.0f, 2.0f / (float)bh);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+
+    // RIM_DEBUG=1: dump both density maps once (PGM, R channel ×32) so their
+    // contents/alignment can be inspected offline instead of guessed at.
+    if (std::getenv("RIM_DEBUG")) {
+      static bool dumped = false;
+      if (!dumped) {
+        dumped = true;
+        std::vector<float> buf((size_t)bw * bh * 2);
+        auto dump = [&](GLuint tex, const char* path, int chan, float gain) {
+          glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+          glReadPixels(0, 0, bw, bh, GL_RG, GL_FLOAT, buf.data());
+          std::ofstream o(path, std::ios::binary);
+          o << "P5\n" << bw << " " << bh << "\n255\n";
+          for (int y = bh - 1; y >= 0; --y)
+            for (int x = 0; x < bw; ++x) {
+              int v = (int)(buf[((size_t)y * bw + x) * 2 + chan] * gain);
+              o.put((char)std::clamp(v, 0, 255));
+            }
+        };
+        dump(dustDensTex,     "/tmp/dens_sharp.pgm",  0, 32.0f);
+        dump(dustDensBlurTex, "/tmp/dens_blur.pgm",   0, 32.0f);
+        dump(dustDensBlurTex, "/tmp/dens_lit.pgm",    1, 32.0f);   // G: density x world-facing
+        std::printf("[RIM_DEBUG] density maps dumped (%dx%d)\n", bw, bh);
+      }
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dustDensTex, 0);
+    }
   }
 
   glDisable(GL_DEPTH_TEST);
@@ -6229,8 +6292,39 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, bloomTex[0]); glUniform1i(tmLocBloom, 1);
   glActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, bloomTex[2]); glUniform1i(tmLocSpike, 2);
   glActiveTexture(GL_TEXTURE3); glBindTexture(GL_TEXTURE_2D, rimOn ? dustDensTex : 0); glUniform1i(tmLocDustDens, 3);
+  glActiveTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, rimOn ? dustDensBlurTex : 0); glUniform1i(tmLocDensBlur, 4);
   glUniform1f(tmLocEdgeLight, rimOn ? edgeLightStrength : 0.0f);
+  glUniform1f(tmLocFringe,    rimOn ? rimSpriteStrength : 0.0f);
   glUniform2f(tmLocTexelD, 1.0f / (float)bw, 1.0f / (float)bh);
+  // Solid-body screen discs (planets + their atmosphere shells): the tonemap
+  // suppresses dust glow inside them so nothing shines THROUGH a planet.
+  // Projected with the same WorldToScreen the selection UI uses — proven math.
+  {
+    float discs[8 * 4] = {0};
+    int   nd = 0;
+    for (const vec4& oc : rimOccluders) {
+      if (nd >= 8) break;
+      float sx, sy;
+      if (!WorldToScreen({oc.x, oc.y, oc.z}, sx, sy)) continue;
+      float effR = oc.w * activeSizeExag() * 1.12f;   // pad to the atmosphere shell
+      float esx, esy, pr = 4.0f;
+      if (WorldToScreen({oc.x + camMatrix[0]*effR, oc.y + camMatrix[1]*effR, oc.z + camMatrix[2]*effR}, esx, esy)) {
+        float ddx = esx - sx, ddy = esy - sy;
+        pr = std::max(std::sqrt(ddx*ddx + ddy*ddy), 2.0f);
+      }
+      // WorldToScreen yields overlay coords (top-down, incl. image offset);
+      // map into the render target's pixel space the tonemap runs over.
+      discs[nd*4+0] = sx - sceneImageOffX;
+      discs[nd*4+1] = (float)sceneRenderH - (sy - sceneImageOffY);   // flip to GL bottom-up
+      discs[nd*4+2] = pr;
+      discs[nd*4+3] = 1.0f;
+      nd++;
+    }
+    glUniform1i(glGetUniformLocation(tonemapProgram, "uOccCount"), rimOn ? nd : 0);
+    if (nd > 0) glUniform4fv(glGetUniformLocation(tonemapProgram, "uOccDiscs"), 8, discs);
+    glUniform2f(glGetUniformLocation(tonemapProgram, "uSceneSize"),
+                (float)sceneRenderW, (float)sceneRenderH);
+  }
   glUniform1f(tmLocExposure, rtExposure);
   glUniform1f(tmLocBloomStr, bloomStrength);
   // RT star cores feed the (shared) spike source less energy than the raster's

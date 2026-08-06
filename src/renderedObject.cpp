@@ -633,17 +633,32 @@ void RenderedObject::updateCloudRimFactors()
   for (size_t i = 0; i < n; ++i) {
     float px=UVObjectMeshBuffer[i*3], py=UVObjectMeshBuffer[i*3+1], pz=UVObjectMeshBuffer[i*3+2];
     int gx=cellOf(px,lo.x,ext.x), gy=cellOf(py,lo.y,ext.y), gz=cellOf(pz,lo.z,ext.z);
-    // Outward normal = -density gradient (world units: divide by cell size)
-    vec3 nrm{-(at(gx+1,gy,gz)-at(gx-1,gy,gz)) / (ext.x/G),
-             -(at(gx,gy+1,gz)-at(gx,gy-1,gz)) / (ext.y/G),
-             -(at(gx,gy,gz+1)-at(gx,gy,gz-1)) / (ext.z/G)};
-    float nl = std::sqrt(nrm.x*nrm.x + nrm.y*nrm.y + nrm.z*nrm.z);
-    vec3 L{cen.x-px, cen.y-py, cen.z-pz};
-    float ll = std::sqrt(L.x*L.x + L.y*L.y + L.z*L.z);
-    float f = 0.5f;   // degenerate normal/at-centroid → neutral
-    if (nl > 1e-12f && ll > 1e-12f)
-      f = std::max((nrm.x*L.x + nrm.y*L.y + nrm.z*L.z) / (nl*ll), 0.0f);
-    rimFactors[i] = f;
+    // 3D SURFACE-NESS: a particle on a clump's boundary shell sees a strong
+    // density gradient relative to its local density → it is an exposed
+    // surface, bathed in the surrounding starlight. Buried particles see a
+    // weak relative gradient → dark. View-independent: from above, a clump's
+    // whole top face carries high values; edge-on the same shell IS the rim.
+    float dx = at(gx+1,gy,gz) - at(gx-1,gy,gz);
+    float dy = at(gx,gy+1,gz) - at(gx,gy-1,gz);
+    float dz = at(gx,gy,gz+1) - at(gx,gy,gz-1);
+    float gm = std::sqrt(dx*dx + dy*dy + dz*dz);
+    float surf = std::clamp(gm / (at(gx,gy,gz) + 2.0f), 0.0f, 1.0f);
+    // Directional shading (the volumetric "one side fully lit" look): wrapped
+    // half-Lambert of the outward normal against the light toward the
+    // luminosity centre. Wrapped — not clamped — so the disk's dominant
+    // vertical normals still shade smoothly instead of zeroing out; the
+    // core-facing flank of every clump reads bright, the far flank dark.
+    float f = 0.5f;
+    if (gm > 1e-6f) {
+      float nx = -dx/gm, ny = -dy/gm, nz = -dz/gm;   // outward normal
+      float Lx = cen.x-px, Ly = cen.y-py, Lz = cen.z-pz;
+      float ll = std::sqrt(Lx*Lx + Ly*Ly + Lz*Lz);
+      if (ll > 1e-12f)
+        f = 0.5f + 0.5f * (nx*Lx + ny*Ly + nz*Lz) / ll;
+    }
+    // Harsh shape-revealing falloff: direct light pops, grazing dies fast.
+    f = f * f * f;
+    rimFactors[i] = surf * f;
   }
   if (rimVbo) {
     glBindBuffer(GL_ARRAY_BUFFER, rimVbo);

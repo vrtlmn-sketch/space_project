@@ -311,6 +311,7 @@ int main(int argc, char** argv) {
     renderer.bloomThreshold     = s.bloomThreshold;
     renderer.spikeStrength      = s.spikeStrength;
     renderer.edgeLightStrength  = s.edgeLightStrength;
+    renderer.rimSpriteStrength  = s.rimSpriteStrength;
     renderer.spikeCount         = s.spikeCount;
     renderer.spikeAngle         = s.spikeAngle;
     renderer.spikeLength        = s.spikeLength;
@@ -399,6 +400,7 @@ int main(int argc, char** argv) {
     s.bloomThreshold     = renderer.bloomThreshold;
     s.spikeStrength      = renderer.spikeStrength;
     s.edgeLightStrength  = renderer.edgeLightStrength;
+    s.rimSpriteStrength  = renderer.rimSpriteStrength;
     s.spikeCount         = renderer.spikeCount;
     s.spikeAngle         = renderer.spikeAngle;
     s.spikeLength        = renderer.spikeLength;
@@ -898,6 +900,7 @@ int main(int argc, char** argv) {
           c->renderedObject.uploadRenderMode(c->renderMode);
           renderer.Draw(c->renderedObject);
         }
+        if (!std::getenv("RASTER_ONLY")) {
         renderer.DispatchRaytracer(384, 216);      // populate rtLastObjects (res discarded)
         renderer.rayTracerView = false;
         renderer.CaptureRTImageTo(W, H, "/tmp/cmp_rt.png");
@@ -905,10 +908,13 @@ int main(int argc, char** argv) {
         // Geodesic parity pair (same scene, small res — the march is slow): with
         // no black hole the ray escapes to a straight line, so geodesic output
         // must match Simple RT. Captured at matching resolution for diffing.
-        renderer.CaptureRTImageTo(256, 144, "/tmp/cmp_rt_small.png");
-        renderer.raytracerMethod = 1;
-        renderer.CaptureRTImageTo(256, 144, "/tmp/cmp_geo.png");
-        renderer.raytracerMethod = 0;
+        if (!std::getenv("SKIP_GEO")) {
+          renderer.CaptureRTImageTo(256, 144, "/tmp/cmp_rt_small.png");
+          renderer.raytracerMethod = 1;
+          renderer.CaptureRTImageTo(256, 144, "/tmp/cmp_geo.png");
+          renderer.raytracerMethod = 0;
+        }
+        } else { renderer.rayTracerView = false; }   // RASTER_ONLY: skip all RT captures
 
         // 2) Performant (raster): draw the cinematic raster view + capture.
         renderer.rayTracerView = false; renderer.realisticRasterView = true;
