@@ -537,7 +537,7 @@ public:
   float dustGlow{0.15f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
   int   dustDetail{14000};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent
-  float edgeLightStrength{0.35f}; // screen-space rim light on dust edges (0 = off)
+  float edgeLightStrength{1.0f};  // screen-space rim light on dust edges (0 = off)
   float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──

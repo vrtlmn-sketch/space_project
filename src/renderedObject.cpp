@@ -587,6 +587,70 @@ static float rtDustLane(float x, float y, float z,
   return std::pow(d, std::max(contrast, 0.25f));
 }
 
+// World-space rim factors: bin the particles into a coarse density grid, take
+// its gradient at each particle (the cloud's outward surface normal in WORLD
+// space), and dot it with the direction to the luminosity centroid (~galactic
+// core, the dominant light). The result is view-INDEPENDENT: orbiting the
+// galaxy keeps the lit side lit — fixing the screen-space rim's flaw. Cheap
+// (array taps only), so it refreshes periodically while the sim animates.
+void RenderedObject::updateCloudRimFactors()
+{
+  size_t n = UVObjectMeshBuffer.size() / 3;
+  if (n < 16) return;
+  if (!rimFactors.empty() && (rimUpdateCounter++ % 30) != 0) return;
+
+  const int G = 48;
+  vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+  double cx=0, cy=0, cz=0;
+  for (size_t i = 0; i < n; ++i) {
+    float x=UVObjectMeshBuffer[i*3], y=UVObjectMeshBuffer[i*3+1], z=UVObjectMeshBuffer[i*3+2];
+    lo.x=std::min(lo.x,x); hi.x=std::max(hi.x,x);
+    lo.y=std::min(lo.y,y); hi.y=std::max(hi.y,y);
+    lo.z=std::min(lo.z,z); hi.z=std::max(hi.z,z);
+    cx+=x; cy+=y; cz+=z;
+  }
+  vec3 cen{(float)(cx/n), (float)(cy/n), (float)(cz/n)};
+  vec3 ext{std::max(hi.x-lo.x,1e-6f), std::max(hi.y-lo.y,1e-6f), std::max(hi.z-lo.z,1e-6f)};
+
+  static std::vector<float> grid;   // scratch, reused across calls
+  grid.assign((size_t)G*G*G, 0.0f);
+  auto cellOf = [&](float v, float l, float e) {
+    int c = (int)((v - l) / e * (G - 1) + 0.5f);
+    return std::clamp(c, 0, G - 1);
+  };
+  for (size_t i = 0; i < n; ++i) {
+    int gx = cellOf(UVObjectMeshBuffer[i*3],   lo.x, ext.x);
+    int gy = cellOf(UVObjectMeshBuffer[i*3+1], lo.y, ext.y);
+    int gz = cellOf(UVObjectMeshBuffer[i*3+2], lo.z, ext.z);
+    grid[(size_t)(gz*G + gy)*G + gx] += 1.0f;
+  }
+  auto at = [&](int x, int y, int z) {
+    x = std::clamp(x,0,G-1); y = std::clamp(y,0,G-1); z = std::clamp(z,0,G-1);
+    return grid[(size_t)(z*G + y)*G + x];
+  };
+
+  rimFactors.resize(n);
+  for (size_t i = 0; i < n; ++i) {
+    float px=UVObjectMeshBuffer[i*3], py=UVObjectMeshBuffer[i*3+1], pz=UVObjectMeshBuffer[i*3+2];
+    int gx=cellOf(px,lo.x,ext.x), gy=cellOf(py,lo.y,ext.y), gz=cellOf(pz,lo.z,ext.z);
+    // Outward normal = -density gradient (world units: divide by cell size)
+    vec3 nrm{-(at(gx+1,gy,gz)-at(gx-1,gy,gz)) / (ext.x/G),
+             -(at(gx,gy+1,gz)-at(gx,gy-1,gz)) / (ext.y/G),
+             -(at(gx,gy,gz+1)-at(gx,gy,gz-1)) / (ext.z/G)};
+    float nl = std::sqrt(nrm.x*nrm.x + nrm.y*nrm.y + nrm.z*nrm.z);
+    vec3 L{cen.x-px, cen.y-py, cen.z-pz};
+    float ll = std::sqrt(L.x*L.x + L.y*L.y + L.z*L.z);
+    float f = 0.5f;   // degenerate normal/at-centroid → neutral
+    if (nl > 1e-12f && ll > 1e-12f)
+      f = std::max((nrm.x*L.x + nrm.y*L.y + nrm.z*L.z) / (nl*ll), 0.0f);
+    rimFactors[i] = f;
+  }
+  if (rimVbo) {
+    glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
+    glBufferData(GL_ARRAY_BUFFER, rimFactors.size()*sizeof(float), rimFactors.data(), GL_DYNAMIC_DRAW);
+  }
+}
+
 // Dust-density map pass (screen-space rim light): draw the dust sprites once
 // more, additively, with the frag in density-only mode. Runs right after the
 // main cloud draw each frame, so buffers/uniforms are already current.
@@ -951,6 +1015,11 @@ void RenderedObject::setupRender()
       glBindBuffer(GL_ARRAY_BUFFER, relVbo);
       glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
       glEnableVertexAttribArray(1);
+      // Attribute 2 = world-lit rim factor (3D-correct dust edge lighting).
+      glGenBuffers(1, &rimVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
+      glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
+      glEnableVertexAttribArray(2);
     }
   }
 

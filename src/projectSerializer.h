@@ -104,7 +104,7 @@ struct SceneSettings {
   float rtExposure{1.0f};
   float bloomStrength{0.45f};
   float bloomThreshold{0.0f};
-  float edgeLightStrength{0.35f};
+  float edgeLightStrength{1.0f};
   float spikeStrength{1.14f};
   int   spikeCount{6};
   float spikeAngle{0.0f};

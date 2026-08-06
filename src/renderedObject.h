@@ -78,6 +78,9 @@ private:
   unsigned int vao{};
   unsigned int vbo{};
   unsigned int relVbo{};                 // cloud: per-frame camera-relative positions (large-world precision)
+  unsigned int rimVbo{};                 // cloud: per-particle world-lit rim factor (attribute 2)
+  std::vector<float> rimFactors{};       // CPU-side rim factors (regenerated periodically)
+  int  rimUpdateCounter{0};              // throttle: recompute every N draws while simulating
   std::vector<float> relPosBuffer{};     // CPU scratch for relVbo
   unsigned int ssboParticles{};
   unsigned int ssboObjects{};
@@ -161,6 +164,10 @@ public:
   void renderMesh(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderLine(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
   void renderCloud(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+  // World-space rim factors (one per particle): max(0, dot(cloud-surface
+  // normal, dir-to-light)) from a 48-cell density-grid gradient. Feeds the
+  // density map's G channel so screen-space rims light 3D-correctly.
+  void updateCloudRimFactors();
   // Draw ONLY the dust pass, additively, writing raw density — the screen-space
   // rim-light map. Reuses this frame's cloud program/VBO state; vpH = density
   // target height so sprite sizes match the smaller buffer.

@@ -15,7 +15,8 @@ in vec3  vColor;            // per-particle blackbody colour (from cloudVert)
 in float vMag;              // per-particle magnitude 0..1
 in float vDust;             // dust density at this particle (0 = not dusty)
 in float vSeed;             // per-cloud seed → unique billowing FBM shape
-in float vHot;              // 1 = hot blue star
+in float vHot;
+in float vRim;              // 1 = hot blue star
 
 // 2D value-noise FBM — carves each dust sprite into a wispy cloud (soft edges),
 // so a big dust sprite is a sculpted cloud form, not a smooth disc.
@@ -74,7 +75,11 @@ void main() {
             // Rim-light map mode: accumulate raw density (additive) instead of
             // extinction — feeds the screen-space edge-light pass in the tonemap.
             if (uDensityOnly != 0) {
-                FragColor = vec4(vDust * dens, 0.0, 0.0, 1.0);
+                // R = density; G = density x world-lit factor. The tonemap's
+                // G/R ratio tells each screen edge whether it faces the light
+                // in 3D — rims stay put when the camera orbits.
+                float d = vDust * dens;
+                FragColor = vec4(d, d * vRim, 0.0, 1.0);
                 return;
             }
 

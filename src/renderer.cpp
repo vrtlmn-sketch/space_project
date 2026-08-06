@@ -553,7 +553,8 @@ void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+                                            ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             if (realisticRasterView) rimClouds.push_back(&ro); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
@@ -6149,7 +6150,7 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
       if (!dustDensFBO) glGenFramebuffers(1, &dustDensFBO);
       if (!dustDensTex) glGenTextures(1, &dustDensTex);
       glBindTexture(GL_TEXTURE_2D, dustDensTex);
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, bw, bh, 0, GL_RED, GL_FLOAT, nullptr);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, bw, bh, 0, GL_RG, GL_FLOAT, nullptr);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
       glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

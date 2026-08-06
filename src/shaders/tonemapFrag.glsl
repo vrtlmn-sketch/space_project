@@ -48,10 +48,17 @@ void main() {
       if (gl2 > 1e-10) {
         // Outward edge normal = -gradD; lit when it faces the light direction.
         float facing = max(dot(normalize(-gradD), normalize(gradL)), 0.0);
-        float dens   = 1.0 - exp(-texture(uDustDens, vUV).r * 0.6);
+        vec2  dc     = texture(uDustDens, vUV).rg;
+        // 3D correctness: G/R = average world-lit factor of the dust here
+        // (precomputed per particle from the density-grid normal vs the light
+        // direction). Kills rims on faces pointing AWAY from the light, no
+        // matter the camera angle.
+        float worldLit = clamp(dc.g / max(dc.r, 1e-4), 0.0, 1.0);
+        float dens   = 1.0 - exp(-dc.r * 0.6);
         // Silhouette shell: rim lives on the edge band, not deep interiors.
         float shell  = smoothstep(0.03, 0.15, dens) * (1.0 - smoothstep(0.75, 0.98, dens));
         rim = bloom * (facing * facing) * min(edge * 8.0, 1.0) * shell
+              * (0.15 + 0.85 * worldLit)
               * uEdgeLight * vec3(1.0, 0.86, 0.72);
       }
     }

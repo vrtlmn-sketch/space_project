@@ -1,6 +1,7 @@
 #version 460 core
 layout (location = 0) in vec3 aPos;      // absolute (galaxy-local) position — used for dust field
 layout (location = 1) in vec3 aRelPos;   // camera-relative position (CPU double) — used for the transform
+layout (location = 2) in float aRim;     // world-lit rim factor (3D-correct edge lighting)
 
 uniform mat4 uProj;
 uniform mat4 uWorld;
@@ -33,6 +34,7 @@ out float vMag;     // per-particle magnitude (0..1, log-ish)
 out float vDust;    // dust density at this particle (0 = not dusty)
 out float vSeed;    // per-dust-cloud seed → unique billowing FBM shape in the frag
 out float vHot;     // 1 = hot blue star (seeds glowing gas)
+out float vRim;     // world-lit rim factor forwarded to the density map
 
 float hash11(float p) {
   p = fract(p * 0.1031);
@@ -94,6 +96,7 @@ void main() {
   // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
   gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
 
+  vRim = aRim;
   float id = float(gl_VertexID);
   // Star attributes hashed on the star's normalized galaxy-local POSITION (not the
   // vertex index), with the SAME hash13 the raytracer uses → the same physical star
