@@ -900,6 +900,14 @@ int main(int argc, char** argv) {
         renderer.rayTracerView = false;
         renderer.CaptureRTImageTo(W, H, "/tmp/cmp_rt.png");
 
+        // Geodesic parity pair (same scene, small res — the march is slow): with
+        // no black hole the ray escapes to a straight line, so geodesic output
+        // must match Simple RT. Captured at matching resolution for diffing.
+        renderer.CaptureRTImageTo(256, 144, "/tmp/cmp_rt_small.png");
+        renderer.raytracerMethod = 1;
+        renderer.CaptureRTImageTo(256, 144, "/tmp/cmp_geo.png");
+        renderer.raytracerMethod = 0;
+
         // 2) Performant (raster): draw the cinematic raster view + capture.
         renderer.rayTracerView = false; renderer.realisticRasterView = true;
         renderer.BeginRecordRaster(W, H);
