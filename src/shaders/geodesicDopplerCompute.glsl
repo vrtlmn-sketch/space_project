@@ -232,7 +232,12 @@ uniform vec3  uBHPos;
 uniform float uBH_RS;
 #define BH_RS           uBH_RS
 #define BH_PHOTON_SPHERE (1.5 * uBH_RS)
-const float BH_ESCAPE_ACCEL = 1e-5;
+// Escape test in SCALE-FREE form. Acceleration goes as rs/r^2, so the
+// product accel*rs is invariant at a fixed r/rs — comparing raw accel to a
+// constant made huge black holes declare escape on step one (no lensing).
+// 5e-7 = the old 1e-5 threshold at the historical rs of 0.05, so small
+// holes behave exactly as before.
+const float BH_ESCAPE_ACCEL_RS = 5e-7;
 
 // ---------------------------------------------------------------------------
 // Doppler helpers
@@ -665,7 +670,12 @@ void main()
 
     vec3 pos = ro;
     vec3 vel = rd;
-    float baseStep = 0.15;
+    // Step is a FRACTION OF rs, never an absolute distance: general
+    // relativity is scale-free, so a 1e7 AU hole must bend light exactly
+    // like a 0.05 AU one. 0.5 is converged (finer changes deflection by
+    // <0.01 deg); the old fixed 0.15 AU under-integrated by ~23% even at
+    // default size, and produced NO bending at all for large holes.
+    float stepFracRs = 0.5;
 
     vec3  color    = vec3(0.0);
     bool  hitScene = false;
@@ -707,10 +717,12 @@ void main()
         float radialVel = dot(normalize(nearRel), vel);
         vec3  accel     = geodesicAccel(pos, vel);
         float accelMag  = length(accel);
-        if (radialVel > 0.0 && accelMag < BH_ESCAPE_ACCEL) break;
+        if (radialVel > 0.0 && accelMag * max(nearRs, 1e-9) < BH_ESCAPE_ACCEL_RS) break;
 
-        float stepScale = clamp(nearR / (3.0 * nearRs), 0.1, 10.0);
-        float dt = baseStep * stepScale;
+        // Far-field clamp is wide (400) so a distant camera can cross the
+        // scene within the step budget; it tightens automatically on approach.
+        float stepScale = clamp(nearR / (3.0 * nearRs), 0.1, 400.0);
+        float dt = max(nearRs, 1e-9) * stepFracRs * stepScale;
 // Refine the step near free-object meshes: take small steps through the
         // mesh region so the curved ray is finely sampled (reliable hit + local
         // bending) instead of a coarse chord skipping over a small object.

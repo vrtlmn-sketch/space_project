@@ -236,7 +236,12 @@ uniform vec3  uBHPos;                          // world-space black hole positio
 uniform float uBH_RS;                         // Schwarzschild radius (set from C++)
 #define BH_RS           uBH_RS
 #define BH_PHOTON_SPHERE (1.5 * uBH_RS)
-const float BH_ESCAPE_ACCEL = 1e-5;           // acceleration threshold for escape
+// Escape test in SCALE-FREE form. Acceleration goes as rs/r^2, so the
+// product accel*rs is invariant at a fixed r/rs — comparing raw accel to a
+// constant made huge black holes declare escape on step one (no lensing).
+// 5e-7 = the old 1e-5 threshold at the historical rs of 0.05, so small
+// holes behave exactly as before.
+const float BH_ESCAPE_ACCEL_RS = 5e-7;           // acceleration threshold for escape
 
 // ---------------------------------------------------------------------------
 // Acyclic algorithm constants
@@ -814,7 +819,12 @@ void main()
     // Integration state (Cartesian, BH-relative)
     vec3 pos = ro;
     vec3 vel = rd;
-    float baseStep = 0.15;
+    // Step is a FRACTION OF rs, never an absolute distance: general
+    // relativity is scale-free, so a 1e7 AU hole must bend light exactly
+    // like a 0.05 AU one. 0.5 is converged (finer changes deflection by
+    // <0.01 deg); the old fixed 0.15 AU under-integrated by ~23% even at
+    // default size, and produced NO bending at all for large holes.
+    float stepFracRs = 0.5;
 
     // Track state for glow accumulation during integration
     vec3  curvedGlow         = vec3(0.0);
@@ -876,14 +886,16 @@ void main()
         float radialVel = dot(normalize(relPos), vel);
         vec3  accel     = geodesicAccel(relPos, vel);
         float accelMag  = length(accel);
-        if (radialVel > 0.0 && accelMag < BH_ESCAPE_ACCEL)
+        if (radialVel > 0.0 && accelMag * max(BH_RS, 1e-9) < BH_ESCAPE_ACCEL_RS)
         {
             break;
         }
 
         // Adaptive step size
-        float stepScale = clamp(r / (3.0 * BH_RS), 0.1, 10.0);
-        float dt = baseStep * stepScale;
+        // Far-field clamp is wide (400) so a distant camera can cross the
+        // scene within the step budget; it tightens automatically on approach.
+        float stepScale = clamp(r / (3.0 * BH_RS), 0.1, 400.0);
+        float dt = max(BH_RS, 1e-9) * stepFracRs * stepScale;
 // Refine the step near free-object meshes: take small steps through the
         // mesh region so the curved ray is finely sampled (reliable hit + local
         // bending) instead of a coarse chord skipping over a small object.
