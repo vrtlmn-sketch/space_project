@@ -683,6 +683,7 @@ void main()
     // Per-particle dust (converged with Simple RT), segment-ownership gated.
     float dustR2  = uDustInfluence * 0.35; dustR2 *= dustR2;
     float dustAcc = 0.0;
+    vec3  dustGlowCol = vec3(0.0);   // starlight scattered toward the eye
     vec3  nebulaScatter       = vec3(0.0);
 
     for (int step = 0; step < uMaxSteps; step++)
@@ -804,7 +805,11 @@ void main()
                             float pdust = objects[i].color.x;
                             if (uDustStrength > 0.0 && pdust > 0.04 && bd2 < dustR2 * 9.0) {
                                 vec3 pp = prevPos + segNorm * clamp(tAlong, 0.0, segTMin);
-                                dustAcc += pdust * exp(-bd2 / dustR2) * gxDustField(pp - uDustCenter);
+                                float w = pdust * exp(-bd2 / dustR2) * gxDustField(pp - uDustCenter);
+                                dustAcc += w;
+                                if (uDustGlow > 0.0)
+                                    dustGlowCol += gxDustInScatter(w, objects[i].color.yzw,
+                                                                   objects[i].rotation.xyz, segNorm);
                             }
                         }
                     }
@@ -894,7 +899,11 @@ void main()
                     float pdust = objects[i].color.x;
                     if (uDustStrength > 0.0 && pdust > 0.04 && sd2 < dustR2 * 9.0) {
                         vec3 pp = prevPos + seg * clamp(tR, 0.0, 1.0);
-                        dustAcc += pdust * exp(-sd2 / dustR2) * gxDustField(pp - uDustCenter);
+                        float w = pdust * exp(-sd2 / dustR2) * gxDustField(pp - uDustCenter);
+                        dustAcc += w;
+                        if (uDustGlow > 0.0)
+                            dustGlowCol += gxDustInScatter(w, objects[i].color.yzw,
+                                                           objects[i].rotation.xyz, normalize(seg));
                     }
                 }
             }
@@ -1003,7 +1012,11 @@ void main()
                     float pdust = objects[i].color.x;
                     if (uDustStrength > 0.0 && pdust > 0.04 && d2 < dustR2 * 9.0) {
                         vec3 pp = pos + vel * tE;
-                        dustAcc += pdust * exp(-d2 / dustR2) * gxDustField(pp - uDustCenter);
+                        float w = pdust * exp(-d2 / dustR2) * gxDustField(pp - uDustCenter);
+                        dustAcc += w;
+                        if (uDustGlow > 0.0)
+                            dustGlowCol += gxDustInScatter(w, objects[i].color.yzw,
+                                                           objects[i].rotation.xyz, normalize(vel));
                     }
                 }
             }
@@ -1134,6 +1147,8 @@ void main()
     if (uDustStrength > 0.0 && dustAcc > 0.0) {
         dustTau = pow(min(dustAcc * 2.6, 1.25), 2.2) * 60.0;
         color = gxDustExtinction(color, dustTau, dustAcc * 2.6);
+        if (uDustGlow > 0.0)
+            color += uDustGlow * gxDustGlow(dustGlowCol, dustAcc, dustTau);
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

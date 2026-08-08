@@ -941,6 +941,8 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glBindVertexArray(0);
 }
 
+static const float kNoDustLight[3] = {0.0f, 0.0f, 0.0f};
+
 void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3],
                                                  std::vector<RayTracerObjectDoppler>& list,
                                                  float dustInfluence, float dustClumpScale,
@@ -990,11 +992,22 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
                          rtDustLane(UVObjectMeshBuffer[j*3], UVObjectMeshBuffer[j*3+1], UVObjectMeshBuffer[j*3+2],
                                     dustInfluence, dustClumpScale, covAdj, dustContrast));
     }
+    // Same baked in-scatter data the non-Doppler path ships: light colour in
+    // the free colour lanes, light direction in the unused rotation lane.
+    const float* dl = (dustLightRGB.size() == (size_t)particleCount*3)
+                    ? &dustLightRGB[(size_t)i*3] : kNoDustLight;
+    const float* dd = (dustLightDir.size() == (size_t)particleCount*3)
+                    ? &dustLightDir[(size_t)i*3] : kNoDustLight;
+    float ldx = dd[0], ldy = dd[1], ldz = dd[2];
     if (rot) {
       float ox = R[0]*rx + R[1]*ry + R[2]*rz;
       float oy = R[3]*rx + R[4]*ry + R[5]*rz;
       float oz = R[6]*rx + R[7]*ry + R[8]*rz;
       rx = ox; ry = oy; rz = oz;
+      float dxr = R[0]*ldx + R[1]*ldy + R[2]*ldz;
+      float dyr = R[3]*ldx + R[4]*ldy + R[5]*ldz;
+      float dzr = R[6]*ldx + R[7]*ldy + R[8]*ldz;
+      ldx = dxr; ldy = dyr; ldz = dzr;
     }
     list.push_back(RayTracerObjectDoppler{
       vec4{
@@ -1003,12 +1016,12 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
         rz + (float)(coordinates.z + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType,
-      vec4{pLane,0,0,0},
-      vec4{vel.x, vel.y, vel.z, 0}});
+      vec4{pLane, dl[0], dl[1], dl[2]},
+      vec4{vel.x, vel.y, vel.z, 0},
+      vec4{0,0,0,0}, vec4{0,0,0,0},
+      vec4{ldx, ldy, ldz, 0}});
   }
 }
-
-static const float kNoDustLight[3] = {0.0f, 0.0f, 0.0f};
 
 void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                                           float dustInfluence, float dustClumpScale,

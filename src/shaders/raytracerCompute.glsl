@@ -327,7 +327,6 @@ uniform vec3  uDustCenter;         // cloud centre (camera-relative) — anchors
 uniform float uDustClumpScale;     // dust clump cell size (x influence radius)
 uniform float uDustSampleFrac;     // fraction of star points used for dust (fixed resolution)
 uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 = glowing dust
-uniform float uDustPhaseG;         // scatter anisotropy: 0 = even from all angles
 
 // Shared galaxy look (star colours, luminosity + core-gating, FBM dust, gas,
 // pointSourceGlow) — one file, included by every RT method so they stay 1:1.
@@ -809,25 +808,9 @@ void main()
                 // puff with the core behind it lights up brilliantly while one
                 // lit from the camera's side stays dull — the reason backlit
                 // dust glows in real nebula photographs.
-                if (uDustGlow > 0.0) {
-                    vec3  Lp = objects[i].color.yzw;
-                    // Direction toward THIS puff's local light source (gradient
-                    // of the starlight field, baked per particle). Previously
-                    // this was the galaxy-centre radial direction, which lit one
-                    // whole side of the galaxy regardless of where light was.
-                    vec3  wi = objects[i].rotation.xyz;
-                    float wl = length(wi);
-                    float ct = (wl > 1e-6) ? dot(wi / wl, rd) : 0.0;
-                    // Henyey-Greenstein. At g=0 it is 1.0 in every direction:
-                    // dust glows the same wherever the camera is. Raising it
-                    // favours backlit dust — physically real, but it makes the
-                    // lit side track the camera, so it is a dial, not a fixed
-                    // constant.
-                    float gHG = clamp(uDustPhaseG, 0.0, 0.85);
-                    float hg  = (1.0 - gHG * gHG)
-                              * inversesqrt(pow(max(1.0 + gHG * gHG - 2.0 * gHG * ct, 1e-4), 3.0));
-                    dustGlowCol += w * Lp * min(hg, 4.0);
-                }
+                if (uDustGlow > 0.0)
+                    dustGlowCol += gxDustInScatter(w, objects[i].color.yzw,
+                                                   objects[i].rotation.xyz, rd);
             }
         }
         else // otype == 4: nebula — Beer-Lambert transmittance
@@ -876,27 +859,7 @@ void main()
             // the glow had already saturated). Per channel, so the blue that
             // dust scatters best comes back as scattered light — the reason
             // real reflection nebulae are blue.
-            // Amount is SCALAR — how much light the column took, full stop.
-            // Using the per-channel extinction tilt here made the glow ~6x
-            // bluer than red (that tilt describes how dust REDDENS light
-            // passing through, not how it scatters). Hue comes from meanL,
-            // the actual colour of the stars lighting this dust, with only a
-            // mild blue albedo — real dust scatters blue a little better,
-            // which is what tints reflection nebulae.
-            vec3  T     = gxDustTransmittance(dustTau);
-            vec3  meanL = dustGlowCol / max(dustAcc, 1e-4);
-            float amt   = 1.0 - dot(T, vec3(0.3333));   // light the column took
-            // ...and the scattered light must climb back OUT through the dust
-            // to reach the eye. Two consequences, both visible in every real
-            // nebula photograph:
-            //   COLOUR — the way out strips blue hardest, so glow emerges warm
-            //            orange instead of the flat white of raw starlight.
-            //   SHAPE  — amt rises with depth while the exit term falls, so the
-            //            product PEAKS AT THE SKIN of a clump and collapses in
-            //            its core. Surfaces light up, interiors stay black,
-            //            and dark dust reads as dark instead of glowing white.
-            vec3  outT  = sqrt(max(T, vec3(1e-5)));
-            color += uDustGlow * meanL * amt * outT * vec3(1.0, 1.04, 1.12);
+            color += uDustGlow * gxDustGlow(dustGlowCol, dustAcc, dustTau);
         }
     }
 

@@ -788,6 +788,7 @@ void main()
     // Per-particle dust puff (converged with Simple RT)
     float dustR2  = uDustInfluence * 0.35; dustR2 *= dustR2;
     float dustAcc = 0.0;
+    vec3  dustGlowCol = vec3(0.0);   // starlight scattered toward the eye
 
     for (int i = 0; i < uObjectCount; i++)
     {
@@ -826,7 +827,11 @@ void main()
             float pdust = objects[i].color.x;
             if (uDustStrength > 0.0 && pdust > 0.04 && d2 < dustR2 * 9.0) {
                 vec3 pp = ro + rd * max(dot(cen - ro, rd), 0.0);
-                dustAcc += pdust * exp(-d2 / dustR2) * gxDustField(pp - uDustCenter);
+                float w = pdust * exp(-d2 / dustR2) * gxDustField(pp - uDustCenter);
+                dustAcc += w;
+                if (uDustGlow > 0.0)
+                    dustGlowCol += gxDustInScatter(w, objects[i].color.yzw,
+                                                   objects[i].rotation.xyz, rd);
             }
         }
         else // otype == 4: nebula Beer-Lambert
@@ -864,6 +869,8 @@ void main()
     if (uDustStrength > 0.0 && dustAcc > 0.0) {
         dustTau = pow(min(dustAcc * 2.6, 1.25), 2.2) * 60.0;
         color = gxDustExtinction(color, dustTau, dustAcc * 2.6);
+        if (uDustGlow > 0.0)
+            color += uDustGlow * gxDustGlow(dustGlowCol, dustAcc, dustTau);
     }
 
     color = max(color, vec3(0.0)); // HDR: no upper clamp (tonemapped in post)

@@ -94,6 +94,34 @@ vec3 gxDustExtinction(vec3 color, float dustTau, float overlap) {
     return color * max(mult, floorC);
 }
 
+// ── Dust in-scatter (shared by every RT shader) ─────────────────────────────
+// Per dusty puff: the starlight reaching it (baked per particle on the CPU,
+// self-shadowed at clump scale) scattered toward the eye. `lightDir` is that
+// puff's own light direction, `viewDir` the ray direction AT the puff — which
+// in the geodesic shaders is the bent ray, not the camera ray.
+uniform float uDustPhaseG;   // 0 = scatters evenly, higher = backlit dust favoured
+
+vec3 gxDustInScatter(float w, vec3 Lp, vec3 lightDir, vec3 viewDir) {
+    float wl = length(lightDir);
+    float ct = (wl > 1e-6) ? dot(lightDir / wl, viewDir) : 0.0;
+    float g  = clamp(uDustPhaseG, 0.0, 0.85);
+    float hg = (1.0 - g * g)
+             * inversesqrt(pow(max(1.0 + g * g - 2.0 * g * ct, 1e-4), 3.0));
+    return w * Lp * min(hg, 4.0);
+}
+
+// Emergent glow for the whole column. Energy-consistent: the amount tracks the
+// light the dust TOOK, and the scattered light must climb back OUT through the
+// dust — which reddens it and makes the product peak at a clump's skin while
+// its core stays dark. Caller scales by uDustGlow.
+vec3 gxDustGlow(vec3 dustGlowCol, float dustAcc, float dustTau) {
+    vec3  T     = gxDustTransmittance(dustTau);
+    vec3  meanL = dustGlowCol / max(dustAcc, 1e-4);
+    float amt   = 1.0 - dot(T, vec3(0.3333));
+    vec3  outT  = sqrt(max(T, vec3(1e-5)));
+    return meanL * amt * outT * vec3(1.0, 1.04, 1.12);
+}
+
 // Single-layer wrapper (geodesic callers): floor behaves as before.
 vec3 gxDustExtinction(vec3 color, float dustTau) {
     return gxDustExtinction(color, dustTau, 0.0);
