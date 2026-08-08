@@ -573,6 +573,8 @@ void Renderer::Draw(RenderedObject& ro) {
                              1.0f, 0.0f, 0.0f, {0.55f,0.25f,0.15f}, &rtTriangles, &rtNodes);
     }
     else if (ro.meshType == MeshType::cloud) {
+      ro.updateCloudDustLight(dustInfluence, dustClumpScale, dustCoverage, dustContrast, dustReddening,
+                              dustSkinDepth, dustSkinContrast);
       ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects,
                               dustInfluence, dustClumpScale, dustCoverage, dustContrast);
       if (dopplerMode) ro.renderCloudRaytracedDoppler(cameraTranslate, rtDopplerObjects,
@@ -3023,8 +3025,14 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGui::TextDisabled("How broken-up the dust is (lower = more gaps).");
   norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.04f, 1.5f,  true);
   ImGui::TextDisabled("Lane fineness — smaller hugs the star shape more tightly.");
-  norm01("Glow",          "##dustglow",  &dustGlow,       0.0f,  1.0f,  true);
+  norm01("Glow",          "##dustglow",  &dustGlow,       0.0f,  4.0f,  true);
   ImGui::TextDisabled("Dust scatters nearby starlight and glows softly (0 = dark lanes only).");
+  norm01("Backlit Bias",  "##dustphase", &dustPhaseG,       0.0f, 0.7f, true);
+  ImGui::TextDisabled("0 = dust glows evenly from any angle; higher = only backlit dust glows.");
+  norm01("Shape Contrast", "##dustskink", &dustSkinContrast, 0.0f, 10.0f, true);
+  ImGui::TextDisabled("How hard clumps shadow themselves — exposes each clump's 3D shape.");
+  norm01("Skin Depth",     "##dustskind", &dustSkinDepth,    0.01f, 8.0f, true);
+  ImGui::TextDisabled("How deep the lit surface layer reaches into a clump.");
   ImGui::Text("Dust Points");
   ImGui::SetNextItemWidth(-1);
   if (ImGui::SliderInt("##dustdetail", &dustDetail, 200, 20000))
@@ -5121,6 +5129,8 @@ void Renderer::CineResolveIfActive() {
 }
 
 void Renderer::BindViewportFBO() {
+  rimClouds.clear();
+  rimOccluders.clear();
   if (!editorViewport || vpWidth <= 0 || vpHeight <= 0) {
     // Fullscreen (no editor viewport): the primary target is the default
     // framebuffer. Redirect to the HDR buffer when Cinematic is active.
@@ -5216,6 +5226,8 @@ void Renderer::EndRecordCamera() {
 }
 
 void Renderer::BeginSecondaryPass() {
+  rimClouds.clear();
+  rimOccluders.clear();
   // PiP is 1/4 of window size (half each dimension)
   int pw = fbWidth / 2;
   int ph = fbHeight / 2;
@@ -5933,6 +5945,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
     GLint locDG = glGetUniformLocation(activeProgram, "uDustGlow");
     if (locDG >= 0) glUniform1f(locDG, dustGlow);
+    GLint locPG = glGetUniformLocation(activeProgram, "uDustPhaseG");
+    if (locPG >= 0) glUniform1f(locPG, dustPhaseG);
     GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
     if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
@@ -6174,6 +6188,20 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     for (RenderedObject* rc : rimClouds)
       rc->renderCloudDustDensity(cameraTranslate, camMatrix, zoom, bw, bh);
 
+    if (std::getenv("RIM_DEBUG")) {
+      std::vector<float> px((size_t)bw * bh * 2);
+      glReadPixels(0, 0, bw, bh, GL_RG, GL_FLOAT, px.data());
+      FILE* f = fopen("/tmp/dens_sharp.pgm", "wb");
+      if (f) {
+        fprintf(f, "P5\n%d %d\n255\n", bw, bh);
+        for (int y = bh - 1; y >= 0; --y)
+          for (int x = 0; x < bw; ++x) {
+            int v = (int)(px[((size_t)y * bw + x) * 2] * 32.0f);
+            fputc(v < 0 ? 0 : (v > 255 ? 255 : v), f);
+          }
+        fclose(f);
+      }
+    }
   }
 
   glDisable(GL_DEPTH_TEST);
@@ -6701,6 +6729,8 @@ void Renderer::CaptureImage() {
     if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
     GLint locDG = glGetUniformLocation(activeProgram, "uDustGlow");
     if (locDG >= 0) glUniform1f(locDG, dustGlow);
+    GLint locPG = glGetUniformLocation(activeProgram, "uDustPhaseG");
+    if (locPG >= 0) glUniform1f(locPG, dustPhaseG);
     GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
     if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");
@@ -7015,6 +7045,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locDL >= 0) glUniform1f(locDL, dustClumpScale);
     GLint locDG = glGetUniformLocation(activeProgram, "uDustGlow");
     if (locDG >= 0) glUniform1f(locDG, dustGlow);
+    GLint locPG = glGetUniformLocation(activeProgram, "uDustPhaseG");
+    if (locPG >= 0) glUniform1f(locPG, dustPhaseG);
     GLint locDF = glGetUniformLocation(activeProgram, "uDustSampleFrac");
     if (locDF >= 0) glUniform1f(locDF, dustSampleFrac);
     GLint locDI = glGetUniformLocation(activeProgram, "uDustInfluence");

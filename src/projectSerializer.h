@@ -124,7 +124,10 @@ struct SceneSettings {
   float dustContrast{1.0f};
   float dustCoverage{0.30f};
   float dustClumpScale{0.13f};
-  float dustGlow{0.15f};
+  float dustGlow{1.4f};
+  float dustPhaseG{0.05f};
+  float dustSkinDepth{8.0f};
+  float dustSkinContrast{10.0f};
   float cineSSAA{1.5f};
   int   dustDetail{200};
 

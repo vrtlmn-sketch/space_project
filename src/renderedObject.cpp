@@ -5,6 +5,7 @@
 #include "renderedObject.h"
 #include "units.h"
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
@@ -666,6 +667,248 @@ void RenderedObject::updateCloudRimFactors()
   }
 }
 
+// CPU ports of the shaders' star model (cloudVert.glsl / galaxy_common.glsl):
+// same hashes, same luminosity law, same blackbody — so the light we bake is
+// the light actually drawn on screen, not an invented approximation.
+static vec3 rtBlackbody(float T) {
+  T = std::clamp(T, 1000.0f, 40000.0f);
+  float t = T / 100.0f, r, g, b;
+  if (T <= 6600.0f) r = 1.0f;
+  else r = std::clamp(1.2929362f * std::pow(t - 60.0f, -0.1332047592f), 0.0f, 1.0f);
+  if (T <= 6600.0f) g = std::clamp(0.39008157876f * std::log(t) - 0.63184144378f, 0.0f, 1.0f);
+  else g = std::clamp(1.1298908609f * std::pow(t - 60.0f, -0.0755148492f), 0.0f, 1.0f);
+  if (T >= 6600.0f) b = 1.0f;
+  else if (T <= 1900.0f) b = 0.0f;
+  else b = std::clamp(0.54320678911f * std::log(t - 10.0f) - 1.19625408914f, 0.0f, 1.0f);
+  return vec3{r, g, b};
+}
+
+// ── In-scatter light bake (RT "lit dust", Option A) ─────────────────────────
+// RT dust is otherwise purely subtractive: it can only remove light, never
+// glow. Real dust glows because starlight scatters off it — so we precompute,
+// per particle, the light ARRIVING there: the core's light attenuated by all
+// the dust in between. That march is the self-shadowing that makes a clump
+// read as solid — its core-facing flank blazes, its interior stays dark, its
+// far flank falls into shadow. Wavelength-dependent extinction (blue absorbed
+// ~7x harder than red, the same tilt gxDustExtinction uses) reddens the light
+// as it burrows in, so deep dust is lit fiery orange, exactly like real
+// reflection nebulae. Done on the CPU once — the GPU just multiplies.
+void RenderedObject::updateCloudDustLight(float dustInfluence, float dustClumpScale,
+                                          float dustCoverage, float dustContrast,
+                                          float dustReddening,
+                                          float skinDepth, float skinContrast)
+{
+  size_t n = UVObjectMeshBuffer.size() / 3;
+  if (n < 16 || dustInfluence <= 0.0f) { dustLightRGB.clear(); return; }
+
+  auto mixKey = [](unsigned long long k, float v) {
+    unsigned int b; std::memcpy(&b, &v, 4);
+    return k * 1000003ull + b;
+  };
+  const int G = 48;
+  float covAdj = std::min(dustCoverage + 0.05f, 1.0f);
+
+  // ── Placement stage: per-particle lane values + optical-density grid.
+  // Depends only on WHERE the dust is, so tuning the lighting dials below
+  // reuses it (this is the expensive pass — one FBM per particle).
+  unsigned long long pkey = (unsigned long long)n * 1000003ull;
+  pkey = mixKey(pkey, dustInfluence); pkey = mixKey(pkey, dustClumpScale);
+  pkey = mixKey(pkey, dustCoverage);  pkey = mixKey(pkey, dustContrast);
+  bool placeStale = (dustLaneCache.size() != n) || (pkey != dustPlaceKey)
+                 || ((dustLightCounter++ % 600) == 0);
+  if (placeStale) {
+    dustPlaceKey = pkey;
+    vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+    double cx=0, cy=0, cz=0;
+    for (size_t i = 0; i < n; ++i) {
+      float x=UVObjectMeshBuffer[i*3], y=UVObjectMeshBuffer[i*3+1], z=UVObjectMeshBuffer[i*3+2];
+      lo.x=std::min(lo.x,x); hi.x=std::max(hi.x,x);
+      lo.y=std::min(lo.y,y); hi.y=std::max(hi.y,y);
+      lo.z=std::min(lo.z,z); hi.z=std::max(hi.z,z);
+      cx+=x; cy+=y; cz+=z;
+    }
+    vec3 ext{std::max(hi.x-lo.x,1e-6f), std::max(hi.y-lo.y,1e-6f), std::max(hi.z-lo.z,1e-6f)};
+    dustBakeLo[0]=lo.x; dustBakeLo[1]=lo.y; dustBakeLo[2]=lo.z;
+    dustBakeExt[0]=ext.x; dustBakeExt[1]=ext.y; dustBakeExt[2]=ext.z;
+    dustBakeCore[0]=(float)(cx/n); dustBakeCore[1]=(float)(cy/n); dustBakeCore[2]=(float)(cz/n);
+
+    dustLaneCache.assign(n, 0.0f);
+    dustGridCache.assign((size_t)G*G*G, 0.0f);
+    lightGridCache.assign((size_t)G*G*G*3, 0.0f);
+    auto cellOf = [&](float v, float l, float e) {
+      return std::clamp((int)((v - l) / e * (G - 1) + 0.5f), 0, G - 1);
+    };
+    for (size_t i = 0; i < n; ++i) {
+      float px=UVObjectMeshBuffer[i*3], py=UVObjectMeshBuffer[i*3+1], pz=UVObjectMeshBuffer[i*3+2];
+      float L = rtDustLane(px, py, pz, dustInfluence, dustClumpScale, covAdj, dustContrast);
+      dustLaneCache[i] = L;
+      // Same star this particle renders as: hash its normalised position with
+      // the shaders' constants, take the same steep luminosity law, same
+      // temperature → colour. A handful of bright stars dominate, exactly as
+      // on screen, so the light field peaks where the picture is bright.
+      float hx = px/dustInfluence + 17.0f, hy = py/dustInfluence + 17.0f, hz = pz/dustInfluence + 17.0f;
+      float h1 = rtHash13(hx + 0.3f,  hy + 1.1f, hz + 5.5f);
+      float h2 = rtHash13(hx + 11.0f, hy + 2.0f, hz + 7.7f);
+      float baseT = (cachedTemperature > 100.0f) ? cachedTemperature : 5000.0f;
+      float Tst   = (2600.0f + 27000.0f * std::pow(h1, 3.5f)) * (baseT / 5000.0f);
+      float mag   = h2 * h2 * h2;
+      vec3  sc    = rtBlackbody(Tst);
+      size_t lc = ((size_t)(cellOf(pz,lo.z,ext.z)*G + cellOf(py,lo.y,ext.y))*G + cellOf(px,lo.x,ext.x)) * 3;
+      lightGridCache[lc+0] += mag * sc.x;
+      lightGridCache[lc+1] += mag * sc.y;
+      lightGridCache[lc+2] += mag * sc.z;
+      if (L > 0.01f)
+        dustGridCache[(size_t)(cellOf(pz,lo.z,ext.z)*G + cellOf(py,lo.y,ext.y))*G + cellOf(px,lo.x,ext.x)] += L;
+    }
+    double occSum = 0.0; int occN = 0;
+    for (float v : dustGridCache) if (v > 0.0f) { occSum += v; occN++; }
+    dustBakeInv   = (occN > 0) ? (float)(occN / std::max(occSum, 1e-9)) : 1.0f;
+    // Turn EMISSION into ILLUMINATION. The grid so far holds light emitted
+    // inside each cell — a star-density map, where a cell is bright only if
+    // stars sit in it. Real light travels: a clump is lit by the cluster
+    // NEXT to it, and brightness falls off as 1/r^2.
+    //
+    // À-trous propagation: blur at geometrically widening strides and sum.
+    // A blur of scale s spreads a point source over ~s^3, so weighting each
+    // scale by s makes the summed radial profile fall off as 1/r^2 — real
+    // light spreading, for a handful of passes over a 48^3 grid.
+    {
+      std::vector<float> cur = lightGridCache, tmp(lightGridCache.size());
+      std::vector<float> illum(lightGridCache.size(), 0.0f);
+      float wsum = 0.0f;
+      for (int step : {1, 2, 4, 8, 16}) {
+        for (int axis = 0; axis < 3; ++axis) {
+          tmp = cur;
+          for (int z = 0; z < G; ++z) for (int y = 0; y < G; ++y) for (int x = 0; x < G; ++x) {
+            int xm = std::clamp(x - (axis==0)*step, 0, G-1);
+            int ym = std::clamp(y - (axis==1)*step, 0, G-1);
+            int zm = std::clamp(z - (axis==2)*step, 0, G-1);
+            int xp = std::clamp(x + (axis==0)*step, 0, G-1);
+            int yp = std::clamp(y + (axis==1)*step, 0, G-1);
+            int zp = std::clamp(z + (axis==2)*step, 0, G-1);
+            size_t c  = ((size_t)(z*G + y)*G + x)*3;
+            size_t cm = ((size_t)(zm*G + ym)*G + xm)*3;
+            size_t cp = ((size_t)(zp*G + yp)*G + xp)*3;
+            for (int k = 0; k < 3; ++k)
+              cur[c+k] = 0.25f*tmp[cm+k] + 0.5f*tmp[c+k] + 0.25f*tmp[cp+k];
+          }
+        }
+        float w = (float)step;                       // ∝ scale → 1/r^2 profile
+        for (size_t c = 0; c < illum.size(); ++c) illum[c] += w * cur[c];
+        wsum += w;
+      }
+      for (size_t c = 0; c < illum.size(); ++c) lightGridCache[c] = illum[c] / wsum;
+    }
+    // Reference level = 90th percentile of lit cells, not the mean: the core
+    // is orders of magnitude denser than the arms, so a mean-normalised field
+    // makes the centre enormous and everything else nothing. Then a soft knee
+    // (x/(1+x)) bounds it, so the bulge stays the brightest region without
+    // saturating to white and swamping every local light source.
+    {
+      std::vector<float> lums;
+      lums.reserve(lightGridCache.size()/3);
+      for (size_t c = 0; c < lightGridCache.size(); c += 3) {
+        float lum = lightGridCache[c]+lightGridCache[c+1]+lightGridCache[c+2];
+        if (lum > 0.0f) lums.push_back(lum);
+      }
+      float ref = 1.0f;
+      if (!lums.empty()) {
+        size_t k = (size_t)(lums.size() * 0.90f);
+        if (k >= lums.size()) k = lums.size() - 1;
+        std::nth_element(lums.begin(), lums.begin()+k, lums.end());
+        ref = std::max(lums[k], 1e-9f);
+      }
+      for (size_t c = 0; c < lightGridCache.size(); c += 3) {
+        float lum = (lightGridCache[c]+lightGridCache[c+1]+lightGridCache[c+2]) / ref;
+        float sc  = (lum > 1e-9f) ? (lum / (1.0f + lum)) / lum : 0.0f;
+        lightGridCache[c+0] *= sc / ref;
+        lightGridCache[c+1] *= sc / ref;
+        lightGridCache[c+2] *= sc / ref;
+      }
+    }
+    dustBakeLightInv = 1.0f;
+    dustBakeCellW = std::max(std::max(ext.x, ext.y), ext.z) / (float)G;
+    dustBakeR0    = 0.20f * std::max(std::max(ext.x, ext.y), ext.z);
+    dustLightKey  = 0;   // force the light stage to follow
+  }
+
+  // ── Light stage: cheap relative to placement, so the dials below stay
+  // responsive while dragging.
+  unsigned long long lkey = mixKey(pkey, dustReddening);
+  lkey = mixKey(lkey, skinDepth); lkey = mixKey(lkey, skinContrast);
+  if (dustLightRGB.size() == n * 3 && lkey == dustLightKey) return;
+  dustLightKey = lkey;
+
+  auto cellOf = [&](float v, float l, float e) {
+    return std::clamp((int)((v - l) / e * (G - 1) + 0.5f), 0, G - 1);
+  };
+  const int LOCAL_STEPS = 5;
+  float kR = 1.0f, kG = 1.0f + 1.72f * dustReddening, kB = 1.0f + 7.0f * dustReddening;
+  float lstep = std::max(dustInfluence * dustClumpScale, 1e-6f) * std::max(skinDepth, 0.01f);
+
+  int cap    = std::max(100, rtCloudPointCap);
+  int stride = ((int)n > cap) ? ((int)n / cap) : 1;
+
+  dustLightRGB.assign(n * 3, 0.0f);
+  dustLightDir.assign(n * 3, 0.0f);
+  for (size_t i = 0; i < n; i += (size_t)stride) {
+    // Gate on the SAME group-max lane renderCloudRaytraced uploads: a puff is
+    // drawn if ANY particle in its stride group is dusty, so it must be lit on
+    // the same test. Gating on particle i alone left whole puffs dark — dust
+    // in the picture that the light never touched.
+    float groupLane = 0.0f;
+    for (size_t j = i; j < i + (size_t)stride && j < n; ++j)
+      groupLane = std::max(groupLane, dustLaneCache[j]);
+    if (groupLane <= 0.04f) continue;
+    float px=UVObjectMeshBuffer[i*3], py=UVObjectMeshBuffer[i*3+1], pz=UVObjectMeshBuffer[i*3+2];
+    int cxi = cellOf(px,dustBakeLo[0],dustBakeExt[0]);
+    int cyi = cellOf(py,dustBakeLo[1],dustBakeExt[1]);
+    int czi = cellOf(pz,dustBakeLo[2],dustBakeExt[2]);
+    auto lightAt = [&](int x, int y, int z, int k) {
+      x=std::clamp(x,0,G-1); y=std::clamp(y,0,G-1); z=std::clamp(z,0,G-1);
+      return lightGridCache[((size_t)(z*G + y)*G + x)*3 + k];
+    };
+    auto lumAt = [&](int x, int y, int z) {
+      return lightAt(x,y,z,0) + lightAt(x,y,z,1) + lightAt(x,y,z,2);
+    };
+
+    // Incident starlight here, straight from the field the stars themselves
+    // built — no invented falloff, no centroid. Bright where the picture is
+    // bright, coloured like the stars doing the lighting.
+    float Lr = lightAt(cxi,cyi,czi,0) * dustBakeLightInv;
+    float Lg = lightAt(cxi,cyi,czi,1) * dustBakeLightInv;
+    float Lb = lightAt(cxi,cyi,czi,2) * dustBakeLightInv;
+
+    // Light DIRECTION = gradient of the light field: which way the nearest
+    // concentration of starlight lies. Locally correct everywhere, unlike a
+    // single galactic centre.
+    float gx = lumAt(cxi+1,cyi,czi) - lumAt(cxi-1,cyi,czi);
+    float gy = lumAt(cxi,cyi+1,czi) - lumAt(cxi,cyi-1,czi);
+    float gz = lumAt(cxi,cyi,czi+1) - lumAt(cxi,cyi,czi-1);
+    float gm = std::sqrt(gx*gx + gy*gy + gz*gz);
+    float ux, uy, uz;
+    if (gm > 1e-12f) { ux = gx/gm; uy = gy/gm; uz = gz/gm; }
+    else {
+      float vx = dustBakeCore[0]-px, vy = dustBakeCore[1]-py, vz = dustBakeCore[2]-pz;
+      float d = std::max(std::sqrt(vx*vx+vy*vy+vz*vz), 1e-9f);
+      ux = vx/d; uy = vy/d; uz = vz/d;
+    }
+
+    // Clump-scale skin shadow, marched toward the light: the lit flank of each
+    // clump keeps its light, the interior loses it. This is the shape.
+    float tauL = 0.0f;
+    for (int s2 = 1; s2 <= LOCAL_STEPS; ++s2) {
+      float t = lstep * (float)s2;
+      tauL += rtDustLane(px + ux*t, py + uy*t, pz + uz*t,
+                         dustInfluence, dustClumpScale, covAdj, dustContrast);
+    }
+    dustLightDir[i*3+0] = ux; dustLightDir[i*3+1] = uy; dustLightDir[i*3+2] = uz;
+    dustLightRGB[i*3+0] = Lr * std::exp(-tauL * skinContrast * kR);
+    dustLightRGB[i*3+1] = Lg * std::exp(-tauL * skinContrast * kG);
+    dustLightRGB[i*3+2] = Lb * std::exp(-tauL * skinContrast * kB);
+  }
+}
+
 // Dust-density map pass (screen-space rim light): draw the dust sprites once
 // more, additively, with the frag in density-only mode. Runs right after the
 // main cloud draw each frame, so buffers/uniforms are already current.
@@ -765,6 +1008,8 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
   }
 }
 
+static const float kNoDustLight[3] = {0.0f, 0.0f, 0.0f};
+
 void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::vector<RayTracerObject>& raytracerObjectList,
                                           float dustInfluence, float dustClumpScale,
                                           float dustCoverage, float dustContrast)
@@ -810,6 +1055,10 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
     }
 
     float rx = UVObjectMeshBuffer[fi], ry = UVObjectMeshBuffer[fi+1], rz = UVObjectMeshBuffer[fi+2];
+    const float* dl = (dustLightRGB.size() == (size_t)particleCount*3)
+                    ? &dustLightRGB[(size_t)i*3] : kNoDustLight;
+    const float* dd = (dustLightDir.size() == (size_t)particleCount*3)
+                    ? &dustLightDir[(size_t)i*3] : kNoDustLight;
     // Dust lane as the MAX over this point's FULL stride group (every real
     // particle it stands in for): the point is dusty if ANY particle it
     // represents is. Keeps the field's crisp 0-or-1 contrast, makes dust
@@ -827,11 +1076,17 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
                          rtDustLane(UVObjectMeshBuffer[j*3], UVObjectMeshBuffer[j*3+1], UVObjectMeshBuffer[j*3+2],
                                     dustInfluence, dustClumpScale, covAdj, dustContrast));
     }
+    float ldx = dd[0], ldy = dd[1], ldz = dd[2];
     if (rot) {
       float ox = R[0]*rx + R[1]*ry + R[2]*rz;
       float oy = R[3]*rx + R[4]*ry + R[5]*rz;
       float oz = R[6]*rx + R[7]*ry + R[8]*rz;
       rx = ox; ry = oy; rz = oz;
+      // the light direction lives in the same local frame → rotate it too
+      float dxr = R[0]*ldx + R[1]*ldy + R[2]*ldz;
+      float dyr = R[3]*ldx + R[4]*ldy + R[5]*ldz;
+      float dzr = R[6]*ldx + R[7]*ldy + R[8]*ldz;
+      ldx = dxr; ldy = dyr; ldz = dzr;
     }
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
@@ -839,7 +1094,10 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
         ry + (float)(coordinates.y + cameraTranslate[1]),
         rz + (float)(coordinates.z + cameraTranslate[2]),
         0},
-      adjustedMass, pRad, cachedTemperature, pObjType, vec4{pLane,0,0,0}});
+      adjustedMass, pRad, cachedTemperature, pObjType,
+      vec4{pLane, dl[0], dl[1], dl[2]},
+      vec4{0,0,0,0}, vec4{0,0,0,0},
+      vec4{ldx, ldy, ldz, 0}});
   }
 }
 

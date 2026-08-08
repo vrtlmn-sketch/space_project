@@ -80,6 +80,16 @@ private:
   unsigned int relVbo{};                 // cloud: per-frame camera-relative positions (large-world precision)
   unsigned int rimVbo{};                 // cloud: per-particle world-lit rim factor (attribute 2)
   std::vector<float> rimFactors{};       // CPU-side rim factors (regenerated periodically)
+  std::vector<float> dustLightRGB{};     // per-particle transmitted starlight (3 floats each)
+  std::vector<float> dustLightDir{};     // per-particle unit direction TOWARD the light
+  unsigned long long dustLightKey{0};    // light-params fingerprint → relight only when stale
+  unsigned long long dustPlaceKey{0};    // placement fingerprint → rebuild lane/grid only when stale
+  std::vector<float> dustLaneCache{};    // per-particle lane value (placement stage)
+  std::vector<float> dustGridCache{};    // 48^3 optical-density grid (placement stage)
+  std::vector<float> lightGridCache{};   // 48^3 RGB starlight field (the 3D 'light texture')
+  float dustBakeLo[3]{0,0,0}, dustBakeExt[3]{1,1,1}, dustBakeCore[3]{0,0,0};
+  float dustBakeInv{1.0f}, dustBakeCellW{1.0f}, dustBakeR0{1.0f}, dustBakeLightInv{1.0f};
+  int  dustLightCounter{0};              // periodic refresh while the sim moves particles
   int  rimUpdateCounter{0};              // throttle: recompute every N draws while simulating
   std::vector<float> relPosBuffer{};     // CPU scratch for relVbo
   unsigned int ssboParticles{};
@@ -168,6 +178,11 @@ public:
   // normal, dir-to-light)) from a 48-cell density-grid gradient. Feeds the
   // density map's G channel so screen-space rims light 3D-correctly.
   void updateCloudRimFactors();
+  // Per-particle in-scatter light (Option A): starlight reaching each dust
+  // particle from the galactic core, self-shadowed by the dust between them.
+  void updateCloudDustLight(float dustInfluence, float dustClumpScale,
+                            float dustCoverage, float dustContrast, float dustReddening,
+                            float skinDepth, float skinContrast);
   // Draw ONLY the dust pass, additively, writing raw density — the screen-space
   // rim-light map. Reuses this frame's cloud program/VBO state; vpH = density
   // target height so sprite sizes match the smaller buffer.

@@ -535,7 +535,10 @@ public:
   float dustContrast{1.0f};     // 1 = linear; >1 concentrates dust in dense regions
   float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
   float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)
-  float dustGlow{0.15f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
+  float dustGlow{1.4f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
+  float dustPhaseG{0.05f};       // scatter directionality: 0 = even everywhere, high = backlit-only
+  float dustSkinDepth{8.0f};    // clump-scale self-shadow march step (in clump radii)
+  float dustSkinContrast{10.0f}; // opacity per clump radius → how hard shape is exposed
   int   dustDetail{14000};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent
   float edgeLightStrength{2.15f}; // screen-space rim light on dust edges (0 = off)

@@ -328,6 +328,9 @@ int main(int argc, char** argv) {
     renderer.dustCoverage       = s.dustCoverage;
     renderer.dustClumpScale     = s.dustClumpScale;
     renderer.dustGlow           = s.dustGlow;
+    renderer.dustPhaseG         = s.dustPhaseG;
+    renderer.dustSkinDepth      = s.dustSkinDepth;
+    renderer.dustSkinContrast   = s.dustSkinContrast;
     renderer.cineSSAA           = s.cineSSAA;
     renderer.dustDetail         = s.dustDetail;
     renderer.simSpeed        = s.simSpeed;
@@ -416,6 +419,9 @@ int main(int argc, char** argv) {
     s.dustCoverage       = renderer.dustCoverage;
     s.dustClumpScale     = renderer.dustClumpScale;
     s.dustGlow           = renderer.dustGlow;
+    s.dustPhaseG         = renderer.dustPhaseG;
+    s.dustSkinDepth      = renderer.dustSkinDepth;
+    s.dustSkinContrast   = renderer.dustSkinContrast;
     s.cineSSAA           = renderer.cineSSAA;
     s.dustDetail         = renderer.dustDetail;
     s.rtMaxBounces    = renderer.GetRtMaxBounces();
@@ -915,6 +921,7 @@ int main(int argc, char** argv) {
         } else { renderer.rayTracerView = false; }   // RASTER_ONLY: skip all RT captures
 
         // 2) Performant (raster): draw the cinematic raster view + capture.
+        if (std::getenv("SKIP_RASTER")) { std::cout << "[compare] wrote /tmp/cmp_rt.png (RT only)\n"; std::exit(0); }
         renderer.rayTracerView = false; renderer.realisticRasterView = true;
         renderer.BeginRecordRaster(W, H);
         renderer.DrawSkybox(skybox);

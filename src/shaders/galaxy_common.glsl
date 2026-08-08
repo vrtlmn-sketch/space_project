@@ -75,12 +75,20 @@ float gxDustFieldDense(vec3 galLocal, float covBoost) {
 // raster floors each SPRITE separately, so stacked sprites MULTIPLY their floors
 // (0.1² → black): compounding the floor here reproduces that — single patches
 // bottom out warm red, overlapping patches go genuinely BLACK.
+// Per-channel transmittance of a dust column. Single source of truth: the
+// extinction below uses it, and the RT in-scatter uses (1 - it) so the light
+// dust GIVES BACK tracks exactly the light it TAKES — same tau, same spectral
+// tilt, same response to camera distance.
+vec3 gxDustTransmittance(float dustTau) {
+    vec3  dExt = vec3(1.0, 1.0 + 1.72 * uDustReddening, 1.0 + 7.0 * uDustReddening);
+    float tau  = dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0);
+    return exp(-uDustStrength * 0.042 * tau * dExt);
+}
+
 vec3 gxDustExtinction(vec3 color, float dustTau, float overlap) {
     // The raster's exact spectral tilt + reddish floor (cloudFrag.glsl): dense
     // dust bottoms out at deep RED (fiery core), not near-black brown.
-    vec3  dExt = vec3(1.0, 1.0 + 1.72 * uDustReddening, 1.0 + 7.0 * uDustReddening);
-    float tau  = dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0);
-    vec3  mult = exp(-uDustStrength * 0.042 * tau * dExt);
+    vec3  mult = gxDustTransmittance(dustTau);
     vec3  floorC = vec3(0.14, 0.038, 0.016) * smoothstep(0.0, 6.0, dustTau);
     floorC *= exp(-max(overlap - 0.8, 0.0) * 2.2);   // stacked layers → floor compounds toward black
     return color * max(mult, floorC);
