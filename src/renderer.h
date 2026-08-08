@@ -401,6 +401,11 @@ private:
   int    vpFboW{0}, vpFboH{0};      // actual FBO dimensions (screen-aspect sub-rect of central area)
   bool   prevEditorViewport{true};
   bool   focusInspectorNext{false};  // one-shot: select Inspector tab after layout reset
+  // Quick-menu delete is deferred: DrawGizmoAndPick has no SceneCallbacks, and
+  // mutating the object list mid-draw would invalidate panels still iterating it.
+  bool   quickDeletePending{false};
+  int    quickDeleteIdx{-1};
+  int    lastCloudIdx{-99};         // inspector cloud-form sync (reset on delete)
 
   // ── Cinematic (HDR) rasterized pass ──
   // When the realistic HDR rasterizer runs, the scene is drawn into this RGBA16F buffer,

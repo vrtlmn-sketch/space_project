@@ -1933,6 +1933,21 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   if (!raytracerIsMain)
     DrawCameraFrustums();
     DrawGizmoAndPick(physicsObjects, clouds);
+
+  // Deferred quick-menu delete: run after every panel has drawn, so nothing is
+  // iterating the list we are about to modify.
+  if (quickDeletePending) {
+    quickDeletePending = false;
+    int target = quickDeleteIdx;
+    if (target >= 0) {
+      if (cb.deleteObject) cb.deleteObject(target);
+    } else if (target <= -2 && target > -1000) {
+      if (cb.deleteCloud) cb.deleteCloud(-target - 2);
+      lastCloudIdx = -99;
+    }
+    selectedIdx    = -1;
+    quickDeleteIdx = -1;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2281,6 +2296,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
           if (ImGui::Button("Locate", ImVec2(96, 0))) {
             selectedIdx = hoverIdx;
             highlightMode = 0;
+            focusInspectorNext = true;
             if (hObj) {
               float effR = hObj->renderRadius() * activeSizeExag();
               if (hObj->shaderType == ObjectType::BlackHole)
@@ -2299,6 +2315,14 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
             highlightMode = 0;
             focusInspectorNext = true;
           }
+          ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
+          ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
+          ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
+          if (ImGui::Button("Delete", ImVec2(96, 0))) {
+            quickDeleteIdx     = hoverIdx;
+            quickDeletePending = true;
+          }
+          ImGui::PopStyleColor(3);
           menuWasHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
         }
         ImGui::End();
@@ -2350,8 +2374,8 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
     }
     // Hit → select; empty space → deselect (inspector falls back to blank,
     // leaving only Rendering Settings with content in the right dock)
-    if      (bestIdx   >= 0) { selectedIdx = bestIdx;           highlightMode = 0; }
-    else if (bestCloud >= 0) { selectedIdx = -(bestCloud + 2);  highlightMode = 0; }
+    if      (bestIdx   >= 0) { selectedIdx = bestIdx;           highlightMode = 0; focusInspectorNext = true; }
+    else if (bestCloud >= 0) { selectedIdx = -(bestCloud + 2);  highlightMode = 0; focusInspectorNext = true; }
     else                     { selectedIdx = -1;                highlightMode = 0; }
   }
 }
@@ -2879,75 +2903,6 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Rendering Settings", nullptr, flags);
 
-  // ── Camera ──
-  ImGui::Text("Camera Speed");
-  ImGui::SetNextItemWidth(-60);
-  ImGui::SliderFloat("##camspeed", &cameraSpeedFactor, 0.05f, 10.0f, "%.2fx",
-                     ImGuiSliderFlags_Logarithmic);
-  ImGui::SameLine();
-  if (ImGui::Button("Reset##camspeed")) cameraSpeedFactor = 1.0f;
-  if (focusDistance > 0.0f)
-    ImGui::TextDisabled("Adaptive: scaling with focus distance");
-  else
-    ImGui::TextDisabled("Constant (nothing selected)");
-
-  ImGui::Spacing();
-  if (ImGui::Checkbox("Exaggerated Sizes##exag", &exaggeratedSizes))
-    sizesDirty = true;
-  if (exaggeratedSizes) {
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(60);
-    if (ImGui::DragFloat("##exagf", &sizeExagFactor, 5.0f, 10.0f, 5000.0f, "%.0fx"))
-      sizesDirty = true;
-  }
-  ImGui::TextDisabled(exaggeratedSizes
-    ? "Visual only - physics uses real sizes"
-    : "True-scale sizes (planets are tiny)");
-
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // ── Rendering method ──
-  ImGui::Text("Rendering Method");
-  ImGui::SetNextItemWidth(-1);
-  const char* methodItems[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
-  ImGui::Combo("##rtmethod", &raytracerMethod, methodItems, 3);
-
-  ImGui::Spacing();
-
-  // ── Doppler effect toggle + parameters ──
-  if (ImGui::Checkbox("Doppler Effect", &dopplerMode))
-    rtDirty = true;
-
-  if (dopplerMode) {
-    ImGui::Indent(8.0f);
-    ImGui::Text("Velocity Exaggeration");
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("1x = physically real Doppler for AU/yr velocities.\nHigher exaggerates the effect artistically.");
-    ImGui::SetNextItemWidth(-1);
-    {
-      // Stored value is the raw v->beta multiplier; the slider edits it as a
-      // multiple of the PHYSICAL 1/c (63,241 AU/yr) so 1x sits mid-range and
-      // the whole travel is usable instead of skyrocketing past the first tick.
-      const float kPhys = 1.581e-5f;
-      float exag = dopplerVelScale / kPhys;
-      if (ImGui::SliderFloat("##dvel", &exag, 0.05f, 200.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
-        dopplerVelScale = exag * kPhys;
-        rtDirty = true;
-      }
-    }
-    ImGui::Text("Brightness Str");
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##dbrightness", &dopplerBrightnessStr, 0.0f, 6.0f, "%.2f"))
-      rtDirty = true;
-    ImGui::Text("Color Str");
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##dcolor", &dopplerColorStr, 0.0f, 4.0f, "%.2f"))
-      rtDirty = true;
-    ImGui::Unindent(8.0f);
-  }
-
   // 0..1 slider that maps to a real [lo,hi] range. dirty=true for compute-side
   // params (need a re-dispatch); false for post-process params (live every frame).
   auto norm01 = [&](const char* label, const char* id, float* v, float lo, float hi, bool dirty) {
@@ -2961,90 +2916,158 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     }
   };
 
-  ImGui::Spacing();
-  ImGui::SeparatorText("Photographic (HDR)");
-  ImGui::TextDisabled("Exposure, glow + ACES tonemap (cinematic views).");
-  norm01("Exposure",       "##rtexposure", &rtExposure,     0.0f, 4.0f,  false);
-  norm01("Glow",           "##bloomstr",   &bloomStrength,  0.0f, 1.5f,  false);
-  norm01("Glow Threshold", "##bloomthr",   &bloomThreshold, 0.0f, 2.0f,  false);
-  ImGui::SliderFloat("Anti-alias", &cineSSAA, 1.0f, 2.0f, "%.2fx");
-  if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("Supersampling for the Performant view — higher = less star\n"
-                      "flicker while moving, but more GPU cost (cost grows with the square).");
+  // ── Camera & Movement ──────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Camera & Movement", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Text("Camera Speed");
+    ImGui::SetNextItemWidth(-60);
+    ImGui::SliderFloat("##camspeed", &cameraSpeedFactor, 0.05f, 10.0f, "%.2fx",
+                       ImGuiSliderFlags_Logarithmic);
+    ImGui::SameLine();
+    if (ImGui::Button("Reset##camspeed")) cameraSpeedFactor = 1.0f;
+    if (focusDistance > 0.0f)
+      ImGui::TextDisabled("Adaptive: scaling with focus distance");
+    else
+      ImGui::TextDisabled("Constant (nothing selected)");
 
-  ImGui::Spacing();
-  ImGui::SeparatorText("Diffraction Spikes");
-  ImGui::TextDisabled("Synthetic PSF — telescope star spikes on bright points.");
-  norm01("Edge Light", "##edgelight", &edgeLightStrength, 0.0f, 5.0f, false);
-  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Thin screen-space rim light on dust edges.");
-  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Screen-space rim light: dust edges facing bright stars glow (raster view).");
-  norm01("Intensity",  "##spkstr",   &spikeStrength, 0.0f, 2.0f, false);
-  ImGui::SliderInt("Spikes",     &spikeCount, 2, 8);
-  if (ImGui::IsItemHovered()) ImGui::SetTooltip("6 = JWST, 4 = Hubble.");
-  { float deg = spikeAngle * 57.29578f;
-    if (ImGui::SliderFloat("Rotation", &deg, 0.0f, 180.0f, "%.0f°"))
-      spikeAngle = deg * 0.01745329f; }
-  norm01("Length",     "##spklen",   &spikeLength, 0.05f, 1.0f, false);
-  norm01("Sharpness",  "##spkdecay", &spikeDecay,  0.3f,  4.0f, false);
-  norm01("Secondary",  "##spksec",   &spikeSecondary, 0.0f, 1.0f, false);
-  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faint cross-spike pair (JWST strut spikes).");
-  norm01("Chroma",     "##spkchroma", &spikeChroma, 0.0f, 1.0f, false);
-  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rainbow tint toward the spike tips.");
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Exaggerated Sizes##exag", &exaggeratedSizes))
+      sizesDirty = true;
+    if (exaggeratedSizes) {
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(60);
+      if (ImGui::DragFloat("##exagf", &sizeExagFactor, 5.0f, 10.0f, 5000.0f, "%.0fx"))
+        sizesDirty = true;
+    }
+    ImGui::TextDisabled(exaggeratedSizes
+      ? "Visual only - physics uses real sizes"
+      : "True-scale sizes (planets are tiny)");
 
-  ImGui::Spacing();
-  ImGui::SeparatorText("Star Haze");
-  ImGui::TextDisabled("Smooth glow from stars too dense to resolve as points.");
-  norm01("Brightness", "##unrstr",  &unresolvedStrength, 0.0f, 10.0f,  true);
-  norm01("Spread",     "##unrsize", &unresolvedSize,     1.0f, 100.0f, true);
-  norm01("Resolved",   "##rescut",  &resolvedCut,        0.0f, 1.0f,   true);
-  if (ImGui::IsItemHovered())
-    ImGui::SetTooltip("How many stars resolve as sharp points. Higher = fewer sharp\n"
-                      "stars, more unresolved glow (real telescope look).");
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Doppler Effect", &dopplerMode))
+      rtDirty = true;
+    ImGui::TextDisabled("Colour + brightness shift from motion toward/away.");
+    if (dopplerMode) {
+      ImGui::Indent(8.0f);
+      ImGui::Text("Velocity Exaggeration");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("1x = physically real Doppler for AU/yr velocities.\nHigher exaggerates the effect artistically.");
+      ImGui::SetNextItemWidth(-1);
+      {
+        // Stored value is the raw v->beta multiplier; the slider edits it as a
+        // multiple of the PHYSICAL 1/c (63,241 AU/yr) so 1x sits mid-range and
+        // the whole travel is usable instead of skyrocketing past the first tick.
+        const float kPhys = 1.581e-5f;
+        float exag = dopplerVelScale / kPhys;
+        if (ImGui::SliderFloat("##dvel", &exag, 0.05f, 200.0f, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
+          dopplerVelScale = exag * kPhys;
+          rtDirty = true;
+        }
+      }
+      ImGui::Text("Brightness Str");
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::SliderFloat("##dbrightness", &dopplerBrightnessStr, 0.0f, 6.0f, "%.2f"))
+        rtDirty = true;
+      ImGui::Text("Color Str");
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::SliderFloat("##dcolor", &dopplerColorStr, 0.0f, 4.0f, "%.2f"))
+        rtDirty = true;
+      ImGui::Unindent(8.0f);
+    }
+  }
 
-  ImGui::Spacing();
-  ImGui::SeparatorText("Nebula Gas");
-  ImGui::TextDisabled("Glowing emission gas near hot young stars.");
-  norm01("Amount##gas", "##gasstr", &gasStrength, 0.0f, 2.0f, true);
+  // ── Light & Exposure ───────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Light & Exposure", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::TextDisabled("Exposure, glow + ACES tonemap (cinematic views).");
+    norm01("Exposure",       "##rtexposure", &rtExposure,     0.0f, 4.0f,  false);
+    norm01("Glow",           "##bloomstr",   &bloomStrength,  0.0f, 1.5f,  false);
+    norm01("Glow Threshold", "##bloomthr",   &bloomThreshold, 0.0f, 2.0f,  false);
+  }
 
-  ImGui::Spacing();
-  ImGui::Text("Star Points");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderInt("##rtpoints", &RenderedObject::rtCloudPointCap, 500, 100000, "%d",
-                       ImGuiSliderFlags_Logarithmic))
-    rtDirty = true;
-  ImGui::TextDisabled("How many stars render as individual points. Raise for stills.");
+  // ── Stars ──────────────────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Stars")) {
+    ImGui::SeparatorText("Star Haze");
+    ImGui::TextDisabled("Smooth glow from stars too dense to resolve as points.");
+    norm01("Brightness", "##unrstr",  &unresolvedStrength, 0.0f, 10.0f,  true);
+    norm01("Spread",     "##unrsize", &unresolvedSize,     1.0f, 100.0f, true);
+    norm01("Resolved",   "##rescut",  &resolvedCut,        0.0f, 1.0f,   true);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How many stars resolve as sharp points. Higher = fewer sharp\n"
+                        "stars, more unresolved glow (real telescope look).");
 
-  ImGui::Spacing();
-  ImGui::SeparatorText("Dust");
-  ImGui::TextDisabled("Dense regions dim + redden the light behind them.");
-  norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  2.0f,  true);
-  norm01("Reddening",     "##dustred",   &dustReddening,  0.0f,  4.0f,  true);
-  norm01("Concentration", "##dustcon",   &dustContrast,   1.0f,  4.0f,  true);
-  ImGui::TextDisabled("Higher packs dust into tighter, darker lanes.");
-  norm01("Patchiness",    "##dustcov",   &dustCoverage,   0.0f,  1.0f,  true);
-  ImGui::TextDisabled("How broken-up the dust is (lower = more gaps).");
-  norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.04f, 1.5f,  true);
-  ImGui::TextDisabled("Lane fineness — smaller hugs the star shape more tightly.");
-  norm01("Glow",          "##dustglow",  &dustGlow,       0.0f,  4.0f,  true);
-  ImGui::TextDisabled("Dust scatters nearby starlight and glows softly (0 = dark lanes only).");
-  norm01("Backlit Bias",  "##dustphase", &dustPhaseG,       0.0f, 0.7f, true);
-  ImGui::TextDisabled("0 = dust glows evenly from any angle; higher = only backlit dust glows.");
-  norm01("Shape Contrast", "##dustskink", &dustSkinContrast, 0.0f, 10.0f, true);
-  ImGui::TextDisabled("How hard clumps shadow themselves — exposes each clump's 3D shape.");
-  norm01("Skin Depth",     "##dustskind", &dustSkinDepth,    0.01f, 8.0f, true);
-  ImGui::TextDisabled("How deep the lit surface layer reaches into a clump.");
-  ImGui::Text("Dust Points");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderInt("##dustdetail", &dustDetail, 200, 20000))
-    rtDirty = true;
-  ImGui::TextDisabled("How many points the dust samples — independent of Star Points (fewer = more mottled).");
+    ImGui::Spacing();
+    ImGui::SeparatorText("Diffraction Spikes");
+    ImGui::TextDisabled("Synthetic PSF - telescope star spikes on bright points.");
+    norm01("Intensity",  "##spkstr",   &spikeStrength, 0.0f, 2.0f, false);
+    ImGui::SliderInt("Spikes",     &spikeCount, 2, 8);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("6 = JWST, 4 = Hubble.");
+    { float deg = spikeAngle * 57.29578f;
+      if (ImGui::SliderFloat("Rotation", &deg, 0.0f, 180.0f, "%.0f°"))
+        spikeAngle = deg * 0.01745329f; }
+    norm01("Length",     "##spklen",   &spikeLength, 0.05f, 1.0f, false);
+    norm01("Sharpness",  "##spkdecay", &spikeDecay,  0.3f,  4.0f, false);
+    norm01("Secondary",  "##spksec",   &spikeSecondary, 0.0f, 1.0f, false);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faint cross-spike pair (JWST strut spikes).");
+    norm01("Chroma",     "##spkchroma", &spikeChroma, 0.0f, 1.0f, false);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rainbow tint toward the spike tips.");
+  }
 
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
+  // ── Dust & Gas Clouds ──────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Dust & Gas Clouds")) {
+    ImGui::SeparatorText("Dust Shape");
+    ImGui::TextDisabled("Dense regions dim + redden the light behind them.");
+    norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  2.0f,  true);
+    norm01("Reddening",     "##dustred",   &dustReddening,  0.0f,  4.0f,  true);
+    norm01("Concentration", "##dustcon",   &dustContrast,   1.0f,  4.0f,  true);
+    ImGui::TextDisabled("Higher packs dust into tighter, darker lanes.");
+    norm01("Patchiness",    "##dustcov",   &dustCoverage,   0.0f,  1.0f,  true);
+    ImGui::TextDisabled("How broken-up the dust is (lower = more gaps).");
+    norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.04f, 1.5f,  true);
+    ImGui::TextDisabled("Lane fineness - smaller hugs the star shape more tightly.");
 
-  // ── Grid ──
-  if (ImGui::CollapsingHeader("Grid", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Spacing();
+    ImGui::SeparatorText("Dust Lighting");
+    ImGui::TextDisabled("Starlight scattering off the dust itself (realistic view).");
+    norm01("Glow",          "##dustglow",  &dustGlow,       0.0f,  4.0f,  true);
+    ImGui::TextDisabled("Dust scatters nearby starlight and glows softly (0 = dark lanes only).");
+    norm01("Backlit Bias",  "##dustphase", &dustPhaseG,       0.0f, 0.7f, true);
+    ImGui::TextDisabled("0 = dust glows evenly from any angle; higher = only backlit dust glows.");
+    norm01("Shape Contrast", "##dustskink", &dustSkinContrast, 0.0f, 10.0f, true);
+    ImGui::TextDisabled("How hard clumps shadow themselves - exposes each clump's 3D shape.");
+    norm01("Skin Depth",     "##dustskind", &dustSkinDepth,    0.01f, 8.0f, true);
+    ImGui::TextDisabled("How deep the lit surface layer reaches into a clump.");
+    norm01("Edge Light", "##edgelight", &edgeLightStrength, 0.0f, 5.0f, false);
+    ImGui::TextDisabled("Screen-space rim on dust edges facing bright stars (performant view).");
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Nebula Gas");
+    ImGui::TextDisabled("Glowing emission gas near hot young stars.");
+    norm01("Amount##gas", "##gasstr", &gasStrength, 0.0f, 2.0f, true);
+    ImGui::Text("Detail");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##nebuladetail", &nebulaDetail, 0.0f, 1.0f, "%.2f"))
+      rtDirty = true;
+    ImGui::TextDisabled("Density + color variation per particle");
+  }
+
+  // ── Background & Grid ──────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Background & Grid")) {
+    ImGui::SeparatorText("Spheremap");
+    if (ImGui::Checkbox("Enabled##sm", &spheremapEnabled))
+      rtDirty = true;
+    ImGui::Text("Exposure");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##smexp", &spheremapExposure, 0.05f, 25.0f, "%.2f", ImGuiSliderFlags_Logarithmic))
+      rtDirty = true;
+    ImGui::Text("HDR Path");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##smpath", spheremapPathBuf, sizeof(spheremapPathBuf));
+    if (ImGui::Button("Load Spheremap", ImVec2(-1, 0))) {
+      if (cb.loadSpheremap) cb.loadSpheremap(std::string(spheremapPathBuf));
+      rtDirty = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Grid");
     bool changed = false;
     changed |= ImGui::Checkbox("Show Grid", &gridForm.visible);
     changed |= ImGui::Checkbox("Adaptive Scale", &gridForm.adaptive);
@@ -3064,163 +3087,141 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     if (changed && cb.applyGrid) cb.applyGrid(gridForm);
   }
 
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // ── Spheremap background ──
-  if (ImGui::CollapsingHeader("Spheremap", ImGuiTreeNodeFlags_DefaultOpen)) {
-    if (ImGui::Checkbox("Enabled##sm", &spheremapEnabled))
-      rtDirty = true;
-    ImGui::Text("Exposure");
+  // ── Quality & Speed ────────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Quality & Speed")) {
+    ImGui::Text("Rendering Method");
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##smexp", &spheremapExposure, 0.05f, 25.0f, "%.2f", ImGuiSliderFlags_Logarithmic))
-      rtDirty = true;
-    ImGui::Text("HDR Path");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##smpath", spheremapPathBuf, sizeof(spheremapPathBuf));
-    if (ImGui::Button("Load Spheremap", ImVec2(-1, 0))) {
-      if (cb.loadSpheremap) cb.loadSpheremap(std::string(spheremapPathBuf));
-      rtDirty = true;
-    }
-  }
+    const char* methodItems[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
+    ImGui::Combo("##rtmethod", &raytracerMethod, methodItems, 3);
+    ImGui::TextDisabled("Simple is fastest; geodesic bends light around black holes.");
 
-  ImGui::Spacing();
-
-  ImGui::Text("Nebula Detail");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::SliderFloat("##nebuladetail", &nebulaDetail, 0.0f, 1.0f, "%.2f"))
-    rtDirty = true;
-  ImGui::TextDisabled("Density + color variation per particle");
-
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // ── Live RT resolution ──
-  static const struct { const char* label; int w; int h; } rtLivePresets[] = {
-    { "Native",  0,    0 },
-    { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
-    { "360p",   640,  360 }, { "480p",  854,  480 },
-    { "720p",  1280,  720 }, { "1080p",1920, 1080 },
-  };
-  static const int numRtPresets = (int)(sizeof(rtLivePresets) / sizeof(rtLivePresets[0]));
-  ImGui::Text("RT Resolution");
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::Combo("##rtres2", &rtLiveResPreset, [](void*, int idx) -> const char* {
-    static const char* labels[] = { "Native", "80p", "144p", "240p", "360p", "480p", "720p", "1080p" };
-    return labels[idx];
-  }, nullptr, numRtPresets)) {
-    rtLiveWidth  = rtLivePresets[rtLiveResPreset].w;
-    rtLiveHeight = rtLivePresets[rtLiveResPreset].h;
-  }
-
-  ImGui::Spacing();
-
-  // ── Max bounces ──
-  ImGui::Text("Max Bounces");
-  ImGui::SetNextItemWidth(-1);
-  ImGui::SliderInt("##bounce2", &rtMaxBounces, 0, 4, "%d");
-
-  // ── Max steps (geodesic only) ──
-  if (raytracerMethod >= 1) {
     ImGui::Spacing();
-    ImGui::Text("Max Steps");
+    static const struct { const char* label; int w; int h; } rtLivePresets[] = {
+      { "Native",  0,    0 },
+      { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
+      { "360p",   640,  360 }, { "480p",  854,  480 },
+      { "720p",  1280,  720 }, { "1080p",1920, 1080 },
+    };
+    static const int numRtPresets = (int)(sizeof(rtLivePresets) / sizeof(rtLivePresets[0]));
+    ImGui::Text("RT Resolution");
     ImGui::SetNextItemWidth(-1);
-    ImGui::SliderInt("##maxsteps", &rtMaxSteps, 32, 1024, "%d");
-  }
-
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // ── Recording settings ──
-  ImGui::Text("Recording Path");
-  ImGui::SetNextItemWidth(-1);
-  if (recording) ImGui::BeginDisabled();
-  ImGui::InputText("##recf2", recordPathBuf, sizeof(recordPathBuf));
-  if (recording) ImGui::EndDisabled();
-
-  ImGui::Spacing();
-
-  ImGui::Text("Recording FPS");
-  ImGui::SetNextItemWidth(-1);
-  if (recording) ImGui::BeginDisabled();
-  const char* fpsItems[] = { "24", "30", "60" };
-  int fpsIdx = (recordFps == 24) ? 0 : (recordFps == 60) ? 2 : 1;
-  if (ImGui::Combo("##fps2", &fpsIdx, fpsItems, 3))
-    recordFps = (fpsIdx == 0) ? 24 : (fpsIdx == 2) ? 60 : 30;
-  if (recording) ImGui::EndDisabled();
-
-  ImGui::Spacing();
-
-  ImGui::Text("Recording Resolution");
-  static const struct { const char* label; int w; int h; } resPresets[] = {
-    { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
-    { "360p",   640,  360 }, { "480p",   854,  480 },
-    { "720p",  1280,  720 }, { "1080p", 1920, 1080 },
-    { "1440p", 2560, 1440 }, { "4K",    3840, 2160 },
-    { "Custom",    0,    0 },
-  };
-  static const int numPresets = (int)(sizeof(resPresets) / sizeof(resPresets[0]));
-  if (recording) ImGui::BeginDisabled();
-  ImGui::SetNextItemWidth(-1);
-  if (ImGui::Combo("##res2", &recordResPreset, [](void*, int idx) -> const char* {
-    return resPresets[idx].label;
-  }, nullptr, numPresets)) {
-    if (recordResPreset < numPresets - 1) {
-      recordWidth  = resPresets[recordResPreset].w;
-      recordHeight = resPresets[recordResPreset].h;
+    if (ImGui::Combo("##rtres2", &rtLiveResPreset, [](void*, int idx) -> const char* {
+      static const char* labels[] = { "Native", "80p", "144p", "240p", "360p", "480p", "720p", "1080p" };
+      return labels[idx];
+    }, nullptr, numRtPresets)) {
+      rtLiveWidth  = rtLivePresets[rtLiveResPreset].w;
+      rtLiveHeight = rtLivePresets[rtLiveResPreset].h;
     }
-  }
-  if (recording) ImGui::EndDisabled();
 
-  if (recordResPreset == numPresets - 1) {
+    ImGui::Spacing();
+    ImGui::Text("Max Bounces");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderInt("##bounce2", &rtMaxBounces, 0, 4, "%d");
+
+    if (raytracerMethod >= 1) {
+      ImGui::Spacing();
+      ImGui::Text("Max Steps");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##maxsteps", &rtMaxSteps, 32, 1024, "%d");
+    }
+
+    ImGui::Spacing();
+    ImGui::SliderFloat("Anti-alias", &cineSSAA, 1.0f, 2.0f, "%.2fx");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Supersampling for the Performant view - higher = less star\n"
+                        "flicker while moving, but more GPU cost (cost grows with the square).");
+
+    ImGui::Spacing();
+    ImGui::Text("Star Points");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderInt("##rtpoints", &RenderedObject::rtCloudPointCap, 500, 100000, "%d",
+                         ImGuiSliderFlags_Logarithmic))
+      rtDirty = true;
+    ImGui::TextDisabled("How many stars render as individual points. Raise for stills.");
+
+    ImGui::Text("Dust Points");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderInt("##dustdetail", &dustDetail, 200, 20000))
+      rtDirty = true;
+    ImGui::TextDisabled("How many points the dust samples - independent of Star Points (fewer = more mottled).");
+
+    ImGui::Spacing();
+    ImGui::Text("RAM Budget");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderFloat("##ram2", &ramBudgetGB, 1.0f, 128.0f, "%.0f GB");
+  }
+
+  // ── Save & Record ──────────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Save & Record", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::Text("Screenshot Path");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##imgf2", imagePathBuf, sizeof(imagePathBuf));
+    if (ImGui::Button("Snap", ImVec2(-1, 0))) {
+      if (cinematicViewEnabled && cinematicRaster) rasterSnapRequested = true; // main loop renders + saves
+      else CaptureImage();                                                     // RT snapshot
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Video");
+    ImGui::Text("Recording Path");
+    ImGui::SetNextItemWidth(-1);
     if (recording) ImGui::BeginDisabled();
-    ImGui::SetNextItemWidth(60);
-    if (ImGui::InputInt("##rw2", &recordWidth, 0, 0)) {
-      if (recordWidth < 16) recordWidth = 16;
-      if (recordWidth > 7680) recordWidth = 7680;
-    }
-    ImGui::SameLine(); ImGui::Text("x"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(60);
-    if (ImGui::InputInt("##rh2", &recordHeight, 0, 0)) {
-      if (recordHeight < 16) recordHeight = 16;
-      if (recordHeight > 4320) recordHeight = 4320;
+    ImGui::InputText("##recf2", recordPathBuf, sizeof(recordPathBuf));
+    if (recording) ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Text("Recording FPS");
+    ImGui::SetNextItemWidth(-1);
+    if (recording) ImGui::BeginDisabled();
+    const char* fpsItems[] = { "24", "30", "60" };
+    int fpsIdx = (recordFps == 24) ? 0 : (recordFps == 60) ? 2 : 1;
+    if (ImGui::Combo("##fps2", &fpsIdx, fpsItems, 3))
+      recordFps = (fpsIdx == 0) ? 24 : (fpsIdx == 2) ? 60 : 30;
+    if (recording) ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Text("Recording Resolution");
+    static const struct { const char* label; int w; int h; } resPresets[] = {
+      { "80p",    142,   80 }, { "144p",  256,  144 }, { "240p",  426,  240 },
+      { "360p",   640,  360 }, { "480p",   854,  480 },
+      { "720p",  1280,  720 }, { "1080p", 1920, 1080 },
+      { "1440p", 2560, 1440 }, { "4K",    3840, 2160 },
+      { "Custom",    0,    0 },
+    };
+    static const int numPresets = (int)(sizeof(resPresets) / sizeof(resPresets[0]));
+    if (recording) ImGui::BeginDisabled();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::Combo("##res2", &recordResPreset, [](void*, int idx) -> const char* {
+      return resPresets[idx].label;
+    }, nullptr, numPresets)) {
+      if (recordResPreset < numPresets - 1) {
+        recordWidth  = resPresets[recordResPreset].w;
+        recordHeight = resPresets[recordResPreset].h;
+      }
     }
     if (recording) ImGui::EndDisabled();
-  } else {
-    ImGui::TextDisabled("%dx%d", recordWidth, recordHeight);
+
+    if (recordResPreset == numPresets - 1) {
+      if (recording) ImGui::BeginDisabled();
+      ImGui::SetNextItemWidth(60);
+      if (ImGui::InputInt("##rw2", &recordWidth, 0, 0)) {
+        if (recordWidth < 16) recordWidth = 16;
+        if (recordWidth > 7680) recordWidth = 7680;
+      }
+      ImGui::SameLine(); ImGui::Text("x"); ImGui::SameLine();
+      ImGui::SetNextItemWidth(60);
+      if (ImGui::InputInt("##rh2", &recordHeight, 0, 0)) {
+        if (recordHeight < 16) recordHeight = 16;
+        if (recordHeight > 4320) recordHeight = 4320;
+      }
+      if (recording) ImGui::EndDisabled();
+    } else {
+      ImGui::TextDisabled("%dx%d", recordWidth, recordHeight);
+    }
   }
 
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // ── Image export ──
-  ImGui::Text("Screenshot Path");
-  ImGui::SetNextItemWidth(-1);
-  ImGui::InputText("##imgf2", imagePathBuf, sizeof(imagePathBuf));
-  if (ImGui::Button("Snap", ImVec2(-1, 0))) {
-    if (cinematicViewEnabled && cinematicRaster) rasterSnapRequested = true; // main loop renders + saves
-    else CaptureImage();                                                     // RT snapshot
-  }
-
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // ── RAM budget ──
-  ImGui::Text("RAM Budget");
-  ImGui::SetNextItemWidth(-1);
-  ImGui::SliderFloat("##ram2", &ramBudgetGB, 1.0f, 128.0f, "%.0f GB");
-
-  ImGui::Spacing();
-  ImGui::Separator();
-  ImGui::Spacing();
-
-  // ── Performance ──
-  if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen))
+  // ── Performance ────────────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Performance"))
     DrawBenchmarkPanel();
 
   ImGui::End();
@@ -3952,6 +3953,7 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
              i, clouds[i]->particleCount(), i);
     if (ImGui::Selectable(cloudLabel, cloudSel)) {
       selectedIdx   = cloudSel ? -1 : sentinel;
+      if (!cloudSel) focusInspectorNext = true;
       highlightMode = 0;
     }
     if (ImGui::IsItemHovered()) {
@@ -3971,6 +3973,7 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     snprintf(camLabel, sizeof(camLabel), "[#] %s##scam%d", sceneCameras[i].name.c_str(), i);
     if (ImGui::Selectable(camLabel, camSel)) {
       selectedIdx   = camSel ? -1 : sentinel;
+      if (!camSel) focusInspectorNext = true;
       highlightMode = 0;
     }
     ImGui::PopStyleColor();
@@ -3994,6 +3997,7 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     ImGui::PushStyleColor(ImGuiCol_Header, headerCol);
     if (ImGui::Selectable(label, sel)) {
       selectedIdx   = sel ? -1 : i;
+      if (!sel) focusInspectorNext = true;
       highlightMode = 0;
     }
     if (ImGui::IsItemHovered()) {
@@ -4213,7 +4217,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       previewImage();
 
       ImGui::Spacing();
-      ImGui::SeparatorText("Mesh (.obj)");
+      if (ImGui::CollapsingHeader("Mesh (.obj)", ImGuiTreeNodeFlags_DefaultOpen)) {
       static std::vector<std::string> modelFiles;
       static bool modelsScanned = false;
       if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
@@ -4242,9 +4246,10 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
       if (obj.meshPath.empty())
         ImGui::TextDisabled("No mesh loaded — showing a placeholder sphere.");
+      }
 
       ImGui::Spacing();
-      ImGui::SeparatorText("Surface");
+      if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Text("Texture");
       imagePicker("ftex", obj.texturePath, 0);
       ImGui::Text("Normal Map");
@@ -4255,6 +4260,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         ImGui::SliderFloat("##fnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
       }
       ImGui::TextDisabled("Uses the model's UVs (needs vt in the .obj).");
+      }
     }
     else if (obj.shaderType == ObjectType::Star) {
       temperatureEditor();
@@ -4265,6 +4271,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       colorEditor();
 
       ImGui::Spacing();
+      if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Text("Texture");
       previewImage();
       imagePicker("ptex", obj.texturePath, 0);
@@ -4283,9 +4290,10 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         ImGui::SliderFloat("##pnightstr", &obj.nightMapStrength, 0.0f, 6.0f, "%.2f");
       }
       ImGui::TextDisabled("City lights on the night side (Cinematic view).");
+      }
 
       ImGui::Spacing();
-      ImGui::SeparatorText("Atmosphere");
+      if (ImGui::CollapsingHeader("Atmosphere")) {
       ImGui::Checkbox("Enabled##iatm", &obj.atmosphereEnabled);
       if (obj.atmosphereEnabled) {
         ImGui::Text("Height");
@@ -4306,8 +4314,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
           obj.atmosphereScatter.z = atmCol[2];
         }
       }
+      }
 
-      ImGui::SeparatorText("Clouds");
+      if (ImGui::CollapsingHeader("Clouds")) {
       ImGui::Checkbox("Enabled##icld", &obj.cloudsEnabled);
       if (obj.cloudsEnabled) {
         ImGui::Text("Coverage");
@@ -4337,6 +4346,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = static (RT stays cached); >0 animates (RT re-renders per frame).");
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##iclddrift", &obj.cloudDrift, 0.0f, 0.2f, "%.3f");
+      }
       }
     }
 
@@ -4442,7 +4452,6 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     CloudObject* cloud = (cloudIdx >= 0 && cloudIdx < (int)clouds.size()) ? clouds[cloudIdx].get() : nullptr;
     if (cloud) {
       // Sync cloudForm when the selected cloud changes
-      static int lastCloudIdx = -99;
       if (cloudIdx != lastCloudIdx) {
         cloudForm.renderMode         = cloud->renderMode;
         cloudForm.nebulaScatterScale = cloud->nebulaScatterScale;
