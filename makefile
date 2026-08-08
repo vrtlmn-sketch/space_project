@@ -3,7 +3,11 @@ CXX      := g++
 WARN_FLAGS := -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wformat=2 \
               -Wnull-dereference -Wduplicated-cond -Wduplicated-branches \
               -Wlogical-op -Wuseless-cast -Wnon-virtual-dtor -Woverloaded-virtual
-CXXFLAGS := -std=c++20 $(WARN_FLAGS) \
+# -MMD -MP emits a .d file per object listing the headers it includes, so a
+# changed header rebuilds every .o that uses it. Without this, editing a header
+# left stale objects linked against an old struct layout — which does not fail
+# to build, it segfaults at runtime.
+CXXFLAGS := -std=c++20 $(WARN_FLAGS) -MMD -MP \
             -I./vendor/include \
             -I./vendor/include/imgui \
             -I./vendor/include/nlohmann
@@ -22,6 +26,7 @@ IMGUI_SRCS := \
 
 ALL_SRCS := $(SRCS) $(IMGUI_SRCS)
 OBJS     := $(ALL_SRCS:.cpp=.o)
+DEPS     := $(OBJS:.o=.d)
 BIN_DIR  := bin
 OUT      := $(BIN_DIR)/$(APP)
 
@@ -49,11 +54,14 @@ $(OUT): $(OBJS)
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
+# Pull in the generated header dependencies (silent on first build).
+-include $(DEPS)
+
 run: build
 	./$(OUT)
 
 clean:
-	rm -rf $(BIN_DIR) $(OBJS) $(IMGUI_SRC_DIR)/*.o
+	rm -rf $(BIN_DIR) $(OBJS) $(DEPS) $(IMGUI_SRC_DIR)/*.o $(IMGUI_SRC_DIR)/*.d
 
 # ─── Unit tests ──────────────────────────────────────────────────────────────
 # Compiled with minimal GL/GLFW stubs so no GPU context is needed.
