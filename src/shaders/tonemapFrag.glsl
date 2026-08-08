@@ -6,9 +6,7 @@ uniform sampler2D uScene;        // HDR raytracer output
 uniform sampler2D uBloom;        // blurred bright pass
 uniform sampler2D uSpike;        // diffraction-spike streaks
 uniform sampler2D uDustDens;     // screen-space dust density (sharp: wisp texture)
-uniform sampler2D uDustDensBlur; // blurred density (clump ENVELOPE: silhouettes)
 uniform float     uEdgeLight;    // thin rim-light strength (0 = off)
-uniform float     uFringe;       // lit-fringe (crescent body) strength (0 = off)
 uniform vec2      uTexelD;       // texel of the density/bloom maps
 uniform int       uOccCount;     // solid-body screen discs (planets + atmo)
 uniform vec4      uOccDiscs[8];  // (px, py, radius_px, used) — glow suppressed inside
@@ -33,6 +31,12 @@ void main() {
   // pseudo-normal), the blurred bloom IS the aggregated starlight field, and
   // its gradient points toward the light. Edge facing light × starlight there
   // = the JWST "lit pillar edge" — no per-star loops, a handful of taps.
+  // Scale-stable starlight: Reinhard-normalized bloom. Keeps WHERE the light
+  // is (locality/direction) but cancels the per-pixel brightness falloff that
+  // made the whole lit-dust effect dim on approach — extinction is a ratio
+  // and survives proximity, so the light must too or the 3D read collapses.
+  vec3 slight = bloom / (0.30 + dot(bloom, vec3(0.333)));
+
   vec3 rim = vec3(0.0);
   if (uEdgeLight > 0.0) {
     // Overlapping sprites SUM in the density map (values 0..20+); compress to
@@ -71,38 +75,10 @@ void main() {
         float dens   = 1.0 - exp(-dc.r * 0.6);
         // Silhouette shell: rim lives on the edge band, not deep interiors.
         float shell  = smoothstep(0.03, 0.15, dens) * (1.0 - smoothstep(0.75, 0.98, dens));
-        rim = bloom * (facing * facing) * min(edge * 8.0, 1.0) * shell
+        rim = slight * (facing * facing) * min(edge * 8.0, 1.0) * shell
               * (0.15 + 0.85 * worldLit)
               * uEdgeLight * vec3(1.0, 0.86, 0.72);
       }
-    }
-  }
-
-  // ── Lit faces (true 3D dust lighting) ────────────────────────────────────
-  // The G channel of the density maps carries density x WORLD-space facing
-  // (per-particle surface normal from the 3D density grid, dotted with the
-  // light direction). Glow = starlight x that facing x dust presence — so a
-  // face-on view lights the WHOLE facing surface, and an edge-on view
-  // compresses the same lit face into a natural rim. No screen-space band:
-  // the rim is an emergent projection effect, exactly like real nebulae.
-  if (uFringe > 0.0) {
-    vec2  eb  = texture(uDustDensBlur, vUV).rg;
-    float env = 1.0 - exp(-eb.r * 0.25);
-    float presence = smoothstep(0.05, 0.30, env);
-    if (presence > 0.002) {
-      // G/R (density-weighted surface-ness x directional shading) lives in
-      // ~0.05..0.35 — remap that ACTUAL range to 0..1, else any pow() crushes
-      // the whole effect to a whisper. Shadow flanks land near 0, lit flanks
-      // near 1 → the volumetric one-side-lit read.
-      float worldLit = eb.g / max(eb.r, 1e-4);
-      // Harsh directional response: direct-lit surfaces pop, grazing light
-      // falls off fast → the SHAPE carves the lighting (not overall gain).
-      float lit = smoothstep(0.08, 0.35, worldLit);
-      lit = lit * lit * (0.5 + 0.5 * lit);
-      // The cloud's own fine structure textures the light (sharp vs envelope).
-      float wisp = clamp(texture(uDustDens, vUV).r / max(eb.r, 1e-3), 0.0, 2.0);
-      wisp = 0.35 + 0.65 * smoothstep(0.4, 1.4, wisp);
-      rim += bloom * presence * lit * wisp * uFringe * vec3(1.0, 0.84, 0.66) * 1.6;
     }
   }
 

@@ -181,7 +181,6 @@ bool ProjectSerializer::Save(const std::string& path,
     s["bloomStrength"]     = settings.bloomStrength;
     s["bloomThreshold"]    = settings.bloomThreshold;
     s["edgeLightStrength"] = settings.edgeLightStrength;
-    s["rimSpriteStrength"] = settings.rimSpriteStrength;
     s["spikeStrength"]     = settings.spikeStrength;
     s["spikeCount"]        = settings.spikeCount;
     s["spikeAngle"]        = settings.spikeAngle;
@@ -426,7 +425,6 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.bloomStrength      = s.value("bloomStrength",      0.45f);
     st.bloomThreshold     = s.value("bloomThreshold",     0.0f);
     st.edgeLightStrength  = s.value("edgeLightStrength",  2.15f);
-    st.rimSpriteStrength  = s.value("rimSpriteStrength",  5.0f);
     st.spikeStrength      = s.value("spikeStrength",      1.45f);
     st.spikeCount         = s.value("spikeCount",         6);
     st.spikeAngle         = s.value("spikeAngle",         0.0f);
