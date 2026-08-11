@@ -190,6 +190,7 @@ void CloudObject::readbackParticlesFromGPU() {
   // No need to reset hasBeenRendered — renderCloud() always re-uploads
   // the buffer data via glBufferData. Resetting it would leak VAO/VBO
   // resources by re-calling setupRender() every frame.
+  renderedObject.cloudGpuDirty = true;   // positions changed → VBO must re-upload
 }
 
 // ── Dispatch Barnes-Hut compute ─────────────────────────────────────────────
@@ -571,6 +572,17 @@ CloudObject::CloudObject(const vec3& position, const std::string& formationPath)
   this->position = position;
   this->formationFile = formationPath;
 
+  // A .starfield is a chunked binary catalogue (millions of stars) rather than
+  // a JSON formation: it loads straight into one static VBO and is drawn as
+  // culled, budgeted chunks. No physics — these are fixed stars.
+  if (formationPath.size() > 10 &&
+      formationPath.compare(formationPath.size() - 10, 10, ".starfield") == 0) {
+    renderedObject.LoadStarfield(formationPath);
+    renderedObject.setupShaders("src/shaders/cloudVert.glsl", "src/shaders/cloudFrag.glsl");
+    simulatePhysics = false;
+    return;
+  }
+
   // Load formation JSON
   std::ifstream file(formationPath);
   if (!file.is_open()) {
@@ -627,6 +639,19 @@ void CloudObject::SetShaders(const std::string& vertShaderPath, const std::strin
 }
 
 void CloudObject::boundsEstimate(vec3& center, float& radius) const {
+  if (renderedObject.isStarfield && !renderedObject.starChunks.empty()) {
+    vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+    for (const auto& sc : renderedObject.starChunks) {
+      lo.x = std::min(lo.x, sc.center.x - sc.extent); hi.x = std::max(hi.x, sc.center.x + sc.extent);
+      lo.y = std::min(lo.y, sc.center.y - sc.extent); hi.y = std::max(hi.y, sc.center.y + sc.extent);
+      lo.z = std::min(lo.z, sc.center.z - sc.extent); hi.z = std::max(hi.z, sc.center.z + sc.extent);
+    }
+    center = vec3{(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};
+    radius = std::max(std::max(hi.x-lo.x, hi.y-lo.y), hi.z-lo.z) * 0.5f;
+    if (radius <= 0.0f) radius = 1.0f;
+    return;
+  }
+
   const auto& buf = renderedObject.UVObjectMeshBuffer;
   size_t n = buf.size() / 3;
   if (n == 0) { center = renderedObject.coordinates; radius = 1.0f; return; }

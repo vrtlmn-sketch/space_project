@@ -540,6 +540,8 @@ public:
   float dustContrast{1.0f};     // 1 = linear; >1 concentrates dust in dense regions
   float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
   float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)
+  float  starSize{1.0f};         // scale on resolved star-core sprites
+  int    starBudget{80000};      // starfield: max points drawn per frame
   float dustGlow{1.4f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
   float dustPhaseG{0.05f};       // scatter directionality: 0 = even everywhere, high = backlit-only
   float dustSkinDepth{8.0f};    // clump-scale self-shadow march step (in clump radii)

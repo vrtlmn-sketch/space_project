@@ -5,6 +5,7 @@ uniform float uTemperature; // Kelvin (0 = default warm grey)
 uniform int   uRenderMode;  // 0 = Point, 1 = Nebula
 uniform int   uRealistic;   // 0 = nav look, 1 = Cinematic Performant (HDR, RT-like)
 uniform int   uCloudPass;   // 0 = haze, 1 = core, 3 = dust (reddened extinction)
+uniform int   uStarfield;   // 1 = measured catalogue (wide brightness range)
 uniform int   uDensityOnly; // 1 = dust pass writes DENSITY (screen-space rim-light map)
 uniform float uDustReddening;
 uniform float uDustStrength;       // overall dust amount (also gates in the vert)
@@ -115,7 +116,13 @@ void main() {
             // Softer, anti-aliased core: smooth Gaussian + a smoothstep edge fade.
             float core  = exp(-r2 * 3.5);
             float edge  = smoothstep(1.0, 0.5, r2);
-            float coreI = 0.30 + 3.5 * vMag;   // bright stars punch to white
+            // A catalogue star field needs a REAL dynamic range: a handful of
+            // bright stars over a vast faint majority. The 0.30 floor below is
+            // right for a procedural galaxy (where every drawn point should
+            // read) but made all 8M catalogue stars equally bright, so raising
+            // the budget just whited out the screen instead of adding depth.
+            float coreI = (uStarfield == 1) ? (0.015 + 4.0 * vMag * vMag)
+                                            : (0.30  + 3.5 * vMag);
             c = vColor * core * edge * coreI;
         } else {
             // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.

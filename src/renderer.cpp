@@ -559,7 +559,7 @@ void Renderer::Draw(RenderedObject& ro) {
                                                                           (float)ro.coordinates.z,
                                                                           ro.sphereRadius()}); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.starBudget = starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             if (realisticRasterView) rimClouds.push_back(&ro); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -770,7 +770,10 @@ bool Renderer::UpdateInputs() {
       // Caps scale with the focus distance: approaching a true-scale planet
       // needs micro-steps, crossing 26,000 ly needs comically large ones.
       float lo = 1e-7f;
-      float hi = std::max(0.3f, focusDistance * 0.05f);
+      // The cap used to ignore the speed slider, so "10x" did nothing once the
+      // clamp bit — which is why max speed still felt frozen in a scene 1e10 AU
+      // across. Let the user's factor raise the ceiling too.
+      float hi = std::max(0.3f, focusDistance * 0.05f * std::max(userFactor, 1.0f));
       moveStep = std::clamp(
         cameraSpeed * userFactor * zoomScale * std::pow(focusDistance / 3.0f, kExponent),
         lo, hi);
@@ -1697,6 +1700,55 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     focusFrom(dvec3(clouds[cloudSel]->position));
   } else if (!physicsObjects.empty()) {
     focusDistance = (float)std::max(nearestSurface, 0.001);
+  }
+
+  // Nothing selected and no planets — a pure star-catalogue scene. Without this
+  // focusDistance stays -1, movement falls back to a constant step tuned for
+  // AU-scale scenes, and flying through a field 2e10 AU across feels frozen.
+  // Scale to the nearest actual STARS: for a starfield that is the closest
+  // chunk, for an ordinary cloud its bounding surface.
+  if (focusDistance <= 0.0f && !clouds.empty()) {
+    double best = 1e300;
+    for (const auto& cl : clouds) {
+      if (!cl) continue;
+      const RenderedObject& ro = cl->renderedObject;
+      double cx = cl->position.x + cameraTranslate[0];
+      double cy = cl->position.y + cameraTranslate[1];
+      double cz = cl->position.z + cameraTranslate[2];
+      if (ro.isStarfield && !ro.starChunks.empty()) {
+        for (const auto& sc : ro.starChunks) {
+          double dx = cx + sc.center.x, dy = cy + sc.center.y, dz = cz + sc.center.z;
+          double d  = std::sqrt(dx*dx + dy*dy + dz*dz) - sc.extent;
+          // INSIDE a chunk d goes negative. Clamping that to a couple of AU
+          // (as this first did) pins the camera to planet-scale steps in a
+          // scene 1e10 AU across — flying then feels like standing still.
+          // Fall back to the chunk's own size: that IS the local scale.
+          if (d < sc.extent * 0.25) d = sc.extent * 0.25;
+          if (d < best) best = d;
+        }
+      } else {
+        vec3 cen; float rad = 1.0f;
+        cl->boundsEstimate(cen, rad);
+        double dx = cx + cen.x, dy = cy + cen.y, dz = cz + cen.z;
+        double d = std::sqrt(dx*dx + dy*dy + dz*dz) - rad;
+        if (d < rad * 0.25) d = rad * 0.25;
+        if (d < best) best = d;
+      }
+    }
+    // Inside a star catalogue the nearest chunk is a poor scale for travel:
+    // it makes crossing the field take tens of thousands of keypresses. Blend
+    // in a fraction of the whole field's radius so flying across it is possible
+    // while approaching a star still slows you down.
+    if (best < 1e299) {
+      double scale = best;
+      for (const auto& cl : clouds) {
+        if (!cl) continue;
+        vec3 cen; float rad = 1.0f;
+        cl->boundsEstimate(cen, rad);
+        scale = std::max(scale, (double)rad * 0.02);
+      }
+      focusDistance = (float)std::max(scale, 1.0);
+    }
   }
 
   // ── Fullscreen DockSpace ──
@@ -3132,6 +3184,15 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "flicker while moving, but more GPU cost (cost grows with the square).");
 
     ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Star Catalogue", ImGuiTreeNodeFlags_DefaultOpen)) {
+      norm01("Star Size", "##starsize", &starSize, 0.05f, 2.0f, false);
+      ImGui::TextDisabled("Size of resolved star sprites. Lower = pinpoint stars.");
+      ImGui::Text("Star Budget");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##starbudget", &starBudget, 5000, 400000, "%d", ImGuiSliderFlags_Logarithmic);
+      ImGui::TextDisabled("Max catalogue stars drawn per frame; chunks off screen cost nothing.");
+    }
+
     ImGui::Text("Star Points");
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderInt("##rtpoints", &RenderedObject::rtCloudPointCap, 500, 100000, "%d",

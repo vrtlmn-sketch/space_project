@@ -198,6 +198,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["dustContrast"]      = settings.dustContrast;
     s["dustCoverage"]      = settings.dustCoverage;
     s["dustClumpScale"]    = settings.dustClumpScale;
+    s["starSize"]          = settings.starSize;
+    s["starBudget"]        = settings.starBudget;
     s["dustGlow"]          = settings.dustGlow;
     s["dustPhaseG"]        = settings.dustPhaseG;
     s["dustSkinDepth"]     = settings.dustSkinDepth;
@@ -445,6 +447,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dustContrast       = s.value("dustContrast",       1.0f);
     st.dustCoverage       = s.value("dustCoverage",       0.30f);
     st.dustClumpScale     = s.value("dustClumpScale",     0.13f);
+    st.starSize           = s.value("starSize",           1.0f);
+    st.starBudget         = s.value("starBudget",         80000);
     st.dustGlow           = s.value("dustGlow",           1.4f);
     st.dustPhaseG         = s.value("dustPhaseG",         0.05f);
     st.dustSkinDepth      = s.value("dustSkinDepth",      8.0f);

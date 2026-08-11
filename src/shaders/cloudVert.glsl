@@ -1,7 +1,19 @@
 #version 460 core
 layout (location = 0) in vec3 aPos;      // absolute (galaxy-local) position — used for dust field
-layout (location = 1) in vec3 aRelPos;   // camera-relative position (CPU double) — used for the transform
 layout (location = 2) in float aRim;     // world-lit rim factor (3D-correct edge lighting)
+
+// Camera-relative placement of this cloud. The CPU computes ONLY these (in
+// double, once per cloud per frame) and the GPU applies them per vertex — the
+// old path did the same maths per PARTICLE on the CPU and re-uploaded the whole
+// buffer every frame, which is what capped particle counts.
+// Starfield chunks: positions arrive as int16 normalised to [-1,1] within a
+// chunk, so the real cloud-local position is centre + aPos*extent. Extent 0
+// means an ordinary float cloud and aPos is used as-is.
+uniform vec3  uChunkCenter;
+uniform float uChunkExtent;
+
+uniform vec3 uCloudOrigin;   // cloud centre + camera translate (already differenced in double)
+uniform mat3 uCloudRot;      // cloud rotation
 
 uniform mat4 uProj;
 uniform mat4 uWorld;
@@ -13,6 +25,7 @@ uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
 uniform float uTemperature;  // Kelvin (whole-cloud base)
 uniform int   uCloudPass;    // 0 = haze, 1 = core, 3 = dust (reddened extinction)
 uniform float uCinePixelScale; // point-size scale so sprites keep apparent size under SSAA
+uniform float uStarSize;       // artistic scale on resolved star cores (1 = legacy)
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
 uniform float uUnresolvedSize;     // star-haze spread (RT parity)
 uniform float uViewportH;          // framebuffer height (px) → perspective dust sizing
@@ -94,6 +107,8 @@ float dustLane(vec3 p) {
 
 void main() {
   // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
+  vec3 aLocal  = (uChunkExtent > 0.0) ? (uChunkCenter + aPos * uChunkExtent) : aPos;
+  vec3 aRelPos = uCloudOrigin + uCloudRot * aLocal;
   gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
 
   vRim = aRim;
@@ -101,7 +116,7 @@ void main() {
   // Star attributes hashed on the star's normalized galaxy-local POSITION (not the
   // vertex index), with the SAME hash13 the raytracer uses → the same physical star
   // gets the same colour/magnitude in both renderers (bright stars align pixel-wise).
-  vec3  hp = aPos / uDustInfluence + 17.0;
+  vec3  hp = aLocal / uDustInfluence + 17.0;
   float h1 = hash13(hp + vec3(0.3, 1.1, 5.5));    // temperature selector
   float h2 = hash13(hp + vec3(11.0, 2.0, 7.7));   // luminosity selector
 
@@ -131,7 +146,10 @@ void main() {
     if (vMag < uResolvedCut) gl_PointSize = 0.0;
     // Smaller cores (closer to RT's PSF dots); the brightness lost to the
     // smaller disc comes back through the stronger shared spike pass.
-    else gl_PointSize = clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps;
+    // Core sprites are up to 9 px. In a packed galaxy they overlap into
+    // texture; standing inside a sparse catalogue each one reads as a ball
+    // instead of a star, so the scale is exposed rather than hard-coded.
+    else gl_PointSize = max(clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps * uStarSize, 1.0);
   } else if (uCloudPass == 4) {
     // Glowing gas: only hot young stars seed emission nebulosity. Large soft
     // sprite (perspective-sized like dust), FBM-carved into filaments in the frag,
@@ -154,7 +172,7 @@ void main() {
     // scale (structure), not the sprite pixels, so shape-following holds at any size
     // and the sprites stay small (fast). The frag carves each into a wisp and, drawn
     // last, they COVER the stars behind them in the dense cores.
-    float lane = dustLane(aPos);
+    float lane = dustLane(aLocal);
     if (uDustStrength > 0.0 && lane > 0.04 && gl_Position.w > 1e-4) {
       vDust = lane;
       vSeed = hash11(id * 9.1 + 4.0) * 20.0;

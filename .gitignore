@@ -28,3 +28,8 @@ tests/build/
 
 # Per-user app settings
 settings.json
+
+# Source star catalogues (hundreds of MB) — the derived .starfield is what ships
+templates/dataset/
+__pycache__/
+*.pyc

@@ -124,6 +124,8 @@ struct SceneSettings {
   float dustContrast{1.0f};
   float dustCoverage{0.30f};
   float dustClumpScale{0.13f};
+  float starSize{1.0f};
+  int   starBudget{80000};
   float dustGlow{1.4f};
   float dustPhaseG{0.05f};
   float dustSkinDepth{8.0f};

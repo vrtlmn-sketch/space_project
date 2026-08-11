@@ -91,7 +91,8 @@ private:
   float dustBakeInv{1.0f}, dustBakeCellW{1.0f}, dustBakeR0{1.0f}, dustBakeLightInv{1.0f};
   int  dustLightCounter{0};              // periodic refresh while the sim moves particles
   int  rimUpdateCounter{0};              // throttle: recompute every N draws while simulating
-  std::vector<float> relPosBuffer{};     // CPU scratch for relVbo
+  bool cloudGpuDirty{true};              // positions changed → re-upload (else the VBO is static)
+
   unsigned int ssboParticles{};
   unsigned int ssboObjects{};
 
@@ -109,6 +110,25 @@ private:
   std::vector<CloudParticle> cloudParticles;
   std::vector<PhysicsObjectStructure> gridPoints;
 public:
+  // ── Starfield: millions of stars, drawn as culled chunks ───────────────────
+  // Positions live in the VBO as int16 RELATIVE TO THEIR CHUNK, so 8M stars fit
+  // in 49 MB and stay precise. Each chunk is culled and level-of-detailed on
+  // its own, which is what keeps the drawn count near the budget.
+  struct StarChunk {
+    vec3  center;    // cloud-local centre (AU)
+    float extent;    // half-size the int16s are normalised against
+    int   first;     // first vertex in the shared VBO
+    int   count;     // stars in this chunk
+    int   drawn{0};  // decided per frame by the LOD budget
+  };
+  std::vector<StarChunk> starChunks{};
+  bool  isStarfield{false};
+  int   starBudget{80000};   // max points drawn per frame across all chunks
+  int   lastDrawnStars{0};   // reported in the UI
+  int   lastVisibleChunks{0};
+  void  LoadStarfield(const std::string& indexPath);
+  void  drawStarfieldChunks(const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
+                            const double cameraTranslate[3]);
   MeshType meshType{MeshType::sphere};
   dvec3 coordinates;  // world position (double: galactic coords need it)
   vec3  rotationDeg{0.0f, 0.0f, 0.0f};  // object orientation (Euler X/Y/Z degrees)
@@ -123,6 +143,7 @@ public:
   float cineHazeSpread{32.4f};   // unresolved-star haze spread (RT Star Haze → Spread)
   float cineResolvedCut{0.6f};   // brightness cutoff: only brighter stars draw as sharp cores
   float cineGasStrength{0.5f};   // glowing-gas emission brightness (0 = off)
+  float cineStarSize{1.0f};      // artistic scale on resolved star-core sprites
   // Procedural cloud layer params (shared packing, both views):
   // P0 = (coverage, scale, bandedness, turbulence); P1 = (softness, altitude,
   // whiteness, driftPhase). coverage 0 = clouds off.
@@ -177,6 +198,7 @@ public:
   // World-space rim factors (one per particle): max(0, dot(cloud-surface
   // normal, dir-to-light)) from a 48-cell density-grid gradient. Feeds the
   // density map's G channel so screen-space rims light 3D-correctly.
+  void setCloudPlacementUniforms(const double cameraTranslate[3]);
   void updateCloudRimFactors();
   // Per-particle in-scatter light (Option A): starlight reaching each dust
   // particle from the galactic core, self-shadowed by the dust between them.
@@ -240,7 +262,7 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   void AddPointToLine(const vec3& point);
   void TrimLinePoints(size_t maxPoints);
 
-  int cloudParticleCount() const { return (int)cloudParticles.size(); }
+  int  cloudParticleCount() const { return isStarfield ? bufferSize : (int)cloudParticles.size(); }
   // Cloud particle positions (galaxy-local xyz triples) — read-only access for
   // viewport picking/outline (projected hull), which lives in the Renderer.
   const std::vector<float>& cloudLocalPositions() const { return UVObjectMeshBuffer; }

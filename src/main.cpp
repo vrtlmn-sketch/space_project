@@ -27,7 +27,10 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   std::unique_ptr<CloudObject> cloud;
   vec3 cpos = static_cast<vec3>(cd.position);
   if (!cd.formationFile.empty()) {
-    std::string formPath = "templates/formations/" + cd.formationFile;
+    // .starfield catalogues live in their own directory
+    bool sf = cd.formationFile.size() > 10 &&
+              cd.formationFile.compare(cd.formationFile.size() - 10, 10, ".starfield") == 0;
+    std::string formPath = (sf ? "templates/starfields/" : "templates/formations/") + cd.formationFile;
     cloud = std::make_unique<CloudObject>(cpos, formPath);
   } else {
     cloud = std::make_unique<CloudObject>(
@@ -327,6 +330,8 @@ int main(int argc, char** argv) {
     renderer.dustContrast       = s.dustContrast;
     renderer.dustCoverage       = s.dustCoverage;
     renderer.dustClumpScale     = s.dustClumpScale;
+    renderer.starSize           = s.starSize;
+    renderer.starBudget         = s.starBudget;
     renderer.dustGlow           = s.dustGlow;
     renderer.dustPhaseG         = s.dustPhaseG;
     renderer.dustSkinDepth      = s.dustSkinDepth;
@@ -418,6 +423,8 @@ int main(int argc, char** argv) {
     s.dustContrast       = renderer.dustContrast;
     s.dustCoverage       = renderer.dustCoverage;
     s.dustClumpScale     = renderer.dustClumpScale;
+    s.starSize           = renderer.starSize;
+    s.starBudget         = renderer.starBudget;
     s.dustGlow           = renderer.dustGlow;
     s.dustPhaseG         = renderer.dustPhaseG;
     s.dustSkinDepth      = renderer.dustSkinDepth;
@@ -515,7 +522,10 @@ int main(int argc, char** argv) {
     using SC = Renderer::StartupChoice;
     if (renderer.startupChoice == SC::Template) {
       // --template flag: load the Milky Way project like any other project
-      const std::string tmplPath = "projects/milky_way.json";
+      // PROJECT=<path> overrides the template — used by the harness to load a
+      // specific project without changing the default.
+      const char* pe = std::getenv("PROJECT");
+      const std::string tmplPath = pe ? std::string(pe) : std::string("projects/milky_way.json");
       ProjectData tmpl = ProjectSerializer::Load(tmplPath);
       if (tmpl.objects.empty())
         std::cerr << "[main] Template project missing or broken "

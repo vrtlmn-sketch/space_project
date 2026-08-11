@@ -6,6 +6,7 @@
 #include "units.h"
 #include <cmath>
 #include <cstring>
+#include <iostream>
 #include <cstdint>
 #include <fstream>
 #include <sstream>
@@ -912,6 +913,30 @@ void RenderedObject::updateCloudDustLight(float dustInfluence, float dustClumpSc
 // Dust-density map pass (screen-space rim light): draw the dust sprites once
 // more, additively, with the frag in density-only mode. Runs right after the
 // main cloud draw each frame, so buffers/uniforms are already current.
+// Camera-relative placement for the cloud program: ONE double subtraction per
+// cloud (centre - camera), then the GPU applies it per vertex. Shared by the
+// main draw and the dust-density pass so neither depends on leftover state.
+void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
+{
+  double ox = coordinates.x + cameraTranslate[0];
+  double oy = coordinates.y + cameraTranslate[1];
+  double oz = coordinates.z + cameraTranslate[2];
+  float rm[9] = {1,0,0, 0,1,0, 0,0,1};
+  if (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f) {
+    const double d2r = 3.14159265358979323846 / 180.0;
+    double ca = std::cos(rotationDeg.x*d2r), sa = std::sin(rotationDeg.x*d2r);
+    double cb = std::cos(rotationDeg.y*d2r), sb = std::sin(rotationDeg.y*d2r);
+    double cc = std::cos(rotationDeg.z*d2r), sc = std::sin(rotationDeg.z*d2r);
+    rm[0]=(float)(cc*cb); rm[1]=(float)(cc*sb*sa - sc*ca); rm[2]=(float)(cc*sb*ca + sc*sa);
+    rm[3]=(float)(sc*cb); rm[4]=(float)(sc*sb*sa + cc*ca); rm[5]=(float)(sc*sb*ca - cc*sa);
+    rm[6]=(float)(-sb);   rm[7]=(float)(cb*sa);            rm[8]=(float)(cb*ca);
+  }
+  GLint lo = glGetUniformLocation(program, "uCloudOrigin");
+  if (lo >= 0) glUniform3f(lo, (float)ox, (float)oy, (float)oz);
+  GLint lr = glGetUniformLocation(program, "uCloudRot");
+  if (lr >= 0) glUniformMatrix3fv(lr, 1, GL_TRUE, rm);   // rm is row-major
+}
+
 void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],
                                             float fovDeg, int fbWidth, int fbHeight)
 {
@@ -919,6 +944,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glBindVertexArray(vao);
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+  setCloudPlacementUniforms(cameraTranslate);
   glUniform1i(glGetUniformLocation(program, "uRealistic"),   1);
   glUniform1i(glGetUniformLocation(program, "uCloudPass"),   3);
   glUniform1i(glGetUniformLocation(program, "uDensityOnly"), 1);
@@ -1274,6 +1300,204 @@ void RenderedObject::renderAtmosphere(const double cameraTranslate[3], const flo
   glDisable(GL_BLEND);
 }
 
+
+// ── Starfield loading ────────────────────────────────────────────────────────
+// Reads the chunked .starfield index plus its .part payloads (see
+// tools/gaia_to_starfield.py). Everything lands in ONE static VBO of int16
+// triples; the chunk table records where each chunk lives so it can be culled
+// and level-of-detailed independently.
+void RenderedObject::LoadStarfield(const std::string& indexPath)
+{
+  std::ifstream idx(indexPath, std::ios::binary);
+  if (!idx) { std::cerr << "[starfield] cannot open " << indexPath << "\n"; return; }
+  std::vector<char> hdr((std::istreambuf_iterator<char>(idx)), std::istreambuf_iterator<char>());
+  if (hdr.size() < 24 || std::memcmp(hdr.data(), "SFLD", 4) != 0) {
+    std::cerr << "[starfield] bad magic in " << indexPath << "\n"; return;
+  }
+  uint32_t ver, nChunks, nParts; uint64_t nStars;
+  std::memcpy(&ver,     hdr.data()+4,  4);
+  std::memcpy(&nChunks, hdr.data()+8,  4);
+  std::memcpy(&nStars,  hdr.data()+12, 8);
+  std::memcpy(&nParts,  hdr.data()+20, 4);
+  if (ver != 3) { std::cerr << "[starfield] unsupported version " << ver << "\n"; return; }
+  if (hdr.size() < 24 + (size_t)nChunks * 40) { std::cerr << "[starfield] index truncated\n"; return; }
+
+  std::string base = indexPath.substr(0, indexPath.rfind(".starfield"));
+  std::vector<size_t> partBase(nParts, 0);
+  std::vector<char>   blob;
+  blob.reserve((size_t)nStars * 6);
+  for (uint32_t p = 0; p < nParts; ++p) {
+    char nb[32]; std::snprintf(nb, sizeof(nb), ".%03u.part", p);
+    std::ifstream pf(base + nb, std::ios::binary);
+    if (!pf) { std::cerr << "[starfield] missing part " << base << nb << "\n"; return; }
+    partBase[p] = blob.size();
+    blob.insert(blob.end(), std::istreambuf_iterator<char>(pf), std::istreambuf_iterator<char>());
+  }
+
+  starChunks.clear(); starChunks.reserve(nChunks);
+  for (uint32_t i = 0; i < nChunks; ++i) {
+    const char* r = hdr.data() + 24 + (size_t)i * 40;
+    uint32_t part, off, cnt; double cx, cy, cz; float ext;
+    std::memcpy(&part,&r[0],4); std::memcpy(&off,&r[4],4); std::memcpy(&cnt,&r[8],4);
+    std::memcpy(&cx,&r[12],8);  std::memcpy(&cy,&r[20],8); std::memcpy(&cz,&r[28],8);
+    std::memcpy(&ext,&r[36],4);
+    if (part >= nParts) continue;
+    StarChunk sc;
+    sc.center = vec3{(float)cx, (float)cy, (float)cz};
+    sc.extent = ext;
+    sc.first  = (int)((partBase[part] + off) / 6);
+    sc.count  = (int)cnt;
+    starChunks.push_back(sc);
+  }
+
+  isStarfield   = true;
+  meshType      = MeshType::cloud;
+  bufferSize    = (int)nStars;
+  hasBeenRendered = true;         // VAO/VBO/attribs are built below, not by setupRender
+  cloudGpuDirty = false;          // uploaded right here, once
+
+  if (!vao) { glGenVertexArrays(1, &vao); }
+  glBindVertexArray(vao);
+  if (!vbo) glGenBuffers(1, &vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)blob.size(), blob.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_SHORT, GL_TRUE, 3 * sizeof(short), (void*)0);
+  glEnableVertexAttribArray(0);
+  glBindVertexArray(0);
+
+  std::cout << "[starfield] " << nStars << " stars in " << starChunks.size()
+            << " chunks, " << (blob.size() / (1024*1024)) << " MB VRAM\n";
+}
+
+
+// ── Starfield draw: frustum-cull chunks, then spend a fixed point budget ─────
+// Two jobs at once. Culling removes chunks that are off-screen or behind the
+// camera. The budget then shares the remaining points out by how much SCREEN
+// AREA each chunk covers, so the total drawn stays near starBudget no matter
+// how many of the 8M stars are technically in view. Because each chunk's stars
+// were shuffled at build time, drawing the first N of a chunk is an unbiased
+// sample of it rather than a corner.
+void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
+                                         int fbWidth, int fbHeight,
+                                         const double cameraTranslate[3])
+{
+  if (starChunks.empty()) return;
+  const double ox = coordinates.x + cameraTranslate[0];
+  const double oy = coordinates.y + cameraTranslate[1];
+  const double oz = coordinates.z + cameraTranslate[2];
+
+  const float aspect  = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : 1.7778f;
+  const float tanV    = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);
+  const float tanH    = tanV * aspect;
+
+  struct Vis { int idx; float weight; };
+  static std::vector<Vis> vis;      // reused: this runs every frame
+  vis.clear();
+  double wsum = 0.0;
+
+  for (int i = 0; i < (int)starChunks.size(); ++i) {
+    const StarChunk& sc = starChunks[i];
+    // chunk centre in camera space (viewRot is row-major; camera looks down -Z)
+    float px = (float)(ox + sc.center.x), py = (float)(oy + sc.center.y), pz = (float)(oz + sc.center.z);
+    float vx = viewRot[0]*px + viewRot[1]*py + viewRot[2]*pz;
+    float vy = viewRot[3]*px + viewRot[4]*py + viewRot[5]*pz;
+    float vz = viewRot[6]*px + viewRot[7]*py + viewRot[8]*pz;
+    float r  = sc.extent * 1.7320508f;            // cube half-diagonal
+    float depth = -vz;
+    if (depth < -r) continue;                      // fully behind the camera
+    float d = (depth > 1e-6f) ? depth : 1e-6f;
+    if (std::fabs(vx) > tanH * d + r) continue;    // outside left/right
+    if (std::fabs(vy) > tanV * d + r) continue;    // outside top/bottom
+    // Weight by how much of the chunk actually lands ON SCREEN, not merely how
+    // big it is. Project its bounding box to NDC and clip to the viewport: a
+    // chunk enclosing the camera covers the whole screen but spreads its stars
+    // over the entire sky, so only ~10% of anything drawn from it can ever be
+    // visible — weighting by size alone poured the budget into exactly those.
+    float ndcx = vx / (tanH * d), ndcy = vy / (tanV * d);
+    float rx   = r  / (tanH * d), ry   = r  / (tanV * d);
+    float oxw = std::min(ndcx + rx, 1.0f) - std::max(ndcx - rx, -1.0f);
+    float oyw = std::min(ndcy + ry, 1.0f) - std::max(ndcy - ry, -1.0f);
+    if (oxw < 0.0f) oxw = 0.0f;
+    if (oyw < 0.0f) oyw = 0.0f;
+    float onScreen = oxw * oyw;                                   // NDC area, max 4
+    float frac = (rx > 1e-9f && ry > 1e-9f) ? onScreen / (4.0f * rx * ry) : 1.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    float w = onScreen * frac;   // area it covers, discounted by wasted draws
+    if (w <= 0.0f) continue;
+    vis.push_back({i, w});
+    wsum += w;
+  }
+
+  lastVisibleChunks = (int)vis.size();
+  if (vis.empty()) {
+    lastDrawnStars = 0;
+    if (std::getenv("STARDEBUG")) std::cerr << "[starfield] 0 chunks visible\n";
+    return;
+  }
+
+  GLint lc = glGetUniformLocation(program, "uChunkCenter");
+  GLint le = glGetUniformLocation(program, "uChunkExtent");
+
+  const int budget = (starBudget > 0) ? starBudget : 80000;
+
+  // Water-fill the budget: hand out points in proportion to screen area, clamp
+  // each chunk to the stars it actually has, then redistribute what the clamped
+  // ones could not use. Without the redistribution a few small chunks cap out
+  // and most of the budget is simply never spent.
+  static std::vector<int> alloc;
+  alloc.assign(vis.size(), 0);
+  double remaining = (double)budget, wleft = wsum;
+  for (int pass = 0; pass < 4 && remaining > 1.0 && wleft > 0.0; ++pass) {
+    double spent = 0.0, saturated = 0.0;
+    for (size_t k = 0; k < vis.size(); ++k) {
+      const StarChunk& sc = starChunks[vis[k].idx];
+      if (alloc[k] >= sc.count) continue;
+      int want = alloc[k] + (int)(remaining * (vis[k].weight / wleft));
+      if (want > sc.count) { spent += sc.count - alloc[k]; saturated += vis[k].weight; alloc[k] = sc.count; }
+      else                 { spent += want - alloc[k];     alloc[k] = want; }
+    }
+    remaining -= spent; wleft -= saturated;
+    if (spent <= 0.0) break;
+  }
+
+  if (std::getenv("STARDEBUG2")) {
+    static bool once=false;
+    if (!once) { once=true;
+      std::vector<size_t> ord(vis.size()); for (size_t k=0;k<ord.size();++k) ord[k]=k;
+      std::sort(ord.begin(), ord.end(), [&](size_t a,size_t b){return alloc[a]>alloc[b];});
+      for (size_t t=0; t<ord.size() && t<6; ++t) {
+        size_t k=ord[t]; const StarChunk& sc=starChunks[vis[k].idx];
+        float px=(float)(ox+sc.center.x), py=(float)(oy+sc.center.y), pz=(float)(oz+sc.center.z);
+        float d=std::sqrt(px*px+py*py+pz*pz);
+        std::cerr << "   alloc " << alloc[k] << "/" << sc.count
+                  << "  extent " << sc.extent << "  dist " << d
+                  << "  angRatio " << (sc.extent*1.732f/std::max(d,1.0f)) << "\n";
+      }
+    }
+  }
+
+  int drawn = 0;
+  for (size_t k = 0; k < vis.size(); ++k) {
+    const StarChunk& sc = starChunks[vis[k].idx];
+    int n = alloc[k];
+    if (n < 32) n = 32;                            // never blank a visible chunk
+    if (n > sc.count) n = sc.count;
+    if (n <= 0) continue;
+    if (lc >= 0) glUniform3f(lc, sc.center.x, sc.center.y, sc.center.z);
+    if (le >= 0) glUniform1f(le, sc.extent);
+    glDrawArrays(GL_POINTS, sc.first, n);
+    drawn += n;
+  }
+  lastDrawnStars = drawn;
+  if (std::getenv("STARDEBUG")) {
+    static int f = 0;
+    if ((f++ % 120) == 0)
+      std::cerr << "[starfield] visible " << lastVisibleChunks << "/" << starChunks.size()
+                << " chunks, drawn " << drawn << " / " << bufferSize << " stars\n";
+  }
+  if (le >= 0) glUniform1f(le, 0.0f);              // back to plain float positions
+}
+
 void RenderedObject::setupRender()
 {
   glGenVertexArrays(1, &vao);
@@ -1282,7 +1506,13 @@ void RenderedObject::setupRender()
   glGenBuffers(1, &vbo);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
-  if (meshType == MeshType::sphere) {
+  if (isStarfield) {
+    // 3 x int16, normalised to [-1,1] within the chunk; the shader scales by the
+    // chunk's extent. Half the bandwidth and VRAM of floats.
+    glVertexAttribPointer(0, 3, GL_SHORT, GL_TRUE, 3 * sizeof(short), (void*)0);
+    glEnableVertexAttribArray(0);
+  }
+  else if (meshType == MeshType::sphere) {
     // pos(3) + normal(3) + uv(2) = 8 floats per vertex
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
@@ -1297,10 +1527,6 @@ void RenderedObject::setupRender()
     if (meshType == MeshType::cloud) {
       // Attribute 1 = per-frame camera-relative position (computed in double on
       // the CPU) so the galaxy doesn't shimmer under camera motion at 1e9 AU.
-      glGenBuffers(1, &relVbo);
-      glBindBuffer(GL_ARRAY_BUFFER, relVbo);
-      glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-      glEnableVertexAttribArray(1);
       // Attribute 2 = world-lit rim factor (3D-correct dust edge lighting).
       glGenBuffers(1, &rimVbo);
       glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
@@ -1760,47 +1986,26 @@ void RenderedObject::renderLine(const double cameraTranslate[3], const float vie
 }
 
 void RenderedObject::renderCloud(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
-  if(bufferSize == 0 || UVObjectMeshBuffer.empty()) return;
-  if(!hasBeenRendered) { setupRender(); }
+  // A starfield keeps no CPU-side copy: its positions live only in the static
+  // VBO built by LoadStarfield, so the usual "empty buffer" guard must not fire.
+  if(bufferSize == 0 || (!isStarfield && UVObjectMeshBuffer.empty())) return;
+  if(!hasBeenRendered) { setupRender(); cloudGpuDirty = true; }
   glBindVertexArray(vao);
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  // Streamed every frame — GL_STREAM_DRAW (not STATIC) so the driver orphans and
-  // reuses storage instead of piling up "static" allocations in VRAM.
-  glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float), &UVObjectMeshBuffer[0], GL_STREAM_DRAW);
 
-  // Camera-relative particle positions computed in DOUBLE — eliminates the
-  // large-world float cancellation (aPos + camera at ~1e9 AU) that made the
-  // galaxy structure shimmer when the camera moved. Absolute positions stay in
-  // vbo (attribute 0) for the dust clump hashing; attribute 1 gets these.
-  {
-    size_t n = UVObjectMeshBuffer.size() / 3;
-    if (relPosBuffer.size() != n * 3) relPosBuffer.resize(n * 3);
-    double r[9] = {1,0,0, 0,1,0, 0,0,1};
-    if (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f) {
-      const double d2r = 3.14159265358979323846 / 180.0;
-      double ca = std::cos(rotationDeg.x*d2r), sa = std::sin(rotationDeg.x*d2r);
-      double cb = std::cos(rotationDeg.y*d2r), sb = std::sin(rotationDeg.y*d2r);
-      double cc = std::cos(rotationDeg.z*d2r), sc = std::sin(rotationDeg.z*d2r);
-      r[0]=cc*cb; r[1]=cc*sb*sa - sc*ca; r[2]=cc*sb*ca + sc*sa;
-      r[3]=sc*cb; r[4]=sc*sb*sa + cc*ca; r[5]=sc*sb*ca - cc*sa;
-      r[6]=-sb;   r[7]=cb*sa;            r[8]=cb*ca;
-    }
-    double ox = coordinates.x + cameraTranslate[0];
-    double oy = coordinates.y + cameraTranslate[1];
-    double oz = coordinates.z + cameraTranslate[2];
-    for (size_t i = 0; i < n; i++) {
-      double ax = UVObjectMeshBuffer[i*3+0];
-      double ay = UVObjectMeshBuffer[i*3+1];
-      double az = UVObjectMeshBuffer[i*3+2];
-      relPosBuffer[i*3+0] = (float)(ox + r[0]*ax + r[1]*ay + r[2]*az);
-      relPosBuffer[i*3+1] = (float)(oy + r[3]*ax + r[4]*ay + r[5]*az);
-      relPosBuffer[i*3+2] = (float)(oz + r[6]*ax + r[7]*ay + r[8]*az);
-    }
-    glBindBuffer(GL_ARRAY_BUFFER, relVbo);
-    glBufferData(GL_ARRAY_BUFFER, relPosBuffer.size()*sizeof(float), relPosBuffer.data(), GL_STREAM_DRAW);
+  // Positions are STATIC in the cloud's own frame, so they upload only when they
+  // actually change (formation load, or a physics step writing new positions).
+  // Previously this buffer — and a second camera-relative copy built by a CPU
+  // loop over every particle — was re-uploaded every frame.
+  if (cloudGpuDirty && !isStarfield) {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float),
+                 &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
+    cloudGpuDirty = false;
   }
 
   glUseProgram(program);
+  setCloudPlacementUniforms(cameraTranslate);
+
   if (realisticUniform != (unsigned int)-1)
     glUniform1i(realisticUniform, realisticShading ? 1 : 0);
   {
@@ -1814,6 +2019,10 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (vhLoc >= 0) glUniform1f(vhLoc, (float)fbHeight);
     GLint rcLoc = glGetUniformLocation(program, "uResolvedCut");
     if (rcLoc >= 0) glUniform1f(rcLoc, cineResolvedCut);
+    GLint sfLoc = glGetUniformLocation(program, "uStarfield");
+    if (sfLoc >= 0) glUniform1i(sfLoc, 0);
+    GLint ssLoc = glGetUniformLocation(program, "uStarSize");
+    if (ssLoc >= 0) glUniform1f(ssLoc, cineStarSize);
     GLint gsLoc = glGetUniformLocation(program, "uGasStrength");
     if (gsLoc >= 0) glUniform1f(gsLoc, cineGasStrength);
   }
@@ -1836,19 +2045,25 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     GLint passLoc = glGetUniformLocation(program, "uCloudPass");
 
     // 1. Haze — the diffuse "gas" glow (density-driven from the star field).
+    //    A star catalogue runs the SAME passes as a procedural cloud: the haze
+    //    is where the dense, milky look comes from, and skipping it made the
+    //    catalogue render as isolated dots unlike every other project.
     glBlendFunc(GL_ONE, GL_ONE);
     if (passLoc >= 0) glUniform1i(passLoc, 0);
-    glDrawArrays(GL_POINTS, 0, bufferSize);
+    if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+    else             glDrawArrays(GL_POINTS, 0, bufferSize);
 
     // 2. Glowing gas — emission nebulosity near hot young stars (additive).
     if (cineGasStrength > 0.0f) {
       if (passLoc >= 0) glUniform1i(passLoc, 4);
-      glDrawArrays(GL_POINTS, 0, bufferSize);
+      if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+      else             glDrawArrays(GL_POINTS, 0, bufferSize);
     }
 
     // 3. Star cores — the resolved (bright) individual stars only.
     if (passLoc >= 0) glUniform1i(passLoc, 1);
-    glDrawArrays(GL_POINTS, 0, bufferSize);
+    if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+    else             glDrawArrays(GL_POINTS, 0, bufferSize);
 
     // 3. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
     //    glow behind it, like a real dark cloud. Many small, density-placed sprites
@@ -1856,7 +2071,8 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     //    light so bright stars still show through the gaps.
     glBlendFunc(GL_ZERO, GL_SRC_COLOR);
     if (passLoc >= 0) glUniform1i(passLoc, 3);
-    glDrawArrays(GL_POINTS, 0, bufferSize);
+    if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+    else             glDrawArrays(GL_POINTS, 0, bufferSize);
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -1877,7 +2093,8 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glPointSize(2);
   }
 
-  glDrawArrays(GL_POINTS, 0, bufferSize);
+  if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+  else             glDrawArrays(GL_POINTS, 0, bufferSize);
 
   if (curRenderMode == 1) {
     glDisable(GL_BLEND);
@@ -1914,6 +2131,7 @@ void RenderedObject::UpdateCloudPhysics
     UVObjectMeshBuffer[i*3+1] = first.position.y;
     UVObjectMeshBuffer[i*3+2] = first.position.z;
   }
+  cloudGpuDirty = true;
 }
 
 std::vector<ParticleSnapshot> RenderedObject::getParticleSnapshots() const {
@@ -1933,6 +2151,7 @@ void RenderedObject::setParticleSnapshots(const std::vector<ParticleSnapshot>& s
     UVObjectMeshBuffer[i*3+1] = snapshots[i].position.y;
     UVObjectMeshBuffer[i*3+2] = snapshots[i].position.z;
   }
+  cloudGpuDirty = true;
 }
 
 void RenderedObject::LoadCloudFromFormation(const std::vector<CloudParticle>& particles) {
@@ -1945,6 +2164,7 @@ void RenderedObject::LoadCloudFromFormation(const std::vector<CloudParticle>& pa
     UVObjectMeshBuffer.emplace_back(p.position.z);
   }
   bufferSize = (int)cloudParticles.size();
+  cloudGpuDirty = true;
   meshType = MeshType::cloud;
   hasBeenRendered = false;
 }
