@@ -328,3 +328,76 @@ catalogues already dim and brighten as the LOD budget drops stars with distance.
   the scale where they are meaningless.
 - `BuildProceduralUniverse` (all galaxies in one cloud) is superseded by the
   per-galaxy path and should probably be deleted.
+
+---
+
+# Open issues  (handoff — read before touching galaxy rendering)
+
+## 1. Distant galaxies flicker while moving  (UNSOLVED, prime suspect known)
+
+Symptom: distant galaxies pulse/flicker as the camera moves. Only in motion —
+invisible in a still, so DO NOT try to diagnose it from harness mean luminance.
+Get a screenshot or fly. Three wrong guesses were burned reasoning from means.
+
+PRIME SUSPECT, in `cloudVert.glsl`, added while fixing the "yellow balls":
+
+```
+vHazeBoost = clamp((sz * sz) / max(capped * capped, 1e-4), 1.0, 48.0);
+```
+
+`capped` comes from `uChunkScreenPx`, recomputed EVERY FRAME from camera
+distance, so the boost varies continuously as you fly — brightness pumping,
+which is what flicker looks like. It also reaches 48x, and combined with an
+experiment that drew every built star (instead of a screen-area subset) it
+whited out the whole view.
+
+FIRST EXPERIMENT: force `vHazeBoost = 1.0` and fly. If the flicker stops, it is
+confirmed. Then the real question is how to keep distant galaxies visible
+WITHOUT a multiplier that tracks live camera distance — e.g. derive it from the
+galaxy's own fixed properties, or cap it far below 48.
+
+The size cap and the boost are A PAIR: the cap shrinks the lobe, the boost
+returns the light. Removing the boost alone makes distant galaxies dimmer than
+the version that was signed off.
+
+Ruled out (verified, do not re-investigate):
+- Stars do NOT move between LOD levels. `GenerateGalaxyStars` is a proper
+  prefix: LOD 128 and LOD 1024 share identical first-128 positions.
+- Camera-relative differencing in double on the CPU is intact (the `4682aeb`
+  fix). Float precision of `uChunkCenter` is ~2^-24 relative, i.e. sub-pixel at
+  any distance.
+
+Attempted and REVERTED (all three changed the look without fixing the flicker):
+- Deriving the chunk frame from the desc instead of the sampled bounding box.
+  NOTE: this fixed a REAL bug — the bbox-derived centre shifted ~1e8 AU per rung
+  and the shader hashes star colour, magnitude and the dust lane field on
+  position RELATIVE TO THAT CENTRE, so every rebuild re-rolled the galaxy. Worth
+  redoing on a clean base. Per-type bounds (spiral 1.30, elliptical 1.15,
+  irregular 1.70 x radius) measured over 300 galaxies; a flat 1.7 washes spirals
+  out.
+- Drawing every built star for galaxies (`n = sc.count`) instead of the
+  per-frame screen-area cap. Made galaxies much brighter.
+- Quantising the capped sprite size to integer pixels. Also shifted the
+  milky_way baseline 61.62 -> 61.79 when applied unconditionally.
+
+## 2. Draw order: things render through things  (diagnosed, not fixed)
+
+Two symptoms, one cause:
+- Background galaxies shine through a foreground galaxy's dark dust lanes.
+- Galaxy haze edges overflow ON TOP OF planets.
+
+Clouds draw in LIST ORDER with `glDepthMask(GL_FALSE)`, so a background galaxy
+drawn later paints over an earlier galaxy's multiplicative dust. A point sprite
+also carries ONE depth for the whole quad, so a large haze lobe centred beside a
+planet bleeds across the planet's silhouette instead of being clipped by it.
+
+Fix: draw back-to-front by camera distance. CRITICAL: build a sorted INDEX LIST
+for drawing — do NOT reorder the `clouds` vector. Selection sentinels encode
+cloud indices as `-(2 + i)`, so shuffling it silently retargets selections and
+deletes.
+
+## 3. Editor overlays shred past ~1e15 AU
+
+Grid and gizmo still build geometry in float. Same conversion the rest of the
+scene already had: camera-relative differences in double on the CPU, small
+floats to the GPU. See "Large-world coordinates" in CLAUDE.md.
