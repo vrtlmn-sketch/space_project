@@ -54,6 +54,41 @@ struct SpawnFormState {
   float  visualRadius  = 0.01f; // free object: mesh bounding radius (AU)
 };
 
+// ---- Universe spawner (see docs/universe.md) --------------------------------
+// A universe is a container that GENERATES its contents from a seed, optionally
+// anchored to real astronomical data. The single axis that matters is how much
+// of it is empirically grounded; everything else refines that.
+struct UniverseFormState {
+  char  name[64]      = "Universe";
+  int   preset        = 0;      // 0=Observable, 1=Home, 2=Sandbox, 3=Deep field, 4=Custom
+  float empirical     = 0.35f;  // 0 = fully procedural, 1 = fully data-driven
+  bool  homeSurroundings = true;// pin the real Milky Way + Solar System
+
+  // ── Real source ──
+  int   datasetPreset = 0;      // best available / Gaia / extragalactic / nearby / custom
+  bool  srcStars = true, srcGalaxies = true, srcExoplanets = true;
+  bool  srcNebulae = true, srcBlackHoles = true, srcClusters = true;
+  int   unknownData   = 0;      // leave / infer / procedurally complete
+  int   measurement   = 0;      // best estimate / sample / show uncertainty
+  int   epoch         = 0;      // current observational data
+
+  // ── Procedural ──
+  unsigned int seed   = 82947291u;
+  int   generator     = 0;      // cosmological / artistic / uniform / clustered / custom
+  float radiusGly     = 46.0f;
+  float cosmicWeb = 1.0f, clustering = 1.0f, voidSize = 1.0f, galaxyDensity = 1.0f;
+  float popSpiral = 0.58f, popElliptical = 0.27f, popIrregular = 0.15f;
+  int   physicalModel = 0;      // realistic / relaxed / custom laws
+  int   depthGalaxies = 0, depthStars = 1, depthPlanets = 1, depthSurfaces = 2;
+
+  // ── Mixing ──
+  int   mixMode       = 0;      // preserve observed / spatial / statistical / progressive
+  float scaleSolar = 1.0f, scaleNearby = 1.0f, scaleMilkyWay = 0.8f;
+  float scaleLocalGroup = 0.6f, scaleNearbyGal = 0.4f, scaleLSS = 0.2f, scaleDistant = 0.0f;
+  float typeStars = 1.0f, typeExo = 1.0f, typeGalaxies = 0.8f;
+  float typeNebulae = 0.2f, typeBlackHoles = 0.5f, typeDarkMatter = 0.0f;
+};
+
 // ---- Spawned camera object (viewpoint you can frame, keyframe and record) ----
 struct SceneCamera {
   std::string name{"Camera"};
@@ -480,6 +515,7 @@ private:
   void DrawControlsPanel(const SceneCallbacks& cb);
   void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds);
   void DrawSpawnPanel(const SceneCallbacks& cb);
+  void DrawUniversePanel();
   void DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
   void DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
   void DrawGhostObject();
@@ -747,6 +783,7 @@ public:
   // Public spawn/grid forms (accessed from main.cpp)
   SpawnFormState spawnForm{};
   GridFormState  gridForm{};
+  UniverseFormState universeForm{};
 
   // Camera context distance: selected object, or nearest object surface when
   // nothing is selected (-1 = empty scene). Updated each frame in DrawUI;
@@ -754,6 +791,7 @@ public:
   float focusDistance{-1.0f};
 
   // ---- App settings (persisted in settings.json, independent of projects) ----
+  bool showUniversePanel{false};   // floating universe generator
   bool showSettingsPanel{false};
   bool themeLight{false};              // active theme has light surfaces
   char appTheme[64] = "Space wander (ImGui)";

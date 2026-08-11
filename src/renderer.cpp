@@ -1860,6 +1860,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   DrawInspector(physicsObjects, clouds, cb);
   DrawRenderingSettings(cb);
   DrawProjectPanel(cb);
+  DrawUniversePanel();
   DrawSettingsPanel();
   DrawTextEditor();
   DrawCliPanel();
@@ -3761,6 +3762,186 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DrawUniversePanel  (floating — the universe generator, see docs/universe.md)
+// ─────────────────────────────────────────────────────────────────────────────
+// MOCKUP. Every dial from the design is present so the shape can be judged
+// before anything is wired; controls that do nothing yet are marked. Kept in
+// its own window rather than the Spawn tab because it is far too large to sit
+// in a docked side panel.
+void Renderer::DrawUniversePanel() {
+  if (!showUniversePanel) return;
+  ImGui::SetNextWindowSize(ImVec2(460, 760), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Universe Generator", &showUniversePanel)) { ImGui::End(); return; }
+
+    auto todo = [&]() {
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(0.85f, 0.65f, 0.25f, 1.0f), "(not implemented)");
+    };
+    auto& U = universeForm;
+
+    ImGui::InputText("Name##uni", U.name, sizeof(U.name));
+
+    ImGui::Spacing();
+    ImGui::Text("Preset");
+    ImGui::SetNextItemWidth(-1);
+    const char* presets[] = { "Observable Universe", "Home (familiar start)",
+                              "Sandbox", "Deep Field", "Custom" };
+    ImGui::Combo("##unipreset", &U.preset, presets, IM_ARRAYSIZE(presets)); todo();
+    ImGui::TextDisabled("Presets are the main interface — the dials below are for tuning.");
+
+    // ── The one axis that matters ──
+    ImGui::Spacing();
+    ImGui::SeparatorText("Reality Mix");
+    ImGui::Text("%.0f%% empirical", U.empirical * 100.0f);
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderFloat("##uniempirical", &U.empirical, 0.0f, 1.0f, ""); todo();
+    ImGui::TextDisabled("REAL  <-------------------->  PROCEDURAL");
+    ImGui::TextDisabled("Nothing is partly real: this is how much of the universe is\n"
+                        "grounded in measurements rather than generated.");
+
+    ImGui::Spacing();
+    ImGui::Checkbox("Home surroundings", &U.homeSurroundings); todo();
+    ImGui::TextDisabled("Pin the real Milky Way and Solar System so you start\n"
+                        "somewhere familiar, wherever the slider sits.");
+
+    // ── Real source ──
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Configure Real Source")) {
+      ImGui::Text("Dataset preset");
+      const char* dsets[] = { "Best available", "Gaia-focused", "Extragalactic",
+                              "Nearby universe", "Custom" };
+      ImGui::SetNextItemWidth(-1);
+      ImGui::Combo("##unidset", &U.datasetPreset, dsets, IM_ARRAYSIZE(dsets)); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Data sources");
+      ImGui::Checkbox("Stars##us",      &U.srcStars);      ImGui::SameLine(140);
+      ImGui::Checkbox("Galaxies##us",   &U.srcGalaxies);
+      ImGui::Checkbox("Exoplanets##us", &U.srcExoplanets); ImGui::SameLine(140);
+      ImGui::Checkbox("Nebulae##us",    &U.srcNebulae);
+      ImGui::Checkbox("Black holes##us",&U.srcBlackHoles); ImGui::SameLine(140);
+      ImGui::Checkbox("Clusters##us",   &U.srcClusters);
+      ImGui::TextDisabled("Real does not mean complete — catalogues are"); todo();
+      ImGui::TextDisabled("magnitude-limited and full of holes.");
+
+      ImGui::Spacing();
+      ImGui::Text("Unknown data");
+      ImGui::RadioButton("Leave unknown##uu",        &U.unknownData, 0);
+      ImGui::RadioButton("Infer statistically##uu",  &U.unknownData, 1);
+      ImGui::RadioButton("Procedurally complete##uu",&U.unknownData, 2); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Measurement handling");
+      ImGui::RadioButton("Best estimate##um",     &U.measurement, 0);
+      ImGui::RadioButton("Sample uncertainty##um",&U.measurement, 1);
+      ImGui::RadioButton("Show uncertainty##um",  &U.measurement, 2); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Epoch");
+      const char* epochs[] = { "Current observational data" };
+      ImGui::SetNextItemWidth(-1);
+      ImGui::Combo("##uniepoch", &U.epoch, epochs, IM_ARRAYSIZE(epochs)); todo();
+    }
+
+    // ── Procedural ──
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Configure Generator", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::Text("Seed");
+      ImGui::SetNextItemWidth(-90);
+      int seedi = (int)U.seed;
+      if (ImGui::InputInt("##uniseed", &seedi, 0, 0)) U.seed = (unsigned)seedi;
+      ImGui::SameLine();
+      if (ImGui::Button("Randomize##uni")) U.seed = (unsigned)(U.seed * 1664525u + 1013904223u);
+
+      ImGui::Spacing();
+      ImGui::Text("Generator");
+      const char* gens[] = { "Standard Cosmological", "Artistic", "Uniform",
+                             "Clustered", "Custom" };
+      ImGui::SetNextItemWidth(-1);
+      ImGui::Combo("##unigen", &U.generator, gens, IM_ARRAYSIZE(gens)); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Scale");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##uniradius", &U.radiusGly, 0.1f, 46.0f, "Radius  %.1f Gly"); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Structure");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##uweb",  &U.cosmicWeb,     0.0f, 2.0f, "Cosmic web    %.2f");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##uclu",  &U.clustering,    0.0f, 2.0f, "Clustering    %.2f");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##uvoid", &U.voidSize,      0.0f, 2.0f, "Void size     %.2f");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##uden",  &U.galaxyDensity, 0.0f, 2.0f, "Galaxy density %.2f"); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Galaxy population");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##upsp", &U.popSpiral,     0.0f, 1.0f, "Spiral      %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##upel", &U.popElliptical, 0.0f, 1.0f, "Elliptical  %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##upir", &U.popIrregular,  0.0f, 1.0f, "Irregular   %.0f%%"); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Physical model");
+      ImGui::RadioButton("Realistic##up",   &U.physicalModel, 0); ImGui::SameLine();
+      ImGui::RadioButton("Relaxed##up",     &U.physicalModel, 1); ImGui::SameLine();
+      ImGui::RadioButton("Custom laws##up", &U.physicalModel, 2); todo();
+
+      ImGui::Spacing();
+      ImGui::Text("Generation depth");
+      const char* depth[] = { "Full", "Dynamic", "On demand", "Off" };
+      ImGui::SetNextItemWidth(-1); ImGui::Combo("##udg", &U.depthGalaxies, depth, IM_ARRAYSIZE(depth));
+      ImGui::SetNextItemWidth(-1); ImGui::Combo("##uds", &U.depthStars,    depth, IM_ARRAYSIZE(depth));
+      ImGui::SetNextItemWidth(-1); ImGui::Combo("##udp", &U.depthPlanets,  depth, IM_ARRAYSIZE(depth));
+      ImGui::SetNextItemWidth(-1); ImGui::Combo("##udu", &U.depthSurfaces, depth, IM_ARRAYSIZE(depth)); todo();
+      ImGui::TextDisabled("Galaxies / Stars / Planets / Surfaces");
+    }
+
+    // ── Mixing ──
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Mixing")) {
+      ImGui::Text("Mixing mode");
+      ImGui::RadioButton("Preserve observed objects##ux", &U.mixMode, 0);
+      ImGui::RadioButton("Spatial blend##ux",             &U.mixMode, 1);
+      ImGui::RadioButton("Statistical blend##ux",         &U.mixMode, 2);
+      ImGui::RadioButton("Replace progressively##ux",     &U.mixMode, 3); todo();
+
+      ImGui::Spacing();
+      ImGui::SeparatorText("Reality constraints (by scale)");
+      ImGui::TextDisabled("Reality fades with distance — we genuinely know more nearby.");
+      ImGui::BeginDisabled(true);
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rc1", &U.scaleSolar,      0,1, "Solar System          LOCKED");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rc2", &U.scaleNearby,     0,1, "Nearby stars          %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rc3", &U.scaleMilkyWay,   0,1, "Milky Way             %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rc4", &U.scaleLocalGroup, 0,1, "Local Group           %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rc5", &U.scaleNearbyGal,  0,1, "Nearby galaxies       %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rc6", &U.scaleLSS,        0,1, "Large-scale structure %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rc7", &U.scaleDistant,    0,1, "Distant universe      %.0f%%");
+      ImGui::EndDisabled(); todo();
+
+      ImGui::Spacing();
+      ImGui::SeparatorText("Reality by data type");
+      ImGui::BeginDisabled(true);
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rt1", &U.typeStars,      0,1, "Stars       %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rt2", &U.typeExo,        0,1, "Exoplanets  %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rt3", &U.typeGalaxies,   0,1, "Galaxies    %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rt4", &U.typeNebulae,    0,1, "Nebulae     %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rt5", &U.typeBlackHoles, 0,1, "Black holes %.0f%%");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rt6", &U.typeDarkMatter, 0,1, "Dark matter %.0f%%");
+      ImGui::EndDisabled(); todo();
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextDisabled("Generated objects never simulate physics by default.");
+    ImGui::BeginDisabled(true);
+    ImGui::Button("Create Universe", ImVec2(-1, 30));
+    ImGui::EndDisabled();
+    ImGui::TextColored(ImVec4(0.85f, 0.65f, 0.25f, 1.0f),
+                       "Mockup — next step is the fully procedural end.");
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DrawSpawnPanel  (docked left-top — spawn tools)
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
@@ -3768,6 +3949,17 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
   ImGui::Begin("Spawn", nullptr, flags);
 
   if (ImGui::BeginTabBar("SpawnTabs")) {
+
+    // ── Universe tab — the generator is a floating panel of its own ──
+    if (ImGui::BeginTabItem("Universe")) {
+      ImGui::TextWrapped("A universe is a container that generates its own contents "
+                         "from a seed, optionally anchored to real astronomical data.");
+      ImGui::Spacing();
+      if (ImGui::Button("Universe Generator", ImVec2(-1, 32)))
+        showUniversePanel = true;
+      ImGui::TextDisabled("Opens the full generator in its own window.");
+      ImGui::EndTabItem();
+    }
 
     // ── Physics Object tab ──
     if (ImGui::BeginTabItem("Object")) {
