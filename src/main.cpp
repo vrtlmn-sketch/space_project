@@ -17,6 +17,7 @@
 #include "planeObject.h"
 #include "lineObject.h"
 #include "cloudObject.h"
+#include "universeGen.h"
 #include "gridObject.h"
 #include "projectSerializer.h"
 #include "proceduralGen.h"
@@ -238,6 +239,41 @@ int main(int argc, char** argv) {
   cb.applyCloud = [&](const CloudFormState& cf) {
     if (!cf.enabled) return;
     clouds.push_back(buildCloudFromData(cloudDataFromForm(cf)));
+  };
+
+  // Procedural universe: one cloud holding every galaxy, each galaxy a chunk.
+  renderer.universeCreate = [&](const UniverseFormState& uf) {
+    UniverseParams up;
+    up.seed           = uf.seed;
+    up.radiusGly      = uf.radiusGly;
+    up.galaxyCount    = renderer.universeGalaxyCount;
+    up.starsPerGalaxy = renderer.universeStarsPerGalaxy;
+    up.clustering     = uf.clustering;
+    up.popSpiral      = uf.popSpiral;
+    up.popElliptical  = uf.popElliptical;
+    up.popIrregular   = uf.popIrregular;
+
+    // ONE CLOUD PER GALAXY. Packing them into a single object was efficient but
+    // wrong: a galaxy has to be selectable, locatable and editable, which means
+    // it must exist in the scene rather than be anonymous geometry inside a blob.
+    std::vector<GalaxyDesc> galaxies;
+    GenerateUniverseGalaxies(up, galaxies);
+    int gi = 0;
+    for (const GalaxyDesc& g : galaxies) {
+      auto cloud = std::make_unique<CloudObject>(vec3{0,0,0}, std::vector<CloudParticle>{});
+      cloud->position = g.position;             // double: universe scale
+      cloud->renderedObject.coordinates = g.position;
+      cloud->renderedObject.BuildGalaxyStarfield(g, up.starsPerGalaxy);
+      cloud->renderedObject.setupShaders("src/shaders/cloudVert.glsl", "src/shaders/cloudFrag.glsl");
+      cloud->simulatePhysics = false;           // universes never simulate by default
+      const char* kind = (g.type == GalaxyType::Spiral)     ? "Spiral"
+                       : (g.type == GalaxyType::Elliptical) ? "Elliptical" : "Irregular";
+      cloud->name = std::string(kind) + " Galaxy " + std::to_string(++gi);
+      cloud->universeMember = true;
+      clouds.push_back(std::move(cloud));
+    }
+    std::cout << "[universe] " << galaxies.size() << " galaxies as separate objects, "
+              << (long long)galaxies.size() * up.starsPerGalaxy << " stars\n";
   };
 
   cb.deleteCloud = [&](int cloudIdx) {
@@ -692,9 +728,19 @@ int main(int argc, char** argv) {
     // Scale the RT dust influence radius to the primary cloud's size (world
     // units) so dust works whether the cloud spans 1 AU or 26,000 ly.
     if (!clouds.empty()) {
-      vec3 dcen; float drad = 1.0f;
-      clouds[0]->boundsEstimate(dcen, drad);
-      renderer.dustInfluence = std::max(drad * 0.04f, 1e-6f);
+      dvec3 dcenW; double dradD = 1.0;
+      clouds[0]->boundsEstimate(dcenW, dradD);
+      vec3 dcen{(float)dcenW.x, (float)dcenW.y, (float)dcenW.z};
+      float drad = (float)dradD;
+      // Star colour and magnitude are hashed on position/dustInfluence. For a
+      // UNIVERSE the cloud spans ~1e15 AU, so every star inside one galaxy
+      // divides to the same value and the whole field collapses to a single
+      // hashed star. Scale to the local structure (a galaxy) instead.
+      float scaleRad = drad;
+      const auto& sc0 = clouds[0]->renderedObject.starChunks;
+      if (clouds[0]->renderedObject.isStarfield && !sc0.empty())
+        scaleRad = sc0[sc0.size() / 2].extent;      // representative chunk
+      renderer.dustInfluence = std::max(scaleRad * 0.04f, 1e-6f);
       // Camera-relative centre (RT objects are pushed camera-relative), so the
       // clump pattern is anchored to the galaxy and doesn't swim with the camera.
       renderer.dustCenter[0] = dcen.x + (float)renderer.cameraTranslate[0];
@@ -953,6 +999,38 @@ int main(int argc, char** argv) {
         renderer.EndRecordRaster();
         std::cout << "[compare] wrote /tmp/cmp_rt.png and /tmp/cmp_raster.png\n";
         std::exit(0);
+      }
+    }
+
+    // UNIVERSE_TEST=<galaxies>: build a procedural universe once at startup so
+    // generation can be exercised without the GUI.
+    {
+      static bool uniTested = false;
+      const char* ut = std::getenv("UNIVERSE_TEST");
+      if (ut && !uniTested) {
+        uniTested = true;
+        int n = std::atoi(ut);
+        if (n > 0) renderer.universeGalaxyCount = n;
+        if (const char* sp = std::getenv("UNIVERSE_STARS"))
+          renderer.universeStarsPerGalaxy = std::atoi(sp);
+        if (const char* rr = std::getenv("UNIVERSE_RADIUS"))
+          renderer.universeForm.radiusGly = (float)std::atof(rr);
+        if (renderer.universeCreate) renderer.universeCreate(renderer.universeForm);
+        // Park the camera beside the first generated galaxy so the near end of
+        // the LOD can be exercised without hunting for one by hand.
+        if (!clouds.empty()) {
+          const auto& gal = *clouds.back();
+          const auto& ch = gal.renderedObject.starChunks;
+          if (!ch.empty()) {
+            // Galaxy position is the CLOUD's (double); chunk centres are local.
+            double back = ch[0].extent * 2.5;
+            renderer.cameraTranslate[0] = -(gal.position.x + ch[0].center.x);
+            renderer.cameraTranslate[1] = -(gal.position.y + ch[0].center.y);
+            renderer.cameraTranslate[2] = -(gal.position.z + ch[0].center.z) - back;
+            std::cout << "[universe] camera parked at a galaxy, extent "
+                      << ch[0].extent << " AU, dist " << back << " AU\n";
+          }
+        }
       }
     }
 

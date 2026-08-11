@@ -569,7 +569,7 @@ CloudObject::CloudObject(const vec3& position, int objectCount, float (*distribu
 }
 
 CloudObject::CloudObject(const vec3& position, const std::string& formationPath){
-  this->position = position;
+  this->position = dvec3(position);
   this->formationFile = formationPath;
 
   // A .starfield is a chunked binary catalogue (millions of stars) rather than
@@ -625,7 +625,7 @@ CloudObject::CloudObject(const vec3& position, const std::string& formationPath)
 }
 
 CloudObject::CloudObject(const vec3& pos, std::vector<CloudParticle> pts) {
-  this->position = pos;
+  this->position = dvec3(pos);
   renderedObject.LoadCloudFromFormation(pts);
   renderedObject.setupShaders("src/shaders/cloudVert.glsl", "src/shaders/cloudFrag.glsl");
 }
@@ -638,23 +638,25 @@ void CloudObject::SetShaders(const std::string& vertShaderPath, const std::strin
   renderedObject.setupShaders(vertShaderPath, fragShaderPath);
 }
 
-void CloudObject::boundsEstimate(vec3& center, float& radius) const {
+void CloudObject::boundsEstimate(dvec3& center, double& radius) const {
   if (renderedObject.isStarfield && !renderedObject.starChunks.empty()) {
     vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
     for (const auto& sc : renderedObject.starChunks) {
-      lo.x = std::min(lo.x, sc.center.x - sc.extent); hi.x = std::max(hi.x, sc.center.x + sc.extent);
-      lo.y = std::min(lo.y, sc.center.y - sc.extent); hi.y = std::max(hi.y, sc.center.y + sc.extent);
-      lo.z = std::min(lo.z, sc.center.z - sc.extent); hi.z = std::max(hi.z, sc.center.z + sc.extent);
+      lo.x = std::min(lo.x, (float)(sc.center.x - sc.extent)); hi.x = std::max(hi.x, (float)(sc.center.x + sc.extent));
+      lo.y = std::min(lo.y, (float)(sc.center.y - sc.extent)); hi.y = std::max(hi.y, (float)(sc.center.y + sc.extent));
+      lo.z = std::min(lo.z, (float)(sc.center.z - sc.extent)); hi.z = std::max(hi.z, (float)(sc.center.z + sc.extent));
     }
-    center = vec3{(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};
-    radius = std::max(std::max(hi.x-lo.x, hi.y-lo.y), hi.z-lo.z) * 0.5f;
-    if (radius <= 0.0f) radius = 1.0f;
+    center = dvec3{ position.x + (lo.x+hi.x)*0.5,
+                    position.y + (lo.y+hi.y)*0.5,
+                    position.z + (lo.z+hi.z)*0.5 };
+    radius = std::max(std::max(hi.x-lo.x, hi.y-lo.y), hi.z-lo.z) * 0.5;
+    if (radius <= 0.0) radius = 1.0;
     return;
   }
 
   const auto& buf = renderedObject.UVObjectMeshBuffer;
   size_t n = buf.size() / 3;
-  if (n == 0) { center = renderedObject.coordinates; radius = 1.0f; return; }
+  if (n == 0) { center = renderedObject.coordinates; radius = 1.0; return; }
 
   double cx = 0, cy = 0, cz = 0;
   for (size_t i = 0; i < n; ++i) {
@@ -668,12 +670,12 @@ void CloudObject::boundsEstimate(vec3& center, float& radius) const {
     r2sum += dx*dx + dy*dy + dz*dz;
   }
   // 2× RMS radius covers the bulk of the cloud without outlier blowup
-  float rms = (float)std::sqrt(r2sum / (double)n);
+  double rms = std::sqrt(r2sum / (double)n);
 
-  center = vec3{(float)cx + renderedObject.coordinates.x,
-                (float)cy + renderedObject.coordinates.y,
-                (float)cz + renderedObject.coordinates.z};
-  radius = std::max(2.0f * rms, 0.1f);
+  center = dvec3{ cx + renderedObject.coordinates.x,
+                  cy + renderedObject.coordinates.y,
+                  cz + renderedObject.coordinates.z };
+  radius = std::max(2.0 * rms, 0.1);
 }
 
 bool CloudObject::gravitySource(vec3& comWorld, float& totalMass) const {

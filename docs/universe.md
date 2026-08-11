@@ -181,3 +181,105 @@ Cheap to reserve now, expensive to retrofit.
   required before any position data is written; see Technical constraints.
 - `.starfield` chunking is the streaming mechanism and already works; the
   generator should emit it directly rather than JSON.
+
+
+---
+
+# Implementation status  (updated at session end)
+
+## Built and working
+
+**`src/universeGen.{h,cpp}`** — deterministic generators, pure functions of a seed
+(xorshift64*, never `std::rand`, so a universe reproduces bit-for-bit anywhere):
+- `GenerateUniverseGalaxies(params, out)` — galaxy descriptors: position, radius,
+  type, seed, inclination, arms. Clumps galaxies around attractor nodes so the
+  result has filaments and voids rather than a uniform fog.
+- `GenerateGalaxyStars(desc, count, out)` — spiral (two-component exponential
+  disc + logarithmic arms + bulge), elliptical (r^2.2, mildly triaxial),
+  irregular (knots + envelope). Inclination and roll applied per galaxy.
+
+**`RenderedObject::BuildGalaxyStarfield(desc, count)`** — one galaxy into one
+chunk, in galaxy-LOCAL coordinates. The owning cloud carries the double-precision
+universe position, so chunk centres stay small and float-safe at any distance.
+
+**`main.cpp` `renderer.universeCreate`** — spawns ONE CloudObject PER GALAXY,
+named (`Spiral Galaxy 7`), `universeMember = true`, physics off. This replaced an
+earlier design that packed every galaxy into a single cloud: efficient, but
+galaxies then had no presence in the scene and could not be selected, located or
+edited. Do not go back to that.
+
+**Hierarchy** — `[U] Universe (N galaxies)` parent node with galaxies indented
+beneath it and a Settings shortcut to the generator panel. Only `universeMember`
+clouds are grouped; hand-placed clouds stay top level and unaffected.
+
+**UI** — Spawn -> Universe tab is just a button; the generator is a floating
+window (`showUniversePanel`, `DrawUniversePanel`). 54 controls, 17 marked
+"(not implemented)". Seed + Randomize and the galaxy/star count sliders are live.
+
+**Test gates** (no GUI needed):
+```
+UNIVERSE_TEST=<galaxies>   build a universe at startup
+UNIVERSE_RADIUS=<Gly>      override radius
+UNIVERSE_STARS=<n>         override stars per galaxy
+PROJECT=<path>             load a specific project
+```
+
+## Bugs fixed (do not re-introduce)
+
+1. **`CloudObject::position` was `vec3`** — a float. At 1e15 AU a float resolves
+   to ~1e8 AU, coarser than a whole galaxy, and it overwrote the correct
+   `dvec3 RenderedObject::coordinates` every frame. Now `dvec3`.
+2. **`StarChunk::center` was `vec3`** — same problem. Now `dvec3`, and the
+   shader uniform is the CAMERA-RELATIVE centre, differenced in double on the
+   CPU. `cloudVert.glsl` uses it directly for starfields and skips
+   `uCloudOrigin`/`uCloudRot` (which would add a large number back).
+3. **`boundsEstimate` returned cloud-LOCAL float coordinates** for starfields
+   while callers treated the result as world — so Locate flew to the origin.
+   Now WORLD-space `dvec3` + `double`. Five call sites updated.
+4. **LOD spent the whole budget regardless of screen size** — distant galaxies
+   drew 50k stars into one pixel, summing to a blown-out spike. Allocation is
+   now capped by the screen area a chunk actually covers: the same view went
+   from 300,000 stars drawn to 104.
+5. **`dustInfluence`** was derived from the whole cloud's radius; at universe
+   scale every star in a galaxy hashed to the same value. Now scales to a
+   representative chunk extent (local structure).
+
+## Known broken
+
+- **Close-up galaxies look sparse.** Not an LOD failure: `LocateCamera` frames at
+  5.7x radius (~20 degrees), which covers ~500k pixels on a 1080p screen, and a
+  galaxy has 50k stars — 0.1 stars per pixel. Cannot be fixed by raising the
+  global count (200 galaxies x 400k = 80M stars, ~480 MB VRAM).
+- **Grid and gizmo overlays shred at ~1e15 AU** — the editor overlays still build
+  geometry in float. Same root cause as the fixed items above, not yet converted.
+- **Scale sweep**: renders at 0.001 Gly, black from 0.01 Gly up. The position and
+  chunk-centre fixes improved it (0.000 -> 0.003 mean) but did not resolve it.
+  Bisect between those two radii to find the remaining float narrowing.
+- **milky_way regression baseline drifted 60.95 -> 60.94** after the float->double
+  position change. Almost certainly benign, unverified.
+
+## Next feature: dynamic star density  (the agreed next step)
+
+This is "Generation depth: Stars -> Dynamic" from the design above.
+
+Regenerate a galaxy's starfield at high density on approach, drop it on
+departure. Determinism makes this free: the galaxy is `seed -> generator`, so
+regenerating is identical every time and nothing needs storing.
+
+Sketch:
+- Store the `GalaxyDesc` on the cloud (it is currently discarded after building).
+- Each frame, compute the galaxy's angular size (the culling code already does).
+- Above a threshold and below the target star count, rebuild via
+  `BuildGalaxyStarfield` at a higher count; below it, rebuild small or evict.
+- Do the generation on a background thread; only the GL upload must be on the
+  main thread. Hysteresis on the threshold, or it will thrash at the boundary.
+- A galaxy at 20 degrees needs roughly 500k-1M stars to read as dense.
+
+## Also queued
+
+- Black holes at galaxy centres — gives each galaxy a navigable anchor object,
+  which suits "children you can select and fly to" better than a cloud of points.
+- Convert grid/gizmo overlays to camera-relative doubles, or suppress them past
+  the scale where they are meaningless.
+- `BuildProceduralUniverse` (all galaxies in one cloud) is superseded by the
+  per-galaxy path and should probably be deleted.

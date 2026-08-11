@@ -128,6 +128,7 @@ struct SceneCallbacks {
   std::function<void(const SpawnFormState&)>              spawnPhysicsObject;
   std::function<void(const GridFormState&)>               applyGrid;
   std::function<void(const CloudFormState&)>              applyCloud;
+  std::function<void(const UniverseFormState&)>           createUniverse;
   std::function<void(int index)>                          deleteObject;
   std::function<void(int cloudIdx)>                       deleteCloud;
   std::function<void(int cloudIdx, const CloudFormState&)> respawnCloud;
@@ -784,6 +785,9 @@ public:
   SpawnFormState spawnForm{};
   GridFormState  gridForm{};
   UniverseFormState universeForm{};
+  int  universeGalaxyCount{200};
+  int  universeStarsPerGalaxy{50000};
+  std::function<void(const UniverseFormState&)> universeCreate{};
 
   // Camera context distance: selected object, or nearest object surface when
   // nothing is selected (-1 = empty scene). Updated each frame in DrawUI;

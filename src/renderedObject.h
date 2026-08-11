@@ -115,7 +115,8 @@ public:
   // in 49 MB and stay precise. Each chunk is culled and level-of-detailed on
   // its own, which is what keeps the drawn count near the budget.
   struct StarChunk {
-    vec3  center;    // cloud-local centre (AU)
+    dvec3 center;    // cloud-local centre (AU) — DOUBLE: at universe scale a
+                     // float resolves to ~1e8 AU, coarser than a whole galaxy
     float extent;    // half-size the int16s are normalised against
     int   first;     // first vertex in the shared VBO
     int   count;     // stars in this chunk
@@ -127,6 +128,13 @@ public:
   int   lastDrawnStars{0};   // reported in the UI
   int   lastVisibleChunks{0};
   void  LoadStarfield(const std::string& indexPath);
+  // Build a starfield in memory from a procedural universe seed. One chunk per
+  // galaxy: compact, so each galaxy becomes the culling and LOD unit for free.
+  void  BuildProceduralUniverse(const struct UniverseParams& p);
+  // One galaxy as its own starfield, in galaxy-LOCAL coordinates. The owning
+  // cloud carries the (double) universe position, so chunk centres stay small
+  // and float-safe no matter how far out the galaxy sits.
+  void  BuildGalaxyStarfield(const struct GalaxyDesc& d, int starCount);
   void  drawStarfieldChunks(const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
                             const double cameraTranslate[3]);
   MeshType meshType{MeshType::sphere};

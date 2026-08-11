@@ -3,6 +3,7 @@
 #include <stb_image.h>
 #include "physicsObject.h"
 #include "renderedObject.h"
+#include "universeGen.h"
 #include "units.h"
 #include <cmath>
 #include <cstring>
@@ -1343,7 +1344,7 @@ void RenderedObject::LoadStarfield(const std::string& indexPath)
     std::memcpy(&ext,&r[36],4);
     if (part >= nParts) continue;
     StarChunk sc;
-    sc.center = vec3{(float)cx, (float)cy, (float)cz};
+    sc.center = dvec3{cx, cy, cz};
     sc.extent = ext;
     sc.first  = (int)((partBase[part] + off) / 6);
     sc.count  = (int)cnt;
@@ -1390,7 +1391,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   const float tanV    = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);
   const float tanH    = tanV * aspect;
 
-  struct Vis { int idx; float weight; };
+  struct Vis { int idx; float weight; int cap; };
   static std::vector<Vis> vis;      // reused: this runs every frame
   vis.clear();
   double wsum = 0.0;
@@ -1398,6 +1399,8 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   for (int i = 0; i < (int)starChunks.size(); ++i) {
     const StarChunk& sc = starChunks[i];
     // chunk centre in camera space (viewRot is row-major; camera looks down -Z)
+    // Camera-relative in DOUBLE, then narrowed: the difference is small even
+    // when both terms are ~1e15, which is the whole point of the hierarchy.
     float px = (float)(ox + sc.center.x), py = (float)(oy + sc.center.y), pz = (float)(oz + sc.center.z);
     float vx = viewRot[0]*px + viewRot[1]*py + viewRot[2]*pz;
     float vy = viewRot[3]*px + viewRot[4]*py + viewRot[5]*pz;
@@ -1424,7 +1427,12 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     if (frac > 1.0f) frac = 1.0f;
     float w = onScreen * frac;   // area it covers, discounted by wasted draws
     if (w <= 0.0f) continue;
-    vis.push_back({i, w});
+    // How many pixels does this chunk actually occupy? Drawing thousands of
+    // stars into a chunk that covers four pixels is pure waste AND sums to a
+    // blown-out white dot. Cap what it can be given by its own screen area.
+    float pixels = onScreen * 0.25f * (float)fbWidth * (float)fbHeight;
+    int   capByArea = (int)(pixels * 4.0f) + 8;
+    vis.push_back({i, w, capByArea});
     wsum += w;
   }
 
@@ -1451,10 +1459,11 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     double spent = 0.0, saturated = 0.0;
     for (size_t k = 0; k < vis.size(); ++k) {
       const StarChunk& sc = starChunks[vis[k].idx];
-      if (alloc[k] >= sc.count) continue;
+      int lim = std::min(sc.count, vis[k].cap);
+      if (alloc[k] >= lim) continue;
       int want = alloc[k] + (int)(remaining * (vis[k].weight / wleft));
-      if (want > sc.count) { spent += sc.count - alloc[k]; saturated += vis[k].weight; alloc[k] = sc.count; }
-      else                 { spent += want - alloc[k];     alloc[k] = want; }
+      if (want > lim) { spent += lim - alloc[k]; saturated += vis[k].weight; alloc[k] = lim; }
+      else            { spent += want - alloc[k]; alloc[k] = want; }
     }
     remaining -= spent; wleft -= saturated;
     if (spent <= 0.0) break;
@@ -1481,9 +1490,14 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     const StarChunk& sc = starChunks[vis[k].idx];
     int n = alloc[k];
     if (n < 32) n = 32;                            // never blank a visible chunk
+    if (n > vis[k].cap) n = vis[k].cap;            // never exceed its screen area
     if (n > sc.count) n = sc.count;
     if (n <= 0) continue;
-    if (lc >= 0) glUniform3f(lc, sc.center.x, sc.center.y, sc.center.z);
+    // uChunkCenter is already CAMERA-RELATIVE for starfields, so the shader
+    // adds nothing large to it.
+    if (lc >= 0) glUniform3f(lc, (float)(ox + sc.center.x),
+                                 (float)(oy + sc.center.y),
+                                 (float)(oz + sc.center.z));
     if (le >= 0) glUniform1f(le, sc.extent);
     glDrawArrays(GL_POINTS, sc.first, n);
     drawn += n;
@@ -1496,6 +1510,126 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
                 << " chunks, drawn " << drawn << " / " << bufferSize << " stars\n";
   }
   if (le >= 0) glUniform1f(le, 0.0f);              // back to plain float positions
+}
+
+
+// ── Procedural universe → chunked starfield (see docs/universe.md) ──────────
+// A galaxy is generated straight into ONE chunk. Galaxies are compact and
+// spatially coherent, so this makes each galaxy the unit the renderer culls
+// and budgets — the chunked path needs no changes at all.
+void RenderedObject::BuildProceduralUniverse(const UniverseParams& p)
+{
+  std::vector<GalaxyDesc> galaxies;
+  GenerateUniverseGalaxies(p, galaxies);
+  if (galaxies.empty()) return;
+
+  starChunks.clear();
+  starChunks.reserve(galaxies.size());
+  std::vector<short> blob;
+  blob.reserve((size_t)galaxies.size() * p.starsPerGalaxy * 3);
+
+  std::vector<vec3> stars;
+  size_t total = 0;
+  for (const GalaxyDesc& g : galaxies) {
+    GenerateGalaxyStars(g, p.starsPerGalaxy, stars);
+    if (stars.empty()) continue;
+
+    // Tight bounds so the culling sphere hugs the galaxy and the int16
+    // quantisation step stays small (a loose box wastes both).
+    vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+    for (const vec3& s : stars) {
+      lo.x=std::min(lo.x,s.x); hi.x=std::max(hi.x,s.x);
+      lo.y=std::min(lo.y,s.y); hi.y=std::max(hi.y,s.y);
+      lo.z=std::min(lo.z,s.z); hi.z=std::max(hi.z,s.z);
+    }
+    vec3  c{(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};
+    float ext = std::max(std::max(hi.x-lo.x, hi.y-lo.y), hi.z-lo.z) * 0.5f;
+    if (ext <= 0.0f) ext = 1.0f;
+
+    StarChunk sc;
+    sc.center = dvec3{ g.position.x + (double)c.x,
+                       g.position.y + (double)c.y,
+                       g.position.z + (double)c.z };
+    sc.extent = ext;
+    sc.first  = (int)(blob.size() / 3);
+    sc.count  = (int)stars.size();
+    starChunks.push_back(sc);
+
+    for (const vec3& s : stars) {
+      blob.push_back((short)std::clamp(std::lround((s.x - c.x) / ext * 32767.0f), -32767L, 32767L));
+      blob.push_back((short)std::clamp(std::lround((s.y - c.y) / ext * 32767.0f), -32767L, 32767L));
+      blob.push_back((short)std::clamp(std::lround((s.z - c.z) / ext * 32767.0f), -32767L, 32767L));
+    }
+    total += stars.size();
+  }
+  if (starChunks.empty()) return;
+
+  isStarfield     = true;
+  meshType        = MeshType::cloud;
+  bufferSize      = (int)total;
+  hasBeenRendered = true;
+  cloudGpuDirty   = false;
+
+  if (!vao) glGenVertexArrays(1, &vao);
+  glBindVertexArray(vao);
+  if (!vbo) glGenBuffers(1, &vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(blob.size()*sizeof(short)), blob.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_SHORT, GL_TRUE, 3*sizeof(short), (void*)0);
+  glEnableVertexAttribArray(0);
+  glBindVertexArray(0);
+
+  std::cout << "[universe] " << galaxies.size() << " galaxies, " << total
+            << " stars, " << (blob.size()*sizeof(short)/(1024*1024)) << " MB VRAM\n";
+}
+
+
+void RenderedObject::BuildGalaxyStarfield(const GalaxyDesc& d, int starCount)
+{
+  std::vector<vec3> stars;
+  GenerateGalaxyStars(d, starCount, stars);
+  if (stars.empty()) return;
+
+  vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+  for (const vec3& s : stars) {
+    lo.x=std::min(lo.x,s.x); hi.x=std::max(hi.x,s.x);
+    lo.y=std::min(lo.y,s.y); hi.y=std::max(hi.y,s.y);
+    lo.z=std::min(lo.z,s.z); hi.z=std::max(hi.z,s.z);
+  }
+  vec3  c{(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};
+  float ext = std::max(std::max(hi.x-lo.x, hi.y-lo.y), hi.z-lo.z) * 0.5f;
+  if (ext <= 0.0f) ext = 1.0f;
+
+  std::vector<short> blob;
+  blob.reserve(stars.size()*3);
+  for (const vec3& s : stars) {
+    blob.push_back((short)std::clamp(std::lround((s.x - c.x) / ext * 32767.0f), -32767L, 32767L));
+    blob.push_back((short)std::clamp(std::lround((s.y - c.y) / ext * 32767.0f), -32767L, 32767L));
+    blob.push_back((short)std::clamp(std::lround((s.z - c.z) / ext * 32767.0f), -32767L, 32767L));
+  }
+
+  starChunks.clear();
+  StarChunk sc;
+  sc.center = dvec3{ (double)c.x, (double)c.y, (double)c.z };   // galaxy-local: small
+  sc.extent = ext;
+  sc.first  = 0;
+  sc.count  = (int)stars.size();
+  starChunks.push_back(sc);
+
+  isStarfield     = true;
+  meshType        = MeshType::cloud;
+  bufferSize      = (int)stars.size();
+  hasBeenRendered = true;
+  cloudGpuDirty   = false;
+
+  if (!vao) glGenVertexArrays(1, &vao);
+  glBindVertexArray(vao);
+  if (!vbo) glGenBuffers(1, &vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(blob.size()*sizeof(short)), blob.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_SHORT, GL_TRUE, 3*sizeof(short), (void*)0);
+  glEnableVertexAttribArray(0);
+  glBindVertexArray(0);
 }
 
 void RenderedObject::setupRender()

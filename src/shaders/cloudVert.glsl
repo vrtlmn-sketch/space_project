@@ -107,8 +107,16 @@ float dustLane(vec3 p) {
 
 void main() {
   // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
-  vec3 aLocal  = (uChunkExtent > 0.0) ? (uChunkCenter + aPos * uChunkExtent) : aPos;
-  vec3 aRelPos = uCloudOrigin + uCloudRot * aLocal;
+  // Starfield chunks arrive ALREADY camera-relative (the big subtraction was
+  // done in double on the CPU), so they must not be offset again.
+  vec3 aLocal, aRelPos;
+  if (uChunkExtent > 0.0) {
+    aLocal  = aPos * uChunkExtent;
+    aRelPos = uChunkCenter + aLocal;
+  } else {
+    aLocal  = aPos;
+    aRelPos = uCloudOrigin + uCloudRot * aLocal;
+  }
   gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
 
   vRim = aRim;
