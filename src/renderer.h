@@ -79,12 +79,7 @@ struct UniverseFormState {
   float cosmicWeb = 1.0f, clustering = 1.0f, voidSize = 1.0f, galaxyDensity = 1.0f;
   float popSpiral = 0.58f, popElliptical = 0.27f, popIrregular = 0.15f;
   int   physicalModel = 0;      // realistic / relaxed / custom laws
-  int   depthGalaxies = 0, depthStars = 1, depthPlanets = 1, depthSurfaces = 2;
-  // Dynamic star detail (depthStars == 1): galaxies near the camera regenerate
-  // at a higher star count and drop back when you leave.
-  int   dynNearby     = 3;        // how many may hold detail at once
-  int   dynStars      = 300000;   // star count while detailed
-  float dynTriggerPct = 30.0f;    // % of the view height a galaxy must span
+  int   depthGalaxies = 0, depthPlanets = 1, depthSurfaces = 2;
 
   // ── Mixing ──
   int   mixMode       = 0;      // preserve observed / spatial / statistical / progressive
@@ -439,6 +434,10 @@ private:
   GLuint vpColorTex{0};
   GLuint vpDepthRBO{0};
   int    vpWidth{0}, vpHeight{0};   // central-area available size (from last frame's DrawUI)
+public:
+  // Galaxy LOD picks its star count from how many pixels a galaxy covers.
+  int    viewportHeight() const { return vpHeight; }
+private:
   int    vpFboW{0}, vpFboH{0};      // actual FBO dimensions (screen-aspect sub-rect of central area)
   bool   prevEditorViewport{true};
   bool   focusInspectorNext{false};  // one-shot: select Inspector tab after layout reset

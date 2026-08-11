@@ -258,29 +258,53 @@ PROJECT=<path>             load a specific project
 - **milky_way regression baseline drifted 60.95 -> 60.94** after the float->double
   position change. Almost certainly benign, unverified.
 
-## Dynamic star density  (built)
+## Galaxy level of detail  (built)
 
-Regenerates a galaxy's starfield at high density on approach and drops it on
-departure. Determinism makes this free: a galaxy is `seed -> generator`, so
-regenerating is identical every time and nothing needs storing.
+TERMINOLOGY, as agreed with the user: a galaxy HAS `galaxyFullStars` stars — that
+is what the user typed and it is the galaxy's identity. An LOD is any cheaper
+stand-in: one point, then a few stars, then more, then the full galaxy. The user
+never controls LOD star counts; that is an implementation detail.
 
-- `RenderedObject` keeps `galaxyDesc` / `galaxyStarCount` / `galaxyBaseStars`.
-  The descriptor used to be thrown away at spawn, which is what made
-  regeneration impossible.
-- `UpdateUniverseDetail` (main.cpp) ranks galaxies by the FRACTION OF THE VIEW
-  they span — not raw degrees, because what makes a galaxy look sparse is stars
-  per pixel, and that follows screen coverage. Top N get rebuilt dense.
-- Hysteresis at 0.6x the trigger, and at most ONE rebuild per frame: 300k stars
-  costs ~25 ms to generate, so three in a frame is a freeze rather than a hitch.
-- `starBudgetOverride` exists because the global star budget is 80k. Without it
-  a galaxy rebuilt at 300k still draws 80k and the rebuild changes nothing.
+- `RenderedObject` keeps `galaxyDesc` (so it can be regenerated at all),
+  `galaxyFullStars` (identity) and `galaxyStarCount` (what is built right now).
+- Galaxies SPAWN at 128 stars, not at full size. Spawning 800 galaxies at full
+  size costs gigabytes and nearly all of them are a few pixels wide. The ladder
+  climbs on approach and never exceeds `galaxyFullStars`.
+- `UpdateUniverseDetail` (main.cpp) picks the rung from screen coverage alone:
+  `want = 4 * pi * r_px^2` (about four stars per pixel it covers). One rung per
+  rebuild, 4x deadband between climbing and dropping so drifting near a boundary
+  cannot thrash. At most ONE rebuild per frame — a full galaxy can cost ~25 ms.
+- `starBudgetOverride` is set to the built count: generation IS the LOD, so the
+  global star budget must not second-guess it and drop stars we chose to build.
+- The UI reports `galaxyFullStars`, never the live count. The built count changes
+  as you fly and watching it jump reads as a bug (it was reported as one).
 
-Measured, 40 galaxies at 50k base, camera parked at one: raster mean 3.32 with
-detail off, 83.74 at 100k. The 20x separation is far above the ~2% noise floor.
-milky_way baseline unaffected (61.619 without / 61.622 with, stash A/B).
+An earlier version had this backwards — "stars each" was a floor that a global
+"Galaxy Detail" setting multiplied up to 300k. Do not go back to that: the number
+the user types has to be the number they get.
 
-Generation is synchronous. 300k stars is ~25 ms, so a rebuild is a visible hitch;
-threading it is deferred until the visual side is settled.
+### Distant galaxies were drawn as yellow balls
+
+The haze pass in `cloudVert.glsl` sized its lobe in fixed SCREEN pixels with an
+8 px floor, so a galaxy 4 px across was a stack of 8 px+ additive lobes — a
+saturated blob bigger than the galaxy. The dust and gas passes never had this
+problem because they are perspective-sized; the haze pass just never got the
+same treatment.
+
+Fixed by capping the lobe with `uChunkScreenPx` (the chunk's projected radius,
+already computed by `drawStarfieldChunks`) and returning the light the shrunken
+lobe would have spread, via the area ratio, so flux is preserved. Up close the
+radius is huge and the cap does nothing, so near views and procedural clouds are
+untouched — verified: milky_way 61.619 before / 61.616 after.
+
+### Crash: stack smashing in renderCloud
+
+`renderCloud` read the render mode back off the GPU with `glGetUniformiv` into a
+4-byte stack GLint; it was the only call in that function writing through a
+pointer to a stack local, and it aborted with `*** stack smashing detected ***`
+once a universe existed. `uploadRenderMode` already caches the same value in
+`cachedRenderMode`, so the read-back was pointless. It was also a driver
+round-trip PER CLOUD PER FRAME — 200 of them with a universe loaded.
 
 ### Known problem: particle count is standing in for physical density
 

@@ -132,8 +132,12 @@ public:
   // that possible; it used to be discarded once the stars were built.
   GalaxyDesc galaxyDesc{};
   bool  isGalaxy{false};       // built by BuildGalaxyStarfield, so regenerable
-  int   galaxyStarCount{0};    // count the current VBO holds
-  int   galaxyBaseStars{0};    // count it was spawned with — what it drops back to
+  // A galaxy HAS galaxyFullStars stars — that is what the user asked for and what
+  // the UI reports. galaxyStarCount is only how many are currently built: an LOD
+  // stand-in, never larger than full, chosen from screen coverage alone. The user
+  // never sets it.
+  int   galaxyFullStars{0};
+  int   galaxyStarCount{0};
   // >0 overrides the renderer's global star budget for this object alone. A
   // galaxy regenerated at 300k stars would otherwise still draw only 80k.
   int   starBudgetOverride{0};

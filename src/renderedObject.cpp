@@ -1391,7 +1391,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   const float tanV    = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);
   const float tanH    = tanV * aspect;
 
-  struct Vis { int idx; float weight; int cap; };
+  struct Vis { int idx; float weight; int cap; float screenPx; };
   static std::vector<Vis> vis;      // reused: this runs every frame
   vis.clear();
   double wsum = 0.0;
@@ -1432,7 +1432,10 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     // blown-out white dot. Cap what it can be given by its own screen area.
     float pixels = onScreen * 0.25f * (float)fbWidth * (float)fbHeight;
     int   capByArea = (int)(pixels * 4.0f) + 8;
-    vis.push_back({i, w, capByArea});
+    // Projected radius in pixels — the haze lobe is capped by it so a galaxy a
+    // few pixels wide is not drawn as a stack of much larger glowing sprites.
+    float screenPx = ry * 0.5f * (float)fbHeight;
+    vis.push_back({i, w, capByArea, screenPx});
     wsum += w;
   }
 
@@ -1445,6 +1448,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
 
   GLint lc = glGetUniformLocation(program, "uChunkCenter");
   GLint le = glGetUniformLocation(program, "uChunkExtent");
+  GLint lp = glGetUniformLocation(program, "uChunkScreenPx");
 
   const int budget = (starBudget > 0) ? starBudget : 80000;
 
@@ -1499,6 +1503,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
                                  (float)(oy + sc.center.y),
                                  (float)(oz + sc.center.z));
     if (le >= 0) glUniform1f(le, sc.extent);
+    if (lp >= 0) glUniform1f(lp, vis[k].screenPx);
     glDrawArrays(GL_POINTS, sc.first, n);
     drawn += n;
   }
@@ -1513,6 +1518,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
                 << " chunks, drawn " << drawn << " / " << bufferSize << " stars\n";
   }
   if (le >= 0) glUniform1f(le, 0.0f);              // back to plain float positions
+  if (lp >= 0) glUniform1f(lp, 0.0f);              // cap off for non-chunk draws
 }
 
 
@@ -1629,7 +1635,11 @@ void RenderedObject::BuildGalaxyStarfield(const GalaxyDesc& d, int starCount)
   galaxyDesc      = d;
   isGalaxy        = true;
   galaxyStarCount = (int)stars.size();
-  if (galaxyBaseStars == 0) galaxyBaseStars = galaxyStarCount;
+  if (galaxyFullStars == 0) galaxyFullStars = galaxyStarCount;
+  // Generation IS the level of detail for a galaxy: the count was already chosen
+  // from how much screen it covers, so the global star budget must not second-
+  // guess it and drop stars we deliberately built.
+  starBudgetOverride = galaxyStarCount;
 
   if (!vao) glGenVertexArrays(1, &vao);
   glBindVertexArray(vao);
@@ -2172,9 +2182,13 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
   // Check render mode: if nebula, enable blending and larger point sprites
-  GLint curRenderMode = 0;
-  if (renderModeUniform != (unsigned int)-1)
-    glGetUniformiv(program, renderModeUniform, &curRenderMode);
+  // Use the value we uploaded rather than reading it back off the GPU.
+  // glGetUniformiv wrote into this 4-byte stack slot through a cached location,
+  // which is the only call in this function that can smash the stack, and it also
+  // forced a driver round-trip PER CLOUD PER FRAME — 200 of them once a universe
+  // exists. uploadRenderMode always sets cachedRenderMode alongside the uniform,
+  // so the value is identical.
+  const int curRenderMode = cachedRenderMode;
 
   if (realisticShading) {
     // RT-like: pure-additive HDR glow, shader-controlled point size, no depth

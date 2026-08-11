@@ -143,71 +143,73 @@ static void buildScene(
   }
 }
 
-// ─── Dynamic star density ────────────────────────────────────────────────────
-// A generated galaxy is a pure function of its seed, so a dense version can be
-// rebuilt on approach and thrown away on departure rather than kept around. That
-// is the only way out of the density problem: framed at ~20 degrees a galaxy
-// covers ~500k pixels, so 50k stars is 0.1 stars per pixel, and raising the
-// spawn count for every galaxy in the universe would cost hundreds of MB.
+// ─── Galaxy level of detail ─────────────────────────────────────
+// A galaxy HAS galaxyFullStars stars — that is what the user asked for and it
+// never changes. What changes is how many are actually built right now: a
+// stand-in of one point, then a few stars, then more, up to the full galaxy when
+// you are close enough for the difference to show. Regenerating is free because
+// a galaxy is a pure function of its seed, so no LOD level needs storing.
+//
+// The rung is chosen from screen coverage alone. There is deliberately no user
+// control over it: how many stars an LOD has is an implementation detail, and
+// the only number anyone should have to think about is the galaxy's real size.
 static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clouds,
-                                 const double camT[3], float fovDeg,
-                                 const UniverseFormState& U)
+                                 const double camT[3], float fovDeg, int fbHeight)
 {
-  if (U.depthStars != 1) return;   // only the "Dynamic" generation depth
-  // Harness gate, matching UNIVERSE_STARS: overrides the detailed star count,
-  // 0 turns the whole thing off so an A/B can be measured headlessly.
+  // Harness gate: UNIVERSE_DETAIL=0 freezes every galaxy at its spawn rung so an
+  // A/B can be measured headlessly.
   static const char* envDetail = std::getenv("UNIVERSE_DETAIL");
-  const int dense = envDetail ? std::atoi(envDetail) : std::max(U.dynStars, 1000);
-  if (dense <= 0) return;
+  if (envDetail && std::atoi(envDetail) == 0) return;
 
-  struct Cand { CloudObject* cloud; float frac; };
-  std::vector<Cand> cand;
+  const int   MIN_LOD  = 64;    // the "one point" rung — enough to have a shape at all
+  const float STARS_PX = 4.0f;  // stars worth building per pixel it covers
+
+  CloudObject* rebuild = nullptr;
+  int   rebuildTo = 0;
+  float bestFrac  = -1.0f;
+
   for (auto& c : clouds) {
     if (!c || !c->universeMember) continue;
     RenderedObject& ro = c->renderedObject;
-    if (!ro.isGalaxy || ro.starChunks.empty()) continue;
+    if (!ro.isGalaxy || ro.starChunks.empty() || ro.galaxyFullStars <= 0) continue;
     const RenderedObject::StarChunk& sc = ro.starChunks[0];
     // Camera-relative in double, as everywhere else at this scale.
     double dx = ro.coordinates.x + sc.center.x + camT[0];
     double dy = ro.coordinates.y + sc.center.y + camT[1];
     double dz = ro.coordinates.z + sc.center.z + camT[2];
     double d  = std::sqrt(dx*dx + dy*dy + dz*dz);
-    double ang = 2.0 * std::atan2((double)sc.extent, std::max(d, 1.0)) * 57.2957795;
-    // Fraction of the view it spans, not raw degrees: what makes a galaxy look
-    // sparse is stars per pixel, and that follows how much screen it covers.
-    cand.push_back({ c.get(), (float)(ang / (double)std::max(fovDeg, 1.0f)) });
-  }
-  if (cand.empty()) return;
+    double ang  = 2.0 * std::atan2((double)sc.extent, std::max(d, 1.0)) * 57.2957795;
+    float  frac = (float)(ang / (double)std::max(fovDeg, 1.0f));   // share of the view
 
-  std::sort(cand.begin(), cand.end(),
-            [](const Cand& a, const Cand& b) { return a.frac > b.frac; });
+    // How many stars are worth building: the disc it covers, at a few per pixel.
+    double rpx  = 0.5 * (double)frac * (double)std::max(fbHeight, 1);
+    double want = STARS_PX * 3.14159265 * rpx * rpx;
 
-  const float up    = std::max(U.dynTriggerPct, 1.0f) * 0.01f;
-  const float down  = up * 0.6f;   // hysteresis, or it rebuilds every frame at the edge
-  const int   slots = std::max(U.dynNearby, 0);
+    const int full = ro.galaxyFullStars;
+    const int cur  = std::max(ro.galaxyStarCount, 1);
+    const int low  = std::min(MIN_LOD, full);
 
-  CloudObject* rebuild = nullptr;
-  int rebuildTo = 0;
-  for (int i = 0; i < (int)cand.size(); ++i) {
-    RenderedObject& ro = cand[i].cloud->renderedObject;
-    bool detailed = ro.galaxyStarCount > ro.galaxyBaseStars;
-    bool want     = (i < slots) && (cand[i].frac > (detailed ? down : up));
-    int  target   = want ? dense : ro.galaxyBaseStars;
-    if (target != ro.galaxyStarCount && !rebuild) { rebuild = cand[i].cloud; rebuildTo = target; }
+    // One rung per rebuild, with a 4x deadband between climbing and dropping so
+    // drifting around a boundary cannot thrash.
+    int target = cur;
+    if      (want > cur * 1.5 && cur < full) target = std::min(cur * 2, full);
+    else if (want < cur * 0.35 && cur > low) target = std::max(cur / 2, low);
+    if (target == ro.galaxyStarCount) continue;
+
+    // Nearest galaxy first: it is the one whose detail you can actually see.
+    if (frac > bestFrac) { bestFrac = frac; rebuild = c.get(); rebuildTo = target; }
   }
 
-  // One rebuild per frame. 300k stars costs ~25 ms to generate; doing three in
-  // the same frame turns a hitch into a freeze. Candidates are sorted by screen
-  // size, so the galaxy you are looking at is always served first.
+  // One rebuild per frame. The full galaxy can cost ~25 ms to generate, and doing
+  // several in a frame turns a hitch into a freeze.
   if (!rebuild) return;
   RenderedObject& ro = rebuild->renderedObject;
-  GalaxyDesc desc = ro.galaxyDesc;              // copy: BuildGalaxyStarfield overwrites it
+  GalaxyDesc desc = ro.galaxyDesc;          // copy: BuildGalaxyStarfield overwrites it
+  const int before = ro.galaxyStarCount;
   ro.BuildGalaxyStarfield(desc, rebuildTo);
-  // The global star budget is 80k; a galaxy rebuilt at 300k would still draw
-  // only 80k of them without this, and the rebuild would change nothing on screen.
-  ro.starBudgetOverride = (rebuildTo > ro.galaxyBaseStars) ? rebuildTo : 0;
-  std::cout << "[universe] " << (rebuildTo > ro.galaxyBaseStars ? "detail " : "drop ")
-            << rebuild->name << " -> " << rebuildTo << " stars\n";
+  if (std::getenv("STARDEBUG3"))
+    std::cerr << "[lod] " << rebuild->name << "  " << before << " -> " << rebuildTo
+              << " / " << ro.galaxyFullStars << " stars\n";
 }
 
 // ─── main ────────────────────────────────────────────────────────────────────
@@ -332,7 +334,11 @@ int main(int argc, char** argv) {
       auto cloud = std::make_unique<CloudObject>(vec3{0,0,0}, std::vector<CloudParticle>{});
       cloud->position = g.position;             // double: universe scale
       cloud->renderedObject.coordinates = g.position;
-      cloud->renderedObject.BuildGalaxyStarfield(g, up.starsPerGalaxy);
+      // The galaxy HAS starsPerGalaxy stars. It is BUILT at the cheapest rung —
+      // spawning 800 galaxies at full size would cost gigabytes, and almost all
+      // of them are a few pixels wide. The LOD climbs as you approach.
+      cloud->renderedObject.galaxyFullStars = up.starsPerGalaxy;
+      cloud->renderedObject.BuildGalaxyStarfield(g, std::min(up.starsPerGalaxy, 128));
       cloud->renderedObject.setupShaders("src/shaders/cloudVert.glsl", "src/shaders/cloudFrag.glsl");
       cloud->simulatePhysics = false;           // universes never simulate by default
       const char* kind = (g.type == GalaxyType::Spiral)     ? "Spiral"
@@ -790,7 +796,8 @@ int main(int argc, char** argv) {
 
     // Regenerate nearby galaxies at higher star density before they are drawn,
     // so the change lands this frame rather than the next.
-    UpdateUniverseDetail(clouds, renderer.cameraTranslate, renderer.zoom, renderer.universeForm);
+    UpdateUniverseDetail(clouds, renderer.cameraTranslate, renderer.zoom,
+                         renderer.viewportHeight() > 0 ? renderer.viewportHeight() : 1080);
 
     // Step all GPU Barnes-Hut clouds together against one shared octree so
     // separate formations gravitate on each other, then draw each cloud.

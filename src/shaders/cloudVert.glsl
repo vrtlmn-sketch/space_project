@@ -11,6 +11,7 @@ layout (location = 2) in float aRim;     // world-lit rim factor (3D-correct edg
 // means an ordinary float cloud and aPos is used as-is.
 uniform vec3  uChunkCenter;
 uniform float uChunkExtent;
+uniform float uChunkScreenPx;  // chunk's projected radius in pixels (0 = inactive)
 
 uniform vec3 uCloudOrigin;   // cloud centre + camera translate (already differenced in double)
 uniform mat3 uCloudRot;      // cloud rotation
@@ -48,6 +49,7 @@ out float vDust;    // dust density at this particle (0 = not dusty)
 out float vSeed;    // per-dust-cloud seed → unique billowing FBM shape in the frag
 out float vHot;     // 1 = hot blue star (seeds glowing gas)
 out float vRim;     // world-lit rim factor forwarded to the density map
+out float vHazeBoost; // haze light returned after the lobe is capped to chunk size
 
 float hash11(float p) {
   p = fract(p * 0.1031);
@@ -139,6 +141,7 @@ void main() {
   // dominated by faint stars that blend into haze, not equal-brightness sparkles.
   vMag   = pow(h2, 3.0);
   vDust  = 0.0;
+  vHazeBoost = 1.0;
 
   if (uRealistic == 0) {
     gl_PointSize = (uRenderMode == 1) ? 8.0 : 2.0;
@@ -200,6 +203,22 @@ void main() {
     // dim lobe; thousands overlap into a density-driven volumetric glow. Spread
     // from uUnresolvedSize (like RT's su = 0.0013*uUnresolvedSize).
     float spread = 0.3 + uUnresolvedSize * 0.03;   // default 32.4 → ~1.27
-    gl_PointSize = clamp(20.0 * (0.6 + 0.7 * vMag) * spread, 8.0, 160.0) * ps;
+    float sz = clamp(20.0 * (0.6 + 0.7 * vMag) * spread, 8.0, 160.0) * ps;
+    // The lobe is a fixed SCREEN size, so a galaxy only a few pixels across was
+    // still drawn as a stack of 8px+ lobes — a saturated ball far bigger than the
+    // galaxy itself, nothing like a distant galaxy. Cap the lobe by how much
+    // screen the chunk actually occupies. Up close that radius is huge and this
+    // does nothing, so the near view and procedural clouds are untouched; it only
+    // bites in exactly the far case that was broken. Same reasoning as the
+    // perspective-sized dust puff above ("no dark central blob far away").
+    float capped = sz;
+    if (uChunkScreenPx > 0.0) capped = min(sz, max(uChunkScreenPx, 1.0));
+    // Shrinking the lobe throws away all the light it used to spread over the
+    // larger disc, which is why distant galaxies vanished outright. Put that
+    // light back by the area ratio: the flux is preserved, just concentrated
+    // into the galaxy's true angular size — so it reads as a faint point rather
+    // than either a bloated ball or nothing at all.
+    vHazeBoost = clamp((sz * sz) / max(capped * capped, 1e-4), 1.0, 48.0);
+    gl_PointSize = capped;
   }
 }

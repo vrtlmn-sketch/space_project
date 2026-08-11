@@ -3783,6 +3783,22 @@ void Renderer::DrawUniversePanel() {
 
     ImGui::InputText("Name##uni", U.name, sizeof(U.name));
 
+    // The controls that actually build something live at the TOP: the panel is
+    // long and mostly mockup, and having to scroll past all of it to reach the
+    // button (and back up to change a count) is a chore every single time.
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderInt("##unigalcount", &universeGalaxyCount, 10, 2000, "Galaxies %d");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderInt("##unistars", &universeStarsPerGalaxy, 1000, 200000, "Stars each %d",
+                     ImGuiSliderFlags_Logarithmic);
+    ImGui::TextDisabled("= %.1fM stars total",
+                        universeGalaxyCount * (double)universeStarsPerGalaxy / 1e6);
+    if (ImGui::Button("Create Universe", ImVec2(-1, 30))) {
+      if (universeCreate) universeCreate(universeForm);
+    }
+    ImGui::TextDisabled("Generated objects never simulate physics by default.");
+    ImGui::Separator();
+
     ImGui::Spacing();
     ImGui::Text("Preset");
     ImGui::SetNextItemWidth(-1);
@@ -3890,24 +3906,9 @@ void Renderer::DrawUniversePanel() {
       ImGui::Text("Generation depth");
       const char* depth[] = { "Full", "Dynamic", "On demand", "Off" };
       ImGui::SetNextItemWidth(-1); ImGui::Combo("##udg", &U.depthGalaxies, depth, IM_ARRAYSIZE(depth));
-      ImGui::SetNextItemWidth(-1); ImGui::Combo("##uds", &U.depthStars,    depth, IM_ARRAYSIZE(depth));
       ImGui::SetNextItemWidth(-1); ImGui::Combo("##udp", &U.depthPlanets,  depth, IM_ARRAYSIZE(depth));
       ImGui::SetNextItemWidth(-1); ImGui::Combo("##udu", &U.depthSurfaces, depth, IM_ARRAYSIZE(depth)); todo();
-      ImGui::TextDisabled("Galaxies / Stars / Planets / Surfaces");
-
-      ImGui::Spacing();
-      ImGui::Text("Dynamic star detail");
-      ImGui::BeginDisabled(U.depthStars != 1);
-      ImGui::SetNextItemWidth(-1);
-      ImGui::SliderInt("##udyn", &U.dynNearby, 0, 8, "%d galaxies at a time");
-      ImGui::SetNextItemWidth(-1);
-      ImGui::SliderInt("##udys", &U.dynStars, 50000, 2000000, "%d stars up close",
-                       ImGuiSliderFlags_Logarithmic);
-      ImGui::SetNextItemWidth(-1);
-      ImGui::SliderFloat("##udyt", &U.dynTriggerPct, 5.0f, 100.0f,
-                         "starts at %.0f%% of the view");
-      ImGui::EndDisabled();
-      ImGui::TextDisabled("Nearby galaxies rebuild denser as you approach.");
+      ImGui::TextDisabled("Galaxies / Planets / Surfaces");
     }
 
     // ── Mixing ──
@@ -3946,21 +3947,7 @@ void Renderer::DrawUniversePanel() {
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::Spacing();
-    ImGui::TextDisabled("Generated objects never simulate physics by default.");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::SliderInt("##unigalcount", &universeGalaxyCount, 10, 2000, "Galaxies %d");
-    ImGui::SetNextItemWidth(-1);
-    ImGui::SliderInt("##unistars", &universeStarsPerGalaxy, 1000, 200000, "Stars each %d",
-                     ImGuiSliderFlags_Logarithmic);
-    ImGui::TextDisabled("= %.1fM stars total",
-                        universeGalaxyCount * (double)universeStarsPerGalaxy / 1e6);
-    ImGui::Spacing();
-    if (ImGui::Button("Create Universe", ImVec2(-1, 30))) {
-      if (universeCreate) universeCreate(universeForm);
-    }
-    ImGui::TextColored(ImVec4(0.85f, 0.65f, 0.25f, 1.0f),
-                       "Procedural end is live; the dials above are still mockup.");
+    ImGui::TextDisabled("Everything above is still mockup — the live controls are at the top.");
 
   ImGui::End();
 }
@@ -4248,12 +4235,17 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     bool cloudSel = (selectedIdx == sentinel);
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.08f, 0.18f, 0.12f, 1.f));
     char cloudLabel[128];
+    // A galaxy reports the stars it HAS, not the LOD stand-in currently built.
+    // The built count changes as you fly around; that is a rendering detail and
+    // watching it jump is noise, not information.
+    const RenderedObject& cro = clouds[i]->renderedObject;
+    int shownCount = cro.isGalaxy ? cro.galaxyFullStars : clouds[i]->particleCount();
     if (!clouds[i]->name.empty())
       snprintf(cloudLabel, sizeof(cloudLabel), "[~] %s  (%d)##cloud%d",
-               clouds[i]->name.c_str(), clouds[i]->particleCount(), i);
+               clouds[i]->name.c_str(), shownCount, i);
     else
       snprintf(cloudLabel, sizeof(cloudLabel), "[~] Cloud %d  (%d)##cloud%d",
-               i, clouds[i]->particleCount(), i);
+               i, shownCount, i);
     if (ImGui::Selectable(cloudLabel, cloudSel)) {
       selectedIdx   = cloudSel ? -1 : sentinel;
       if (!cloudSel) focusInspectorNext = true;
@@ -4772,7 +4764,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.40f, 1.00f), "Cloud %d", cloudIdx);
       ImGui::Separator();
 
-      ImGui::Text("Active: %d particles", cloud->particleCount());
+      if (cloud->renderedObject.isGalaxy) {
+        ImGui::Text("Stars: %d", cloud->renderedObject.galaxyFullStars);
+        ImGui::TextDisabled("Detail: %d built at this distance",
+                            cloud->renderedObject.galaxyStarCount);
+      } else {
+        ImGui::Text("Active: %d particles", cloud->particleCount());
+      }
       ImGui::TextDisabled("Frame: %u / %u", cloud->getTimeframe(), cloud->getBufferSize());
       ImGui::Spacing();
 

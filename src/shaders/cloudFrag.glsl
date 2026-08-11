@@ -18,6 +18,7 @@ in float vDust;             // dust density at this particle (0 = not dusty)
 in float vSeed;             // per-cloud seed → unique billowing FBM shape
 in float vHot;
 in float vRim;              // 1 = hot blue star
+in float vHazeBoost;        // light returned after the haze lobe was size-capped
 
 // 2D value-noise FBM — carves each dust sprite into a wispy cloud (soft edges),
 // so a big dust sprite is a sculpted cloud form, not a smooth disc.
@@ -128,7 +129,7 @@ void main() {
             // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.
             // Thousands overlap → density-driven volumetric glow the dust carves into.
             float halo = exp(-r2 * 1.4);
-            c = vColor * halo * uUnresolvedStrength * 0.008;
+            c = vColor * halo * uUnresolvedStrength * 0.008 * vHazeBoost;
         }
         FragColor = vec4(c, 1.0);
         return;
