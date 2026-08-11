@@ -559,7 +559,7 @@ void Renderer::Draw(RenderedObject& ro) {
                                                                           (float)ro.coordinates.z,
                                                                           ro.sphereRadius()}); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.starBudget = starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             if (realisticRasterView) rimClouds.push_back(&ro); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -3894,6 +3894,20 @@ void Renderer::DrawUniversePanel() {
       ImGui::SetNextItemWidth(-1); ImGui::Combo("##udp", &U.depthPlanets,  depth, IM_ARRAYSIZE(depth));
       ImGui::SetNextItemWidth(-1); ImGui::Combo("##udu", &U.depthSurfaces, depth, IM_ARRAYSIZE(depth)); todo();
       ImGui::TextDisabled("Galaxies / Stars / Planets / Surfaces");
+
+      ImGui::Spacing();
+      ImGui::Text("Dynamic star detail");
+      ImGui::BeginDisabled(U.depthStars != 1);
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##udyn", &U.dynNearby, 0, 8, "%d galaxies at a time");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##udys", &U.dynStars, 50000, 2000000, "%d stars up close",
+                       ImGuiSliderFlags_Logarithmic);
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##udyt", &U.dynTriggerPct, 5.0f, 100.0f,
+                         "starts at %.0f%% of the view");
+      ImGui::EndDisabled();
+      ImGui::TextDisabled("Nearby galaxies rebuild denser as you approach.");
     }
 
     // ── Mixing ──

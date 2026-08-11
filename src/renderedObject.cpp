@@ -1503,6 +1503,9 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     drawn += n;
   }
   lastDrawnStars = drawn;
+  if (starBudgetOverride > 0 && std::getenv("STARDEBUG3"))
+    std::cerr << "[detail] drawn " << drawn << " / " << bufferSize
+              << "  budget " << starBudget << "  extent " << starChunks[0].extent << "\n";
   if (std::getenv("STARDEBUG")) {
     static int f = 0;
     if ((f++ % 120) == 0)
@@ -1621,6 +1624,12 @@ void RenderedObject::BuildGalaxyStarfield(const GalaxyDesc& d, int starCount)
   bufferSize      = (int)stars.size();
   hasBeenRendered = true;
   cloudGpuDirty   = false;
+  // Remember what built this so the galaxy can be regenerated at another
+  // density later without the caller having to hold onto anything.
+  galaxyDesc      = d;
+  isGalaxy        = true;
+  galaxyStarCount = (int)stars.size();
+  if (galaxyBaseStars == 0) galaxyBaseStars = galaxyStarCount;
 
   if (!vao) glGenVertexArrays(1, &vao);
   glBindVertexArray(vao);

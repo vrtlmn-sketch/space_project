@@ -29,9 +29,11 @@ Env gates:
 | `RIM_DEBUG=1` | dump the dust density map to /tmp/dens_sharp.pgm |
 | `STARDEBUG=1` | log starfield chunks visible / stars drawn |
 | `STARDEBUG2=1` | log the top LOD allocations |
+| `STARDEBUG3=1` | log draw counts for galaxies holding dynamic detail |
 | `PROJECT=<path>` | load a specific project |
 | `UNIVERSE_TEST=<n>` | build a procedural universe at startup |
 | `UNIVERSE_RADIUS=<Gly>`, `UNIVERSE_STARS=<n>` | override universe params |
+| `UNIVERSE_DETAIL=<n>` | dynamic star density: star count up close, 0 = off |
 
 ### Traps in the harness
 

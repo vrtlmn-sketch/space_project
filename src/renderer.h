@@ -80,6 +80,11 @@ struct UniverseFormState {
   float popSpiral = 0.58f, popElliptical = 0.27f, popIrregular = 0.15f;
   int   physicalModel = 0;      // realistic / relaxed / custom laws
   int   depthGalaxies = 0, depthStars = 1, depthPlanets = 1, depthSurfaces = 2;
+  // Dynamic star detail (depthStars == 1): galaxies near the camera regenerate
+  // at a higher star count and drop back when you leave.
+  int   dynNearby     = 3;        // how many may hold detail at once
+  int   dynStars      = 300000;   // star count while detailed
+  float dynTriggerPct = 30.0f;    // % of the view height a galaxy must span
 
   // ── Mixing ──
   int   mixMode       = 0;      // preserve observed / spatial / statistical / progressive

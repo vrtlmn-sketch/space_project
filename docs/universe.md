@@ -258,22 +258,43 @@ PROJECT=<path>             load a specific project
 - **milky_way regression baseline drifted 60.95 -> 60.94** after the float->double
   position change. Almost certainly benign, unverified.
 
-## Next feature: dynamic star density  (the agreed next step)
+## Dynamic star density  (built)
 
-This is "Generation depth: Stars -> Dynamic" from the design above.
-
-Regenerate a galaxy's starfield at high density on approach, drop it on
-departure. Determinism makes this free: the galaxy is `seed -> generator`, so
+Regenerates a galaxy's starfield at high density on approach and drops it on
+departure. Determinism makes this free: a galaxy is `seed -> generator`, so
 regenerating is identical every time and nothing needs storing.
 
-Sketch:
-- Store the `GalaxyDesc` on the cloud (it is currently discarded after building).
-- Each frame, compute the galaxy's angular size (the culling code already does).
-- Above a threshold and below the target star count, rebuild via
-  `BuildGalaxyStarfield` at a higher count; below it, rebuild small or evict.
-- Do the generation on a background thread; only the GL upload must be on the
-  main thread. Hysteresis on the threshold, or it will thrash at the boundary.
-- A galaxy at 20 degrees needs roughly 500k-1M stars to read as dense.
+- `RenderedObject` keeps `galaxyDesc` / `galaxyStarCount` / `galaxyBaseStars`.
+  The descriptor used to be thrown away at spawn, which is what made
+  regeneration impossible.
+- `UpdateUniverseDetail` (main.cpp) ranks galaxies by the FRACTION OF THE VIEW
+  they span — not raw degrees, because what makes a galaxy look sparse is stars
+  per pixel, and that follows screen coverage. Top N get rebuilt dense.
+- Hysteresis at 0.6x the trigger, and at most ONE rebuild per frame: 300k stars
+  costs ~25 ms to generate, so three in a frame is a freeze rather than a hitch.
+- `starBudgetOverride` exists because the global star budget is 80k. Without it
+  a galaxy rebuilt at 300k still draws 80k and the rebuild changes nothing.
+
+Measured, 40 galaxies at 50k base, camera parked at one: raster mean 3.32 with
+detail off, 83.74 at 100k. The 20x separation is far above the ~2% noise floor.
+milky_way baseline unaffected (61.619 without / 61.622 with, stash A/B).
+
+Generation is synchronous. 300k stars is ~25 ms, so a rebuild is a visible hitch;
+threading it is deferred until the visual side is settled.
+
+### Known problem: particle count is standing in for physical density
+
+The dust pass (`renderedObject.cpp`, `glBlendFunc(GL_ZERO, GL_SRC_COLOR)`) emits
+one multiplicative extinction sprite PER DRAWN POINT, so optical depth scales
+linearly with the draw count. Raising a galaxy from 100k to 800k stars makes it
+DARKER (mean 83.7 -> 57.3); with that pass skipped the curve goes monotonic
+(91.2 -> 100.8), which is how this was isolated.
+
+The same object at two detail levels must have the same brightness and the same
+dust column. The fix is a `uSampleWeight = referenceCount / drawn` uniform
+scaling dust optical depth and haze/core brightness, defaulting to 1.0 so
+existing clouds are untouched. This also fixes a latent bug: `.starfield`
+catalogues already dim and brighten as the LOD budget drops stars with distance.
 
 ## Also queued
 

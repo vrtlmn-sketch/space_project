@@ -4,6 +4,7 @@
 #include "rayTracerObject.h"
 #include "physicsObjectStructure.h"
 #include "cloudParticle.h"
+#include "universeGen.h"
 
 
 enum class MeshType{
@@ -125,6 +126,17 @@ public:
   std::vector<StarChunk> starChunks{};
   bool  isStarfield{false};
   int   starBudget{80000};   // max points drawn per frame across all chunks
+  // ── Dynamic star density ──
+  // A generated galaxy is a pure function of its seed, so a dense version can be
+  // regenerated on demand instead of stored. Keeping the descriptor is what makes
+  // that possible; it used to be discarded once the stars were built.
+  GalaxyDesc galaxyDesc{};
+  bool  isGalaxy{false};       // built by BuildGalaxyStarfield, so regenerable
+  int   galaxyStarCount{0};    // count the current VBO holds
+  int   galaxyBaseStars{0};    // count it was spawned with — what it drops back to
+  // >0 overrides the renderer's global star budget for this object alone. A
+  // galaxy regenerated at 300k stars would otherwise still draw only 80k.
+  int   starBudgetOverride{0};
   int   lastDrawnStars{0};   // reported in the UI
   int   lastVisibleChunks{0};
   void  LoadStarfield(const std::string& indexPath);
