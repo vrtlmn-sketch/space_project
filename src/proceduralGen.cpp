@@ -112,7 +112,7 @@ static float fbm(float x, float y, float z, int octaves, float contrast) {
 // ─── Camera math ──────────────────────────────────────────────────────────────
 
 void ProceduralGenWindow::getCameraPos(float out[3]) const {
-  float camDist = (5.0f + radius * 1.2f) * previewZoom;
+  float camDist = (5.0f + previewRadius() * 1.2f) * previewZoom;
   float cy = std::cos(previewYaw),   sy = std::sin(previewYaw);
   float cp = std::cos(previewPitch), sp = std::sin(previewPitch);
   out[0] = camDist * sy * cp;
@@ -176,9 +176,34 @@ static void mat3mul(const float M[9], float x, float y, float z,
 
 // ─── Core particle generator ──────────────────────────────────────────────────
 
+float ProceduralGenWindow::previewScale() const {
+  if (mode != 1) return 1.0f;
+  float rAU = galRadiusLy * 63241.0f;
+  return (rAU > 1e-6f) ? previewRadius() / rAU : 1.0f;
+}
+
+void ProceduralGenWindow::generateGalaxy(int targetCount,
+                                         std::vector<CloudParticle>& out)
+{
+  out.clear();
+  if (targetCount <= 0) return;
+  GalaxyDesc d;
+  d.radius = galRadiusLy * 63241.0f;
+  d.type   = (GalaxyType)galType;
+  d.seed   = (uint32_t)seed;
+  d.arms   = galArms;
+  d.shape  = galShape;
+  std::vector<vec3> pos, vel;
+  GenerateGalaxyStars(d, targetCount, pos, &vel);
+  out.reserve(pos.size());
+  for (size_t i = 0; i < pos.size(); ++i)
+    out.push_back({pos[i], vel[i], {0, 0, 0}, galMass});
+}
+
 void ProceduralGenWindow::generateParticles(int targetCount,
                                              std::vector<CloudParticle>& out)
 {
+  if (mode == 1) { generateGalaxy(targetCount, out); return; }
   out.clear();
   if (targetCount <= 0) return;
   out.reserve((size_t)targetCount);
@@ -491,21 +516,22 @@ void ProceduralGenWindow::ensureFBO() {
 void ProceduralGenWindow::uploadPreviewGeom() {
   if (!gpuReady) return;
 
+  const float ps = previewScale();
   std::vector<float> pts;
   pts.reserve(particles.size() * 3);
   for (const auto& p : particles) {
-    pts.push_back(p.position.x);
-    pts.push_back(p.position.y);
-    pts.push_back(p.position.z);
+    pts.push_back(p.position.x * ps);
+    pts.push_back(p.position.y * ps);
+    pts.push_back(p.position.z * ps);
   }
   glBindBuffer(GL_ARRAY_BUFFER, ptVBO);
   glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(pts.size()*sizeof(float)),
                pts.data(), GL_DYNAMIC_DRAW);
 
   constexpr int DIV = 20;
-  float half  = std::max(radius * 2.5f, 3.0f);
+  float half  = std::max(previewRadius() * 2.5f, 3.0f);
   float step  = 2.0f * half / DIV;
-  float gridY = -radius * scaleXYZ[1];
+  float gridY = (mode == 1) ? -previewRadius() * 0.25f : -radius * scaleXYZ[1];
 
   std::vector<float> grid;
   grid.reserve((size_t)(DIV+1) * 12);
@@ -592,19 +618,73 @@ void ProceduralGenWindow::draw() {
 
   bool changed = false;
 
+  // ── MODE ─────────────────────────────────────────────────────────────────────
+  // Galaxy runs the exact sampler universe galaxies use; Sculpt is the
+  // free-form density toolkit. Defaults in Galaxy mode ARE the milky_way
+  // sample formation — hit Generate and you get that shape.
+  {
+    const char* modes[] = {"Sculpt", "Galaxy"};
+    changed |= ImGui::Combo("Mode", &mode, modes, 2);
+    ImGui::Spacing();
+  }
+
   // ── GENERATION ──────────────────────────────────────────────────────────────
   if (ImGui::CollapsingHeader("Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
     changed |= ImGui::DragInt("Particle Count", &count, 100.0f, 1, 1000000);
     count = std::clamp(count, 1, 1000000);
     changed |= ImGui::DragInt("Seed", &seed, 1.0f);
-    changed |= ImGui::DragFloat("Bounds Size", &boundsSize, 0.01f, 0.01f, 10.0f, "%.2f");
-    changed |= ImGui::DragFloat("Sampling Bias", &samplingBias, 0.01f, 0.0f, 1.0f, "%.2f");
-    ImGui::SetItemTooltip("0 = uniform, 1 = concentrated at centre");
+    if (mode == 0) {
+      changed |= ImGui::DragFloat("Bounds Size", &boundsSize, 0.01f, 0.01f, 10.0f, "%.2f");
+      changed |= ImGui::DragFloat("Sampling Bias", &samplingBias, 0.01f, 0.0f, 1.0f, "%.2f");
+      ImGui::SetItemTooltip("0 = uniform, 1 = concentrated at centre");
+    }
     ImGui::Spacing();
   }
 
+  // ── GALAXY ───────────────────────────────────────────────────────────────────
+  if (mode == 1) {
+    if (ImGui::CollapsingHeader("Galaxy", ImGuiTreeNodeFlags_DefaultOpen)) {
+      const char* types[] = {"Spiral", "Elliptical", "Irregular"};
+      changed |= ImGui::Combo("Type", &galType, types, 3);
+      changed |= ImGui::DragFloat("Radius (ly)", &galRadiusLy, 100.0f, 500.0f, 200000.0f, "%.0f");
+      if (galType == 0) {
+        changed |= ImGui::DragInt("Arms", &galArms, 0.1f, 1, 8);
+        if (ImGui::TreeNodeEx("Arms##galarm", ImGuiTreeNodeFlags_DefaultOpen)) {
+          changed |= ImGui::DragFloat("Strength##ga", &galShape.armStrength, 0.01f, 0.0f, 1.0f, "%.2f");
+          changed |= ImGui::DragFloat("Spread##ga",   &galShape.armSpread,   0.01f, 0.05f, 1.5f, "%.2f");
+          changed |= ImGui::DragFloat("Winding##ga",  &galShape.armWinding,  0.02f, 0.5f, 6.0f, "%.2f");
+          ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("Disc##galdisc", ImGuiTreeNodeFlags_DefaultOpen)) {
+          changed |= ImGui::DragFloat("Core Concentration", &galShape.discScale, 0.002f, 0.02f, 0.4f, "%.3f");
+          ImGui::SetItemTooltip("Exponential scale length as a fraction of the radius.\nSmaller = brighter, tighter core.");
+          changed |= ImGui::DragFloat("Outer Disc Fraction", &galShape.extendedFrac, 0.005f, 0.0f, 0.5f, "%.2f");
+          changed |= ImGui::DragFloat("Thickness", &galShape.thickness, 0.002f, 0.005f, 0.15f, "%.3f");
+          changed |= ImGui::DragFloat("Flare",     &galShape.flare,     0.02f, 0.0f, 2.0f, "%.2f");
+          ImGui::TreePop();
+        }
+        if (ImGui::TreeNodeEx("Star Clusters##galknot", ImGuiTreeNodeFlags_DefaultOpen)) {
+          changed |= ImGui::DragFloat("Fraction##gc", &galShape.clusterFrac, 0.005f, 0.0f, 0.6f, "%.2f");
+          changed |= ImGui::DragInt("Count##gc",      &galShape.clusterCount, 0.5f, 0, 300);
+          changed |= ImGui::DragFloat("Spread##gc",   &galShape.clusterSpread, 0.005f, 0.02f, 1.0f, "%.2f");
+          ImGui::TreePop();
+        }
+      }
+      ImGui::Spacing();
+    }
+    if (ImGui::CollapsingHeader("Physics##gal", ImGuiTreeNodeFlags_DefaultOpen)) {
+      changed |= ImGui::DragFloat("Rotation Speed", &galShape.vFlat, 0.5f, 0.0f, 500.0f, "%.1f AU/yr");
+      changed |= ImGui::DragFloat("Velocity Scatter", &galShape.velScatter, 0.02f, 0.0f, 20.0f, "%.2f");
+      changed |= ImGui::DragFloat("Particle Mass##gal", &galMass, 0.01f, 0.0001f, 10.0f, "%.4f");
+      changed |= ImGui::DragFloat("Temperature##gal", &galTemperature, 50.0f, 100.0f, 50000.0f, "%.0f K");
+      const char* methods[] = {"CPU", "Barnes-Hut GPU"};
+      ImGui::Combo("Compute Method##gal", &computeMethod, methods, 2);
+      ImGui::Spacing();
+    }
+  }
+
   // ── BASE SHAPE ───────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Base Shape", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (mode == 0 && ImGui::CollapsingHeader("Base Shape", ImGuiTreeNodeFlags_DefaultOpen)) {
     changed |= ImGui::DragFloat("Radius", &radius, 0.05f, 0.1f, 50.0f, "%.2f");
     changed |= ImGui::DragFloat3("Scale",    scaleXYZ,    0.01f, 0.01f, 20.0f, "%.2f");
     changed |= ImGui::DragFloat3("Rotation", rotationXYZ, 0.5f, -360.0f, 360.0f, "%.1f°");
@@ -618,7 +698,7 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── DEFORMATION ──────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Deformation")) {
+  if (mode == 0 && ImGui::CollapsingHeader("Deformation")) {
     const char* axisNames[] = {"X", "Y", "Z"};
 
     if (ImGui::TreeNodeEx("Twist", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -643,7 +723,7 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── NOISE / WARP ─────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Noise / Warp")) {
+  if (mode == 0 && ImGui::CollapsingHeader("Noise / Warp")) {
     if (ImGui::TreeNodeEx("Noise", ImGuiTreeNodeFlags_DefaultOpen)) {
       changed |= ImGui::DragFloat("Strength##ns", &noiseStrength, 0.01f, 0.0f, 5.0f, "%.2f");
       changed |= ImGui::DragFloat("Scale##ns",    &noiseScale,    0.05f, 0.01f,20.0f, "%.2f");
@@ -660,7 +740,7 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── DENSITY ──────────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Density")) {
+  if (mode == 0 && ImGui::CollapsingHeader("Density")) {
     changed |= ImGui::DragFloat("Strength##dn",   &densityStrength, 0.01f, 0.0f, 5.0f,  "%.2f");
     changed |= ImGui::DragFloat("Falloff##dn",    &densityFalloff,  0.05f, 0.0f, 10.0f, "%.2f");
     changed |= ImGui::DragFloat("Edge Softness",  &densityEdgeSoft, 0.01f, 0.0f, 1.0f,  "%.3f");
@@ -677,7 +757,7 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── PATTERNS ─────────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Patterns")) {
+  if (mode == 0 && ImGui::CollapsingHeader("Patterns")) {
     if (ImGui::TreeNodeEx("Spiral Arms", ImGuiTreeNodeFlags_DefaultOpen)) {
       changed |= ImGui::DragInt("Arm Count",       &armCount,    0.1f, 0, 12);
       changed |= ImGui::DragFloat("Twist##ar",     &armTwist,    0.05f,-10.0f,10.0f,"%.2f");
@@ -700,7 +780,7 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── COMPOSITION ──────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Composition")) {
+  if (mode == 0 && ImGui::CollapsingHeader("Composition")) {
     changed |= ImGui::DragFloat("Add",      &compAdd,      0.01f, 0.0f, 2.0f, "%.2f");
     changed |= ImGui::DragFloat("Multiply", &compMultiply, 0.01f, 0.0f, 5.0f, "%.2f");
     changed |= ImGui::DragFloat("Subtract", &compSubtract, 0.01f, 0.0f, 2.0f, "%.2f");
@@ -709,7 +789,7 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── VELOCITY ─────────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Velocity", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (mode == 0 && ImGui::CollapsingHeader("Velocity", ImGuiTreeNodeFlags_DefaultOpen)) {
     if (ImGui::TreeNodeEx("Spin", ImGuiTreeNodeFlags_DefaultOpen)) {
       changed |= ImGui::DragFloat("Strength##sp", &spinStrength, 0.01f, 0.0f, 5.0f, "%.3f");
       changed |= ImGui::DragFloat("Falloff##sp",  &spinFalloff,  0.02f, 0.0f,10.0f, "%.2f");
@@ -726,7 +806,7 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── PHYSICS ──────────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (mode == 0 && ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
     changed |= ImGui::DragFloat("Particle Mass", &particleMass, 0.001f, 0.0001f, 1.0f, "%.4f");
     changed |= ImGui::DragFloat("Temperature",   &temperature,  50.0f,  100.0f, 50000.0f, "%.0f K");
     const char* methods[] = {"CPU", "Barnes-Hut GPU"};
@@ -759,7 +839,8 @@ void ProceduralGenWindow::draw() {
     }
     uploadPreviewGeom();
     dirty = false;
-    if (onGenerate) onGenerate(fullParticles, computeMethod, temperature);
+    if (onGenerate) onGenerate(fullParticles, computeMethod,
+                               mode == 1 ? galTemperature : temperature);
   }
   ImGui::SetItemTooltip("Spawn this cloud into the simulation (full particle count)");
 

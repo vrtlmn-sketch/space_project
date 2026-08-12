@@ -3,6 +3,7 @@
 #include <functional>
 #include <glad/gl.h>
 #include "cloudParticle.h"
+#include "universeGen.h"
 
 class ProceduralGenWindow {
 public:
@@ -16,6 +17,18 @@ public:
   void draw();
 
 private:
+  // ── MODE ─────────────────────────────────────────────────────────────────────
+  // Galaxy mode drives the SAME sampler the universe generator uses
+  // (GenerateGalaxyStars), so a hand-made galaxy and a universe galaxy are the
+  // same thing. Defaults reproduce the milky_way sample formation.
+  int   mode{0};                    // 0 = Sculpt, 1 = Galaxy
+  int   galType{0};                 // GalaxyType
+  float galRadiusLy{50000.0f};
+  int   galArms{2};
+  GalaxyShape galShape{};
+  float galMass{1.0f};
+  float galTemperature{11000.0f};
+
   // ── GENERATION ──────────────────────────────────────────────────────────────
   int   count{20000};
   int   seed{12345};
@@ -124,6 +137,11 @@ private:
   void ensureGPU();
   void ensureFBO();
   void generateParticles(int targetCount, std::vector<CloudParticle>& out);
+  void generateGalaxy(int targetCount, std::vector<CloudParticle>& out);
+  // Galaxy positions are real-scale AU (~3e9); the preview camera and grid work
+  // in sculpt-sized units, so galaxy previews are drawn scaled down to this.
+  float previewRadius() const { return mode == 1 ? 2.0f : radius; }
+  float previewScale() const;
   void regenerate();           // regenerate preview
   void uploadPreviewGeom();
   void renderToFBO();

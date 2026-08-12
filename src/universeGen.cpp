@@ -79,25 +79,90 @@ void GenerateUniverseGalaxies(const UniverseParams& p, std::vector<GalaxyDesc>& 
     g.inclination = rng.uni(0.0f, 3.14159265f);
     g.roll        = rng.uni(0.0f, 6.28318531f);
     g.arms        = 2 + (int)(rng.next() % 4);
+
+    // Shape: jitter around the milky_way-sample defaults so every galaxy is a
+    // variation of the signed-off look rather than a clone of it. Drawn from
+    // the galaxy's OWN seed, not the universe stream, so a galaxy's shape is a
+    // pure function of its identity.
+    Rng shp((uint64_t)g.seed * 0x9E3779B97F4A7C15ull);
+    g.shape.discScale    = shp.uni(0.05f, 0.09f);
+    g.shape.extendedFrac = shp.uni(0.10f, 0.20f);
+    g.shape.armSpread    = shp.uni(0.25f, 0.45f);
+    g.shape.armStrength  = shp.uni(0.45f, 0.75f);
+    g.shape.armWinding   = shp.uni(2.0f, 3.0f);
+    g.shape.thickness    = shp.uni(0.015f, 0.030f);
+    g.shape.flare        = shp.uni(0.3f, 0.7f);
+    g.shape.clusterFrac  = shp.uni(0.12f, 0.24f);
+    g.shape.clusterCount = 40 + (int)(shp.next() % 41);
     out.push_back(g);
   }
 }
 
-void GenerateGalaxyStars(const GalaxyDesc& d, int starCount, std::vector<vec3>& out)
+// The spiral recipe is a transcription of generate_milky_way_real.py — the
+// sample whose look is signed off — parameterised by GalaxyShape. Same
+// two-component exponential disc, same arm weighting, same arm-tied cluster
+// knots, same flared height. Change one only with the other.
+void GenerateGalaxyStars(const GalaxyDesc& d, int starCount, std::vector<vec3>& out,
+                         std::vector<vec3>* velOut)
 {
   out.clear();
+  if (velOut) velOut->clear();
   if (starCount <= 0) return;
   out.reserve(starCount);
+  if (velOut) velOut->reserve(starCount);
   Rng rng(d.seed);
+  // Velocities draw from their own stream: the LOD ladder regenerates
+  // positions without velocities and must get the same prefix either way.
+  Rng vrng((uint64_t)d.seed ^ 0x51ed270b9c8f3a61ull);
 
+  const GalaxyShape& s = d.shape;
   const float R  = d.radius;
-  const float H  = R * 0.30f;           // exponential disc scale length
-  const float Zh = R * 0.02f;           // disc scale height (thin)
+  const float H  = R * std::max(s.discScale, 1e-4f);
+  const float TAU = 6.28318531f;
 
   // Orientation: galaxies are not all face-on, and inclination is most of what
   // makes a field of them read as three-dimensional.
   const float ci = std::cos(d.inclination), si = std::sin(d.inclination);
   const float cr = std::cos(d.roll),        sr = std::sin(d.roll);
+
+  // Disc field position: two-component exponential profile (concentrated core
+  // + long outer tail), truncated by RESAMPLING — rescattering the overflow
+  // uniformly, as this once did, laid a flat sheet over the profile.
+  auto fieldPos = [&](float& r, float& th) {
+    float h = (rng.uni() < s.extendedFrac) ? H * s.extendedScale : H;
+    r = R * rng.uni();
+    for (int t = 0; t < 32; ++t) {
+      float cand = -h * (std::log(std::max(rng.uni(), 1e-7f))
+                       + std::log(std::max(rng.uni(), 1e-7f)));
+      if (cand <= R) { r = cand; break; }
+    }
+    th = rng.uni(0.0f, TAU);
+    if (s.armStrength > 1e-4f && d.arms > 0) {
+      // Off-arm stars get a CHANCE to be pulled onto the nearest arm, weighted
+      // by how far off they sit — softer than snapping a fixed fraction, and
+      // exactly what gives the sample its clean-but-not-stencilled arms.
+      float wind   = std::log(r / H + 0.01f) * s.armWinding;
+      float sector = TAU / (float)d.arms;
+      float k      = std::round((th - wind) / sector);
+      float dist   = std::fabs((th - wind) - k * sector);
+      float w      = std::exp(-0.5f * (dist / s.armSpread) * (dist / s.armSpread));
+      if (rng.uni() > (1.0f - s.armStrength) + s.armStrength * w)
+        th = wind + k * sector + rng.gauss() * s.armSpread * 0.5f;
+    }
+  };
+
+  // Cluster knots: star-forming regions strung along the arms. Centres are
+  // drawn BEFORE the star loop with a fixed draw count, so the prefix property
+  // survives — star i consumes the same RNG state at any starCount.
+  struct Knot { float x, y; };
+  std::vector<Knot> knots;
+  if (d.type == GalaxyType::Spiral && s.clusterFrac > 1e-4f && s.clusterCount > 0) {
+    knots.reserve(s.clusterCount);
+    for (int i = 0; i < s.clusterCount; ++i) {
+      float r, th; fieldPos(r, th);
+      knots.push_back({ r * std::cos(th), r * std::sin(th) });
+    }
+  }
 
   for (int i = 0; i < starCount; ++i) {
     float x, y, z;
@@ -106,7 +171,7 @@ void GenerateGalaxyStars(const GalaxyDesc& d, int starCount, std::vector<vec3>& 
       // Roughly de Vaucouleurs: steep central concentration, no disc.
       float r = R * std::pow(std::max(rng.uni(), 1e-6f), 2.2f);
       float u = rng.uni(), v = rng.uni();
-      float th = 6.28318531f * u, ph = std::acos(2.0f * v - 1.0f);
+      float th = TAU * u, ph = std::acos(2.0f * v - 1.0f);
       x = r * std::sin(ph) * std::cos(th);
       y = r * std::sin(ph) * std::sin(th) * 0.7f;   // mildly triaxial
       z = r * std::cos(ph) * 0.55f;
@@ -114,7 +179,7 @@ void GenerateGalaxyStars(const GalaxyDesc& d, int starCount, std::vector<vec3>& 
     else if (d.type == GalaxyType::Irregular) {
       // A few knots plus a diffuse envelope — lumpy, no symmetry.
       float r = R * std::pow(std::max(rng.uni(), 1e-6f), 0.7f);
-      float th = rng.uni(0.0f, 6.28318531f);
+      float th = rng.uni(0.0f, TAU);
       float lump = (float)(rng.next() % 5) * 1.2566f;
       th = th * 0.35f + lump;
       x = r * std::cos(th) + rng.gauss() * R * 0.12f;
@@ -122,36 +187,36 @@ void GenerateGalaxyStars(const GalaxyDesc& d, int starCount, std::vector<vec3>& 
       z = rng.gauss() * R * 0.10f;
     }
     else {
-      // Spiral: exponential disc, logarithmic arms, central bulge.
-      // Same structure as generate_milky_way_real.py, parameterised by seed.
-      float r;
-      if (rng.uni() < 0.12f) {                       // bulge
-        r = R * 0.10f * std::pow(std::max(rng.uni(), 1e-6f), 0.6f);
-        float u = rng.uni(), v = rng.uni();
-        float th = 6.28318531f * u, ph = std::acos(2.0f * v - 1.0f);
-        x = r * std::sin(ph) * std::cos(th);
-        y = r * std::sin(ph) * std::sin(th);
-        z = r * std::cos(ph) * 0.8f;
-        goto placed;
-      }
-      // Gamma(2,H): surface density ~ exp(-r/H)
-      r = -H * (std::log(std::max(rng.uni(), 1e-7f)) + std::log(std::max(rng.uni(), 1e-7f)));
-      if (r > R * 1.2f) r = R * 1.2f * rng.uni();
-      {
-        float th = rng.uni(0.0f, 6.28318531f);
-        // Pull most stars toward the nearest arm; the winding makes the spiral.
-        const float wind = 2.4f;
-        float arm = std::round((th - std::log(std::max(r / (H * 0.35f), 1.02f)) * wind)
-                               / (6.28318531f / d.arms));
-        float target = arm * (6.28318531f / d.arms)
-                     + std::log(std::max(r / (H * 0.35f), 1.02f)) * wind;
-        if (rng.uni() < 0.72f) th = target + rng.gauss() * 0.20f;
+      if (!knots.empty() && rng.uni() < s.clusterFrac) {
+        const Knot& kn = knots[rng.next() % knots.size()];
+        x = kn.x + rng.gauss() * H * s.clusterSpread;
+        y = kn.y + rng.gauss() * H * s.clusterSpread;
+      } else {
+        float r, th; fieldPos(r, th);
         x = r * std::cos(th);
         y = r * std::sin(th);
-        z = rng.gauss() * Zh;
       }
+      float rr = std::sqrt(x * x + y * y);
+      // Flare: the disc thickens toward the rim, as the sample's does.
+      z = rng.gauss() * (s.thickness * R) * (1.0f + s.flare * rr / R);
     }
-placed:
+
+    if (velOut) {
+      // Flat rotation curve rising through the core: v = vFlat * r/(r+rCore),
+      // tangential in the disc plane, plus isotropic-ish scatter.
+      float rr = std::sqrt(x * x + y * y);
+      float vc = s.vFlat * rr / (rr + s.rCoreFrac * R);
+      float vx = (rr > 1e-9f) ? -vc * (y / rr) : 0.0f;
+      float vy = (rr > 1e-9f) ?  vc * (x / rr) : 0.0f;
+      float vz = 0.0f;
+      vx += vrng.gauss() * s.velScatter;
+      vy += vrng.gauss() * s.velScatter;
+      vz += vrng.gauss() * s.velScatter * 0.3f;
+      float vy1 = vy * ci - vz * si;
+      float vz1 = vy * si + vz * ci;
+      velOut->push_back(vec3{ vx * cr - vy1 * sr, vx * sr + vy1 * cr, vz1 });
+    }
+
     // inclination about X, then roll about Z
     float y1 = y * ci - z * si;
     float z1 = y * si + z * ci;
