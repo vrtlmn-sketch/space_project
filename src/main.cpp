@@ -212,6 +212,45 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
               << " / " << ro.galaxyFullStars << " stars\n";
 }
 
+// Clouds draw with depth writes off, so submission order alone decides what
+// covers what: whichever is drawn last wins, however far away it is. That is
+// why a distant galaxy LOD can sit on top of a near galaxy. Drawing far to near
+// puts the near one last, and its multiplicative dust then darkens what is
+// behind it rather than the other way round.
+//
+// The order is a separate index list on purpose. The clouds vector itself must
+// keep its order: selection and hover encode a cloud as -(2 + i), and delete /
+// respawn / keyframes all index straight into it.
+static void BuildCloudDrawOrder(const std::vector<std::unique_ptr<CloudObject>>& clouds,
+                                const double camT[3], std::vector<int>& out)
+{
+  out.resize(clouds.size());
+  for (size_t i = 0; i < clouds.size(); ++i) out[i] = (int)i;
+
+  // Harness gate: CLOUD_DRAW_SORT=0 keeps the old list order so the difference
+  // can be measured headlessly.
+  static const char* envSort = std::getenv("CLOUD_DRAW_SORT");
+  if (envSort && std::atoi(envSort) == 0) return;
+
+  // Camera-relative in double, then compare — never subtract two large numbers
+  // after narrowing (positions reach ~1e15 AU).
+  auto dist2 = [&](int i) {
+    const dvec3& p = clouds[i]->position;
+    double dx = p.x + camT[0], dy = p.y + camT[1], dz = p.z + camT[2];
+    return dx*dx + dy*dy + dz*dz;
+  };
+  std::stable_sort(out.begin(), out.end(),
+                   [&](int a, int b) { return dist2(a) > dist2(b); });
+
+  if (std::getenv("STARDEBUG3") && !out.empty()) {
+    int moved = 0;
+    for (size_t i = 0; i < out.size(); ++i) if (out[i] != (int)i) ++moved;
+    std::cerr << "[draworder] " << out.size() << " clouds, " << moved
+              << " moved; far=" << std::sqrt(dist2(out.front()))
+              << " near=" << std::sqrt(dist2(out.back())) << " AU\n";
+  }
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
@@ -802,8 +841,10 @@ int main(int argc, char** argv) {
     // Step all GPU Barnes-Hut clouds together against one shared octree so
     // separate formations gravitate on each other, then draw each cloud.
     CloudObject::SimulateSharedForward(clouds, physData, renderer);
-    for (auto& c : clouds)
-      c->Update(renderer, physData);
+    static std::vector<int> cloudDrawOrder;
+    BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cloudDrawOrder);
+    for (int ci : cloudDrawOrder)
+      clouds[ci]->Update(renderer, physData);
 
     // Scale the RT dust influence radius to the primary cloud's size (world
     // units) so dust works whether the cloud spans 1 AU or 26,000 ly.
@@ -1064,7 +1105,10 @@ int main(int argc, char** argv) {
         for (auto& o : physicsObjects)
           renderer.DrawPhysicsObject(o.renderedObject, o.data.mass, o.temperature,
                                      RtObjectType(o.shaderType), o.data.velocity, o.data.color);
-        for (auto& c : clouds) {
+        std::vector<int> cmpOrder;
+        BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cmpOrder);
+        for (int ci : cmpOrder) {
+          auto& c = clouds[ci];
           c->renderedObject.uploadTemperature(c->temperature);
           c->renderedObject.uploadRenderMode(c->renderMode);
           c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
