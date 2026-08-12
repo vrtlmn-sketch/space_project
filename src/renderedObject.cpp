@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <unordered_map>
 
 float RenderedObject::sZNear = 0.001f;
 float RenderedObject::sZFar  = 1.0e10f;
@@ -1962,16 +1963,28 @@ static std::string readRasterShaderWithIncludes(const std::string& path, int dep
   return out;
 }
 
+// One program per SHADER PAIR, not per object. Every galaxy in a universe is
+// its own RenderedObject asking for the same cloudVert/cloudFrag, and compiling
+// a private copy cost ~1.4 ms and ~70 KB each — 30 s and 2 GB for 20k galaxies,
+// against 15 MB of actual star data. Programs live for the run; the map is
+// bounded by the number of distinct shader files on disk.
+static std::unordered_map<std::string, GLuint> s_programCache;
+
 void RenderedObject::setupShaders(const std::string& vertPath, const std::string& fragPath){
 
-  fragShader = readRasterShaderWithIncludes(fragPath);
-  vertShader = readRasterShaderWithIncludes(vertPath);
+  const std::string key = vertPath + "|" + fragPath;
+  auto cached = s_programCache.find(key);
+  if (cached != s_programCache.end()) {
+    program = cached->second;
+    hasBeenRendered = false;      // uniform locations are re-fetched by setupRender
+    return;
+  }
 
-  // Delete old GPU objects if they exist
-  if (program)       { glDeleteProgram(program);          program = 0; }
-  if (vertexShader)  { /* already detached/deleted after link */ }
-  if (fragmentShader){ /* already detached/deleted after link */ }
+  std::string fragShader = readRasterShaderWithIncludes(fragPath);
+  std::string vertShader = readRasterShaderWithIncludes(vertPath);
 
+  // No glDeleteProgram here: the program this object is dropping may be shared
+  // with every other object using the same pair.
   program = glCreateProgram();
   vertexShader = glCreateShader(GL_VERTEX_SHADER);
   const char* vertShaderCharBuffer = vertShader.c_str();
@@ -2009,6 +2022,7 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   }
   glDeleteShader(vertexShader);
   glDeleteShader(fragmentShader);
+  s_programCache[key] = program;
 
   // After re-linking, uniform locations need refreshing.
   // setupRender() fetches them — mark as needing re-init.

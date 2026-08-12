@@ -35,9 +35,7 @@ private:
   bool hasBeenRendered{};
   GLuint vertexShader{};
   GLuint fragmentShader{};
-  std::string vertShader{};
-  std::string fragShader{};
-  GLuint program{};//shader program
+  GLuint program{};//shader program — SHARED, cached per shader-file pair
   unsigned int cameraTranslateUniform{};
   unsigned int pointCountUniform{};
   unsigned int objectCoordinateUniform{};

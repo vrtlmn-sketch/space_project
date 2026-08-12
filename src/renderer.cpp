@@ -3787,12 +3787,19 @@ void Renderer::DrawUniversePanel() {
     // long and mostly mockup, and having to scroll past all of it to reach the
     // button (and back up to change a count) is a chore every single time.
     ImGui::SetNextItemWidth(-1);
-    ImGui::SliderInt("##unigalcount", &universeGalaxyCount, 10, 2000, "Galaxies %d");
+    // Logarithmic: the useful range now spans three decades, and a linear slider
+    // over it makes every count under a few hundred impossible to hit.
+    ImGui::SliderInt("##unigalcount", &universeGalaxyCount, 10, 10000, "Galaxies %d",
+                     ImGuiSliderFlags_Logarithmic);
     ImGui::SetNextItemWidth(-1);
     ImGui::SliderInt("##unistars", &universeStarsPerGalaxy, 1000, 200000, "Stars each %d",
                      ImGuiSliderFlags_Logarithmic);
     ImGui::TextDisabled("= %.1fM stars total",
                         universeGalaxyCount * (double)universeStarsPerGalaxy / 1e6);
+    // Each galaxy is its own object with its own draw, so the per-frame cost is
+    // linear in the count regardless of how few stars each one is built at.
+    if (universeGalaxyCount > 2000)
+      ImGui::TextDisabled("Every galaxy draws separately — past ~2000 the frame rate drops.");
     if (ImGui::Button("Create Universe", ImVec2(-1, 30))) {
       if (universeCreate) universeCreate(universeForm);
     }

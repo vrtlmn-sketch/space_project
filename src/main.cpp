@@ -1060,7 +1060,8 @@ int main(int argc, char** argv) {
     // ── A/B compare harness (--compare): render both renderers to PNGs, exit ──
     if (compareMode) {
       static int cmpFrame = 0;
-      if (++cmpFrame == 3) {   // let buffers/scene settle first
+      static int cmpWait = std::getenv("COMPARE_FRAMES") ? std::atoi(std::getenv("COMPARE_FRAMES")) : 3;
+      if (++cmpFrame == cmpWait) {   // let buffers/scene settle first
         const int W = 640, H = 360;   // 360p — matches how the good version was viewed
         // Optional camera offset (AU): --compare dx dy dz — for testing whether
         // structures stay attached to the scene (parallax) or swim with the camera.
