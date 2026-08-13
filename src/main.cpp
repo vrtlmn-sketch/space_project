@@ -51,6 +51,9 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   cloud->rotationDeg        = cd.rotation;
   cloud->simulatePhysics    = cd.simulatePhysics;
   cloud->keyframes          = cd.keyframes;
+  // The ctor only got a float position; restore the full double from the file.
+  cloud->position           = cd.position;
+  cloud->renderedObject.coordinates = cd.position;
   if (cd.scale != 1.0f)
     cloud->applyVirialScale(cd.scale);
   return cloud;
@@ -169,9 +172,16 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
   float bestFrac  = -1.0f;
 
   for (auto& c : clouds) {
-    if (!c || !c->universeMember) continue;
+    if (!c) continue;
     RenderedObject& ro = c->renderedObject;
+    // The ladder follows isGalaxy (a render-cache concern), NOT universe
+    // membership (an ownership tag): dragging a galaxy out of the universe
+    // used to silently freeze it at its spawn rung forever.
     if (!ro.isGalaxy || ro.starChunks.empty() || ro.galaxyFullStars <= 0) continue;
+    // Promoted/simulated galaxies own their particle data: the generator
+    // recipe is no longer the truth, so the ladder must never rebuild them
+    // from the desc (it would erase the simulation).
+    if (!ro.isStarfield || ro.simulatableParticleCount() > 0) continue;
     const RenderedObject::StarChunk& sc = ro.starChunks[0];
     // Camera-relative in double, as everywhere else at this scale.
     double dx = ro.coordinates.x + sc.center.x + camT[0];
@@ -346,9 +356,29 @@ int main(int argc, char** argv) {
     return cd;
   };
 
+  // Place a freshly built cloud IN FRONT OF THE CAMERA, framed like Locate
+  // (5.7× its radius). Clouds used to spawn at a hardcoded {0,0,-3}: after
+  // visiting a universe the camera is ~1e15 AU out, so a new cloud landed
+  // invisibly at the origin and read as "it broke / I can't find it".
+  auto placeAheadOfCamera = [&](CloudObject& cloud) {
+    dvec3 c; double r;
+    cloud.boundsEstimate(c, r);
+    dvec3 localCenter{ c.x - cloud.position.x, c.y - cloud.position.y, c.z - cloud.position.z };
+    dvec3 camPos{ -renderer.cameraTranslate[0], -renderer.cameraTranslate[1], -renderer.cameraTranslate[2] };
+    vec3 f = renderer.CameraForward();
+    dvec3 fwd{ (double)f.x, (double)f.y, (double)f.z };
+    double dist = std::max(r * 5.7, 3.0);
+    cloud.position = dvec3{ camPos.x + fwd.x * dist - localCenter.x,
+                            camPos.y + fwd.y * dist - localCenter.y,
+                            camPos.z + fwd.z * dist - localCenter.z };
+    cloud.renderedObject.coordinates = cloud.position;
+  };
+
   cb.applyCloud = [&](const CloudFormState& cf) {
     if (!cf.enabled) return;
-    clouds.push_back(buildCloudFromData(cloudDataFromForm(cf)));
+    auto cloud = buildCloudFromData(cloudDataFromForm(cf));
+    placeAheadOfCamera(*cloud);
+    clouds.push_back(std::move(cloud));
   };
 
   // Procedural universe: one cloud holding every galaxy, each galaxy a chunk.
@@ -368,6 +398,15 @@ int main(int argc, char** argv) {
     // it must exist in the scene rather than be anonymous geometry inside a blob.
     std::vector<GalaxyDesc> galaxies;
     GenerateUniverseGalaxies(up, galaxies);
+    // Harness gate: rotate every galaxy (degrees) so headless captures can
+    // verify the chunk path honours cloud rotation. Unset/zero = untouched.
+    vec3 testRot{0,0,0};
+    if (const char* tr = std::getenv("UNIVERSE_ROT"))
+      std::sscanf(tr, "%f,%f,%f", &testRot.x, &testRot.y, &testRot.z);
+    // Harness gate: enable physics on the first N galaxies so the promote
+    // (chunks -> particles) path can be exercised headlessly.
+    int testPhys = 0;
+    if (const char* tp = std::getenv("UNIVERSE_PHYS")) testPhys = std::atoi(tp);
     int gi = 0;
     for (const GalaxyDesc& g : galaxies) {
       auto cloud = std::make_unique<CloudObject>(vec3{0,0,0}, std::vector<CloudParticle>{});
@@ -379,7 +418,8 @@ int main(int argc, char** argv) {
       cloud->renderedObject.galaxyFullStars = up.starsPerGalaxy;
       cloud->renderedObject.BuildGalaxyStarfield(g, std::min(up.starsPerGalaxy, 128));
       cloud->renderedObject.setupShaders("src/shaders/cloudVert.glsl", "src/shaders/cloudFrag.glsl");
-      cloud->simulatePhysics = false;           // universes never simulate by default
+      cloud->simulatePhysics = (gi < testPhys); // universes never simulate by default
+      cloud->rotationDeg = testRot;
       const char* kind = (g.type == GalaxyType::Spiral)     ? "Spiral"
                        : (g.type == GalaxyType::Elliptical) ? "Elliptical" : "Irregular";
       cloud->name = std::string(kind) + " Galaxy " + std::to_string(++gi);
@@ -404,9 +444,10 @@ int main(int argc, char** argv) {
   };
 
   procGen.onGenerate = [&](std::vector<CloudParticle> pts, int cm, float temp) {
-    auto cloud = std::make_unique<CloudObject>(vec3{0, 0, -3}, std::move(pts));
+    auto cloud = std::make_unique<CloudObject>(vec3{0, 0, 0}, std::move(pts));
     cloud->computeMethod = static_cast<CloudComputeMethod>(cm);
     cloud->temperature   = temp;
+    placeAheadOfCamera(*cloud);
     clouds.push_back(std::move(cloud));
   };
 
@@ -1072,7 +1113,12 @@ int main(int argc, char** argv) {
     if (compareMode) {
       static int cmpFrame = 0;
       static int cmpWait = std::getenv("COMPARE_FRAMES") ? std::atoi(std::getenv("COMPARE_FRAMES")) : 3;
-      if (++cmpFrame == cmpWait) {   // let buffers/scene settle first
+      ++cmpFrame;
+      // Harness gate: drop physics again at frame 2 so the full promote->demote
+      // round-trip (chunks -> particles -> chunks-from-data) runs headlessly.
+      if (std::getenv("UNIVERSE_DEMOTE") && cmpFrame == 2)
+        for (auto& c : clouds) if (c && c->demoteToChunks) c->simulatePhysics = false;
+      if (cmpFrame == cmpWait) {   // let buffers/scene settle first
         const int W = 640, H = 360;   // 360p — matches how the good version was viewed
         // Optional camera offset (AU): --compare dx dy dz — for testing whether
         // structures stay attached to the scene (parallax) or swim with the camera.

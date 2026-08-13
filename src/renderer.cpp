@@ -1691,7 +1691,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     focusDistance = (float)std::sqrt(dx*dx + dy*dy + dz*dz);
   };
   int camSel = SelectedCameraIndex();
-  int cloudSel = (selectedIdx <= -2 && selectedIdx > -1000) ? -(selectedIdx + 2) : -1;
+  int cloudSel = (selectedIdx <= -2 && selectedIdx > -kCameraSelBase) ? -(selectedIdx + 2) : -1;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
     focusFrom(physicsObjects[selectedIdx].data.position);
   } else if (camSel >= 0 && camSel < (int)sceneCameras.size()) {
@@ -1996,7 +1996,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     int target = quickDeleteIdx;
     if (target >= 0) {
       if (cb.deleteObject) cb.deleteObject(target);
-    } else if (target <= -2 && target > -1000) {
+    } else if (target <= -2 && target > -kCameraSelBase) {
       if (cb.deleteCloud) cb.deleteCloud(-target - 2);
       lastCloudIdx = -99;
     }
@@ -2095,7 +2095,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
     pos = selObj->data.position;
     rotPtr = &selObj->rotationDeg;
     haveTarget = true;
-  } else if (selectedIdx <= -1000) {
+  } else if (selectedIdx <= -kCameraSelBase) {
     int ci = SelectedCameraIndex();
     if (ci >= 0 && ci < (int)sceneCameras.size()) {
       selCam = &sceneCameras[ci];
@@ -2116,7 +2116,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
   auto writePos = [&](const dvec3& p) {
     pos = p;
     if (selObj) { selObj->data.position = p; selObj->renderedObject.coordinates = p; }
-    else if (selCloud) { selCloud->position = vec3{(float)p.x, (float)p.y, (float)p.z}; }
+    else if (selCloud) { selCloud->position = p; }
     else if (selCam) { selCam->position = p; }
   };
 
@@ -2286,7 +2286,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
     DrawObjectHighlight(physicsObjects[selectedIdx]);
   }
   // Selected cloud: shape-hugging hull outline (CPU drawlist, no GPU cost).
-  if (selectedIdx <= -2 && selectedIdx > -1000) {
+  if (selectedIdx <= -2 && selectedIdx > -kCameraSelBase) {
     int ci = -(selectedIdx + 2);
     if (ci >= 0 && ci < (int)clouds.size())
       DrawCloudHighlight(*clouds[ci]);
@@ -2310,7 +2310,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
                               ? &physicsObjects[hoverIdx] : nullptr;
       CloudObject*   hCloud = nullptr;
       int hci = -(hoverIdx + 2);
-      if (hoverIdx <= -2 && hoverIdx > -1000 && hci >= 0 && hci < (int)clouds.size())
+      if (hoverIdx <= -2 && hoverIdx > -kCameraSelBase && hci >= 0 && hci < (int)clouds.size())
         hCloud = clouds[hci].get();
 
       if (hObj || hCloud) {
@@ -2344,8 +2344,9 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
                               ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                               ImGuiWindowFlags_NoFocusOnAppearing;
         if (ImGui::Begin("##hoverQuickMenu", nullptr, mf)) {
-          if (hObj) ImGui::TextUnformatted(hObj->name.c_str());
-          else      ImGui::Text("Cloud %d", hci);
+          if (hObj)                        ImGui::TextUnformatted(hObj->name.c_str());
+          else if (!hCloud->name.empty())  ImGui::TextUnformatted(hCloud->name.c_str());
+          else                             ImGui::Text("Cloud %d", hci);
           ImGui::Separator();
 
           if (ImGui::Button("Locate", ImVec2(96, 0))) {
@@ -2364,7 +2365,12 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
             }
           }
           bool* phys = hObj ? &hObj->simulatePhysics : &hCloud->simulatePhysics;
+          const bool catalogueSf = hCloud && hCloud->renderedObject.isStarfield &&
+                                   !hCloud->renderedObject.isGalaxy &&
+                                   hCloud->renderedObject.simulatableParticleCount() == 0;
+          ImGui::BeginDisabled(catalogueSf);
           ImGui::Checkbox("Physics", phys);
+          ImGui::EndDisabled();
           if (ImGui::Button("Inspector", ImVec2(96, 0))) {
             selectedIdx = hoverIdx;
             highlightMode = 0;
@@ -3394,7 +3400,11 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   for (auto& c : clouds) {
     if (!c) continue;
     if (c->getBufferSize() > maxBuf) maxBuf = c->getBufferSize();
-    if (c->simulatePhysics) {
+    // Only clouds that can actually STEP count: a physics-on cloud with no
+    // simulatable particles never advances its timeframe, and letting it set
+    // anySimulated pinned the playhead at 0 for the whole scene — cameras,
+    // keyframes, everything.
+    if (c->simulatePhysics && c->renderedObject.simulatableParticleCount() > 0) {
       anySimulated = true;
       if (c->getTimeframe() > curFrame) curFrame = c->getTimeframe();
     }
@@ -3665,7 +3675,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     int d = drawKeyframeLane(clabel, 2000 + ci, clouds[ci]->keyframes, selectedIdx == -(2 + ci),
       [&, ci](const CameraKeyframe& ck) {
         CloudObject* c = clouds[ci].get();
-        c->position    = vec3{ (float)ck.pos[0], (float)ck.pos[1], (float)ck.pos[2] };
+        c->position    = dvec3{ ck.pos[0], ck.pos[1], ck.pos[2] };
         c->rotationDeg = { ck.pitch, ck.rotation, ck.roll };
         selectedIdx = -(2 + ci);
       });
@@ -4227,16 +4237,28 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
                        ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
                        "[U] Universe  (%d galaxies)", universeCount);
     ImGui::PopStyleColor();
+    // Drop a cloud row here to make it a universe member. Membership is a tag,
+    // not a transform parent (the universe IS the coordinate space), so joining
+    // never moves the object.
+    if (ImGui::BeginDragDropTarget()) {
+      if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("SPACE_CLOUD_IDX")) {
+        int di = *(const int*)pl->Data;
+        if (di >= 0 && di < (int)clouds.size() && clouds[di])
+          clouds[di]->universeMember = true;
+      }
+      ImGui::EndDragDropTarget();
+    }
     if (universeOpen) {
       ImGui::SameLine();
       if (ImGui::SmallButton("Settings##uninode")) showUniversePanel = true;
     }
   }
 
-  // Cloud entries
-  for (int i = 0; i < (int)clouds.size(); i++) {
-    const bool inUniverse = clouds[i] && clouds[i]->universeMember;
-    if (inUniverse && !universeOpen) continue;      // collapsed: hide children
+  // Cloud entries. Universe members render as ONE contiguous block under the
+  // [U] node, loose clouds after — DISPLAY grouping only, the clouds vector is
+  // never reordered (selection sentinels -(2+i) index into it).
+  auto drawCloudRow = [&](int i) {
+    const bool inUniverse = clouds[i]->universeMember;
     if (inUniverse) ImGui::Indent(14.0f);
     int sentinel = -(2 + i);
     bool cloudSel = (selectedIdx == sentinel);
@@ -4263,10 +4285,40 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
       hoverLastSeen = ImGui::GetTime();
       hoverRowY     = ImGui::GetItemRectMin().y;
     }
+    if (ImGui::BeginDragDropSource()) {
+      ImGui::SetDragDropPayload("SPACE_CLOUD_IDX", &i, sizeof(int));
+      if (!clouds[i]->name.empty()) ImGui::TextUnformatted(clouds[i]->name.c_str());
+      else                          ImGui::Text("Cloud %d", i);
+      ImGui::EndDragDropSource();
+    }
+    // Every row is a drop target: dropping among universe members JOINS,
+    // dropping among loose clouds LEAVES — dragging "in between" works the way
+    // it reads. The [U] node itself and empty space below also accept drops.
+    if (ImGui::BeginDragDropTarget()) {
+      if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("SPACE_CLOUD_IDX")) {
+        int di = *(const int*)pl->Data;
+        if (di >= 0 && di < (int)clouds.size() && clouds[di])
+          clouds[di]->universeMember = inUniverse;
+      }
+      ImGui::EndDragDropTarget();
+    }
+    if (ImGui::BeginPopupContextItem()) {
+      if (inUniverse) {
+        if (ImGui::MenuItem("Remove from Universe")) clouds[i]->universeMember = false;
+      } else if (universeCount > 0) {
+        if (ImGui::MenuItem("Add to Universe"))      clouds[i]->universeMember = true;
+      }
+      ImGui::EndPopup();
+    }
     ImGui::PopStyleColor();
     if (inUniverse) ImGui::Unindent(14.0f);
-  }
+  };
+  if (universeOpen)
+    for (int i = 0; i < (int)clouds.size(); i++)
+      if (clouds[i] && clouds[i]->universeMember) drawCloudRow(i);
   if (universeOpen) ImGui::TreePop();
+  for (int i = 0; i < (int)clouds.size(); i++)
+    if (clouds[i] && !clouds[i]->universeMember) drawCloudRow(i);
 
   // Camera list
   for (int i = 0; i < (int)sceneCameras.size(); i++) {
@@ -4318,6 +4370,21 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     if (ImGui::Button("Show All##hl", ImVec2(half, 0))) highlightMode = 1;
     ImGui::SameLine();
     if (ImGui::Button("Hide All##hl", ImVec2(-1, 0)))   highlightMode = 2;
+  }
+
+  // Whole-window drop target: dragging a member row anywhere outside the [U]
+  // node takes it OUT of the universe. ImGui gives overlapping targets to the
+  // smallest rect, so the node's own (join) target still wins over this one.
+  if (universeCount > 0 && ImGui::GetDragDropPayload() != nullptr) {
+    ImGuiWindow* win = ImGui::GetCurrentWindow();
+    if (ImGui::BeginDragDropTargetCustom(win->Rect(), win->ID)) {
+      if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("SPACE_CLOUD_IDX")) {
+        int di = *(const int*)pl->Data;
+        if (di >= 0 && di < (int)clouds.size() && clouds[di])
+          clouds[di]->universeMember = false;
+      }
+      ImGui::EndDragDropTarget();
+    }
   }
 
   ImGui::End();
@@ -4671,7 +4738,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
   }
 
   // ── Camera object ──
-  else if (selectedIdx <= -1000) {
+  else if (selectedIdx <= -kCameraSelBase) {
     int camIdx = SelectedCameraIndex();
     SceneCamera* cam = (camIdx >= 0 && camIdx < (int)sceneCameras.size())
                        ? &sceneCameras[camIdx] : nullptr;
@@ -4773,8 +4840,18 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
       if (cloud->renderedObject.isGalaxy) {
         ImGui::Text("Stars: %d", cloud->renderedObject.galaxyFullStars);
-        ImGui::TextDisabled("Detail: %d built at this distance",
-                            cloud->renderedObject.galaxyStarCount);
+        // Make the promote/demote state visible: "did it work?" should never
+        // require guessing from the render.
+        if (!cloud->renderedObject.isStarfield)
+          ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.55f, 1.0f),
+                             "Promoted: %d live particles (physics-ready)",
+                             cloud->renderedObject.simulatableParticleCount());
+        else if (cloud->renderedObject.simulatableParticleCount() > 0)
+          ImGui::TextColored(ImVec4(0.55f, 0.75f, 0.95f, 1.0f),
+                             "Simulated data, rendered as LOD chunks");
+        else
+          ImGui::TextDisabled("Detail: %d built at this distance",
+                              cloud->renderedObject.galaxyStarCount);
       } else {
         ImGui::Text("Active: %d particles", cloud->particleCount());
       }
@@ -4788,11 +4865,21 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
 
       // Simulate physics: when off, the cloud centre is driven by timeline
-      // keyframes (capture with C) instead of particle gravity.
+      // keyframes (capture with C) instead of particle gravity. A galaxy is
+      // PROMOTED to real particles when this turns on (see materializeGalaxy);
+      // a catalogue starfield has no recipe or velocities, so it cannot
+      // simulate and the checkbox is disabled rather than silently inert.
+      const bool catalogueSf = cloud->renderedObject.isStarfield &&
+                               !cloud->renderedObject.isGalaxy &&
+                               cloud->renderedObject.simulatableParticleCount() == 0;
+      ImGui::BeginDisabled(catalogueSf);
       if (ImGui::Checkbox("Simulate physics##csim", &cloud->simulatePhysics)) {
         cloud->clearRecording();
       }
-      if (!cloud->simulatePhysics)
+      ImGui::EndDisabled();
+      if (catalogueSf && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Star catalogues carry no velocities - physics needs a\ngenerated galaxy or a procedural cloud.");
+      if (!catalogueSf && !cloud->simulatePhysics)
         ImGui::TextDisabled("Keyframed — press C to capture at the playhead");
 
       // Position (AU) — cloud centre. Numeric field always works even when the
@@ -4803,7 +4890,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       if (gizmoDragging && gizmoDragKind == 0) ImGui::PushID(ImGui::GetFrameCount());
       if (ImGui::DragScalarN("##cipos", ImGuiDataType_Double, cp, 3, 0.05f,
                              nullptr, nullptr, "%.4g")) {
-        cloud->position = { (float)cp[0], (float)cp[1], (float)cp[2] };
+        cloud->position = dvec3{ cp[0], cp[1], cp[2] };
       }
       if (gizmoDragging && gizmoDragKind == 0) ImGui::PopID();
 
@@ -5057,6 +5144,34 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
 // pick region so clicks on empty sky near the cloud don't select it.
 std::vector<ImVec2> Renderer::CloudScreenHull(CloudObject& c) {
   std::vector<ImVec2> pts;
+
+  if (c.renderedObject.isStarfield && !c.renderedObject.starChunks.empty()) {
+    // Starfields keep no CPU particle copy — hull the projected corners of
+    // each chunk's cube instead (rotated with the cloud, differenced in
+    // double inside WorldToScreen). Coarser than a particle silhouette but
+    // an honest pick region, and it makes galaxies clickable at all.
+    double Rd[9];
+    bool rot = (c.rotationDeg.x != 0.0f || c.rotationDeg.y != 0.0f || c.rotationDeg.z != 0.0f);
+    if (rot) EulerDegToMat3d(c.rotationDeg, Rd);
+    pts.reserve(c.renderedObject.starChunks.size() * 8);
+    for (const auto& sc : c.renderedObject.starChunks) {
+      for (int k = 0; k < 8; ++k) {
+        double x = sc.center.x + ((k & 1) ? sc.extent : -sc.extent);
+        double y = sc.center.y + ((k & 2) ? sc.extent : -sc.extent);
+        double z = sc.center.z + ((k & 4) ? sc.extent : -sc.extent);
+        if (rot) {
+          double rx = Rd[0]*x + Rd[1]*y + Rd[2]*z;
+          double ry = Rd[3]*x + Rd[4]*y + Rd[5]*z;
+          double rz = Rd[6]*x + Rd[7]*y + Rd[8]*z;
+          x = rx; y = ry; z = rz;
+        }
+        float sx, sy;
+        if (WorldToScreen({c.position.x + x, c.position.y + y, c.position.z + z}, sx, sy))
+          pts.push_back(ImVec2(sx, sy));
+      }
+    }
+    if (pts.size() < 3) { pts.clear(); return pts; }
+  } else {
   const std::vector<float>& P = c.renderedObject.cloudLocalPositions();
   size_t n = P.size() / 3;
   if (n < 3) return pts;
@@ -5085,6 +5200,7 @@ std::vector<ImVec2> Renderer::CloudScreenHull(CloudObject& c) {
       pts.push_back(ImVec2(sx, sy));
   }
   if (pts.size() < 3) { pts.clear(); return pts; }
+  }
 
   std::sort(pts.begin(), pts.end(), [](const ImVec2& a, const ImVec2& b) {
     return a.x < b.x || (a.x == b.x && a.y < b.y);

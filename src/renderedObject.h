@@ -15,6 +15,10 @@ enum class MeshType{
   grid
 };
 
+// R = Rz·Ry·Rx (row-major) from Euler degrees, in double — the shared cloud
+// rotation convention, precision-safe for chunk centres at universe scale.
+void EulerDegToMat3d(const vec3& deg, double R[9]);
+
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback
 public:
@@ -149,6 +153,14 @@ public:
   // cloud carries the (double) universe position, so chunk centres stay small
   // and float-safe no matter how far out the galaxy sits.
   void  BuildGalaxyStarfield(const struct GalaxyDesc& d, int starCount);
+  // Rebuild the chunked render cache FROM cloudParticles (identical int16
+  // single-chunk layout). Used when a promoted/simulated galaxy demotes: the
+  // particles stay — they are the object's identity — this only swaps the
+  // render representation back to the cheap culled/budgeted one.
+  void  BuildStarfieldFromParticles();
+  // Delete the cloud's VAO/VBO/rim/SSBO set so the next builder (setupRender
+  // or BuildStarfieldFromParticles) recreates a clean, layout-consistent one.
+  void  releaseCloudGlObjects();
   void  drawStarfieldChunks(const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
                             const double cameraTranslate[3]);
   MeshType meshType{MeshType::sphere};
@@ -285,6 +297,10 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   void TrimLinePoints(size_t maxPoints);
 
   int  cloudParticleCount() const { return isStarfield ? bufferSize : (int)cloudParticles.size(); }
+  // How many particles physics can actually step. cloudParticleCount() above
+  // reports GPU stars for a chunked starfield whose cloudParticles is empty —
+  // treating that as "has particles" is what crashed the physics path.
+  int  simulatableParticleCount() const { return (int)cloudParticles.size(); }
   // Cloud particle positions (galaxy-local xyz triples) — read-only access for
   // viewport picking/outline (projected hull), which lives in the Renderer.
   const std::vector<float>& cloudLocalPositions() const { return UVObjectMeshBuffer; }

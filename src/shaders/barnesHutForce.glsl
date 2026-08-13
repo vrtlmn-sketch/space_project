@@ -40,6 +40,11 @@ uniform int   uBigBodyCount;
 uniform float uG;            // gravitational constant (0.0001)
 uniform float uDt;           // timestep (0.1)
 uniform float uTheta;        // Barnes-Hut opening angle (0.5)
+// Particle positions are stored CLOUD-LOCAL (a float world position at
+// universe scale resolves to ~1e8 AU — coarser than galaxy structure). The
+// tree and big bodies live in a shared sim frame; this offset (cloud origin
+// relative to that frame, differenced in double on the CPU) bridges the two.
+uniform vec3  uFrameOffset;
 
 // ── Softening to avoid singularity ──
 const float SOFTENING2 = 0.001;       // increased to prevent close-encounter blow-ups
@@ -49,7 +54,7 @@ void main() {
   uint gid = gl_GlobalInvocationID.x;
   if (gid >= uint(uParticleCount)) return;
 
-  vec3 pos  = particles[gid].posM.xyz;
+  vec3 pos  = particles[gid].posM.xyz + uFrameOffset;   // local -> sim frame
   float myMass = particles[gid].posM.w;
   vec3 vel  = particles[gid].velP.xyz;
   vec3 acc  = vec3(0.0);
@@ -115,7 +120,7 @@ void main() {
   vel += acc * uDt;
   pos += vel * uDt;
 
-  // ── 4. Write back ──
-  particles[gid].posM.xyz = pos;
+  // ── 4. Write back (sim frame -> local) ──
+  particles[gid].posM.xyz = pos - uFrameOffset;
   particles[gid].velP.xyz = vel;
 }

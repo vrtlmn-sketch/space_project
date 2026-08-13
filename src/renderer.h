@@ -535,6 +535,8 @@ private:
 public:
   // ---- Public camera state (exposed so UI sliders can drive them) ----
   double cameraTranslate[3] = { 0, 0, 0 };  // = -cameraPosition (uCamera semantics)
+  // Camera forward in world space (camMatrix rows map world→camera; looks down -Z).
+  vec3 CameraForward() const { return vec3{ -camMatrix[6], -camMatrix[7], -camMatrix[8] }; }
   float rotation{};
   float pitch{};
   float roll{};
@@ -652,14 +654,18 @@ public:
   void CameraViewMatrix(const vec3& rotationDeg, float out[9]) const;
   // Draw wireframe frustums for all spawned cameras (rasterized view only)
   void DrawCameraFrustums();
-  // Camera selection helpers: encode camera i as selectedIdx = -(1000 + i)
-  static int  CameraSentinel(int i) { return -(1000 + i); }
+  // Camera selection helpers: encode camera i as selectedIdx = -(kCameraSelBase + i).
+  // The base bounds how many CLOUDS can exist before cloud sentinels -(2+i)
+  // collide with camera sentinels — it used to be 1000, and a universe of ≥998
+  // galaxies made every later cloud select as a nonexistent camera.
+  static constexpr int kCameraSelBase = 100000000;
+  static int  CameraSentinel(int i) { return -(kCameraSelBase + i); }
   int  SelectedCameraIndex() const {
-    return (selectedIdx <= -1000) ? -(selectedIdx) - 1000 : -1;
+    return (selectedIdx <= -kCameraSelBase) ? -(selectedIdx) - kCameraSelBase : -1;
   }
   int  SelectedObjectIndex() const { return selectedIdx >= 0 ? selectedIdx : -1; }
   int  SelectedCloudIndex() const {
-    return (selectedIdx <= -2 && selectedIdx > -1000) ? -(selectedIdx + 2) : -1;
+    return (selectedIdx <= -2 && selectedIdx > -kCameraSelBase) ? -(selectedIdx + 2) : -1;
   }
 
   // ---- Camera keyframes ----

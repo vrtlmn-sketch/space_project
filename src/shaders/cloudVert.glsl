@@ -113,8 +113,12 @@ void main() {
   // done in double on the CPU), so they must not be offset again.
   vec3 aLocal, aRelPos;
   if (uChunkExtent > 0.0) {
+    // uCloudRot places the chunk's stars like the ordinary path places a
+    // cloud's particles; the hashes below stay on the UNROTATED aLocal so a
+    // star keeps its colour, magnitude and dust when the cloud is rotated.
+    // uChunkCenter itself is rotated about the cloud origin on the CPU.
     aLocal  = aPos * uChunkExtent;
-    aRelPos = uChunkCenter + aLocal;
+    aRelPos = uChunkCenter + uCloudRot * aLocal;
   } else {
     aLocal  = aPos;
     aRelPos = uCloudOrigin + uCloudRot * aLocal;

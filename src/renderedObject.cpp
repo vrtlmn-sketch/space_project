@@ -550,6 +550,18 @@ static void eulerMat3(const vec3& deg, float R[9]) {
   R[6]=-sb;   R[7]=cb*sa;          R[8]=cb*ca;
 }
 
+// Same matrix in double: chunk centres are rotated about the cloud origin at
+// universe scale, where a float rotation would quantise positions to ~1e8 AU.
+void EulerDegToMat3d(const vec3& deg, double R[9]) {
+  const double d2r = 3.14159265358979323846 / 180.0;
+  double ca=std::cos(deg.x*d2r), sa=std::sin(deg.x*d2r);
+  double cb=std::cos(deg.y*d2r), sb=std::sin(deg.y*d2r);
+  double cc=std::cos(deg.z*d2r), sc=std::sin(deg.z*d2r);
+  R[0]=cc*cb; R[1]=cc*sb*sa-sc*ca; R[2]=cc*sb*ca+sc*sa;
+  R[3]=sc*cb; R[4]=sc*sb*sa+cc*ca; R[5]=sc*sb*ca-cc*sa;
+  R[6]=-sb;   R[7]=cb*sa;          R[8]=cb*ca;
+}
+
 int RenderedObject::rtCloudPointCap = 20000;
 
 // The raster's EXACT dust field (cloudVert.glsl: hash13 → vnoise → fbm3 →
@@ -925,13 +937,9 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
   double oz = coordinates.z + cameraTranslate[2];
   float rm[9] = {1,0,0, 0,1,0, 0,0,1};
   if (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f) {
-    const double d2r = 3.14159265358979323846 / 180.0;
-    double ca = std::cos(rotationDeg.x*d2r), sa = std::sin(rotationDeg.x*d2r);
-    double cb = std::cos(rotationDeg.y*d2r), sb = std::sin(rotationDeg.y*d2r);
-    double cc = std::cos(rotationDeg.z*d2r), sc = std::sin(rotationDeg.z*d2r);
-    rm[0]=(float)(cc*cb); rm[1]=(float)(cc*sb*sa - sc*ca); rm[2]=(float)(cc*sb*ca + sc*sa);
-    rm[3]=(float)(sc*cb); rm[4]=(float)(sc*sb*sa + cc*ca); rm[5]=(float)(sc*sb*ca - cc*sa);
-    rm[6]=(float)(-sb);   rm[7]=(float)(cb*sa);            rm[8]=(float)(cb*ca);
+    double R[9];
+    EulerDegToMat3d(rotationDeg, R);
+    for (int i = 0; i < 9; ++i) rm[i] = (float)R[i];
   }
   GLint lo = glGetUniformLocation(program, "uCloudOrigin");
   if (lo >= 0) glUniform3f(lo, (float)ox, (float)oy, (float)oz);
@@ -1392,17 +1400,33 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   const float tanV    = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);
   const float tanH    = tanV * aspect;
 
-  struct Vis { int idx; float weight; int cap; float screenPx; };
+  // The cloud's rotation, applied to chunk centres about the cloud origin (in
+  // double — a float rotation quantises to ~1e8 AU at universe scale). The
+  // stars inside each chunk are rotated by the SAME matrix on the GPU
+  // (uCloudRot in cloudVert.glsl), so the whole cloud turns as one body.
+  double rotD[9];
+  const bool hasRot = (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f);
+  if (hasRot) EulerDegToMat3d(rotationDeg, rotD);
+
+  struct Vis { int idx; float weight; int cap; float screenPx; double cx, cy, cz; };
   static std::vector<Vis> vis;      // reused: this runs every frame
   vis.clear();
   double wsum = 0.0;
 
   for (int i = 0; i < (int)starChunks.size(); ++i) {
     const StarChunk& sc = starChunks[i];
+    double lx = sc.center.x, ly = sc.center.y, lz = sc.center.z;
+    if (hasRot) {
+      double rx = rotD[0]*lx + rotD[1]*ly + rotD[2]*lz;
+      double ry = rotD[3]*lx + rotD[4]*ly + rotD[5]*lz;
+      double rz = rotD[6]*lx + rotD[7]*ly + rotD[8]*lz;
+      lx = rx; ly = ry; lz = rz;
+    }
+    const double wx = ox + lx, wy = oy + ly, wz = oz + lz;
     // chunk centre in camera space (viewRot is row-major; camera looks down -Z)
     // Camera-relative in DOUBLE, then narrowed: the difference is small even
     // when both terms are ~1e15, which is the whole point of the hierarchy.
-    float px = (float)(ox + sc.center.x), py = (float)(oy + sc.center.y), pz = (float)(oz + sc.center.z);
+    float px = (float)wx, py = (float)wy, pz = (float)wz;
     float vx = viewRot[0]*px + viewRot[1]*py + viewRot[2]*pz;
     float vy = viewRot[3]*px + viewRot[4]*py + viewRot[5]*pz;
     float vz = viewRot[6]*px + viewRot[7]*py + viewRot[8]*pz;
@@ -1436,7 +1460,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     // Projected radius in pixels — the haze lobe is capped by it so a galaxy a
     // few pixels wide is not drawn as a stack of much larger glowing sprites.
     float screenPx = ry * 0.5f * (float)fbHeight;
-    vis.push_back({i, w, capByArea, screenPx});
+    vis.push_back({i, w, capByArea, screenPx, wx, wy, wz});
     wsum += w;
   }
 
@@ -1481,7 +1505,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
       std::sort(ord.begin(), ord.end(), [&](size_t a,size_t b){return alloc[a]>alloc[b];});
       for (size_t t=0; t<ord.size() && t<6; ++t) {
         size_t k=ord[t]; const StarChunk& sc=starChunks[vis[k].idx];
-        float px=(float)(ox+sc.center.x), py=(float)(oy+sc.center.y), pz=(float)(oz+sc.center.z);
+        float px=(float)vis[k].cx, py=(float)vis[k].cy, pz=(float)vis[k].cz;
         float d=std::sqrt(px*px+py*py+pz*pz);
         std::cerr << "   alloc " << alloc[k] << "/" << sc.count
                   << "  extent " << sc.extent << "  dist " << d
@@ -1498,11 +1522,11 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     if (n > vis[k].cap) n = vis[k].cap;            // never exceed its screen area
     if (n > sc.count) n = sc.count;
     if (n <= 0) continue;
-    // uChunkCenter is already CAMERA-RELATIVE for starfields, so the shader
-    // adds nothing large to it.
-    if (lc >= 0) glUniform3f(lc, (float)(ox + sc.center.x),
-                                 (float)(oy + sc.center.y),
-                                 (float)(oz + sc.center.z));
+    // uChunkCenter is already CAMERA-RELATIVE for starfields (and rotated
+    // about the cloud origin), so the shader adds nothing large to it.
+    if (lc >= 0) glUniform3f(lc, (float)vis[k].cx,
+                                 (float)vis[k].cy,
+                                 (float)vis[k].cz);
     if (le >= 0) glUniform1f(le, sc.extent);
     if (lp >= 0) glUniform1f(lp, vis[k].screenPx);
     glDrawArrays(GL_POINTS, sc.first, n);
@@ -1652,12 +1676,82 @@ void RenderedObject::BuildGalaxyStarfield(const GalaxyDesc& d, int starCount)
   glBindVertexArray(0);
 }
 
-void RenderedObject::setupRender()
+void RenderedObject::releaseCloudGlObjects()
 {
+  if (vao)           { glDeleteVertexArrays(1, &vao); vao = 0; }
+  if (vbo)           { glDeleteBuffers(1, &vbo); vbo = 0; }
+  if (rimVbo)        { glDeleteBuffers(1, &rimVbo); rimVbo = 0; }
+  if (ssboParticles) { glDeleteBuffers(1, &ssboParticles); ssboParticles = 0; }
+  if (ssboObjects)   { glDeleteBuffers(1, &ssboObjects); ssboObjects = 0; }
+  hasBeenRendered = false;
+}
+
+void RenderedObject::BuildStarfieldFromParticles()
+{
+  const size_t n = cloudParticles.size();
+  if (n == 0) return;
+
+  vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
+  for (const auto& p : cloudParticles) {
+    lo.x=std::min(lo.x,p.position.x); hi.x=std::max(hi.x,p.position.x);
+    lo.y=std::min(lo.y,p.position.y); hi.y=std::max(hi.y,p.position.y);
+    lo.z=std::min(lo.z,p.position.z); hi.z=std::max(hi.z,p.position.z);
+  }
+  vec3  c{(lo.x+hi.x)*0.5f, (lo.y+hi.y)*0.5f, (lo.z+hi.z)*0.5f};
+  float ext = std::max(std::max(hi.x-lo.x, hi.y-lo.y), hi.z-lo.z) * 0.5f;
+  if (ext <= 0.0f) ext = 1.0f;
+
+  std::vector<short> blob;
+  blob.reserve(n*3);
+  for (const auto& p : cloudParticles) {
+    blob.push_back((short)std::clamp(std::lround((p.position.x - c.x) / ext * 32767.0f), -32767L, 32767L));
+    blob.push_back((short)std::clamp(std::lround((p.position.y - c.y) / ext * 32767.0f), -32767L, 32767L));
+    blob.push_back((short)std::clamp(std::lround((p.position.z - c.z) / ext * 32767.0f), -32767L, 32767L));
+  }
+
+  starChunks.clear();
+  StarChunk sc;
+  sc.center = dvec3{ (double)c.x, (double)c.y, (double)c.z };
+  sc.extent = ext;
+  sc.first  = 0;
+  // No shuffle: particle order is generator order, which is a proper prefix
+  // (the LOD ladder property), and simulation never reorders it.
+  sc.count  = (int)n;
+  starChunks.push_back(sc);
+
+  releaseCloudGlObjects();
+  isStarfield     = true;
+  meshType        = MeshType::cloud;
+  bufferSize      = (int)n;
+  hasBeenRendered = true;    // the VBO is filled below; setupRender must not re-gen
+  cloudGpuDirty   = false;
+  galaxyStarCount = (int)n;
+  if (galaxyFullStars == 0) galaxyFullStars = (int)n;
+  starBudgetOverride = (int)n;
+
   glGenVertexArrays(1, &vao);
   glBindVertexArray(vao);
-
   glGenBuffers(1, &vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(blob.size()*sizeof(short)), blob.data(), GL_STATIC_DRAW);
+  glVertexAttribPointer(0, 3, GL_SHORT, GL_TRUE, 3*sizeof(short), (void*)0);
+  glEnableVertexAttribArray(0);
+  glBindVertexArray(0);
+}
+
+void RenderedObject::setupRender()
+{
+  // IDEMPOTENT: reuse existing GL objects. This used to glGen unconditionally,
+  // so any path that re-runs it (setupShaders resets hasBeenRendered to
+  // re-cache uniforms; formation respawns) leaked the old VAO/VBO — and for a
+  // universe galaxy it silently REPLACED the VBO BuildGalaxyStarfield had just
+  // filled with an empty one, collapsing every star to the chunk centre until
+  // the first LOD rebuild re-uploaded data (a galaxy already at full count
+  // never rebuilds, so it stayed a saturated point forever).
+  if (!vao) glGenVertexArrays(1, &vao);
+  glBindVertexArray(vao);
+
+  if (!vbo) glGenBuffers(1, &vbo);
   glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
   if (isStarfield) {
@@ -1682,18 +1776,18 @@ void RenderedObject::setupRender()
       // Attribute 1 = per-frame camera-relative position (computed in double on
       // the CPU) so the galaxy doesn't shimmer under camera motion at 1e9 AU.
       // Attribute 2 = world-lit rim factor (3D-correct dust edge lighting).
-      glGenBuffers(1, &rimVbo);
+      if (!rimVbo) glGenBuffers(1, &rimVbo);
       glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
       glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
       glEnableVertexAttribArray(2);
     }
   }
 
-  glGenBuffers(1, &ssboParticles);
+  if (!ssboParticles) glGenBuffers(1, &ssboParticles);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboParticles);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0, ssboParticles);
 
-  glGenBuffers(1, &ssboObjects);
+  if (!ssboObjects) glGenBuffers(1, &ssboObjects);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboObjects);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1, ssboObjects);
 
@@ -2287,9 +2381,11 @@ void RenderedObject::UpdateCloudPhysics
     auto& first = cloudParticles[i];
     for(auto& other : bigBodies)
     {
-      vec3 realPosition = first.position + this->coordinates;
-      vec3 r = vec3{other.position.x, other.position.y, other.position.z}
-        - realPosition;
+      // Difference in DOUBLE: both positions can be ~1e15 AU where a float
+      // world position resolves to ~1e8 AU. The difference itself is small.
+      vec3 r{ (float)(other.position.x - (coordinates.x + (double)first.position.x)),
+              (float)(other.position.y - (coordinates.y + (double)first.position.y)),
+              (float)(other.position.z - (coordinates.z + (double)first.position.z)) };
       float d2 = r.x*r.x + r.y*r.y + r.z*r.z;
       if (d2 == 0) continue;
       vec3 dir = normalize(r);

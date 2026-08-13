@@ -79,7 +79,10 @@ void CloudObject::applyVirialScale(float s) {
 // ── FrameStore lazy initialisation ──────────────────────────────────────────
 void CloudObject::ensureFrameStore() {
   if (frameStore) return;
-  int count = renderedObject.cloudParticleCount();
+  // SIMULATABLE particles only. cloudParticleCount() reports the GPU star
+  // count for a chunked starfield whose cloudParticles is EMPTY — sizing a
+  // record from it made frameStore->push memcpy from a null snapshot vector.
+  int count = (int)renderedObject.cloudParticles.size();
   if (count <= 0) return;
   size_t recordBytes = static_cast<size_t>(count) * sizeof(ParticleSnapshot);
   frameStore = std::make_unique<FrameStore>(recordBytes);
@@ -111,6 +114,7 @@ void CloudObject::initGPU() {
   locG             = glGetUniformLocation(bhProgram, "uG");
   locDt            = glGetUniformLocation(bhProgram, "uDt");
   locTheta         = glGetUniformLocation(bhProgram, "uTheta");
+  locFrameOffset   = glGetUniformLocation(bhProgram, "uFrameOffset");
 
   // Create SSBOs
   glGenBuffers(1, &particleSSBO);
@@ -140,10 +144,12 @@ void CloudObject::uploadParticlesToGPU() {
 
   std::vector<GPUParticle> gpuData(count);
   for (int i = 0; i < count; i++) {
-    // Positions in world space (add cloud offset)
-    gpuData[i].px   = particles[i].position.x + position.x;
-    gpuData[i].py   = particles[i].position.y + position.y;
-    gpuData[i].pz   = particles[i].position.z + position.z;
+    // CLOUD-LOCAL positions: a float world position at universe scale
+    // resolves to ~1e8 AU. The shader bridges to the shared sim frame via
+    // uFrameOffset (differenced from doubles per dispatch).
+    gpuData[i].px   = particles[i].position.x;
+    gpuData[i].py   = particles[i].position.y;
+    gpuData[i].pz   = particles[i].position.z;
     gpuData[i].mass = particles[i].mass;
     gpuData[i].vx   = particles[i].velocity.x;
     gpuData[i].vy   = particles[i].velocity.y;
@@ -170,10 +176,10 @@ void CloudObject::readbackParticlesFromGPU() {
 
   if (mapped) {
     for (int i = 0; i < count; i++) {
-      // GPU stores world-space positions; convert back to local (subtract cloud offset)
-      particles[i].position.x = mapped[i].px - position.x;
-      particles[i].position.y = mapped[i].py - position.y;
-      particles[i].position.z = mapped[i].pz - position.z;
+      // GPU stores cloud-local positions — no offset round-trip.
+      particles[i].position.x = mapped[i].px;
+      particles[i].position.y = mapped[i].py;
+      particles[i].position.z = mapped[i].pz;
       particles[i].velocity.x = mapped[i].vx;
       particles[i].velocity.y = mapped[i].vy;
       particles[i].velocity.z = mapped[i].vz;
@@ -216,12 +222,13 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   std::vector<vec3> positions(particleCount_);
   std::vector<float> masses(particleCount_);
   for (int i = 0; i < particleCount_; i++) {
-    // gpuData is in world space already
+    // gpuData is CLOUD-LOCAL; the whole single-cloud dispatch runs in the
+    // cloud's own frame (uFrameOffset = 0), so the tree is local too.
     positions[i] = vec3{gpuData[i].px, gpuData[i].py, gpuData[i].pz};
     masses[i] = gpuData[i].mass;
   }
 
-  // 2. Build octree on CPU (positions are already world-space, no offset needed)
+  // 2. Build octree on CPU (cloud-local frame)
   vec3 zeroOffset{0.0f, 0.0f, 0.0f};
   octree_.build(positions.data(), masses.data(), particleCount_, zeroOffset);
 
@@ -233,14 +240,15 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
                nodes.data(), GL_DYNAMIC_DRAW);
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
-  // 4. Upload big bodies
+  // 4. Upload big bodies, converted into the cloud-local frame in double —
+  //    the difference stays small even when both positions are ~1e15 AU.
   int bbCount = (int)bigBodies.size();
   std::vector<GPUBigBody> gpuBB(std::max(bbCount, 1)); // at least 1 to avoid zero-size buffer
   for (int i = 0; i < bbCount; i++) {
-    gpuBB[i].px   = bigBodies[i].position.x;
-    gpuBB[i].py   = bigBodies[i].position.y;
-    gpuBB[i].pz   = bigBodies[i].position.z;
-    gpuBB[i].mass = bigBodies[i].mass;
+    gpuBB[i].px   = (float)(bigBodies[i].position.x - position.x);
+    gpuBB[i].py   = (float)(bigBodies[i].position.y - position.y);
+    gpuBB[i].pz   = (float)(bigBodies[i].position.z - position.z);
+    gpuBB[i].mass = (float)bigBodies[i].mass;
   }
   glBindBuffer(GL_SHADER_STORAGE_BUFFER, bigBodySSBO);
   glBufferData(GL_SHADER_STORAGE_BUFFER, std::max(bbCount, 1) * (GLsizeiptr)sizeof(GPUBigBody),
@@ -256,6 +264,7 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
   glUniform1f(locTheta, barnesHutTheta);
+  if (locFrameOffset >= 0) glUniform3f(locFrameOffset, 0.0f, 0.0f, 0.0f);  // sim frame = cloud frame
 
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, treeSSBO);
@@ -282,8 +291,12 @@ Octree       CloudObject::s_sharedOctree;
 // Same as dispatchBarnesHut steps 5-6, but the tree + big bodies come from
 // outside, so every cloud can be integrated against one combined tree.
 void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
-                                      unsigned int bbSSBO, int bbCount, float simSpeed) {
-  int particleCount_ = renderedObject.cloudParticleCount();
+                                      unsigned int bbSSBO, int bbCount, float simSpeed,
+                                      const dvec3& simOrigin) {
+  // SIMULATABLE particles: cloudParticleCount() counts GPU stars for chunked
+  // starfields with no CPU particles — dispatching on that ran the compute
+  // shader across a zero-storage SSBO.
+  int particleCount_ = (int)renderedObject.cloudParticles.size();
   if (particleCount_ <= 0 || !gpuInitialized) return;
 
   glUseProgram(bhProgram);
@@ -293,6 +306,10 @@ void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
   glUniform1f(locTheta, barnesHutTheta);
+  if (locFrameOffset >= 0)
+    glUniform3f(locFrameOffset, (float)(position.x - simOrigin.x),
+                                (float)(position.y - simOrigin.y),
+                                (float)(position.z - simOrigin.z));
 
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sharedTree);
@@ -342,7 +359,7 @@ void CloudObject::SimulateSharedForward(
     if (c->timeframe < total) {
       unsigned int jump = std::min((unsigned int)steps, total - c->timeframe);
       const void* rec = c->frameStore->get(c->timeframe + jump - 1);
-      if (rec) restoreFromRecord(rec, c->renderedObject.cloudParticleCount(), c->renderedObject);
+      if (rec) restoreFromRecord(rec, (int)c->renderedObject.cloudParticles.size(), c->renderedObject);
       c->uploadParticlesToGPU();
       c->timeframe += jump;
       remaining[k] = steps - (int)jump;
@@ -353,15 +370,21 @@ void CloudObject::SimulateSharedForward(
   for (int r : remaining) maxRem = std::max(maxRem, r);
   if (maxRem <= 0) return;
 
+  // Shared sim frame: everything (octree, big bodies, per-cloud offsets) is
+  // expressed relative to the first simulating cloud's origin, differenced in
+  // double. A float WORLD frame at 1e15 AU resolves to ~1e8 AU — coarser than
+  // galaxy structure — so simulation far from the origin was silently garbage.
+  const dvec3 simOrigin = sim[0]->position;
+
   // Big bodies are constant across sub-steps → upload once.
   if (s_sharedBigBodySSBO == 0) glGenBuffers(1, &s_sharedBigBodySSBO);
   int bbCount = (int)bigBodies.size();
   {
     std::vector<GPUBigBody> gpuBB(std::max(bbCount, 1));
     for (int i = 0; i < bbCount; ++i) {
-      gpuBB[i].px   = (float)bigBodies[i].position.x;
-      gpuBB[i].py   = (float)bigBodies[i].position.y;
-      gpuBB[i].pz   = (float)bigBodies[i].position.z;
+      gpuBB[i].px   = (float)(bigBodies[i].position.x - simOrigin.x);
+      gpuBB[i].py   = (float)(bigBodies[i].position.y - simOrigin.y);
+      gpuBB[i].pz   = (float)(bigBodies[i].position.z - simOrigin.z);
       gpuBB[i].mass = (float)bigBodies[i].mass;
     }
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedBigBodySSBO);
@@ -381,10 +404,15 @@ void CloudObject::SimulateSharedForward(
       const auto& ps = c->renderedObject.cloudParticles;
       allPos.reserve(allPos.size() + ps.size());
       allMass.reserve(allMass.size() + ps.size());
+      // Cloud origin relative to the sim frame, differenced in DOUBLE once —
+      // the per-particle add then stays small-float + small-float.
+      const vec3 off{(float)(c->position.x - simOrigin.x),
+                     (float)(c->position.y - simOrigin.y),
+                     (float)(c->position.z - simOrigin.z)};
       for (const auto& p : ps) {
-        allPos.push_back(vec3{p.position.x + c->position.x,
-                              p.position.y + c->position.y,
-                              p.position.z + c->position.z});
+        allPos.push_back(vec3{p.position.x + off.x,
+                              p.position.y + off.y,
+                              p.position.z + off.z});
         allMass.push_back(p.mass);
       }
     }
@@ -403,18 +431,81 @@ void CloudObject::SimulateSharedForward(
     for (size_t k = 0; k < sim.size(); ++k) {
       if (s >= remaining[k]) continue;   // this cloud already finished its steps
       sim[k]->dispatchAgainstTree(s_sharedTreeSSBO, nodeCount,
-                                  s_sharedBigBodySSBO, bbCount, renderer.simSpeed);
+                                  s_sharedBigBodySSBO, bbCount, renderer.simSpeed,
+                                  simOrigin);
       if (sim[k]->frameStore) {
         auto snaps = sim[k]->renderedObject.getParticleSnapshots();
-        sim[k]->frameStore->push(snaps.data());
+        // Guard: pushing an empty snapshot vector memcpy'd from nullptr.
+        if (!snaps.empty()) sim[k]->frameStore->push(snaps.data());
       }
+      sim[k]->simDirty = true;
       sim[k]->timeframe++;
     }
   }
 }
 
+// ── Promote a chunk-rendered galaxy to real particles ───────────────────────
+// The galaxy's generator already produces rotation-curve velocities (the UI
+// procedural-galaxy path has simulated with them all along); the universe path
+// simply never asked for them. After this the cloud IS a hand-made-style
+// particle cloud: physics, picking, RT and rim lighting all work on it.
+// If particles already exist (a demoted, previously-simulated galaxy) they are
+// the object's identity and are reused — regenerating would erase the result.
+void CloudObject::materializeGalaxy() {
+  RenderedObject& ro = renderedObject;
+  if (ro.cloudParticles.empty()) {
+    std::vector<vec3> pos, vel;
+    GenerateGalaxyStars(ro.galaxyDesc, std::max(ro.galaxyFullStars, 1), pos, &vel);
+    if (pos.empty()) { simulatePhysics = false; return; }
+    std::vector<CloudParticle> pts;
+    pts.reserve(pos.size());
+    for (size_t i = 0; i < pos.size(); ++i)
+      pts.push_back(CloudParticle{pos[i], vel[i], vec3{0,0,0}, 1.0f});
+    ro.LoadCloudFromFormation(pts);
+  } else {
+    ro.cloudGpuDirty = true;
+  }
+  // Deterministic switch to the float-particle layout: drop the int16 chunk
+  // VAO/VBO and let setupRender rebuild everything (rim VBO, SSBOs, uniform
+  // cache) exactly as for a hand-made cloud.
+  ro.releaseCloudGlObjects();
+  ro.isStarfield = false;
+  ro.starChunks.clear();
+  ro.starBudgetOverride = 0;
+  demoteToChunks = true;   // physics off later -> rebuild chunks from the data
+  if (gpuInitialized) uploadParticlesToGPU();
+  std::cout << "[universe] " << (name.empty() ? "cloud" : name) << " promoted to "
+            << ro.cloudParticles.size() << " particles\n";
+}
+
 // ── Update ──────────────────────────────────────────────────────────────────
 void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStructure>& physicsObjects){
+  // Identity/render transitions. Enabling physics on a chunk-rendered galaxy
+  // PROMOTES it to real particles; disabling physics on a promoted galaxy
+  // DEMOTES the render back to cheap LOD chunks while the particles stay as
+  // the object's identity (what you simulated is what you keep seeing).
+  if (simulatePhysics && renderedObject.isStarfield) {
+    if (renderedObject.isGalaxy || !renderedObject.cloudParticles.empty())
+      materializeGalaxy();
+    else
+      simulatePhysics = false;   // catalogue starfield: no recipe, no velocities
+  } else if (!simulatePhysics && demoteToChunks && !renderedObject.isStarfield) {
+    if (simDirty) {
+      renderedObject.BuildStarfieldFromParticles();
+    } else if (renderedObject.isGalaxy) {
+      // Never actually simulated: the recipe is still the truth. Drop the
+      // particles and hand the galaxy back to the LOD ladder.
+      renderedObject.cloudParticles.clear();
+      renderedObject.UVObjectMeshBuffer.clear();
+      renderedObject.releaseCloudGlObjects();
+      GalaxyDesc d = renderedObject.galaxyDesc;   // copy: Build overwrites it
+      renderedObject.BuildGalaxyStarfield(d, std::min(renderedObject.galaxyFullStars, 128));
+      demoteToChunks = false;
+    } else {
+      renderedObject.BuildStarfieldFromParticles();
+    }
+  }
+
   // Keyframe-driven clouds animate the whole-cloud transform from the timeline
   // instead of simulating particle gravity.
   if(!simulatePhysics)
@@ -423,7 +514,10 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
       dvec3 p(position.x, position.y, position.z);
       Renderer::InterpolateKeyframeTransform(keyframes, renderer.timelinePlayhead,
                                              p, rotationDeg);
-      position = vec3{ (float)p.x, (float)p.y, (float)p.z };
+      // Keep the double: routing this through vec3 re-quantised every
+      // non-simulated cloud's position to the float grid (~1e8 AU at 1e15 AU)
+      // every frame, whether or not it had any keyframes.
+      position = p;
     }
     renderedObject.coordinates = position;
     renderedObject.rotationDeg = rotationDeg;
@@ -464,7 +558,7 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
         unsigned int jump = std::min((unsigned int)steps, total - timeframe);
         const void* record = frameStore->get(timeframe + jump - 1);
         if (record) {
-          restoreFromRecord(record, renderedObject.cloudParticleCount(), renderedObject);
+          restoreFromRecord(record, (int)renderedObject.cloudParticles.size(), renderedObject);
         }
         // If GPU mode, re-upload to GPU so octree builds from correct state
         if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
@@ -494,8 +588,9 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
         // Record the frame
         if (frameStore) {
           auto snaps = renderedObject.getParticleSnapshots();
-          frameStore->push(snaps.data());
+          if (!snaps.empty()) frameStore->push(snaps.data());
         }
+        simDirty = true;
         timeframe++;
       }
     }
@@ -509,7 +604,7 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
 
         const void* record = frameStore->get(timeframe);
         if (record) {
-          restoreFromRecord(record, renderedObject.cloudParticleCount(), renderedObject);
+          restoreFromRecord(record, (int)renderedObject.cloudParticles.size(), renderedObject);
         }
         if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
           uploadParticlesToGPU();
@@ -537,7 +632,7 @@ void CloudObject::setTimeframeAndRestore(unsigned int frame)
   timeframe = (frame <= maxFrame) ? frame : maxFrame;
   const void* record = frameStore->get(timeframe);
   if (record) {
-    restoreFromRecord(record, renderedObject.cloudParticleCount(), renderedObject);
+    restoreFromRecord(record, (int)renderedObject.cloudParticles.size(), renderedObject);
   }
   // Sync GPU if in Barnes-Hut mode
   if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) {
@@ -557,6 +652,7 @@ void CloudObject::resetToInitial()
     renderedObject.setParticleSnapshots(initialSnaps);
     if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized)
       uploadParticlesToGPU();
+    simDirty = false;   // back at the pre-simulation state: recipe is truth again
   }
   clearRecording();
 }
@@ -640,11 +736,26 @@ void CloudObject::SetShaders(const std::string& vertShaderPath, const std::strin
 
 void CloudObject::boundsEstimate(dvec3& center, double& radius) const {
   if (renderedObject.isStarfield && !renderedObject.starChunks.empty()) {
+    // Chunk centres rotate with the cloud (matching drawStarfieldChunks); a
+    // rotated chunk's axis-aligned bounds can grow to the cube half-diagonal.
+    double rotD[9];
+    const vec3& rd = renderedObject.rotationDeg;
+    const bool hasRot = (rd.x != 0.0f || rd.y != 0.0f || rd.z != 0.0f);
+    if (hasRot) EulerDegToMat3d(rd, rotD);
     vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
     for (const auto& sc : renderedObject.starChunks) {
-      lo.x = std::min(lo.x, (float)(sc.center.x - sc.extent)); hi.x = std::max(hi.x, (float)(sc.center.x + sc.extent));
-      lo.y = std::min(lo.y, (float)(sc.center.y - sc.extent)); hi.y = std::max(hi.y, (float)(sc.center.y + sc.extent));
-      lo.z = std::min(lo.z, (float)(sc.center.z - sc.extent)); hi.z = std::max(hi.z, (float)(sc.center.z + sc.extent));
+      double cx = sc.center.x, cy = sc.center.y, cz = sc.center.z;
+      double ext = sc.extent;
+      if (hasRot) {
+        double rx = rotD[0]*cx + rotD[1]*cy + rotD[2]*cz;
+        double ry = rotD[3]*cx + rotD[4]*cy + rotD[5]*cz;
+        double rz = rotD[6]*cx + rotD[7]*cy + rotD[8]*cz;
+        cx = rx; cy = ry; cz = rz;
+        ext *= 1.7320508;
+      }
+      lo.x = std::min(lo.x, (float)(cx - ext)); hi.x = std::max(hi.x, (float)(cx + ext));
+      lo.y = std::min(lo.y, (float)(cy - ext)); hi.y = std::max(hi.y, (float)(cy + ext));
+      lo.z = std::min(lo.z, (float)(cz - ext)); hi.z = std::max(hi.z, (float)(cz + ext));
     }
     center = dvec3{ position.x + (lo.x+hi.x)*0.5,
                     position.y + (lo.y+hi.y)*0.5,
