@@ -46,9 +46,9 @@ void GridObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStruc
     // Snap to the lattice pitch so the grid appears stationary in space
     double snap = (double)cell;
     mesh.coordinates = dvec3(
-      std::floor(-renderer.cameraTranslate[0] / snap) * snap,
-      std::floor(-renderer.cameraTranslate[1] / snap) * snap,
-      std::floor(-renderer.cameraTranslate[2] / snap) * snap);
+      std::floor((gCamAnchor[0] - renderer.cameraTranslate[0]) / snap) * snap,
+      std::floor((gCamAnchor[1] - renderer.cameraTranslate[1]) / snap) * snap,
+      std::floor((gCamAnchor[2] - renderer.cameraTranslate[2]) / snap) * snap);
     mesh.gridScale  = cell;
     mesh.gridExtent = cell * (float)radius;
     mesh.gridAlpha  = alpha;

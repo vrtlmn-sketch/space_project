@@ -43,6 +43,8 @@ Env gates:
 | `UNIVERSE_DEMOTE=1` | drop physics again at frame 2 (promote->demote round-trip) |
 | `EDIT_TEMP=<K>` | set every cloud's temperature MID-SESSION at frame 2 (live-edit test) |
 | `EDIT_TEMP_OUT=<K>` | same, but only clouds outside the universe |
+| `CAM_ANCHOR=0` | freeze the camera anchor at 0 (pre-anchor absolute-double camera) |
+| `UNIVERSE_CAM_DIST=<AU>` | park the camera this far from the galaxy (8 = inside the core) |
 
 ### Traps in the harness
 
@@ -78,6 +80,20 @@ The scene spans ~1 AU to ~1e15 AU, which no single float frame can hold.
 The rules:
 - World positions are **double** (`dvec3`): `RenderedObject::coordinates`,
   `CloudObject::position`, `StarChunk::center`.
+- **The camera is anchor + local** (`gCamAnchor` + `cameraTranslate`; true
+  camera position = anchor − translate). A single absolute double at 2.6e15 AU
+  has an ULP of 0.5 AU, and 8 AU from a galaxy centre one pixel is 0.006 AU —
+  so the smallest possible camera step was **80 pixels wide**. The anchor
+  absorbs the large part (rebased in `UpdateInputs` when the local part exceeds
+  1e6), leaving movement at full precision anywhere.
+  **Every world→camera difference must be `(pos - gCamAnchor) + cameraTranslate`.**
+  Anything that stores or restores a camera position (save/load, keyframes,
+  record-camera swaps, RT dirty check) converts to the ABSOLUTE translate
+  (`translate - anchor`) so a rebase can never shift it. Verify with
+  `CAM_ANCHOR=0` — that reproduces the old quantised behaviour exactly.
+  NOTE: object positions are still single doubles, so an object's own placement
+  keeps ~0.5 AU granularity out there; per-object local frames (the hierarchy
+  in docs/universe.md) are the next stage.
 - Camera-relative differences are computed in **double on the CPU**, then handed
   to the GPU as small floats. Never subtract two large numbers in a shader.
 - Cloud placement is a uniform (`uCloudOrigin` + `uCloudRot`), not per-particle
@@ -105,6 +121,29 @@ The rules:
 - Shader programs are shared via `s_programCache` (one per vert|frag pair).
   Never `glDeleteProgram` on re-setup, and remember uniforms are program-wide:
   the last upload before a draw wins.
+
+## The look is the contract
+
+The rendered image is the product. **Never change how anything looks without
+being asked**, even to fix something that is technically wrong. Two examples
+that were caught only because the user noticed: making the dust-density pass
+draw chunked galaxies "correctly" brightened them ~25% up close, and giving
+chunked galaxies a CPU sample silently pulled them into the RT accumulator.
+Before touching a shared pass, capture a before/after on BOTH a near view and
+an in-galaxy view (`UNIVERSE_CAM_DIST=8`) and diff them — a scene-average
+mean can hide a large local change.
+
+## Cost traps
+
+- **The RT path costs clouds × sample points, and a universe has THOUSANDS of
+  clouds.** Giving chunked galaxies a CPU sample made every one of them feed
+  the RT accumulator and the dust-light bake: 3555 galaxies × 2000 points =
+  7.1M points, **5 GB and ~10 s/frame**, while 3554 of them projected to under
+  0.03 pixels. `Renderer::Draw` now skips chunked clouds whose disc is under
+  half a pixel at 1080p (a fixed reference, so a low RT live resolution cannot
+  cull what the final render would show). Any new per-cloud CPU work must be
+  screen-size gated the same way — measure with `/usr/bin/time -f %M` on
+  `projects/universe.json`, which should stay near 700 MB / ~3 s.
 
 ## Conventions
 

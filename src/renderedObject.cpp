@@ -18,6 +18,7 @@
 #include <unordered_map>
 
 float RenderedObject::sZNear = 0.001f;
+double gCamAnchor[3] = {0.0, 0.0, 0.0};
 float RenderedObject::sZFar  = 1.0e10f;
 
 
@@ -495,9 +496,9 @@ void RenderedObject::renderMeshRaytraced(const double cameraTranslate[3], std::v
   // rotation.w = whiteness, position.w = drift phase.
   if (!freeMesh) meshInfo = rtCloudP0;
   raytracerObjectList.push_back(RayTracerObject{
-    vec4{(float)(coordinates.x + cameraTranslate[0]),
-         (float)(coordinates.y + cameraTranslate[1]),
-         (float)(coordinates.z + cameraTranslate[2]), rtCloudP1.w},
+    vec4{(float)((coordinates.x - gCamAnchor[0]) + cameraTranslate[0]),
+         (float)((coordinates.y - gCamAnchor[1]) + cameraTranslate[1]),
+         (float)((coordinates.z - gCamAnchor[2]) + cameraTranslate[2]), rtCloudP1.w},
     mass, radius, temperature, otype,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{rtAtmoRadius, rtAtmoFalloff, rtAtmoIntensity, rtCloudP1.x},
@@ -524,9 +525,9 @@ void RenderedObject::renderMeshRaytracedDoppler(const double cameraTranslate[3],
   // slot and P1 in the free .w lanes.
   if (!freeMesh) meshInfo = rtCloudP0;
   list.push_back(RayTracerObjectDoppler{
-    vec4{(float)(coordinates.x + cameraTranslate[0]),
-         (float)(coordinates.y + cameraTranslate[1]),
-         (float)(coordinates.z + cameraTranslate[2]), rtCloudP1.w},
+    vec4{(float)((coordinates.x - gCamAnchor[0]) + cameraTranslate[0]),
+         (float)((coordinates.y - gCamAnchor[1]) + cameraTranslate[1]),
+         (float)((coordinates.z - gCamAnchor[2]) + cameraTranslate[2]), rtCloudP1.w},
     mass, radius, temperature, otype,
     vec4{color.x, color.y, color.z, (float)rtTexLayer},
     vec4{velocity.x, velocity.y, velocity.z, 0},
@@ -611,6 +612,12 @@ static float rtDustLane(float x, float y, float z,
 // (array taps only), so it refreshes periodically while the sim animates.
 void RenderedObject::updateCloudRimFactors()
 {
+  // Chunked starfields have no rim attribute buffer (setupRender only wires
+  // attribute 0 for them), so the result would never reach the GPU. They also
+  // used to skip this entirely — the CPU sample added for the RT view made
+  // thousands of galaxies run a 48^3 grid bake every 30 draws, which is a
+  // periodic multi-second hitch on a fixed cadence and buys nothing.
+  if (isStarfield) return;
   size_t n = UVObjectMeshBuffer.size() / 3;
   if (n < 16) return;
   if (!rimFactors.empty() && (rimUpdateCounter++ % 30) != 0) return;
@@ -932,9 +939,9 @@ void RenderedObject::updateCloudDustLight(float dustInfluence, float dustClumpSc
 // main draw and the dust-density pass so neither depends on leftover state.
 void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
 {
-  double ox = coordinates.x + cameraTranslate[0];
-  double oy = coordinates.y + cameraTranslate[1];
-  double oz = coordinates.z + cameraTranslate[2];
+  double ox = (coordinates.x - gCamAnchor[0]) + cameraTranslate[0];
+  double oy = (coordinates.y - gCamAnchor[1]) + cameraTranslate[1];
+  double oz = (coordinates.z - gCamAnchor[2]) + cameraTranslate[2];
   float rm[9] = {1,0,0, 0,1,0, 0,0,1};
   if (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f) {
     double R[9];
@@ -965,17 +972,13 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE);
   glDisable(GL_DEPTH_TEST);
-  if (isStarfield) {
-    // The chunk VAO is int16 chunk-relative — drawing it as a flat float
-    // buffer misread every star as sitting within 1 AU of the cloud origin,
-    // so chunked galaxies fed garbage into the rim-light density map. There
-    // is no per-star rim data on this VAO; a neutral constant makes the
-    // screen-space edge light treat the galaxy as half-lit everywhere.
-    glVertexAttrib1f(2, 0.5f);
-    drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-  } else {
-    glDrawArrays(GL_POINTS, 0, bufferSize);
-  }
+  // NOTE: starfields deliberately draw the flat buffer here, NOT their chunks.
+  // Feeding the rim-light density map real chunk density makes the screen-space
+  // edge light act on galaxies and brightens them ~25% up close (measured: mean
+  // 7.29 -> 9.14 inside a galaxy). That is a LOOK change, and the look is the
+  // contract — it needs explicit sign-off, not a drive-by fix. Keep this call
+  // byte-identical to the signed-off behaviour until then.
+  glDrawArrays(GL_POINTS, 0, bufferSize);
   glEnable(GL_DEPTH_TEST);
   // The post chain (bloom/tonemap) relies on overwrite semantics — leaking
   // additive blending here makes every later pass ACCUMULATE frame over frame
@@ -1061,9 +1064,9 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
     }
     list.push_back(RayTracerObjectDoppler{
       vec4{
-        rx + (float)(coordinates.x + cameraTranslate[0]),
-        ry + (float)(coordinates.y + cameraTranslate[1]),
-        rz + (float)(coordinates.z + cameraTranslate[2]),
+        rx + (float)((coordinates.x - gCamAnchor[0]) + cameraTranslate[0]),
+        ry + (float)((coordinates.y - gCamAnchor[1]) + cameraTranslate[1]),
+        rz + (float)((coordinates.z - gCamAnchor[2]) + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType,
       vec4{pLane, dl[0], dl[1], dl[2]},
@@ -1156,9 +1159,9 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
     }
     raytracerObjectList.push_back(RayTracerObject{
       vec4{
-        rx + (float)(coordinates.x + cameraTranslate[0]),
-        ry + (float)(coordinates.y + cameraTranslate[1]),
-        rz + (float)(coordinates.z + cameraTranslate[2]),
+        rx + (float)((coordinates.x - gCamAnchor[0]) + cameraTranslate[0]),
+        ry + (float)((coordinates.y - gCamAnchor[1]) + cameraTranslate[1]),
+        rz + (float)((coordinates.z - gCamAnchor[2]) + cameraTranslate[2]),
         0},
       adjustedMass, pRad, cachedTemperature, pObjType,
       vec4{pLane, dl[0], dl[1], dl[2]},
@@ -1409,9 +1412,9 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
                                          const double cameraTranslate[3])
 {
   if (starChunks.empty()) return;
-  const double ox = coordinates.x + cameraTranslate[0];
-  const double oy = coordinates.y + cameraTranslate[1];
-  const double oz = coordinates.z + cameraTranslate[2];
+  const double ox = (coordinates.x - gCamAnchor[0]) + cameraTranslate[0];
+  const double oy = (coordinates.y - gCamAnchor[1]) + cameraTranslate[1];
+  const double oz = (coordinates.z - gCamAnchor[2]) + cameraTranslate[2];
 
   const float aspect  = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : 1.7778f;
   const float tanV    = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);
@@ -2181,12 +2184,16 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
                    meshType == MeshType::plane  || meshType == MeshType::cloud);
 
   float relPos[3] = {
-    (float)(coordinates.x + cameraTranslate[0]),
-    (float)(coordinates.y + cameraTranslate[1]),
-    (float)(coordinates.z + cameraTranslate[2])
+    (float)((coordinates.x - gCamAnchor[0]) + cameraTranslate[0]),
+    (float)((coordinates.y - gCamAnchor[1]) + cameraTranslate[1]),
+    (float)((coordinates.z - gCamAnchor[2]) + cameraTranslate[2])
   };
   float absPos[3] = { (float)coordinates.x, (float)coordinates.y, (float)coordinates.z };
-  float camF[3]   = { (float)cameraTranslate[0], (float)cameraTranslate[1], (float)cameraTranslate[2] };
+  // Legacy absolute path (lines): vertex buffers are world-space floats, so
+  // they need the ABSOLUTE camera translate — recombine anchor + local.
+  float camF[3]   = { (float)(cameraTranslate[0] - gCamAnchor[0]),
+                      (float)(cameraTranslate[1] - gCamAnchor[1]),
+                      (float)(cameraTranslate[2] - gCamAnchor[2]) };
   float zero[3]   = { 0, 0, 0 };
 
   const float* worldPos = relative ? relPos : absPos;
@@ -2344,9 +2351,9 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (spLoc >= 0) {
       float screenPx = 0.0f;
       if (cloudBoundRadius > 0.0f) {
-        float px = (float)(coordinates.x + cameraTranslate[0]);
-        float py = (float)(coordinates.y + cameraTranslate[1]);
-        float pz = (float)(coordinates.z + cameraTranslate[2]);
+        float px = (float)((coordinates.x - gCamAnchor[0]) + cameraTranslate[0]);
+        float py = (float)((coordinates.y - gCamAnchor[1]) + cameraTranslate[1]);
+        float pz = (float)((coordinates.z - gCamAnchor[2]) + cameraTranslate[2]);
         float depth = -(viewRot[6]*px + viewRot[7]*py + viewRot[8]*pz);
         if (depth > 1e-6f) {
           float tanV = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);

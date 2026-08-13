@@ -260,6 +260,13 @@ Lifecycle (`CloudObject::Update` transitions):
 - **Float-path far field**: haze lobes are now capped by the cloud's projected
   radius (`cloudBoundRadius` -> `uChunkScreenPx`), same treatment the chunk
   path got — promoted/hand-made clouds no longer bloat into balls at distance.
+- **Camera stepping/jitter deep inside a distant galaxy**: the camera was one
+  absolute double, whose ULP at 2.6e15 AU is 0.5 AU — 80 pixels when you sit
+  8 AU from a galaxy centre. Split into `gCamAnchor` + `cameraTranslate` (see
+  CLAUDE.md). Proven headlessly: a 0.05 AU camera step changed 0 pixels before
+  and 34k after, with the anchor itself pixel-neutral (`CAM_ANCHOR=0` A/B).
+- **RT cost blowup with thousands of galaxies** (5 GB, ~10 s/frame): sub-pixel
+  chunked clouds are skipped in the RT path.
 
 ## Old notes (kept for context — status corrected above)
 
@@ -335,9 +342,14 @@ PROJECT=<path>             load a specific project
 - **Distant galaxies flicker in motion** — prime suspect is still the
   `vHazeBoost` size-cap/boost pair (see Open issues below). The setupRender
   VBO fix may have reduced the rebuild "pop"; unverified in flight.
-- **Rim/edge-light, dust-density and RT passes** don't work on chunked
-  objects (they read the CPU particle copy or draw the VBO non-chunked).
-  Promoted galaxies get all of them; chunked ones don't.
+- **Screen-space edge light does NOT act on chunked galaxies — ON PURPOSE.**
+  The dust-density pass feeds that map by drawing the cloud's flat buffer,
+  which for a chunked galaxy is not its stars. Making it draw the chunks
+  (tried, reverted) brightens galaxies ~25% up close (mean 7.29 -> 9.14 inside
+  a galaxy, ~50k pixels). That is a LOOK change and needs explicit sign-off;
+  the current behaviour is byte-identical to the signed-off render. The RT
+  view and the dust-light bake DO work on chunked galaxies now (they use the
+  small CPU sample kept by `BuildGalaxyStarfield`).
 - **Grid overlay shreds at ~1e15 AU** (still float; gizmo/picking are fixed).
 - **Near-field on tiny (~AU-scale) clouds**: can't zoom close enough, gizmo
   rings degrade — reported on model-scale formations like milky_way_2k.

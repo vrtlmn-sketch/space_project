@@ -573,6 +573,24 @@ void Renderer::Draw(RenderedObject& ro) {
                              1.0f, 0.0f, 0.0f, {0.55f,0.25f,0.15f}, &rtTriangles, &rtNodes);
     }
     else if (ro.meshType == MeshType::cloud) {
+      // RT cost scales with clouds × sample points, and a universe holds
+      // THOUSANDS of chunked galaxies. Once galaxies gained a CPU sample they
+      // all started feeding the RT accumulator + dust-light bake every frame:
+      // 3555 galaxies x 2000 points = 7.1M points, 5 GB, ~10 s/frame — while
+      // 3554 of them projected to under 0.03 PIXELS. Skip anything whose disc
+      // is smaller than half a pixel at 1080p (a fixed reference, so a low RT
+      // live resolution cannot cull things the final render would show).
+      if (ro.isStarfield && !ro.starChunks.empty()) {
+        double dx = (ro.coordinates.x - gCamAnchor[0]) + cameraTranslate[0];
+        double dy = (ro.coordinates.y - gCamAnchor[1]) + cameraTranslate[1];
+        double dz = (ro.coordinates.z - gCamAnchor[2]) + cameraTranslate[2];
+        double d  = std::sqrt(dx*dx + dy*dy + dz*dz);
+        double tanV = std::tan((double)zoom * M_PI / 180.0 * 0.5);
+        double radiusPx = (d > 1.0 && tanV > 1e-6)
+                        ? (double)ro.starChunks[0].extent / (d * tanV) * 0.5 * 1080.0
+                        : 1e9;
+        if (radiusPx < 0.5) return;
+      }
       ro.updateCloudDustLight(dustInfluence, dustClumpScale, dustCoverage, dustContrast, dustReddening,
                               dustSkinDepth, dustSkinContrast);
       ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects,
@@ -732,6 +750,29 @@ void Renderer::UploadStarLights(std::vector<RenderedObject*>& planetShaders,
 // UpdateInputs  (keyboard — all shortcuts kept)
 // ─────────────────────────────────────────────────────────────────────────────
 bool Renderer::UpdateInputs() {
+  // ── Floating camera origin: rebase ──
+  // cameraTranslate holds only the SMALL local part of the camera position;
+  // gCamAnchor holds the large part (true camera pos = anchor - translate).
+  // Fold the local part into the anchor when it grows, so camera motion keeps
+  // full double precision anywhere — a single absolute double at 2.6e15 AU
+  // quantises movement to 0.5 AU steps (visible jitter, blocky gizmos).
+  // Rebasing changes no observable state: every consumer recomputes
+  // (pos - anchor) + translate per frame.
+  {
+    // Harness gate: CAM_ANCHOR=0 freezes the anchor at 0 (the old single
+    // absolute double), so the precision A/B can be measured headlessly.
+    static const char* envAnchor = std::getenv("CAM_ANCHOR");
+    static const bool anchorOff = envAnchor && std::atoi(envAnchor) == 0;
+    double m = std::max({std::fabs(cameraTranslate[0]), std::fabs(cameraTranslate[1]),
+                         std::fabs(cameraTranslate[2])});
+    if (!anchorOff && m > 1.0e6) {
+      for (int i = 0; i < 3; ++i) {
+        gCamAnchor[i] -= cameraTranslate[i];
+        cameraTranslate[i] = 0.0;
+      }
+    }
+  }
+
   // If ImGui wants the keyboard, skip game keys
   ImGuiIO& io = ImGui::GetIO();
 
@@ -955,9 +996,9 @@ void Renderer::DrawCameraFrustums() {
     dvec3 forward { -M[6], -M[7], -M[8] };
 
     // Frustum depth scaled to ~90px on screen (distance-adaptive)
-    float px = (float)(cam.position.x + cameraTranslate[0]);
-    float py = (float)(cam.position.y + cameraTranslate[1]);
-    float pz = (float)(cam.position.z + cameraTranslate[2]);
+    float px = (float)((cam.position.x - gCamAnchor[0]) + cameraTranslate[0]);
+    float py = (float)((cam.position.y - gCamAnchor[1]) + cameraTranslate[1]);
+    float pz = (float)((cam.position.z - gCamAnchor[2]) + cameraTranslate[2]);
     float vz = camMatrix[6]*px + camMatrix[7]*py + camMatrix[8]*pz;
     float clipW = -vz;
     if (clipW <= 1e-6f) continue;
@@ -1113,6 +1154,7 @@ void Renderer::ComputeFrameAdvance() {
 }
 
 void Renderer::resetCamera() {
+  gCamAnchor[0] = gCamAnchor[1] = gCamAnchor[2] = 0.0;
   cameraTranslate[0] = cameraTranslate[1] = cameraTranslate[2] = 0.0f;
   rotation = 0.0f;
   pitch = 0.0f;
@@ -1668,9 +1710,9 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   double nearestSurface = 1e30;
   {
     for (auto& o : physicsObjects) {
-      double dx = o.data.position.x + cameraTranslate[0];
-      double dy = o.data.position.y + cameraTranslate[1];
-      double dz = o.data.position.z + cameraTranslate[2];
+      double dx = (o.data.position.x - gCamAnchor[0]) + cameraTranslate[0];
+      double dy = (o.data.position.y - gCamAnchor[1]) + cameraTranslate[1];
+      double dz = (o.data.position.z - gCamAnchor[2]) + cameraTranslate[2];
       double d  = std::sqrt(dx*dx + dy*dy + dz*dz)
                 - (double)(o.renderRadius() * activeSizeExag());
       if (d < nearestSurface) nearestSurface = d;
@@ -1685,9 +1727,9 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   // (crossing the galaxy deselected is as fast as it would be focused).
   focusDistance = -1.0f;
   auto focusFrom = [&](const dvec3& p) {
-    double dx = p.x + cameraTranslate[0];
-    double dy = p.y + cameraTranslate[1];
-    double dz = p.z + cameraTranslate[2];
+    double dx = (p.x - gCamAnchor[0]) + cameraTranslate[0];
+    double dy = (p.y - gCamAnchor[1]) + cameraTranslate[1];
+    double dz = (p.z - gCamAnchor[2]) + cameraTranslate[2];
     focusDistance = (float)std::sqrt(dx*dx + dy*dy + dz*dz);
   };
   int camSel = SelectedCameraIndex();
@@ -1712,9 +1754,9 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     for (const auto& cl : clouds) {
       if (!cl) continue;
       const RenderedObject& ro = cl->renderedObject;
-      double cx = cl->position.x + cameraTranslate[0];
-      double cy = cl->position.y + cameraTranslate[1];
-      double cz = cl->position.z + cameraTranslate[2];
+      double cx = (cl->position.x - gCamAnchor[0]) + cameraTranslate[0];
+      double cy = (cl->position.y - gCamAnchor[1]) + cameraTranslate[1];
+      double cz = (cl->position.z - gCamAnchor[2]) + cameraTranslate[2];
       if (ro.isStarfield && !ro.starChunks.empty()) {
         for (const auto& sc : ro.starChunks) {
           double dx = cx + sc.center.x, dy = cy + sc.center.y, dz = cz + sc.center.z;
@@ -1730,8 +1772,9 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
         dvec3 cen; double rad = 1.0;
         cl->boundsEstimate(cen, rad);
         // cen is WORLD now, so difference against the camera directly.
-        double dx = cen.x + cameraTranslate[0], dy = cen.y + cameraTranslate[1],
-               dz = cen.z + cameraTranslate[2];
+        double dx = (cen.x - gCamAnchor[0]) + cameraTranslate[0],
+               dy = (cen.y - gCamAnchor[1]) + cameraTranslate[1],
+               dz = (cen.z - gCamAnchor[2]) + cameraTranslate[2];
         double d = std::sqrt(dx*dx + dy*dy + dz*dz) - rad;
         if (d < rad * 0.25) d = rad * 0.25;
         if (d < best) best = d;
@@ -2041,12 +2084,19 @@ static void drawGizmoArrow(ImDrawList* dl, ImVec2 base, ImVec2 tip, ImU32 col, f
 
 // Project a world-space point to absolute screen coordinates.
 // Returns false if the point is behind the camera.
-bool Renderer::WorldToScreen(dvec3 pos, float& sx, float& sy) {
+// Project a position ALREADY expressed relative to the camera. Overlay
+// geometry (gizmo arrows, rotate rings) must be built in this frame: an
+// offset added to an ABSOLUTE world position quantises to that position's
+// ULP — 0.5 AU at 2.6e15 AU — while a gizmo 8 AU from the camera has offsets
+// of ~0.4 AU, so every ring point collapsed onto the same grid and the gizmo
+// rendered as a staircase. In the camera-relative frame the offsets are
+// large compared to the ULP, so the geometry is exact.
+bool Renderer::RelToScreen(dvec3 rel, float& sx, float& sy) {
   if (sceneRenderW <= 0 || sceneRenderH <= 0) return false;
 
-  float px = (float)(pos.x + cameraTranslate[0]);
-  float py = (float)(pos.y + cameraTranslate[1]);
-  float pz = (float)(pos.z + cameraTranslate[2]);
+  float px = (float)rel.x;
+  float py = (float)rel.y;
+  float pz = (float)rel.z;
 
   // Apply view rotation: each row of camMatrix dotted with p gives camera-space coords.
   float vx = camMatrix[0]*px + camMatrix[1]*py + camMatrix[2]*pz;
@@ -2066,6 +2116,10 @@ bool Renderer::WorldToScreen(dvec3 pos, float& sx, float& sy) {
   sx = (ndcX + 1.0f) * 0.5f * (float)sceneRenderW + sceneImageOffX;
   sy = (1.0f - ndcY) * 0.5f * (float)sceneRenderH + sceneImageOffY;
   return true;
+}
+
+bool Renderer::WorldToScreen(dvec3 pos, float& sx, float& sy) {
+  return RelToScreen(CameraRelative(pos), sx, sy);
 }
 
 // Draw the translate gizmo for the selected object and handle click-to-select.
@@ -2122,9 +2176,13 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
 
   if (haveTarget) {
     // Compute view-space depth for this object (needed for sizing and drag scale)
-    float px_ = (float)(pos.x + cameraTranslate[0]);
-    float py_ = (float)(pos.y + cameraTranslate[1]);
-    float pz_ = (float)(pos.z + cameraTranslate[2]);
+    // ALL gizmo geometry is built here, in the camera-relative frame: adding
+    // small offsets to an absolute world position quantises them away at
+    // universe scale (that is the "chunky gizmo" on small/near objects).
+    const dvec3 posRel = CameraRelative(pos);
+    float px_ = (float)posRel.x;
+    float py_ = (float)posRel.y;
+    float pz_ = (float)posRel.z;
     float vz_ = camMatrix[6]*px_ + camMatrix[7]*py_ + camMatrix[8]*pz_;
     float clipW = -vz_;
 
@@ -2141,10 +2199,10 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
 
       // Project base and all three tips
       float bx, by, txX, tyX, txY, tyY, txZ, tyZ;
-      bool baseOk = WorldToScreen(pos, bx, by);
-      bool okX    = WorldToScreen({pos.x + arrowLen, pos.y,            pos.z           }, txX, tyX);
-      bool okY    = WorldToScreen({pos.x,            pos.y + arrowLen, pos.z           }, txY, tyY);
-      bool okZ    = WorldToScreen({pos.x,            pos.y,            pos.z + arrowLen}, txZ, tyZ);
+      bool baseOk = RelToScreen(posRel, bx, by);
+      bool okX    = RelToScreen({posRel.x + arrowLen, posRel.y,            posRel.z           }, txX, tyX);
+      bool okY    = RelToScreen({posRel.x,            posRel.y + arrowLen, posRel.z           }, txY, tyY);
+      bool okZ    = RelToScreen({posRel.x,            posRel.y,            posRel.z + arrowLen}, txZ, tyZ);
 
       if (baseOk && (showMoveGizmo || showRotateGizmo)) {
         ImVec2 mp = io.MousePos;
@@ -2162,11 +2220,11 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
             for (int i = 0; i <= kSeg; ++i) {
               float t = (float)i / kSeg * 2.0f * (float)M_PI;
               float c = std::cos(t) * arrowLen, s = std::sin(t) * arrowLen;
-              dvec3 wp = (a == 0) ? dvec3{pos.x, pos.y + c, pos.z + s}
-                       : (a == 1) ? dvec3{pos.x + c, pos.y, pos.z + s}
-                                  : dvec3{pos.x + c, pos.y + s, pos.z};
+              dvec3 wp = (a == 0) ? dvec3{posRel.x, posRel.y + c, posRel.z + s}
+                       : (a == 1) ? dvec3{posRel.x + c, posRel.y, posRel.z + s}
+                                  : dvec3{posRel.x + c, posRel.y + s, posRel.z};
               float sx, sy;
-              if (WorldToScreen(wp, sx, sy)) {
+              if (RelToScreen(wp, sx, sy)) {
                 run.push_back({sx, sy});
               } else if (run.size() > 1) {
                 rings[a].push_back(std::move(run));
@@ -2223,8 +2281,8 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
             static const vec3 kAxes[3] = {{1,0,0},{0,1,0},{0,0,1}};
             vec3  ax = kAxes[gizmoDragAxis];
             float tipSx, tipSy;
-            if (WorldToScreen({pos.x+ax.x*arrowLen, pos.y+ax.y*arrowLen, pos.z+ax.z*arrowLen},
-                              tipSx, tipSy)) {
+            if (RelToScreen({posRel.x+ax.x*arrowLen, posRel.y+ax.y*arrowLen, posRel.z+ax.z*arrowLen},
+                            tipSx, tipSy)) {
               float sdx = tipSx - bx, sdy = tipSy - by;
               float slen = std::sqrt(sdx*sdx + sdy*sdy);
               if (slen > 0.5f) {
@@ -2244,10 +2302,11 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
                        pos.z + ( mx * camMatrix[2] - my * camMatrix[5]) * dragScale });
           }
           // Re-project so the handles track the object during a move
-          WorldToScreen(pos, bx, by);
-          if (okX) WorldToScreen({pos.x + arrowLen, pos.y, pos.z}, txX, tyX);
-          if (okY) WorldToScreen({pos.x, pos.y + arrowLen, pos.z}, txY, tyY);
-          if (okZ) WorldToScreen({pos.x, pos.y, pos.z + arrowLen}, txZ, tyZ);
+          const dvec3 pr = CameraRelative(pos);
+          RelToScreen(pr, bx, by);
+          if (okX) RelToScreen({pr.x + arrowLen, pr.y, pr.z}, txX, tyX);
+          if (okY) RelToScreen({pr.x, pr.y + arrowLen, pr.z}, txY, tyY);
+          if (okZ) RelToScreen({pr.x, pr.y, pr.z + arrowLen}, txZ, tyZ);
         } else if (gizmoDragging && gizmoDragKind == 1 &&
                    gizmoDragAxis >= 0 && gizmoDragAxis <= 2) {
           // Rotate: screen-angular mouse motion about the object centre
@@ -2531,13 +2590,19 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::Text("Cam");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(55);
-  ImGui::DragScalar("##cX", ImGuiDataType_Double, &cameraTranslate[0], 0.02f, nullptr, nullptr, "%.4g");
+  double camAbs[3] = { cameraTranslate[0] - gCamAnchor[0],
+                       cameraTranslate[1] - gCamAnchor[1],
+                       cameraTranslate[2] - gCamAnchor[2] };
+  if (ImGui::DragScalar("##cX", ImGuiDataType_Double, &camAbs[0], 0.02f, nullptr, nullptr, "%.4g"))
+    cameraTranslate[0] = camAbs[0] + gCamAnchor[0];
   ImGui::SameLine();
   ImGui::SetNextItemWidth(55);
-  ImGui::DragScalar("##cY", ImGuiDataType_Double, &cameraTranslate[1], 0.02f, nullptr, nullptr, "%.4g");
+  if (ImGui::DragScalar("##cY", ImGuiDataType_Double, &camAbs[1], 0.02f, nullptr, nullptr, "%.4g"))
+    cameraTranslate[1] = camAbs[1] + gCamAnchor[1];
   ImGui::SameLine();
   ImGui::SetNextItemWidth(55);
-  ImGui::DragScalar("##cZ", ImGuiDataType_Double, &cameraTranslate[2], 0.02f, nullptr, nullptr, "%.4g");
+  if (ImGui::DragScalar("##cZ", ImGuiDataType_Double, &camAbs[2], 0.02f, nullptr, nullptr, "%.4g"))
+    cameraTranslate[2] = camAbs[2] + gCamAnchor[2];
   ImGui::SameLine();
   ImGui::SetNextItemWidth(50);
   float prevYaw = rotation, prevPit = pitch, prevRol = roll;
@@ -3646,7 +3711,9 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   {
     int d = drawKeyframeLane("Freecam", -1, cameraKeyframes, SelectedCameraIndex() < 0,
       [&](const CameraKeyframe& ck) {
-        cameraTranslate[0] = ck.pos[0]; cameraTranslate[1] = ck.pos[1]; cameraTranslate[2] = ck.pos[2];
+        cameraTranslate[0] = ck.pos[0] + gCamAnchor[0];
+        cameraTranslate[1] = ck.pos[1] + gCamAnchor[1];
+        cameraTranslate[2] = ck.pos[2] + gCamAnchor[2];
         rotation = ck.rotation; pitch = ck.pitch; roll = ck.roll; zoom = ck.zoom;
         syncMatrixFromEuler();
         selectedIdx = -1;
@@ -4207,7 +4274,9 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         const float r2d = 57.2957795f;
         SceneCamera cam;
         cam.name       = "Camera " + std::to_string(sceneCameras.size() + 1);
-        cam.position   = dvec3(-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]);
+        cam.position   = dvec3(gCamAnchor[0] - cameraTranslate[0],
+                               gCamAnchor[1] - cameraTranslate[1],
+                               gCamAnchor[2] - cameraTranslate[2]);
         cam.rotationDeg = { pitch * r2d, rotation * r2d, roll * r2d };
         cam.fov        = zoom;
         sceneCameras.push_back(cam);
@@ -4787,7 +4856,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
       if (ImGui::Button("Match Freecam", ImVec2(-1, 0))) {
         const float r2d = 57.2957795f;
-        cam->position   = dvec3(-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]);
+        cam->position   = dvec3(gCamAnchor[0] - cameraTranslate[0],
+                                gCamAnchor[1] - cameraTranslate[1],
+                                gCamAnchor[2] - cameraTranslate[2]);
         cam->rotationDeg = { pitch * r2d, rotation * r2d, roll * r2d };
         cam->fov        = zoom;
       }
@@ -5137,12 +5208,12 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
   float ndcY = 1.f - (io.MousePos.y / io.DisplaySize.y) * 2.f;
 
   // Rough inverse: scale by frustum half-size at z plane using current FOV
-  float zPlane    = -cameraTranslate[2] + (-3.f);
+  float zPlane    = (float)(gCamAnchor[2] - cameraTranslate[2]) + (-3.f);
   float halfH     = std::tan(zoom * 0.5f * 3.14159265f / 180.0f) * std::abs(zPlane);
   float aspect    = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : 1.f;
 
-  ghostX = -cameraTranslate[0] + ndcX * halfH * aspect;
-  ghostY = -cameraTranslate[1] + ndcY * halfH;
+  ghostX = (float)(gCamAnchor[0] - cameraTranslate[0]) + ndcX * halfH * aspect;
+  ghostY = (float)(gCamAnchor[1] - cameraTranslate[1]) + ndcY * halfH;
   ghostZ = -3.f;  // fixed depth plane
 
   // Place on left click (when the click lands on the 3D scene)
@@ -5276,9 +5347,9 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
 
   // Live camera distance (display scale: 1 world unit = 200,000 km,
   // which makes the default Earth ~5,600 km in radius)
-  double ddx = pos.x + cameraTranslate[0];
-  double ddy = pos.y + cameraTranslate[1];
-  double ddz = pos.z + cameraTranslate[2];
+  double ddx = (pos.x - gCamAnchor[0]) + cameraTranslate[0];
+  double ddy = (pos.y - gCamAnchor[1]) + cameraTranslate[1];
+  double ddz = (pos.z - gCamAnchor[2]) + cameraTranslate[2];
   double au  = std::sqrt(ddx*ddx + ddy*ddy + ddz*ddz);
 
   char label[160];
@@ -5298,16 +5369,18 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
 void Renderer::LocateCamera(dvec3 target, float effRadius) {
   double dist = std::max((double)effRadius * 5.7, 1e-4);
 
-  dvec3 camPos{-cameraTranslate[0], -cameraTranslate[1], -cameraTranslate[2]};
+  dvec3 camPos{gCamAnchor[0] - cameraTranslate[0],
+               gCamAnchor[1] - cameraTranslate[1],
+               gCamAnchor[2] - cameraTranslate[2]};
   dvec3 back = camPos - target;                  // backward = target → camera
   double blen = getLength(back);
   dvec3 b = (blen > 1e-9) ? dvec3{back.x/blen, back.y/blen, back.z/blen}
                           : dvec3{0, 0, 1};
 
   dvec3 newCam = target + b * dist;
-  cameraTranslate[0] = -newCam.x;
-  cameraTranslate[1] = -newCam.y;
-  cameraTranslate[2] = -newCam.z;
+  cameraTranslate[0] = gCamAnchor[0] - newCam.x;
+  cameraTranslate[1] = gCamAnchor[1] - newCam.y;
+  cameraTranslate[2] = gCamAnchor[2] - newCam.z;
 
   // Invert this codebase's Euler convention (backward row with roll = 0 is
   // (-sin y, cos y·sin p, cos y·cos p)). Pick the branch with cos y matching
@@ -5655,15 +5728,15 @@ void Renderer::BeginRecordCamera() {
   recCamActive = false;
   if (secondaryCameraSource >= 0 && secondaryCameraSource < (int)sceneCameras.size()) {
     recCamActive = true;
-    recSavedCamTranslate[0] = cameraTranslate[0];
-    recSavedCamTranslate[1] = cameraTranslate[1];
-    recSavedCamTranslate[2] = cameraTranslate[2];
+    recSavedCamTranslate[0] = cameraTranslate[0] - gCamAnchor[0];
+    recSavedCamTranslate[1] = cameraTranslate[1] - gCamAnchor[1];
+    recSavedCamTranslate[2] = cameraTranslate[2] - gCamAnchor[2];
     std::memcpy(recSavedCamMatrix, camMatrix, sizeof(camMatrix));
     recSavedZoom = zoom;
     const SceneCamera& c = sceneCameras[secondaryCameraSource];
-    cameraTranslate[0] = -c.position.x;
-    cameraTranslate[1] = -c.position.y;
-    cameraTranslate[2] = -c.position.z;
+    cameraTranslate[0] = gCamAnchor[0] - c.position.x;
+    cameraTranslate[1] = gCamAnchor[1] - c.position.y;
+    cameraTranslate[2] = gCamAnchor[2] - c.position.z;
     CameraViewMatrix(c.rotationDeg, camMatrix);
     zoom = c.fov;
   }
@@ -5673,9 +5746,9 @@ void Renderer::EndRecordCamera() {
   rayTracerView = recSavedRayTracerView;
   realisticRasterView = recSavedRealisticRasterView;
   if (recCamActive) {
-    cameraTranslate[0] = recSavedCamTranslate[0];
-    cameraTranslate[1] = recSavedCamTranslate[1];
-    cameraTranslate[2] = recSavedCamTranslate[2];
+    cameraTranslate[0] = recSavedCamTranslate[0] + gCamAnchor[0];
+    cameraTranslate[1] = recSavedCamTranslate[1] + gCamAnchor[1];
+    cameraTranslate[2] = recSavedCamTranslate[2] + gCamAnchor[2];
     std::memcpy(camMatrix, recSavedCamMatrix, sizeof(camMatrix));
     zoom = recSavedZoom;
     recCamActive = false;
@@ -5701,15 +5774,15 @@ void Renderer::BeginSecondaryPass() {
   secondaryOverride = false;
   if (secondaryCameraSource >= 0 && secondaryCameraSource < (int)sceneCameras.size()) {
     secondaryOverride = true;
-    savedCamTranslate[0] = cameraTranslate[0];
-    savedCamTranslate[1] = cameraTranslate[1];
-    savedCamTranslate[2] = cameraTranslate[2];
+    savedCamTranslate[0] = cameraTranslate[0] - gCamAnchor[0];
+    savedCamTranslate[1] = cameraTranslate[1] - gCamAnchor[1];
+    savedCamTranslate[2] = cameraTranslate[2] - gCamAnchor[2];
     std::memcpy(savedCamMatrix, camMatrix, sizeof(camMatrix));
     savedZoom = zoom;
     const SceneCamera& c = sceneCameras[secondaryCameraSource];
-    cameraTranslate[0] = -c.position.x;
-    cameraTranslate[1] = -c.position.y;
-    cameraTranslate[2] = -c.position.z;
+    cameraTranslate[0] = gCamAnchor[0] - c.position.x;
+    cameraTranslate[1] = gCamAnchor[1] - c.position.y;
+    cameraTranslate[2] = gCamAnchor[2] - c.position.z;
     CameraViewMatrix(c.rotationDeg, camMatrix);
     zoom = c.fov;
   }
@@ -5756,9 +5829,9 @@ void Renderer::EndSecondaryPass() {
 
   // Restore the freecam transform if a spawned camera drove this pass
   if (secondaryOverride) {
-    cameraTranslate[0] = savedCamTranslate[0];
-    cameraTranslate[1] = savedCamTranslate[1];
-    cameraTranslate[2] = savedCamTranslate[2];
+    cameraTranslate[0] = savedCamTranslate[0] + gCamAnchor[0];
+    cameraTranslate[1] = savedCamTranslate[1] + gCamAnchor[1];
+    cameraTranslate[2] = savedCamTranslate[2] + gCamAnchor[2];
     std::memcpy(camMatrix, savedCamMatrix, sizeof(camMatrix));
     zoom = savedZoom;
     secondaryOverride = false;
@@ -6263,9 +6336,9 @@ void Renderer::DispatchRaytracer(int width, int height) {
   static float lastNebulaDetail = -1.0f;
   bool dirty = rtDirty;
   if (!dirty) {
-    dirty = (cameraTranslate[0] != rtLastCamera[0] ||
-             cameraTranslate[1] != rtLastCamera[1] ||
-             cameraTranslate[2] != rtLastCamera[2] ||
+    dirty = (cameraTranslate[0] - gCamAnchor[0] != rtLastCamera[0] ||
+             cameraTranslate[1] - gCamAnchor[1] != rtLastCamera[1] ||
+             cameraTranslate[2] - gCamAnchor[2] != rtLastCamera[2] ||
              std::memcmp(camMatrix, rtLastViewRot, sizeof(camMatrix)) != 0 ||
              zoom     != rtLastZoom     ||
              rtMaxBounces != rtLastBounces ||
@@ -6470,9 +6543,9 @@ void Renderer::DispatchRaytracer(int width, int height) {
       std::chrono::steady_clock::now() - dispatchT0).count();
 
   // ── Snapshot state for dirty check next frame ──
-  rtLastCamera[0] = cameraTranslate[0];
-  rtLastCamera[1] = cameraTranslate[1];
-  rtLastCamera[2] = cameraTranslate[2];
+  rtLastCamera[0] = cameraTranslate[0] - gCamAnchor[0];
+  rtLastCamera[1] = cameraTranslate[1] - gCamAnchor[1];
+  rtLastCamera[2] = cameraTranslate[2] - gCamAnchor[2];
   std::memcpy(rtLastViewRot, camMatrix, sizeof(camMatrix));
   rtLastZoom      = zoom;
   rtLastBounces   = rtMaxBounces;
@@ -7579,9 +7652,9 @@ void Renderer::InsertCameraKeyframe(unsigned int frame) {
   // If a keyframe already exists at this frame, overwrite it
   for (auto& kf : cameraKeyframes) {
     if (kf.frame == frame) {
-      kf.pos[0] = cameraTranslate[0];
-      kf.pos[1] = cameraTranslate[1];
-      kf.pos[2] = cameraTranslate[2];
+      kf.pos[0] = cameraTranslate[0] - gCamAnchor[0];
+      kf.pos[1] = cameraTranslate[1] - gCamAnchor[1];
+      kf.pos[2] = cameraTranslate[2] - gCamAnchor[2];
       kf.rotation = rotation;
       kf.pitch    = pitch;
       kf.roll     = roll;
@@ -7592,9 +7665,9 @@ void Renderer::InsertCameraKeyframe(unsigned int frame) {
   // Otherwise insert, keeping the vector sorted by frame
   CameraKeyframe kf;
   kf.frame   = frame;
-  kf.pos[0]  = cameraTranslate[0];
-  kf.pos[1]  = cameraTranslate[1];
-  kf.pos[2]  = cameraTranslate[2];
+  kf.pos[0]  = cameraTranslate[0] - gCamAnchor[0];
+  kf.pos[1]  = cameraTranslate[1] - gCamAnchor[1];
+  kf.pos[2]  = cameraTranslate[2] - gCamAnchor[2];
   kf.rotation = rotation;
   kf.pitch    = pitch;
   kf.roll     = roll;

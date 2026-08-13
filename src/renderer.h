@@ -207,6 +207,15 @@ private:
   float sceneImageOffX{0.0f}, sceneImageOffY{0.0f};
 
   bool WorldToScreen(dvec3 world, float& sx, float& sy);
+  // Same projection, for positions already differenced against the camera.
+  bool RelToScreen(dvec3 rel, float& sx, float& sy);
+  // World -> camera-relative, in double (anchor + local; see renderedObject.h).
+  // Build overlay geometry from THIS, never from absolute world coordinates.
+  dvec3 CameraRelative(const dvec3& p) const {
+    return dvec3{ (p.x - gCamAnchor[0]) + cameraTranslate[0],
+                  (p.y - gCamAnchor[1]) + cameraTranslate[1],
+                  (p.z - gCamAnchor[2]) + cameraTranslate[2] };
+  }
   void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
                         std::vector<std::unique_ptr<CloudObject>>& clouds);
   void DrawObjectHighlight(PhysicsObject& obj);
@@ -534,7 +543,11 @@ private:
 
 public:
   // ---- Public camera state (exposed so UI sliders can drive them) ----
-  double cameraTranslate[3] = { 0, 0, 0 };  // = -cameraPosition (uCamera semantics)
+  // LOCAL part of the camera translate: true camera position = gCamAnchor -
+  // cameraTranslate (see renderedObject.h). Rebased each frame so this stays
+  // small and camera motion keeps full double precision at any distance.
+  // Every world→camera difference must be (pos - gCamAnchor) + cameraTranslate.
+  double cameraTranslate[3] = { 0, 0, 0 };
   // Camera forward in world space (camMatrix rows map world→camera; looks down -Z).
   vec3 CameraForward() const { return vec3{ -camMatrix[6], -camMatrix[7], -camMatrix[8] }; }
   float rotation{};

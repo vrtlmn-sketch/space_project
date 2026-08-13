@@ -197,9 +197,9 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     if (!ro.isStarfield || ro.simulatableParticleCount() > 0) continue;
     const RenderedObject::StarChunk& sc = ro.starChunks[0];
     // Camera-relative in double, as everywhere else at this scale.
-    double dx = ro.coordinates.x + sc.center.x + camT[0];
-    double dy = ro.coordinates.y + sc.center.y + camT[1];
-    double dz = ro.coordinates.z + sc.center.z + camT[2];
+    double dx = (ro.coordinates.x + sc.center.x - gCamAnchor[0]) + camT[0];
+    double dy = (ro.coordinates.y + sc.center.y - gCamAnchor[1]) + camT[1];
+    double dz = (ro.coordinates.z + sc.center.z - gCamAnchor[2]) + camT[2];
     double d  = std::sqrt(dx*dx + dy*dy + dz*dz);
     double ang  = 2.0 * std::atan2((double)sc.extent, std::max(d, 1.0)) * 57.2957795;
     float  frac = (float)(ang / (double)std::max(fovDeg, 1.0f));   // share of the view
@@ -259,7 +259,9 @@ static void BuildCloudDrawOrder(const std::vector<std::unique_ptr<CloudObject>>&
   // after narrowing (positions reach ~1e15 AU).
   auto dist2 = [&](int i) {
     const dvec3& p = clouds[i]->position;
-    double dx = p.x + camT[0], dy = p.y + camT[1], dz = p.z + camT[2];
+    double dx = (p.x - gCamAnchor[0]) + camT[0],
+           dy = (p.y - gCamAnchor[1]) + camT[1],
+           dz = (p.z - gCamAnchor[2]) + camT[2];
     return dx*dx + dy*dy + dz*dz;
   };
   std::stable_sort(out.begin(), out.end(),
@@ -377,7 +379,9 @@ int main(int argc, char** argv) {
     dvec3 c; double r;
     cloud.boundsEstimate(c, r);
     dvec3 localCenter{ c.x - cloud.position.x, c.y - cloud.position.y, c.z - cloud.position.z };
-    dvec3 camPos{ -renderer.cameraTranslate[0], -renderer.cameraTranslate[1], -renderer.cameraTranslate[2] };
+    dvec3 camPos{ gCamAnchor[0] - renderer.cameraTranslate[0],
+                  gCamAnchor[1] - renderer.cameraTranslate[1],
+                  gCamAnchor[2] - renderer.cameraTranslate[2] };
     vec3 f = renderer.CameraForward();
     dvec3 fwd{ (double)f.x, (double)f.y, (double)f.z };
     double dist = std::max(r * 5.7, 3.0);
@@ -559,6 +563,9 @@ int main(int argc, char** argv) {
   };
 
   auto applySettingsToRenderer = [&](const SceneSettings& s) {
+    // Files store the ABSOLUTE camera translate (pre-anchor semantics): load
+    // it with a zero anchor; the per-frame rebase re-splits it immediately.
+    gCamAnchor[0] = gCamAnchor[1] = gCamAnchor[2] = 0.0;
     renderer.cameraTranslate[0] = s.camX;
     renderer.cameraTranslate[1] = s.camY;
     renderer.cameraTranslate[2] = s.camZ;
@@ -754,9 +761,9 @@ int main(int argc, char** argv) {
       }
     }
     SceneSettings s;
-    s.camX        = renderer.cameraTranslate[0];
-    s.camY        = renderer.cameraTranslate[1];
-    s.camZ        = renderer.cameraTranslate[2];
+    s.camX        = renderer.cameraTranslate[0] - gCamAnchor[0];
+    s.camY        = renderer.cameraTranslate[1] - gCamAnchor[1];
+    s.camZ        = renderer.cameraTranslate[2] - gCamAnchor[2];
     s.camRotation = renderer.rotation;
     s.camPitch    = renderer.pitch;
     s.camRoll     = renderer.roll;
@@ -989,9 +996,9 @@ int main(int argc, char** argv) {
       if (obj.shaderType == ObjectType::Star) {
         // Camera-relative (matches the camera-relative vertex positions)
         starPositions.push_back(vec3{
-          (float)(obj.data.position.x + renderer.cameraTranslate[0]),
-          (float)(obj.data.position.y + renderer.cameraTranslate[1]),
-          (float)(obj.data.position.z + renderer.cameraTranslate[2])});
+          (float)((obj.data.position.x - gCamAnchor[0]) + renderer.cameraTranslate[0]),
+          (float)((obj.data.position.y - gCamAnchor[1]) + renderer.cameraTranslate[1]),
+          (float)((obj.data.position.z - gCamAnchor[2]) + renderer.cameraTranslate[2])});
         // Basic blackbody approximation for the light colour
         float t = obj.temperature;
         float r, g, b;
@@ -1101,9 +1108,9 @@ int main(int argc, char** argv) {
       renderer.dustInfluence = std::max(scaleRad * 0.04f, 1e-6f);
       // Camera-relative centre (RT objects are pushed camera-relative), so the
       // clump pattern is anchored to the galaxy and doesn't swim with the camera.
-      renderer.dustCenter[0] = dcen.x + (float)renderer.cameraTranslate[0];
-      renderer.dustCenter[1] = dcen.y + (float)renderer.cameraTranslate[1];
-      renderer.dustCenter[2] = dcen.z + (float)renderer.cameraTranslate[2];
+      renderer.dustCenter[0] = (float)((dcen.x - gCamAnchor[0]) + renderer.cameraTranslate[0]);
+      renderer.dustCenter[1] = (float)((dcen.y - gCamAnchor[1]) + renderer.cameraTranslate[1]);
+      renderer.dustCenter[2] = (float)((dcen.z - gCamAnchor[2]) + renderer.cameraTranslate[2]);
       // Fixed dust resolution: sample ~dustDetail points regardless of how many
       // stars are sent to the GPU, so the dust look doesn't change with Star Points.
       int cloudPts = clouds[0]->particleCount();
@@ -1160,9 +1167,9 @@ int main(int argc, char** argv) {
       if (before && after) {
         if (before->frame == after->frame) {
           // Exactly on a keyframe
-          renderer.cameraTranslate[0] = before->pos[0];
-          renderer.cameraTranslate[1] = before->pos[1];
-          renderer.cameraTranslate[2] = before->pos[2];
+          renderer.cameraTranslate[0] = before->pos[0] + gCamAnchor[0];
+          renderer.cameraTranslate[1] = before->pos[1] + gCamAnchor[1];
+          renderer.cameraTranslate[2] = before->pos[2] + gCamAnchor[2];
           renderer.rotation = before->rotation;
           renderer.pitch    = before->pitch;
           renderer.roll     = before->roll;
@@ -1171,9 +1178,9 @@ int main(int argc, char** argv) {
         } else {
           // Linear interpolation
           float t = (float)(curFrame - before->frame) / (float)(after->frame - before->frame);
-          renderer.cameraTranslate[0] = before->pos[0] + t * (after->pos[0] - before->pos[0]);
-          renderer.cameraTranslate[1] = before->pos[1] + t * (after->pos[1] - before->pos[1]);
-          renderer.cameraTranslate[2] = before->pos[2] + t * (after->pos[2] - before->pos[2]);
+          renderer.cameraTranslate[0] = before->pos[0] + t * (after->pos[0] - before->pos[0]) + gCamAnchor[0];
+          renderer.cameraTranslate[1] = before->pos[1] + t * (after->pos[1] - before->pos[1]) + gCamAnchor[1];
+          renderer.cameraTranslate[2] = before->pos[2] + t * (after->pos[2] - before->pos[2]) + gCamAnchor[2];
           renderer.rotation = before->rotation + t * (after->rotation - before->rotation);
           renderer.pitch    = before->pitch    + t * (after->pitch    - before->pitch);
           renderer.roll     = before->roll     + t * (after->roll     - before->roll);
@@ -1417,10 +1424,14 @@ int main(int argc, char** argv) {
           const auto& ch = gal.renderedObject.starChunks;
           if (!ch.empty()) {
             // Galaxy position is the CLOUD's (double); chunk centres are local.
+            // UNIVERSE_CAM_DIST=<AU> parks the camera at an ABSOLUTE distance
+            // instead (e.g. 8 AU = deep inside the core), which is the regime
+            // where camera precision and the near-field passes actually bite.
             double back = ch[0].extent * 2.5;
-            renderer.cameraTranslate[0] = -(gal.position.x + ch[0].center.x);
-            renderer.cameraTranslate[1] = -(gal.position.y + ch[0].center.y);
-            renderer.cameraTranslate[2] = -(gal.position.z + ch[0].center.z) - back;
+            if (const char* cd = std::getenv("UNIVERSE_CAM_DIST")) back = std::atof(cd);
+            renderer.cameraTranslate[0] = gCamAnchor[0] - (gal.position.x + ch[0].center.x);
+            renderer.cameraTranslate[1] = gCamAnchor[1] - (gal.position.y + ch[0].center.y);
+            renderer.cameraTranslate[2] = gCamAnchor[2] - (gal.position.z + ch[0].center.z) - back;
             std::cout << "[universe] camera parked at a galaxy, extent "
                       << ch[0].extent << " AU, dist " << back << " AU\n";
           }

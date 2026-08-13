@@ -19,6 +19,17 @@ enum class MeshType{
 // rotation convention, precision-safe for chunk centres at universe scale.
 void EulerDegToMat3d(const vec3& deg, double R[9]);
 
+// ── Floating camera origin ───────────────────────────────────────────────────
+// A double at 2.6e15 AU has an ULP of 0.5 AU: a camera stored as ONE absolute
+// double cannot move in smaller steps there (visible stepping/jitter near
+// galaxies, blocky gizmos). The camera position is therefore split into
+// anchor + local: `cameraTranslate` carries only the SMALL local part at full
+// precision, and this anchor holds the large part. Every world→camera
+// difference must be computed as (pos - anchor) + cameraTranslate — pos-anchor
+// is exact for anything near the camera. The Renderer owns the value; it is
+// mirrored here so RenderedObject code can reach it without signature churn.
+extern double gCamAnchor[3];
+
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback
 public:
