@@ -255,14 +255,14 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
   // resolve, and nothing else. The moment a galaxy covers a noticeable part of
   // the screen it becomes a real particle cloud and goes down exactly the path
   // a hand-made cloud uses, so "spawn a galaxy anywhere" renders one way.
-  // 5% of view height is the agreed line: below it a galaxy is a smudge a few
-  // dozen pixels tall and sampling is invisible; above it, sampling is what
-  // made galaxies look unlike milky_way. Hysteresis stops boundary flip-flop.
+  // 10% of view height is the agreed line: below it a galaxy is a small smudge
+  // where sampling cannot be told apart; above it, sampling is what made
+  // galaxies look unlike milky_way. Hysteresis stops boundary flip-flop.
   // Harness gate: NEAR_PIPE=<frac> moves the switch (0 = always stand-in,
   // 9 = always the real pipeline), so the two can be compared at one distance.
   static const float kUseRealPipeline = []{
     const char* e = std::getenv("NEAR_PIPE");
-    return e ? (float)std::atof(e) : 0.05f;
+    return e ? (float)std::atof(e) : 0.10f;
   }();
   const float kBackToStandIn = kUseRealPipeline * 0.5f;
   for (auto& c : clouds) {

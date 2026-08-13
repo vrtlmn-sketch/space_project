@@ -49,7 +49,7 @@ Env gates:
 | `DUST_DEBUG=1` | log the dust/star-hash scale each cloud renders with |
 | `BRING_TEST=1` | "Bring to me" the first cloud at frame 2 and log the framing it produced |
 | `SCALE_DEBUG=1` | log the scene scale: focus distance, nearest surface, near plane |
-| `NEAR_PIPE=<frac>` | view share above which a galaxy uses the real pipeline (default 0.05; 9 = always sample, 0.001 = never) |
+| `NEAR_PIPE=<frac>` | view share above which a galaxy uses the real pipeline (default 0.10; 9 = always sample, 0.001 = never) |
 
 **The harness uses `harness_imgui.ini`, not `imgui.ini`.** Viewport height feeds
 the LOD star budget, and the live app rewrites `imgui.ini` as the user works —
@@ -174,10 +174,10 @@ second look to keep in sync, and no brightness compensation to tune.
 
 The chunked starfield is a SAMPLED STAND-IN, and only that: it exists because
 3555 galaxies x 50000 stars is 178M points, so objects too small to resolve are
-drawn with fewer. A galaxy switches to the real pipeline once it covers 5% of
+drawn with fewer. A galaxy switches to the real pipeline once it covers 10% of
 view height (`NEAR_PIPE=<frac>` to move the line, `nearPromoted` on the cloud),
-and back below half that. Under 5% it is a smudge tens of pixels tall where
-sampling cannot be seen.
+and back below half that. Under 10% it is a small smudge where sampling cannot
+be told apart.
 
 Do NOT try to make the stand-in match the real path by scaling brightness or
 re-thresholding stars. That was tried (a `uSampleWeight` uniform) and it is the
