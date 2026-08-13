@@ -4835,7 +4835,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         lastCloudIdx = cloudIdx;
       }
 
-      ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.40f, 1.00f), "Cloud %d", cloudIdx);
+      // Show WHICH cloud is being edited — with hundreds of near-identical
+      // galaxies, "Cloud 12" alone can hide an inspector/selection mismatch.
+      if (!cloud->name.empty())
+        ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.40f, 1.00f), "%s  (Cloud %d)",
+                           cloud->name.c_str(), cloudIdx);
+      else
+        ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.40f, 1.00f), "Cloud %d", cloudIdx);
       ImGui::Separator();
 
       if (cloud->renderedObject.isGalaxy) {

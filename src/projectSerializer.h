@@ -90,6 +90,10 @@ struct UniverseOverride {
   bool  member{true};
   float temperature{4500.f};
   int   renderMode{0};
+  float nebulaScatterScale{0.4f};
+  float particleSizeSpread{0.0f};
+  int   computeMethod{1};
+  float theta{0.5f};
   int   fullStars{0};
   bool  simulatePhysics{false};
   std::string dataFile;        // non-empty: identity is simulated DATA (sidecar)

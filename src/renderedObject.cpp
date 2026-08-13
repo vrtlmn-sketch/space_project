@@ -1815,6 +1815,7 @@ void RenderedObject::setupRender()
   nightMapUniform         = glGetUniformLocation(program, "uNightMap");
   hasNightMapUniform      = glGetUniformLocation(program, "uHasNightMap");
   nightStrengthUniform    = glGetUniformLocation(program, "uNightStrength");
+  uniformsCached = true;
 }
 
 void RenderedObject::UploadSSBOParticles(const std::vector<vec4>& points){
@@ -2071,6 +2072,7 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   if (cached != s_programCache.end()) {
     program = cached->second;
     hasBeenRendered = false;      // uniform locations are re-fetched by setupRender
+    uniformsCached  = false;      // ...and stay invalid until it actually runs
     return;
   }
 
@@ -2121,6 +2123,7 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   // After re-linking, uniform locations need refreshing.
   // setupRender() fetches them — mark as needing re-init.
   hasBeenRendered = false;
+  uniformsCached  = false;
 }
 
 void RenderedObject::transformPerspectiveMesh(GLuint program, const double cameraTranslate[3], const float viewRot[9],
@@ -2251,6 +2254,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   // VBO built by LoadStarfield, so the usual "empty buffer" guard must not fire.
   if(bufferSize == 0 || (!isStarfield && UVObjectMeshBuffer.empty())) return;
   if(!hasBeenRendered) { setupRender(); cloudGpuDirty = true; }
+  else if (!uniformsCached) setupRender();   // built before first draw (LOD rebuild)
   glBindVertexArray(vao);
 
   // Positions are STATIC in the cloud's own frame, so they upload only when they

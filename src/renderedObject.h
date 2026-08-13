@@ -95,6 +95,12 @@ private:
   int  dustLightCounter{0};              // periodic refresh while the sim moves particles
   int  rimUpdateCounter{0};              // throttle: recompute every N draws while simulating
   bool cloudGpuDirty{true};              // positions changed → re-upload (else the VBO is static)
+  // True once setupRender has cached this object's uniform locations for the
+  // current program. hasBeenRendered alone is NOT that: BuildGalaxyStarfield
+  // sets it true, so a galaxy the LOD ladder rebuilt BEFORE its first draw
+  // skipped setupRender entirely — all cached locations stayed 0 and its
+  // uploadTemperature/uploadRenderMode wrote to the wrong uniform forever.
+  bool uniformsCached{false};
   // Cloud-local bounding radius (max |p|), refreshed on every VBO upload. Used
   // to cap the haze lobe by the cloud's own projected size — the same fix the
   // chunk path got — so a distant float cloud stops rendering as a bloated ball.

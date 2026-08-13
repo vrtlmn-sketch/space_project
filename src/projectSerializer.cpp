@@ -160,9 +160,13 @@ bool ProjectSerializer::Save(const std::string& path,
           {"rotation",        vec3ToJson(ov.rotation)},
           {"name",            ov.name},
           {"member",          ov.member},
-          {"temperature",     ov.temperature},
-          {"renderMode",      ov.renderMode},
-          {"fullStars",       ov.fullStars},
+          {"temperature",        ov.temperature},
+          {"renderMode",         ov.renderMode},
+          {"nebulaScatterScale", ov.nebulaScatterScale},
+          {"particleSizeSpread", ov.particleSizeSpread},
+          {"computeMethod",      ov.computeMethod},
+          {"theta",              ov.theta},
+          {"fullStars",          ov.fullStars},
           {"simulatePhysics", ov.simulatePhysics},
           {"dataFile",        ov.dataFile}
         };
@@ -455,9 +459,13 @@ ProjectData ProjectSerializer::Load(const std::string& path)
           if (o.contains("rotation")) ov.rotation = jsonToVec3(o["rotation"]);
           ov.name            = o.value("name",            std::string{});
           ov.member          = o.value("member",          true);
-          ov.temperature     = o.value("temperature",     4500.f);
-          ov.renderMode      = o.value("renderMode",      0);
-          ov.fullStars       = o.value("fullStars",       0);
+          ov.temperature        = o.value("temperature",        4500.f);
+          ov.renderMode         = o.value("renderMode",         0);
+          ov.nebulaScatterScale = o.value("nebulaScatterScale", 0.4f);
+          ov.particleSizeSpread = o.value("particleSizeSpread", 0.0f);
+          ov.computeMethod      = o.value("computeMethod",      1);
+          ov.theta              = o.value("theta",              0.5f);
+          ov.fullStars          = o.value("fullStars",          0);
           ov.simulatePhysics = o.value("simulatePhysics", false);
           ov.dataFile        = o.value("dataFile",        std::string{});
           if (o.contains("keyframes")) ov.keyframes = jsonToKeyframes(o["keyframes"]);

@@ -426,6 +426,10 @@ int main(int argc, char** argv) {
     // (chunks -> particles) path can be exercised headlessly.
     int testPhys = 0;
     if (const char* tp = std::getenv("UNIVERSE_PHYS")) testPhys = std::atoi(tp);
+    // Harness gate: recolour every galaxy, so property-edit persistence can be
+    // exercised headlessly (simulates the user changing the temperature).
+    float testTemp = 0.0f;
+    if (const char* tt = std::getenv("UNIVERSE_TEMP")) testTemp = (float)std::atof(tt);
     int spawned = 0;
     for (int gi = 0; gi < (int)galaxies.size(); ++gi) {
       const GalaxyDesc& g = galaxies[gi];
@@ -443,6 +447,7 @@ int main(int argc, char** argv) {
       cloud->renderedObject.setupShaders("src/shaders/cloudVert.glsl", "src/shaders/cloudFrag.glsl");
       cloud->simulatePhysics = (gi < testPhys); // universes never simulate by default
       cloud->rotationDeg = testRot;
+      if (testTemp > 0.0f) cloud->temperature = testTemp;
       const char* kind = (g.type == GalaxyType::Spiral)     ? "Spiral"
                        : (g.type == GalaxyType::Elliptical) ? "Elliptical" : "Irregular";
       cloud->name = std::string(kind) + " Galaxy " + std::to_string(gi + 1);
@@ -454,9 +459,13 @@ int main(int argc, char** argv) {
         cloud->renderedObject.coordinates = ov->position;
         cloud->rotationDeg     = ov->rotation;
         if (!ov->name.empty()) cloud->name = ov->name;
-        cloud->universeMember  = ov->member;
-        cloud->temperature     = ov->temperature;
-        cloud->renderMode      = ov->renderMode;
+        cloud->universeMember     = ov->member;
+        cloud->temperature        = ov->temperature;
+        cloud->renderMode         = ov->renderMode;
+        cloud->nebulaScatterScale = ov->nebulaScatterScale;
+        cloud->particleSizeSpread = ov->particleSizeSpread;
+        cloud->computeMethod      = static_cast<CloudComputeMethod>(ov->computeMethod);
+        cloud->barnesHutTheta     = ov->theta;
         if (ov->fullStars > 0) cloud->renderedObject.galaxyFullStars = ov->fullStars;
         cloud->simulatePhysics = ov->simulatePhysics;
         cloud->keyframes       = ov->keyframes;
@@ -513,6 +522,8 @@ int main(int argc, char** argv) {
     CloudData cd = cloudDataFromForm(cf);
     cd.position = dvec3(clouds[cloudIdx]->position);  // keep current placement
     cd.rotation = clouds[cloudIdx]->rotationDeg;      // keep current orientation
+    cd.name           = clouds[cloudIdx]->name;       // keep identity in the scene list
+    cd.universeMember = clouds[cloudIdx]->universeMember;
     clouds[cloudIdx] = buildCloudFromData(cd);
   };
 
@@ -703,20 +714,27 @@ int main(int argc, char** argv) {
           c->rotationDeg.x != 0.0f || c->rotationDeg.y != 0.0f || c->rotationDeg.z != 0.0f ||
           c->name != defName || !c->universeMember ||
           c->temperature != 4500.f || c->renderMode != 0 ||
+          c->nebulaScatterScale != 0.4f || c->particleSizeSpread != 0.0f ||
+          c->computeMethod != CloudComputeMethod::BarnesHutGPU ||
+          c->barnesHutTheta != 0.5f ||
           c->renderedObject.galaxyFullStars != rec.starsPerGalaxy ||
           c->simulatePhysics || !c->keyframes.empty() || dataIdentity;
         if (!edited) continue;
         UniverseOverride ov;
-        ov.index           = c->uniIndex;
-        ov.position        = dvec3(c->position);
-        ov.rotation        = c->rotationDeg;
-        ov.name            = c->name;
-        ov.member          = c->universeMember;
-        ov.temperature     = c->temperature;
-        ov.renderMode      = c->renderMode;
-        ov.fullStars       = c->renderedObject.galaxyFullStars;
-        ov.simulatePhysics = c->simulatePhysics;
-        ov.keyframes       = c->keyframes;
+        ov.index              = c->uniIndex;
+        ov.position           = dvec3(c->position);
+        ov.rotation           = c->rotationDeg;
+        ov.name               = c->name;
+        ov.member             = c->universeMember;
+        ov.temperature        = c->temperature;
+        ov.renderMode         = c->renderMode;
+        ov.nebulaScatterScale = c->nebulaScatterScale;
+        ov.particleSizeSpread = c->particleSizeSpread;
+        ov.computeMethod      = static_cast<int>(c->computeMethod);
+        ov.theta              = c->barnesHutTheta;
+        ov.fullStars          = c->renderedObject.galaxyFullStars;
+        ov.simulatePhysics    = c->simulatePhysics;
+        ov.keyframes          = c->keyframes;
         if (dataIdentity) {
           ensureDataDir();
           std::string rel = dataDirName + "/u" + std::to_string(r) + "_g"
@@ -1296,6 +1314,14 @@ int main(int argc, char** argv) {
       // round-trip (chunks -> particles -> chunks-from-data) runs headlessly.
       if (std::getenv("UNIVERSE_DEMOTE") && cmpFrame == 2)
         for (auto& c : clouds) if (c && c->demoteToChunks) c->simulatePhysics = false;
+      // Harness gate: recolour every cloud MID-SESSION at frame 2, exactly what
+      // the inspector's temperature slider does — verifies live property edits.
+      if (const char* et = std::getenv("EDIT_TEMP"); et && cmpFrame == 2)
+        for (auto& c : clouds) if (c) c->temperature = (float)std::atof(et);
+      // Same, but ONLY clouds outside the universe (member == false).
+      if (const char* eo = std::getenv("EDIT_TEMP_OUT"); eo && cmpFrame == 2)
+        for (auto& c : clouds) if (c && !c->universeMember)
+          c->temperature = (float)std::atof(eo);
       if (cmpFrame == cmpWait) {   // let buffers/scene settle first
         const int W = 640, H = 360;   // 360p — matches how the good version was viewed
         // Optional camera offset (AU): --compare dx dy dz — for testing whether
