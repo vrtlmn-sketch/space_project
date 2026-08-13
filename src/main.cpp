@@ -26,16 +26,26 @@
 
 // ─── Helper: build scene from ProjectData ────────────────────────────────────
 
-static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
+static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
+                                                       const std::string& baseDir = {}) {
   std::unique_ptr<CloudObject> cloud;
   vec3 cpos = static_cast<vec3>(cd.position);
-  if (!cd.formationFile.empty()) {
+  if (!cd.dataFile.empty()) {
+    // Exact particles from the binary sidecar: a procedural cloud used to
+    // reload as a RANDOM blob because only its count survived the save.
+    std::vector<CloudParticle> parts;
+    std::string p = baseDir.empty() ? cd.dataFile : baseDir + "/" + cd.dataFile;
+    if (ProjectSerializer::LoadCloudParticles(p, parts))
+      cloud = std::make_unique<CloudObject>(cpos, std::move(parts));
+  }
+  if (!cloud && !cd.formationFile.empty()) {
     // .starfield catalogues live in their own directory
     bool sf = cd.formationFile.size() > 10 &&
               cd.formationFile.compare(cd.formationFile.size() - 10, 10, ".starfield") == 0;
     std::string formPath = (sf ? "templates/starfields/" : "templates/formations/") + cd.formationFile;
     cloud = std::make_unique<CloudObject>(cpos, formPath);
-  } else {
+  }
+  if (!cloud) {
     cloud = std::make_unique<CloudObject>(
       cpos, cd.count, randomDistribution,
       vec3{cd.sizeX, cd.sizeY, cd.sizeZ});
@@ -54,6 +64,8 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd) {
   // The ctor only got a float position; restore the full double from the file.
   cloud->position           = cd.position;
   cloud->renderedObject.coordinates = cd.position;
+  cloud->name               = cd.name;
+  cloud->universeMember     = cd.universeMember;
   if (cd.scale != 1.0f)
     cloud->applyVirialScale(cd.scale);
   return cloud;
@@ -73,7 +85,8 @@ static void buildScene(
   std::vector<PhysicsObject>&               physicsObjects,
   std::vector<LineObject>&                  lineObjects,
   std::optional<GridObject>&                grid,
-  std::vector<std::unique_ptr<CloudObject>>& clouds)
+  std::vector<std::unique_ptr<CloudObject>>& clouds,
+  const std::string&                        baseDir = {})
 {
   physicsObjects.clear();
   lineObjects.clear();
@@ -142,7 +155,7 @@ static void buildScene(
 
   for (const auto& cd : data.clouds) {
     if (cd.enabled)
-      clouds.push_back(buildCloudFromData(cd));
+      clouds.push_back(buildCloudFromData(cd, baseDir));
   }
 }
 
@@ -381,21 +394,27 @@ int main(int argc, char** argv) {
     clouds.push_back(std::move(cloud));
   };
 
-  // Procedural universe: one cloud holding every galaxy, each galaxy a chunk.
-  renderer.universeCreate = [&](const UniverseFormState& uf) {
-    UniverseParams up;
-    up.seed           = uf.seed;
-    up.radiusGly      = uf.radiusGly;
-    up.galaxyCount    = renderer.universeGalaxyCount;
-    up.starsPerGalaxy = renderer.universeStarsPerGalaxy;
-    up.clustering     = uf.clustering;
-    up.popSpiral      = uf.popSpiral;
-    up.popElliptical  = uf.popElliptical;
-    up.popIrregular   = uf.popIrregular;
+  // ── Universes: every Create press is a RECORD (recipe) that can regenerate
+  // its galaxies bit-identically; the project file persists records + sparse
+  // overrides instead of generated content (docs/universe.md).
+  std::vector<UniverseRecord> universeRecords;
 
-    // ONE CLOUD PER GALAXY. Packing them into a single object was efficient but
-    // wrong: a galaxy has to be selectable, locatable and editable, which means
-    // it must exist in the scene rather than be anonymous geometry inside a blob.
+  // Spawn one record's galaxies. ONE CLOUD PER GALAXY: a galaxy has to be
+  // selectable, locatable and editable, so it must exist in the scene rather
+  // than be anonymous geometry inside a blob. `baseDir` resolves override
+  // sidecar paths (relative to the project file).
+  auto spawnUniverseRecord = [&](const UniverseRecord& rec, int recIdx,
+                                 const std::string& baseDir) {
+    UniverseParams up;
+    up.seed           = rec.seed;
+    up.radiusGly      = rec.radiusGly;
+    up.galaxyCount    = rec.galaxyCount;
+    up.starsPerGalaxy = rec.starsPerGalaxy;
+    up.clustering     = rec.clustering;
+    up.popSpiral      = rec.popSpiral;
+    up.popElliptical  = rec.popElliptical;
+    up.popIrregular   = rec.popIrregular;
+
     std::vector<GalaxyDesc> galaxies;
     GenerateUniverseGalaxies(up, galaxies);
     // Harness gate: rotate every galaxy (degrees) so headless captures can
@@ -407,8 +426,12 @@ int main(int argc, char** argv) {
     // (chunks -> particles) path can be exercised headlessly.
     int testPhys = 0;
     if (const char* tp = std::getenv("UNIVERSE_PHYS")) testPhys = std::atoi(tp);
-    int gi = 0;
-    for (const GalaxyDesc& g : galaxies) {
+    int spawned = 0;
+    for (int gi = 0; gi < (int)galaxies.size(); ++gi) {
+      const GalaxyDesc& g = galaxies[gi];
+      const UniverseOverride* ov = nullptr;
+      for (const auto& o : rec.overrides) if (o.index == gi) { ov = &o; break; }
+      if (ov && ov->deleted) continue;
       auto cloud = std::make_unique<CloudObject>(vec3{0,0,0}, std::vector<CloudParticle>{});
       cloud->position = g.position;             // double: universe scale
       cloud->renderedObject.coordinates = g.position;
@@ -422,12 +445,62 @@ int main(int argc, char** argv) {
       cloud->rotationDeg = testRot;
       const char* kind = (g.type == GalaxyType::Spiral)     ? "Spiral"
                        : (g.type == GalaxyType::Elliptical) ? "Elliptical" : "Irregular";
-      cloud->name = std::string(kind) + " Galaxy " + std::to_string(++gi);
+      cloud->name = std::string(kind) + " Galaxy " + std::to_string(gi + 1);
       cloud->universeMember = true;
+      cloud->uniRecord = recIdx;
+      cloud->uniIndex  = gi;
+      if (ov) {
+        cloud->position = ov->position;
+        cloud->renderedObject.coordinates = ov->position;
+        cloud->rotationDeg     = ov->rotation;
+        if (!ov->name.empty()) cloud->name = ov->name;
+        cloud->universeMember  = ov->member;
+        cloud->temperature     = ov->temperature;
+        cloud->renderMode      = ov->renderMode;
+        if (ov->fullStars > 0) cloud->renderedObject.galaxyFullStars = ov->fullStars;
+        cloud->simulatePhysics = ov->simulatePhysics;
+        cloud->keyframes       = ov->keyframes;
+        if (!ov->dataFile.empty()) {
+          // Identity is DATA: the galaxy was simulated. Restore the exact
+          // particles; render promoted (physics on) or as chunks-from-data.
+          std::vector<CloudParticle> parts;
+          std::string p = baseDir.empty() ? ov->dataFile : baseDir + "/" + ov->dataFile;
+          if (ProjectSerializer::LoadCloudParticles(p, parts)) {
+            RenderedObject& ro = cloud->renderedObject;
+            ro.LoadCloudFromFormation(parts);
+            cloud->demoteToChunks = true;
+            cloud->simDirty       = true;
+            if (ov->simulatePhysics) {
+              ro.releaseCloudGlObjects();
+              ro.isStarfield = false;
+              ro.starChunks.clear();
+              ro.starBudgetOverride = 0;
+            } else {
+              ro.BuildStarfieldFromParticles();
+            }
+          }
+        }
+      }
       clouds.push_back(std::move(cloud));
+      ++spawned;
     }
-    std::cout << "[universe] " << galaxies.size() << " galaxies as separate objects, "
+    std::cout << "[universe] record " << recIdx << ": " << spawned << " of "
+              << galaxies.size() << " galaxies, "
               << (long long)galaxies.size() * up.starsPerGalaxy << " stars\n";
+  };
+
+  renderer.universeCreate = [&](const UniverseFormState& uf) {
+    UniverseRecord rec;
+    rec.seed           = uf.seed;
+    rec.radiusGly      = uf.radiusGly;
+    rec.galaxyCount    = renderer.universeGalaxyCount;
+    rec.starsPerGalaxy = renderer.universeStarsPerGalaxy;
+    rec.clustering     = uf.clustering;
+    rec.popSpiral      = uf.popSpiral;
+    rec.popElliptical  = uf.popElliptical;
+    rec.popIrregular   = uf.popIrregular;
+    universeRecords.push_back(rec);
+    spawnUniverseRecord(rec, (int)universeRecords.size() - 1, {});
   };
 
   cb.deleteCloud = [&](int cloudIdx) {
@@ -555,8 +628,22 @@ int main(int argc, char** argv) {
     std::error_code dirEc;
     auto parent = std::filesystem::path(path).parent_path();
     if (!parent.empty()) std::filesystem::create_directories(parent, dirEc);
+
+    // Particle sidecars live beside the project: projects/foo.json ->
+    // projects/foo.data/. Paths in the JSON are relative to the project dir.
+    const std::string dataDirName = std::filesystem::path(path).stem().string() + ".data";
+    auto sidecarFull = [&](const std::string& rel) {
+      return parent.empty() ? rel : (parent / rel).string();
+    };
+    auto ensureDataDir = [&]() {
+      std::error_code ec;
+      std::filesystem::create_directories(sidecarFull(dataDirName), ec);
+    };
+
     std::vector<CloudData> cloudDatas;
-    for (const auto& c : clouds) {
+    for (int ci = 0; ci < (int)clouds.size(); ++ci) {
+      const auto& c = clouds[ci];
+      if (c->uniRecord >= 0) continue;   // universe galaxies persist via records
       CloudData cd;
       cd.enabled = true;
       cd.position = dvec3(c->position);
@@ -572,7 +659,81 @@ int main(int argc, char** argv) {
       cd.rotation = c->rotationDeg;
       cd.simulatePhysics = c->simulatePhysics;
       cd.keyframes = c->keyframes;
+      cd.name = c->name;
+      cd.universeMember = c->universeMember;
+      // Procedural clouds (no formation file) keep their EXACT particles in a
+      // sidecar; they used to reload as a random blob of the same count.
+      if (c->formationFile.empty() && !c->renderedObject.particles().empty()) {
+        ensureDataDir();
+        std::string rel = dataDirName + "/cloud_" + std::to_string(ci) + ".pcl";
+        if (ProjectSerializer::SaveCloudParticles(sidecarFull(rel),
+                                                  c->renderedObject.particles()))
+          cd.dataFile = rel;
+      }
       cloudDatas.push_back(cd);
+    }
+
+    // Universe records: refresh each record's sparse overrides by diffing the
+    // live scene against a regenerated baseline (generated content itself is
+    // never stored — docs/universe.md).
+    for (int r = 0; r < (int)universeRecords.size(); ++r) {
+      UniverseRecord& rec = universeRecords[r];
+      rec.overrides.clear();
+      UniverseParams up;
+      up.seed = rec.seed; up.radiusGly = rec.radiusGly;
+      up.galaxyCount = rec.galaxyCount; up.starsPerGalaxy = rec.starsPerGalaxy;
+      up.clustering = rec.clustering;
+      up.popSpiral = rec.popSpiral; up.popElliptical = rec.popElliptical;
+      up.popIrregular = rec.popIrregular;
+      std::vector<GalaxyDesc> baseline;
+      GenerateUniverseGalaxies(up, baseline);
+      std::vector<bool> present(baseline.size(), false);
+      for (const auto& c : clouds) {
+        if (c->uniRecord != r || c->uniIndex < 0 || c->uniIndex >= (int)baseline.size())
+          continue;
+        present[c->uniIndex] = true;
+        const GalaxyDesc& g = baseline[c->uniIndex];
+        const char* kind = (g.type == GalaxyType::Spiral)     ? "Spiral"
+                         : (g.type == GalaxyType::Elliptical) ? "Elliptical" : "Irregular";
+        std::string defName = std::string(kind) + " Galaxy " + std::to_string(c->uniIndex + 1);
+        const bool dataIdentity = c->simDirty && !c->renderedObject.particles().empty();
+        const bool edited =
+          c->position.x != g.position.x || c->position.y != g.position.y ||
+          c->position.z != g.position.z ||
+          c->rotationDeg.x != 0.0f || c->rotationDeg.y != 0.0f || c->rotationDeg.z != 0.0f ||
+          c->name != defName || !c->universeMember ||
+          c->temperature != 4500.f || c->renderMode != 0 ||
+          c->renderedObject.galaxyFullStars != rec.starsPerGalaxy ||
+          c->simulatePhysics || !c->keyframes.empty() || dataIdentity;
+        if (!edited) continue;
+        UniverseOverride ov;
+        ov.index           = c->uniIndex;
+        ov.position        = dvec3(c->position);
+        ov.rotation        = c->rotationDeg;
+        ov.name            = c->name;
+        ov.member          = c->universeMember;
+        ov.temperature     = c->temperature;
+        ov.renderMode      = c->renderMode;
+        ov.fullStars       = c->renderedObject.galaxyFullStars;
+        ov.simulatePhysics = c->simulatePhysics;
+        ov.keyframes       = c->keyframes;
+        if (dataIdentity) {
+          ensureDataDir();
+          std::string rel = dataDirName + "/u" + std::to_string(r) + "_g"
+                          + std::to_string(c->uniIndex) + ".pcl";
+          if (ProjectSerializer::SaveCloudParticles(sidecarFull(rel),
+                                                    c->renderedObject.particles()))
+            ov.dataFile = rel;
+        }
+        rec.overrides.push_back(ov);
+      }
+      for (int i = 0; i < (int)baseline.size(); ++i) {
+        if (present[i]) continue;
+        UniverseOverride ov;
+        ov.index   = i;
+        ov.deleted = true;
+        rec.overrides.push_back(ov);
+      }
     }
     SceneSettings s;
     s.camX        = renderer.cameraTranslate[0];
@@ -644,7 +805,8 @@ int main(int argc, char** argv) {
     s.sceneCameras    = renderer.sceneCameras;
     ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas, s,
                             std::string(renderer.projectNameBuf),
-                            std::string(renderer.projectImageBuf));
+                            std::string(renderer.projectImageBuf),
+                            universeRecords);
     std::strncpy(renderer.projectFileBuf, path.c_str(),
                  sizeof(renderer.projectFileBuf) - 1);
     renderer.projectFileBuf[sizeof(renderer.projectFileBuf) - 1] = '\0';
@@ -668,11 +830,22 @@ int main(int argc, char** argv) {
     renderer.projectSaveAsBuf[0] = '\0';
   };
 
+  // Rebuild saved universes: adopt the file's records, regenerate each from
+  // its seed and re-apply the sparse overrides (spawnUniverseRecord does both).
+  auto applyLoadedUniverses = [&](const ProjectData& data, const std::string& projPath) {
+    universeRecords = data.universes;
+    std::string baseDir = std::filesystem::path(projPath).parent_path().string();
+    for (int r = 0; r < (int)universeRecords.size(); ++r)
+      spawnUniverseRecord(universeRecords[r], r, baseDir);
+  };
+
   cb.loadProject = [&](const std::string& path) {
     ProjectData data = ProjectSerializer::Load(path);
     renderer.showLegacyUnitsWarning = data.legacyUnits;
     currentGrid = data.grid;
-    buildScene(data, physicsObjects, lineObjects, grid, clouds);
+    buildScene(data, physicsObjects, lineObjects, grid, clouds,
+               std::filesystem::path(path).parent_path().string());
+    applyLoadedUniverses(data, path);
     applySettingsToRenderer(data.settings);
     applyProjectMeta(data, path);
     renderer.gridForm.visible  = currentGrid.visible;
@@ -689,6 +862,7 @@ int main(int argc, char** argv) {
     renderer.showLegacyUnitsWarning = false;
     currentGrid = data.grid;
     buildScene(data, physicsObjects, lineObjects, grid, clouds);
+    universeRecords.clear();
     applySettingsToRenderer(data.settings);
     applyProjectMeta(data, "");
     renderer.gridForm.visible  = currentGrid.visible;
@@ -722,7 +896,9 @@ int main(int argc, char** argv) {
         std::cerr << "[main] Template project missing or broken "
                      "(" << tmplPath << ") — starting empty.\n";
       currentGrid = tmpl.grid;
-      buildScene(tmpl, physicsObjects, lineObjects, grid, clouds);
+      buildScene(tmpl, physicsObjects, lineObjects, grid, clouds,
+                 std::filesystem::path(tmplPath).parent_path().string());
+      applyLoadedUniverses(tmpl, tmplPath);
       applySettingsToRenderer(tmpl.settings);
       applyProjectMeta(tmpl, tmplPath);
     } else if (renderer.startupChoice == SC::Load) {
@@ -730,7 +906,9 @@ int main(int argc, char** argv) {
       ProjectData data = ProjectSerializer::Load(loadPath);
       renderer.showLegacyUnitsWarning = data.legacyUnits;
       currentGrid = data.grid;
-      buildScene(data, physicsObjects, lineObjects, grid, clouds);
+      buildScene(data, physicsObjects, lineObjects, grid, clouds,
+                 std::filesystem::path(loadPath).parent_path().string());
+      applyLoadedUniverses(data, loadPath);
       applySettingsToRenderer(data.settings);
       applyProjectMeta(data, loadPath);
     } else {
@@ -1180,6 +1358,14 @@ int main(int argc, char** argv) {
         renderer.CaptureRecordRasterImage(W, H);
         renderer.EndRecordRaster();
         std::cout << "[compare] wrote /tmp/cmp_rt.png and /tmp/cmp_raster.png\n";
+        // Harness gate: save the scene as a project before exiting, so
+        // save/load round-trips can be verified headlessly.
+        if (const char* sp = std::getenv("SAVE_PROJECT")) {
+          std::strncpy(renderer.projectFileBuf, sp, sizeof(renderer.projectFileBuf) - 1);
+          renderer.projectFileBuf[sizeof(renderer.projectFileBuf) - 1] = '\0';
+          if (cb.saveProject) cb.saveProject();
+          std::cout << "[compare] saved project to " << sp << "\n";
+        }
         std::exit(0);
       }
     }

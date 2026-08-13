@@ -95,6 +95,10 @@ private:
   int  dustLightCounter{0};              // periodic refresh while the sim moves particles
   int  rimUpdateCounter{0};              // throttle: recompute every N draws while simulating
   bool cloudGpuDirty{true};              // positions changed → re-upload (else the VBO is static)
+  // Cloud-local bounding radius (max |p|), refreshed on every VBO upload. Used
+  // to cap the haze lobe by the cloud's own projected size — the same fix the
+  // chunk path got — so a distant float cloud stops rendering as a bloated ball.
+  float cloudBoundRadius{0.0f};
 
   unsigned int ssboParticles{};
   unsigned int ssboObjects{};
@@ -301,6 +305,7 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // reports GPU stars for a chunked starfield whose cloudParticles is empty —
   // treating that as "has particles" is what crashed the physics path.
   int  simulatableParticleCount() const { return (int)cloudParticles.size(); }
+  const std::vector<CloudParticle>& particles() const { return cloudParticles; }
   // Cloud particle positions (galaxy-local xyz triples) — read-only access for
   // viewport picking/outline (projected hull), which lives in the Renderer.
   const std::vector<float>& cloudLocalPositions() const { return UVObjectMeshBuffer; }

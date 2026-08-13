@@ -1,6 +1,7 @@
 #include "projectSerializer.h"
 #include <fstream>
 #include <iostream>
+#include <cstring>
 #include "json.hpp"
 #include "units.h"
 
@@ -59,7 +60,8 @@ bool ProjectSerializer::Save(const std::string& path,
                              const std::vector<CloudData>& clouds,
                              const SceneSettings& settings,
                              const std::string& projectName,
-                             const std::string& imagePath)
+                             const std::string& imagePath,
+                             const std::vector<UniverseRecord>& universes)
 {
   json root;
   root["unitsVersion"] = 2;  // v2: AU / solar masses / years, G = 4pi^2
@@ -137,10 +139,50 @@ bool ProjectSerializer::Save(const std::string& path,
       {"particleSizeSpread",cloud.particleSizeSpread},
       {"scale",             cloud.scale},
       {"simulatePhysics",   cloud.simulatePhysics},
-      {"keyframes",         keyframesToJson(cloud.keyframes)}
+      {"keyframes",         keyframesToJson(cloud.keyframes)},
+      {"name",              cloud.name},
+      {"universeMember",    cloud.universeMember},
+      {"dataFile",          cloud.dataFile}
     });
   }
   root["clouds"] = cloudsArr;
+
+  // ── Universes: recipe + sparse overrides (docs/universe.md) ──
+  if (!universes.empty()) {
+    json uniArr = json::array();
+    for (const auto& u : universes) {
+      json ovArr = json::array();
+      for (const auto& ov : u.overrides) {
+        json o = {
+          {"index",           ov.index},
+          {"deleted",         ov.deleted},
+          {"position",        dvec3ToJson(ov.position)},
+          {"rotation",        vec3ToJson(ov.rotation)},
+          {"name",            ov.name},
+          {"member",          ov.member},
+          {"temperature",     ov.temperature},
+          {"renderMode",      ov.renderMode},
+          {"fullStars",       ov.fullStars},
+          {"simulatePhysics", ov.simulatePhysics},
+          {"dataFile",        ov.dataFile}
+        };
+        if (!ov.keyframes.empty()) o["keyframes"] = keyframesToJson(ov.keyframes);
+        ovArr.push_back(o);
+      }
+      uniArr.push_back({
+        {"seed",           u.seed},
+        {"radiusGly",      u.radiusGly},
+        {"galaxyCount",    u.galaxyCount},
+        {"starsPerGalaxy", u.starsPerGalaxy},
+        {"clustering",     u.clustering},
+        {"popSpiral",      u.popSpiral},
+        {"popElliptical",  u.popElliptical},
+        {"popIrregular",   u.popIrregular},
+        {"overrides",      ovArr}
+      });
+    }
+    root["universes"] = uniArr;
+  }
 
   // ── Scene settings ──
   {
@@ -377,6 +419,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.scale              = c.value("scale",              1.0f);
     cd.simulatePhysics    = c.value("simulatePhysics",    true);
     if (c.contains("keyframes")) cd.keyframes = jsonToKeyframes(c["keyframes"]);
+    cd.name           = c.value("name",           std::string{});
+    cd.universeMember = c.value("universeMember", false);
+    cd.dataFile       = c.value("dataFile",       std::string{});
     return cd;
   };
 
@@ -387,6 +432,40 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     // Backward compat: old single-cloud format
     CloudData cd = parseCloudJson(root["cloud"]);
     if (cd.enabled) data.clouds.push_back(cd);
+  }
+
+  // ── Universes ──
+  if (root.contains("universes") && root["universes"].is_array()) {
+    for (const auto& u : root["universes"]) {
+      UniverseRecord rec;
+      rec.seed           = u.value("seed",           82947291u);
+      rec.radiusGly      = u.value("radiusGly",      46.0f);
+      rec.galaxyCount    = u.value("galaxyCount",    200);
+      rec.starsPerGalaxy = u.value("starsPerGalaxy", 50000);
+      rec.clustering     = u.value("clustering",     1.0f);
+      rec.popSpiral      = u.value("popSpiral",      0.58f);
+      rec.popElliptical  = u.value("popElliptical",  0.27f);
+      rec.popIrregular   = u.value("popIrregular",   0.15f);
+      if (u.contains("overrides") && u["overrides"].is_array()) {
+        for (const auto& o : u["overrides"]) {
+          UniverseOverride ov;
+          ov.index           = o.value("index",           -1);
+          ov.deleted         = o.value("deleted",         false);
+          if (o.contains("position")) ov.position = jsonToDVec3(o["position"]);
+          if (o.contains("rotation")) ov.rotation = jsonToVec3(o["rotation"]);
+          ov.name            = o.value("name",            std::string{});
+          ov.member          = o.value("member",          true);
+          ov.temperature     = o.value("temperature",     4500.f);
+          ov.renderMode      = o.value("renderMode",      0);
+          ov.fullStars       = o.value("fullStars",       0);
+          ov.simulatePhysics = o.value("simulatePhysics", false);
+          ov.dataFile        = o.value("dataFile",        std::string{});
+          if (o.contains("keyframes")) ov.keyframes = jsonToKeyframes(o["keyframes"]);
+          if (ov.index >= 0) rec.overrides.push_back(ov);
+        }
+      }
+      data.universes.push_back(rec);
+    }
   }
 
   // ── Scene settings ──
@@ -540,4 +619,56 @@ ProjectData ProjectSerializer::Load(const std::string& path)
   std::cout << "[ProjectSerializer] Loaded " << data.objects.size()
             << " objects from " << path << "\n";
   return data;
+}
+
+// ─── Particle sidecars ───────────────────────────────────────────────────────
+// The exact particles of a cloud whose identity is DATA (simulated galaxies,
+// hand-sculpted procedural clouds). Binary on purpose: 100k particles are
+// ~2.8 MB here vs ~10x that as JSON, and they round-trip bit-exactly.
+static constexpr char     kPclMagic[8] = {'S','P','C','L','P','T','0','1'};
+
+bool ProjectSerializer::SaveCloudParticles(const std::string& path,
+                                           const std::vector<CloudParticle>& particles)
+{
+  std::ofstream f(path, std::ios::binary);
+  if (!f) { std::cerr << "[ProjectSerializer] cannot write " << path << "\n"; return false; }
+  f.write(kPclMagic, 8);
+  uint32_t n = (uint32_t)particles.size();
+  f.write(reinterpret_cast<const char*>(&n), 4);
+  for (const auto& p : particles) {
+    float rec[7] = { p.position.x, p.position.y, p.position.z,
+                     p.velocity.x, p.velocity.y, p.velocity.z, p.mass };
+    f.write(reinterpret_cast<const char*>(rec), sizeof(rec));
+  }
+  return (bool)f;
+}
+
+bool ProjectSerializer::LoadCloudParticles(const std::string& path,
+                                           std::vector<CloudParticle>& out)
+{
+  out.clear();
+  std::ifstream f(path, std::ios::binary);
+  if (!f) { std::cerr << "[ProjectSerializer] cannot read " << path << "\n"; return false; }
+  char magic[8];
+  f.read(magic, 8);
+  if (!f || std::memcmp(magic, kPclMagic, 8) != 0) {
+    std::cerr << "[ProjectSerializer] bad particle file " << path << "\n";
+    return false;
+  }
+  uint32_t n = 0;
+  f.read(reinterpret_cast<char*>(&n), 4);
+  if (!f || n > 200000000u) return false;
+  out.reserve(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    float rec[7];
+    f.read(reinterpret_cast<char*>(rec), sizeof(rec));
+    if (!f) { out.clear(); return false; }
+    CloudParticle p;
+    p.position = {rec[0], rec[1], rec[2]};
+    p.velocity = {rec[3], rec[4], rec[5]};
+    p.acceleration = {0, 0, 0};
+    p.mass = rec[6];
+    out.push_back(p);
+  }
+  return true;
 }

@@ -2262,6 +2262,15 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float),
                  &UVObjectMeshBuffer[0], GL_STATIC_DRAW);
     cloudGpuDirty = false;
+    // Refresh the local bounding radius on the same trigger the VBO refreshes
+    // (load, physics step, snapshot restore) — one O(n) pass, no per-frame cost.
+    float r2max = 0.0f;
+    for (size_t i = 0; i + 2 < UVObjectMeshBuffer.size(); i += 3) {
+      float x = UVObjectMeshBuffer[i], y = UVObjectMeshBuffer[i+1], z = UVObjectMeshBuffer[i+2];
+      float r2 = x*x + y*y + z*z;
+      if (r2 > r2max) r2max = r2;
+    }
+    cloudBoundRadius = std::sqrt(r2max);
   }
 
   glUseProgram(program);
@@ -2288,6 +2297,32 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (gsLoc >= 0) glUniform1f(gsLoc, cineGasStrength);
   }
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+
+  // Float-path far-field cap: give the haze pass the cloud's projected radius
+  // in pixels, exactly like drawStarfieldChunks does per chunk. Far away the
+  // lobe is capped to the cloud's true angular size (flux returned via
+  // vHazeBoost); near, the radius is huge and the cap does nothing, so close
+  // views are untouched. Without this a distant promoted or hand-made cloud
+  // rendered as a stack of 8px+ lobes — a bloated ball, the same bug the chunk
+  // path already had fixed.
+  if (!isStarfield) {
+    GLint spLoc = glGetUniformLocation(program, "uChunkScreenPx");
+    if (spLoc >= 0) {
+      float screenPx = 0.0f;
+      if (cloudBoundRadius > 0.0f) {
+        float px = (float)(coordinates.x + cameraTranslate[0]);
+        float py = (float)(coordinates.y + cameraTranslate[1]);
+        float pz = (float)(coordinates.z + cameraTranslate[2]);
+        float depth = -(viewRot[6]*px + viewRot[7]*py + viewRot[8]*pz);
+        if (depth > 1e-6f) {
+          float tanV = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);
+          screenPx = cloudBoundRadius / (tanV * depth) * 0.5f * (float)fbHeight;
+        }
+      }
+      // 0 = inactive (camera inside/behind the cloud, or radius unknown).
+      glUniform1f(spLoc, screenPx);
+    }
+  }
 
   // Check render mode: if nebula, enable blending and larger point sprites
   // Use the value we uploaded rather than reading it back off the GPU.

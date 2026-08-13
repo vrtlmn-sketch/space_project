@@ -4,6 +4,7 @@
 #include "mathStructs.h"
 #include "physicsObject.h"
 #include "renderer.h"
+#include "cloudParticle.h"
 
 // ─── Plain data structs used for serialisation ───────────────────────────────
 
@@ -68,6 +69,41 @@ struct CloudData {
   float scale{1.0f};
   bool  simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
+  std::string name;            // display name ("" = "Cloud N")
+  bool  universeMember{false}; // grouped under the [U] Universe node
+  // Binary particle sidecar (relative to the project file). Non-empty means
+  // the cloud's exact particles are stored — a procedural cloud used to
+  // reload as a RANDOM blob because only its count survived.
+  std::string dataFile;
+};
+
+// ── Universe persistence (see docs/universe.md: recipe + sparse overrides) ──
+// Generated content is never stored. One record per "Create Universe" press
+// regenerates its galaxies bit-identically from the seed; only the galaxies
+// the user actually edited get an override entry.
+struct UniverseOverride {
+  int   index{-1};             // generation index within the record (stable id v1)
+  bool  deleted{false};        // galaxy was removed from the scene
+  dvec3 position{};            // full field set — an entry exists only if edited
+  vec3  rotation{0.0f, 0.0f, 0.0f};
+  std::string name;
+  bool  member{true};
+  float temperature{4500.f};
+  int   renderMode{0};
+  int   fullStars{0};
+  bool  simulatePhysics{false};
+  std::string dataFile;        // non-empty: identity is simulated DATA (sidecar)
+  std::vector<CameraKeyframe> keyframes;
+};
+
+struct UniverseRecord {
+  unsigned int seed{82947291u};
+  float radiusGly{46.0f};
+  int   galaxyCount{200};
+  int   starsPerGalaxy{50000};
+  float clustering{1.0f};
+  float popSpiral{0.58f}, popElliptical{0.27f}, popIrregular{0.15f};
+  std::vector<UniverseOverride> overrides;
 };
 
 // All non-scene renderer/camera state that is worth persisting per project
@@ -163,6 +199,7 @@ struct ProjectData {
   std::vector<PhysicsObjectData> objects;
   GridData      grid;
   std::vector<CloudData> clouds;
+  std::vector<UniverseRecord> universes;
   SceneSettings settings;
   bool          legacyUnits{false}; // file predates the real-unit system (v2)
 };
@@ -178,8 +215,17 @@ public:
                    const std::vector<CloudData>& clouds,
                    const SceneSettings& settings,
                    const std::string& projectName = {},
-                   const std::string& imagePath   = {});
+                   const std::string& imagePath   = {},
+                   const std::vector<UniverseRecord>& universes = {});
 
   // Load a JSON file; returns populated ProjectData or empty on error
   static ProjectData Load(const std::string& path);
+
+  // Binary particle sidecar (exact positions/velocities/masses of a cloud
+  // whose identity is data, e.g. after a simulation). Small fixed header +
+  // 28 bytes per particle.
+  static bool SaveCloudParticles(const std::string& path,
+                                 const std::vector<CloudParticle>& particles);
+  static bool LoadCloudParticles(const std::string& path,
+                                 std::vector<CloudParticle>& out);
 };
