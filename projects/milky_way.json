@@ -1,322 +1,495 @@
 {
- "clouds": [
-  {
-   "computeMethod": 0,
-   "count": 20000,
-   "enabled": true,
-   "formationFile": "milky_way_real_20k.json",
-   "nebulaScatterScale": 0.4000000059604645,
-   "particleSizeSpread": 0.0,
-   "position": [
-    0.0,
-    0.0,
-    -1644268032.0
-   ],
-   "renderMode": 0,
-   "scale": 1.0,
-   "sizeX": 3.0,
-   "sizeY": 3.0,
-   "sizeZ": 3.0,
-   "temperature": 11000.0,
-   "theta": 0.5
-  }
- ],
- "grid": {
-  "cellSize": 1.0,
-  "radius": 10,
-  "showX": true,
-  "showY": true,
-  "showZ": true,
-  "visible": true
- },
- "imagePath": "solarSystem.bmp",
- "physicsObjects": [
-  {
-   "atmosphereColor": [
-    0.17499999701976776,
-    0.4099999964237213,
-    1.0
-   ],
-   "atmosphereEnabled": false,
-   "atmosphereFalloff": 4.0,
-   "atmosphereHeight": 0.25,
-   "atmosphereIntensity": 1.0,
-   "color": [
-    0.550000011920929,
-    0.25,
-    0.15000000596046448
-   ],
-   "mass": 1.0,
-   "name": "Sol",
-   "position": [
-    0.0,
-    0.0,
-    -3.0
-   ],
-   "schwarzschildRadius": 1.9742003587452928e-08,
-   "shaderType": 1,
-   "temperature": 5778.0,
-   "texturePath": "",
-   "velocity": [
-    0.0,
-    0.0,
-    0.0
-   ],
-   "visualRadius": 0.004650000017136335
+  "clouds": [
+    {
+      "computeMethod": 0,
+      "count": 20000,
+      "dataFile": "",
+      "enabled": true,
+      "formationFile": "milky_way_real_20k.json",
+      "keyframes": [],
+      "name": "",
+      "nebulaScatterScale": 0.4000000059604645,
+      "particleSizeSpread": 0.0,
+      "position": [
+        0.0,
+        0.0,
+        -1644268032.0
+      ],
+      "renderMode": 0,
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "simulatePhysics": true,
+      "sizeX": 3.0,
+      "sizeY": 3.0,
+      "sizeZ": 3.0,
+      "temperature": 11000.0,
+      "theta": 0.5,
+      "universeMember": false
+    }
+  ],
+  "grid": {
+    "adaptive": true,
+    "cellSize": 1.0,
+    "radius": 10,
+    "showX": true,
+    "showY": true,
+    "showZ": true,
+    "visible": true
   },
-  {
-   "atmosphereColor": [
-    0.17499999701976776,
-    0.4099999964237213,
-    1.0
-   ],
-   "atmosphereEnabled": false,
-   "atmosphereFalloff": 4.0,
-   "atmosphereHeight": 0.25,
-   "atmosphereIntensity": 1.0,
-   "color": [
-    0.550000011920929,
-    0.25,
-    0.15000000596046448
-   ],
-   "mass": 1.66e-07,
-   "name": "Mercury",
-   "position": [
-    0.387,
-    0.0,
-    -3.0
-   ],
-   "schwarzschildRadius": 3.277172590509256e-15,
-   "shaderType": 0,
-   "temperature": 0.0,
-   "texturePath": "assets/mercury.jpg",
-   "normalMapPath": "assets/mercury_normal.png",
-   "velocity": [
-    0.0,
-    0.0,
-    10.09
-   ],
-   "visualRadius": 1.630000042496249e-05
+  "imagePath": "solarSystem.bmp",
+  "physicsObjects": [
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 1.0,
+      "meshPath": "",
+      "name": "Sol",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "",
+      "normalMapStrength": 1.0,
+      "position": [
+        0.0,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 1.9742003587452928e-08,
+      "shaderType": 1,
+      "simulatePhysics": true,
+      "temperature": 5778.0,
+      "texturePath": "",
+      "velocity": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "visualRadius": 0.004650000017136335
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 1.66e-07,
+      "meshPath": "",
+      "name": "Mercury",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "assets/mercury_normal.png",
+      "normalMapStrength": 1.0,
+      "position": [
+        0.387,
+        0.0,
+        -3.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 3.277172590509256e-15,
+      "shaderType": 0,
+      "simulatePhysics": true,
+      "temperature": 0.0,
+      "texturePath": "assets/mercury.jpg",
+      "velocity": [
+        0.0,
+        0.0,
+        10.09
+      ],
+      "visualRadius": 1.630000042496249e-05
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 2.45e-06,
+      "meshPath": "",
+      "name": "Venus",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "assets/venus_normal.png",
+      "normalMapStrength": 1.0,
+      "position": [
+        0.0,
+        0.0,
+        -2.277
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 4.8367908934759604e-14,
+      "shaderType": 0,
+      "simulatePhysics": true,
+      "temperature": 0.0,
+      "texturePath": "assets/venus.jpg",
+      "velocity": [
+        -7.388,
+        0.0,
+        0.0
+      ],
+      "visualRadius": 4.039999839733355e-05
+    },
+    {
+      "atmosphereColor": [
+        0.17000000178813934,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": true,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.05999999865889549,
+      "atmosphereIntensity": 1.5,
+      "cloudAltitude": 0.03500000014901161,
+      "cloudBanded": 0.09000000357627869,
+      "cloudCoverage": 0.38999998569488525,
+      "cloudDrift": 0.05000000074505806,
+      "cloudScale": 7.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.9700000286102295,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": true,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 3e-06,
+      "meshPath": "",
+      "name": "Earth",
+      "nightMapPath": "assets/earth_nightmap.jpg",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "assets/earth_normal.png",
+      "normalMapStrength": 1.0,
+      "position": [
+        -0.9397,
+        0.0,
+        -3.342
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 5.922600734495354e-14,
+      "shaderType": 0,
+      "simulatePhysics": true,
+      "temperature": 0.0,
+      "texturePath": "assets/earth.jpg",
+      "velocity": [
+        2.149,
+        0.0,
+        -5.904
+      ],
+      "visualRadius": 4.260000059730373e-05
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 3.23e-07,
+      "meshPath": "",
+      "name": "Mars",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "assets/mars_normal.png",
+      "normalMapStrength": 1.0,
+      "position": [
+        0.762,
+        0.0,
+        -4.3198
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 6.37666689132124e-15,
+      "shaderType": 0,
+      "simulatePhysics": true,
+      "temperature": 0.0,
+      "texturePath": "assets/mars.jpg",
+      "velocity": [
+        4.407,
+        0.0,
+        2.545
+      ],
+      "visualRadius": 2.2700000045006163e-05
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 0.000955,
+      "meshPath": "",
+      "name": "Jupiter",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "assets/jupiter_normal.png",
+      "normalMapStrength": 1.0,
+      "position": [
+        3.679,
+        0.0,
+        0.6789999999999998
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 1.88536131151551e-11,
+      "shaderType": 0,
+      "simulatePhysics": true,
+      "temperature": 0.0,
+      "texturePath": "assets/jupiter.jpg",
+      "velocity": [
+        -1.948,
+        0.0,
+        1.948
+      ],
+      "visualRadius": 0.0004670000053010881
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.25,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 4150000.0,
+      "meshPath": "",
+      "name": "Sagittarius A*",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "",
+      "normalMapStrength": 1.0,
+      "position": [
+        0.0,
+        0.0,
+        -1644268005.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 0.08192931115627289,
+      "shaderType": 2,
+      "simulatePhysics": true,
+      "temperature": 0.0,
+      "texturePath": "",
+      "velocity": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "visualRadius": 0.08192931115627289
+    }
+  ],
+  "projectName": "milky_way",
+  "settings": {
+    "bloomStrength": 0.044999998062849045,
+    "bloomThreshold": 0.0,
+    "camPitch": -0.011173445731401443,
+    "camRoll": 0.1632463037967682,
+    "camRotation": -0.07309074699878693,
+    "camX": 0.9398163308531318,
+    "camY": -2.8265202654087496e-05,
+    "camZ": 3.3416801780365954,
+    "camZoom": 45.0,
+    "cameraKeyframes": [],
+    "cineSSAA": 1.5,
+    "dopplerBrightnessStr": 2.0,
+    "dopplerColorStr": 1.0,
+    "dopplerMode": false,
+    "dopplerVelScale": 1.5809999240445904e-05,
+    "dustClumpScale": 0.12999999523162842,
+    "dustContrast": 1.0,
+    "dustCoverage": 0.30000001192092896,
+    "dustDetail": 14000,
+    "dustGlow": 1.399999976158142,
+    "dustPhaseG": 0.05000000074505806,
+    "dustReddening": 0.7200000286102295,
+    "dustSkinContrast": 6.5,
+    "dustSkinDepth": 8.0,
+    "dustStrength": 1.0,
+    "edgeLightStrength": 0.45000001788139343,
+    "exaggeratedSizes": false,
+    "gasStrength": 0.5,
+    "keypoints": [],
+    "nebulaDetail": 0.0,
+    "playbackSpeed": 1.0,
+    "ramBudgetGB": 1.0,
+    "raytracerEnabled": true,
+    "raytracerIsMain": true,
+    "raytracerMethod": 0,
+    "recStartFrame": -1,
+    "recStopFrame": -1,
+    "recordFps": 30,
+    "recordHeight": 1080,
+    "recordPath": "output.mp4",
+    "recordResPreset": 6,
+    "recordWidth": 1920,
+    "resolvedCut": 0.0,
+    "rtCloudPointCap": 2000,
+    "rtExposure": 0.9200000166893005,
+    "rtLiveHeight": 80,
+    "rtLiveResPreset": 1,
+    "rtLiveWidth": 142,
+    "rtMaxBounces": 1,
+    "rtMaxSteps": 256,
+    "sceneCameras": [],
+    "simSpeed": 1.0,
+    "sizeExagFactor": 750.0,
+    "spheremapEnabled": false,
+    "spheremapExposure": 5.0,
+    "spheremapPath": "assets/default_spheremap.hdr",
+    "spikeAngle": 0.0,
+    "spikeChroma": 0.6499999761581421,
+    "spikeCount": 6,
+    "spikeDecay": 0.9660000205039978,
+    "spikeLength": 0.27000001072883606,
+    "spikeSecondary": 0.7200000286102295,
+    "spikeStrength": 1.559999942779541,
+    "starBudget": 80000,
+    "starSize": 1.0,
+    "unresolvedSize": 45.54999923706055,
+    "unresolvedStrength": 3.4000000953674316
   },
-  {
-   "atmosphereColor": [
-    0.17499999701976776,
-    0.4099999964237213,
-    1.0
-   ],
-   "atmosphereEnabled": false,
-   "atmosphereFalloff": 4.0,
-   "atmosphereHeight": 0.25,
-   "atmosphereIntensity": 1.0,
-   "color": [
-    0.550000011920929,
-    0.25,
-    0.15000000596046448
-   ],
-   "mass": 2.45e-06,
-   "name": "Venus",
-   "position": [
-    0.0,
-    0.0,
-    -2.277
-   ],
-   "schwarzschildRadius": 4.8367908934759604e-14,
-   "shaderType": 0,
-   "temperature": 0.0,
-   "texturePath": "assets/venus.jpg",
-   "normalMapPath": "assets/venus_normal.png",
-   "velocity": [
-    -7.388,
-    0.0,
-    0.0
-   ],
-   "visualRadius": 4.039999839733355e-05
-  },
-  {
-   "atmosphereColor": [
-    0.17,
-    0.41,
-    1.0
-   ],
-   "atmosphereEnabled": true,
-   "atmosphereFalloff": 4.0,
-   "atmosphereHeight": 0.06,
-   "atmosphereIntensity": 1.5,
-   "color": [
-    0.550000011920929,
-    0.25,
-    0.15000000596046448
-   ],
-   "mass": 3e-06,
-   "name": "Earth",
-   "position": [
-    -0.9397,
-    0.0,
-    -3.342
-   ],
-   "schwarzschildRadius": 5.922600734495354e-14,
-   "shaderType": 0,
-   "temperature": 0.0,
-   "texturePath": "assets/earth.jpg",
-   "normalMapPath": "assets/earth_normal.png",
-   "nightMapPath": "assets/earth_nightmap.jpg",
-   "velocity": [
-    2.149,
-    0.0,
-    -5.904
-   ],
-   "visualRadius": 4.260000059730373e-05,
-   "cloudsEnabled": true,
-   "cloudCoverage": 0.39,
-   "cloudScale": 7.0,
-   "cloudBanded": 0.09,
-   "cloudTurbulence": 0.97,
-   "cloudSoftness": 0.18,
-   "cloudAltitude": 0.035,
-   "cloudWhiteness": 1.0,
-   "cloudDrift": 0.05
-  },
-  {
-   "atmosphereColor": [
-    0.17499999701976776,
-    0.4099999964237213,
-    1.0
-   ],
-   "atmosphereEnabled": false,
-   "atmosphereFalloff": 4.0,
-   "atmosphereHeight": 0.25,
-   "atmosphereIntensity": 1.0,
-   "color": [
-    0.550000011920929,
-    0.25,
-    0.15000000596046448
-   ],
-   "mass": 3.23e-07,
-   "name": "Mars",
-   "position": [
-    0.762,
-    0.0,
-    -4.3198
-   ],
-   "schwarzschildRadius": 6.37666689132124e-15,
-   "shaderType": 0,
-   "temperature": 0.0,
-   "texturePath": "assets/mars.jpg",
-   "normalMapPath": "assets/mars_normal.png",
-   "velocity": [
-    4.407,
-    0.0,
-    2.545
-   ],
-   "visualRadius": 2.2700000045006163e-05
-  },
-  {
-   "atmosphereColor": [
-    0.17499999701976776,
-    0.4099999964237213,
-    1.0
-   ],
-   "atmosphereEnabled": false,
-   "atmosphereFalloff": 4.0,
-   "atmosphereHeight": 0.25,
-   "atmosphereIntensity": 1.0,
-   "color": [
-    0.550000011920929,
-    0.25,
-    0.15000000596046448
-   ],
-   "mass": 0.000955,
-   "name": "Jupiter",
-   "position": [
-    3.679,
-    0.0,
-    0.6789999999999998
-   ],
-   "schwarzschildRadius": 1.88536131151551e-11,
-   "shaderType": 0,
-   "temperature": 0.0,
-   "texturePath": "assets/jupiter.jpg",
-   "normalMapPath": "assets/jupiter_normal.png",
-   "velocity": [
-    -1.948,
-    0.0,
-    1.948
-   ],
-   "visualRadius": 0.0004670000053010881
-  },
-  {
-   "atmosphereColor": [
-    0.17499999701976776,
-    0.4099999964237213,
-    1.0
-   ],
-   "atmosphereEnabled": false,
-   "atmosphereFalloff": 4.0,
-   "atmosphereHeight": 0.25,
-   "atmosphereIntensity": 1.0,
-   "color": [
-    0.550000011920929,
-    0.25,
-    0.15000000596046448
-   ],
-   "mass": 4150000.0,
-   "name": "Sagittarius A*",
-   "position": [
-    0.0,
-    0.0,
-    -1644268005.0
-   ],
-   "schwarzschildRadius": 0.08192931115627289,
-   "shaderType": 2,
-   "temperature": 0.0,
-   "texturePath": "",
-   "velocity": [
-    0.0,
-    0.0,
-    0.0
-   ],
-   "visualRadius": 0.0820000022649765
-  }
- ],
- "projectName": "milky_way",
- "settings": {
-  "camPitch": 0.1,
-  "camRoll": 0.2,
-  "camRotation": 0.0,
-  "camX": 0.9397776463579401,
-  "camY": -9.139808808725958e-05,
-  "camZ": 3.341685833148279,
-  "camZoom": 45.0,
-  "cameraKeyframes": [],
-  "dopplerBrightnessStr": 2.0,
-  "dopplerColorStr": 1.0,
-  "dopplerMode": false,
-  "dopplerVelScale": 1.5809999240445904e-05,
-  "exaggeratedSizes": false,
-  "keypoints": [],
-  "nebulaDetail": 0.0,
-  "playbackSpeed": 1.0,
-  "ramBudgetGB": 1.0,
-  "raytracerEnabled": false,
-  "raytracerIsMain": false,
-  "raytracerMethod": 0,
-  "recStartFrame": -1,
-  "recStopFrame": -1,
-  "recordFps": 30,
-  "recordHeight": 1080,
-  "recordPath": "output.mp4",
-  "recordResPreset": 6,
-  "recordWidth": 1920,
-  "rtLiveHeight": 80,
-  "rtLiveResPreset": 1,
-  "rtLiveWidth": 142,
-  "rtMaxBounces": 1,
-  "rtMaxSteps": 256,
-  "simSpeed": 1.0,
-  "sizeExagFactor": 750.0,
-  "spheremapEnabled": false,
-  "spheremapExposure": 5.0,
-  "spheremapPath": "assets/default_spheremap.hdr"
- },
- "unitsVersion": 2
+  "unitsVersion": 2
 }

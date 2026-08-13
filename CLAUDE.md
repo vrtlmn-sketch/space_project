@@ -71,10 +71,16 @@ Env gates:
 ## Regression baseline
 
 `RASTER_ONLY=1 ./bin/blackholesim --compare` on `projects/milky_way.json` gives a
-raster mean luminance of **~61.61** (band 61.60–61.69 across runs; wider when
+raster mean luminance of **~46.68** (band 46.67–46.69 across runs; wider when
 the user's live session holds the GPU). Check it after any shared-shader or
-cloud-pipeline change. History: it was 60.95 for a long stretch, drifted with
-the float->double position work, and moved to ~61.61 where it has held since.
+cloud-pipeline change.
+
+**The number tracks the PROJECT FILE, not just the code.** History: 60.95 for a
+long stretch, ~61.61 after the float->double position work, then 46.68 when the
+user retuned milky_way.json (resolvedCut 0.6->0.0, unresolvedStrength
+6.83->3.4, dustDetail 200->14000, softer bloom/edge light, RT as the main
+view). Before calling a mean shift a regression, check
+`git diff projects/milky_way.json` — a retune is not a bug.
 
 ## Large-world coordinates
 
