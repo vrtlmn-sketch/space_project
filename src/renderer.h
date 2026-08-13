@@ -880,6 +880,19 @@ public:
   float  spikeChroma{0.65f};     // chromatic tint toward the spike tips (0 = white)
 
   // ---- Spheremap background (rasterized + raytraced views) ----
+  // Empty sky — ONE value for the rasterizer's scene clear and the raytracer's
+  // escaped-ray colour, so the two views agree on what "nothing" looks like.
+  vec3   backgroundColor{0.005f, 0.005f, 0.030f};
+  float  backgroundLevel{1.2f};
+  // Clear the bound scene target to the background. Every target the SCENE is
+  // drawn into goes through here; post-process ping-pong buffers (bloom, spike,
+  // dust density) must stay black and are cleared directly.
+  void   ClearSceneTarget();
+  vec3   backgroundRGB() const {
+    return {backgroundColor.x * backgroundLevel,
+            backgroundColor.y * backgroundLevel,
+            backgroundColor.z * backgroundLevel};
+  }
   bool   spheremapEnabled{false};
   float  spheremapExposure{5.0f};
   char   spheremapPathBuf[256] = "assets/default_spheremap.hdr";

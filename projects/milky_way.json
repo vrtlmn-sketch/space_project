@@ -423,6 +423,12 @@
   ],
   "projectName": "milky_way",
   "settings": {
+    "backgroundColor": [
+      0.004999999888241291,
+      0.004999999888241291,
+      0.029999999329447746
+    ],
+    "backgroundLevel": 1.2000000476837158,
     "bloomStrength": 0.044999998062849045,
     "bloomThreshold": 0.0,
     "camPitch": -0.011173445731401443,

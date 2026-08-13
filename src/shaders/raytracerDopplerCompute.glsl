@@ -14,12 +14,15 @@ uniform float uNebulaDetail;
 
 // Skybox spheremap — sampled by the ray's (possibly bent) escape direction
 uniform int   uSkyboxEnabled;
+// Empty-sky colour. The rasterizer clears its scene buffer to the same value,
+// so switching views cannot change what "nothing" looks like.
+uniform vec3  uBackground;
 uniform float uSkyboxExposure;
 layout(binding = 2) uniform sampler2D uSkybox;
 
 vec3 sampleSkybox(vec3 dir)
 {
-    if (uSkyboxEnabled == 0) return vec3(0.0);
+    if (uSkyboxEnabled == 0) return uBackground;
     dir = normalize(dir);
     const float PI_SB = 3.14159265358979;
     float u = atan(dir.z, dir.x) / (2.0 * PI_SB) + 0.5;

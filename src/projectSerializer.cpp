@@ -218,6 +218,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["dopplerColorStr"]     = settings.dopplerColorStr;
 
     // Spheremap
+    s["backgroundColor"]   = vec3ToJson(settings.backgroundColor);
+    s["backgroundLevel"]   = settings.backgroundLevel;
     s["spheremapEnabled"]  = settings.spheremapEnabled;
     s["spheremapExposure"] = settings.spheremapExposure;
     s["spheremapPath"]     = settings.spheremapPath;
@@ -515,6 +517,10 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dopplerColorStr     = s.value("dopplerColorStr",     1.0f);
 
     // Spheremap
+    st.backgroundColor   = s.contains("backgroundColor")
+                           ? jsonToVec3(s["backgroundColor"])
+                           : SceneSettings{}.backgroundColor;
+    st.backgroundLevel   = s.value("backgroundLevel",   SceneSettings{}.backgroundLevel);
     st.spheremapEnabled  = s.value("spheremapEnabled",  false);
     st.spheremapExposure = s.value("spheremapExposure", 5.0f);
     st.spheremapPath     = s.value("spheremapPath",     std::string{"assets/default_spheremap.hdr"});

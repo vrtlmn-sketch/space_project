@@ -3215,20 +3215,16 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
   // ── Background & Grid ──────────────────────────────────────────────────────
   if (ImGui::CollapsingHeader("Background & Grid")) {
-    ImGui::SeparatorText("Spheremap");
-    if (ImGui::Checkbox("Enabled##sm", &spheremapEnabled))
-      rtDirty = true;
-    ImGui::Text("Exposure");
+    ImGui::SeparatorText("Empty Sky");
+    ImGui::TextDisabled("Colour where nothing is drawn - both views.");
+    ImGui::Text("Colour");
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##smexp", &spheremapExposure, 0.05f, 25.0f, "%.2f", ImGuiSliderFlags_Logarithmic))
+    if (ImGui::ColorEdit3("##bgcol", &backgroundColor.x, ImGuiColorEditFlags_Float))
       rtDirty = true;
-    ImGui::Text("HDR Path");
+    ImGui::Text("Brightness");
     ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##smpath", spheremapPathBuf, sizeof(spheremapPathBuf));
-    if (ImGui::Button("Load Spheremap", ImVec2(-1, 0))) {
-      if (cb.loadSpheremap) cb.loadSpheremap(std::string(spheremapPathBuf));
+    if (ImGui::SliderFloat("##bglevel", &backgroundLevel, 0.0f, 2.0f, "%.3f"))
       rtDirty = true;
-    }
 
     ImGui::Spacing();
     ImGui::SeparatorText("Grid");
@@ -5705,6 +5701,12 @@ void Renderer::SetPassView(bool cinematicSlot) {
   else                 rayTracerView = true;        // Realistic → raytracer
 }
 
+void Renderer::ClearSceneTarget() {
+  const vec3 bg = backgroundRGB();
+  glClearColor(bg.x, bg.y, bg.z, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+}
+
 // Clear the currently-bound target to black. Used for the cinematic slot when the
 // Cinematic View is off, so it shows black rather than a copy of the nav scene.
 void Renderer::CineBlankIfNeeded() {
@@ -5734,8 +5736,7 @@ void Renderer::CineBeginIfActive(GLuint realTargetFBO, int w, int h) {
   currentPixelScale  = ss;             // keep point sprites the same apparent size
   glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
   glViewport(0, 0, ssW, ssH);
-  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  ClearSceneTarget();
 }
 
 // Composite the HDR buffer (bloom + ACES) into the real target bound for this pass.
@@ -5782,8 +5783,7 @@ void Renderer::BindViewportFBO() {
   if (!cineActive) {
     glBindFramebuffer(GL_FRAMEBUFFER, vpFBO);
     glViewport(0, 0, renderW, renderH);
-    glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    ClearSceneTarget();
   }
   fbWidth      = renderW;
   fbHeight     = renderH;
@@ -5890,8 +5890,7 @@ void Renderer::BeginSecondaryPass() {
   if (!cineActive) {
     glBindFramebuffer(GL_FRAMEBUFFER, pipFBO);
     glViewport(0, 0, pw, ph);
-    glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    ClearSceneTarget();
   }
 
   // Override fbWidth/fbHeight so Draw calls use PiP resolution
@@ -6582,6 +6581,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
     GLint locSX  = glGetUniformLocation(activeProgram, "uSkyboxExposure");
     if (locSE >= 0) glUniform1i(locSE, skyOn ? 1 : 0);
     if (locSX >= 0) glUniform1f(locSX, spheremapExposure);
+    GLint locBG  = glGetUniformLocation(activeProgram, "uBackground");
+    if (locBG >= 0) { const vec3 bg = backgroundRGB(); glUniform3f(locBG, bg.x, bg.y, bg.z); }
     if (skyOn) {
       glActiveTexture(GL_TEXTURE2);
       glBindTexture(GL_TEXTURE_2D, skyboxTexID);
@@ -7115,8 +7116,7 @@ void Renderer::BeginRecordRaster(int w, int h) {
   glViewport(0, 0, w, h);
   fbWidth = w; fbHeight = h;                 // projection aspect for the record draw
   currentPixelScale = 1.0f;                  // record FBO is not supersampled
-  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  ClearSceneTarget();
 }
 
 void Renderer::EndRecordRaster() {
@@ -7366,6 +7366,8 @@ void Renderer::CaptureImage() {
     GLint locSX  = glGetUniformLocation(activeProgram, "uSkyboxExposure");
     if (locSE >= 0) glUniform1i(locSE, skyOn ? 1 : 0);
     if (locSX >= 0) glUniform1f(locSX, spheremapExposure);
+    GLint locBG  = glGetUniformLocation(activeProgram, "uBackground");
+    if (locBG >= 0) { const vec3 bg = backgroundRGB(); glUniform3f(locBG, bg.x, bg.y, bg.z); }
     if (skyOn) {
       glActiveTexture(GL_TEXTURE2);
       glBindTexture(GL_TEXTURE_2D, skyboxTexID);
@@ -7682,6 +7684,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     GLint locSX  = glGetUniformLocation(activeProgram, "uSkyboxExposure");
     if (locSE >= 0) glUniform1i(locSE, skyOn ? 1 : 0);
     if (locSX >= 0) glUniform1f(locSX, spheremapExposure);
+    GLint locBG  = glGetUniformLocation(activeProgram, "uBackground");
+    if (locBG >= 0) { const vec3 bg = backgroundRGB(); glUniform3f(locBG, bg.x, bg.y, bg.z); }
     if (skyOn) {
       glActiveTexture(GL_TEXTURE2);
       glBindTexture(GL_TEXTURE_2D, skyboxTexID);

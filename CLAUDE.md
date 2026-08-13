@@ -87,6 +87,10 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
   `2>/tmp/log` and check `$?` when results look impossible.
 - **Only ever `pkill -f 'blackholesim --compare'`.** A bare pkill kills the
   user's live session.
+- **Discard the FIRST run after a rebuild.** It lands outside the noise band
+  (46.745 against a 46.67–46.69 baseline; 19.43 against 20.98 on a universe
+  scene) and every run after it is stable. Seen twice, both times mistaken for a
+  regression. Run twice, keep the second.
 
 ## Regression baseline
 
@@ -172,8 +176,9 @@ carry the same values for the pre-project startup state; keep the two in sync.
 The current defaults ARE the signed-off milky_way look (resolvedCut 0.0,
 unresolvedStrength 3.4, unresolvedSize 45.55, bloom 0.045, edgeLight 0.45,
 spikeStrength 1.56, spikeDecay 0.966, rtExposure 0.92, dustSkinContrast 6.5,
-dustDetail 14000, farFalloff 0.08). Verified: stripping those keys from a
-project renders the same image the explicit values do.
+dustDetail 14000, farFalloff 0.08, background 0.005/0.005/0.030 at level 1.2).
+Verified: stripping those keys from a project renders the same image the
+explicit values do.
 
 ## ONE rendering model
 
@@ -231,6 +236,27 @@ constant as it shrinks, i.e. per-pixel brightness rising as d². Removed.
 
 Never add a floor to a size or a count on a render path without asking what it
 does to flux at the small end.
+
+## The empty sky is ONE value, for both views
+
+`backgroundColor` x `backgroundLevel` (Background & Grid → Empty Sky) is what
+"nothing" looks like. The rasterizer clears every SCENE target to it
+(`Renderer::ClearSceneTarget` — cinematic HDR buffer, nav viewport, PiP, record
+FBO) and the raytracer returns it where a ray escapes (`uBackground`, replacing
+a hardcoded `vec3(0.0)` in all 6 compute shaders). Verified: a non-black
+background renders the SAME pixel value in both views.
+
+Post-process ping-pong targets (bloom, spike, dust density) are cleared to black
+directly and must stay that way — they are accumulators, not sky.
+
+Before this there were two hardcoded answers: the nav viewport cleared to 0.05
+grey and RT returned pure black, so switching views changed the background.
+The default is a near-black blue (0.005, 0.005, 0.030 at level 1.2), picked by
+the user in the live app; it renders as [1, 1, 13] after the tonemap.
+
+A spheremap still overrides the background when one is loaded. Its UI was
+removed on request; the loader, the settings keys and the sampling code are all
+still there, so a project with `spheremapEnabled: true` works unchanged.
 
 ## Scene scale is ONE rule, for every kind of object
 

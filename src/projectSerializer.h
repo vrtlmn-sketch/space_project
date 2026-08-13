@@ -134,6 +134,12 @@ struct SceneSettings {
   float dopplerColorStr{1.0f};
 
   // Spheremap background (rasterized view)
+  // Empty sky. ONE value for both views: the rasterizer clears its scene
+  // buffer to it and the raytracer returns it where a ray escapes, so
+  // switching views cannot change what "nothing" looks like. level scales the
+  // colour and may go past 1 for a lit sky.
+  vec3        backgroundColor{0.005f, 0.005f, 0.030f};
+  float       backgroundLevel{1.2f};
   bool        spheremapEnabled{false};
   float       spheremapExposure{5.0f};
   std::string spheremapPath{"assets/default_spheremap.hdr"};
