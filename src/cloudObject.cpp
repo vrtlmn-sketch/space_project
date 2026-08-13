@@ -484,12 +484,17 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
   // PROMOTES it to real particles; disabling physics on a promoted galaxy
   // DEMOTES the render back to cheap LOD chunks while the particles stay as
   // the object's identity (what you simulated is what you keep seeing).
-  if (simulatePhysics && renderedObject.isStarfield) {
+  // Particles are wanted either because the cloud simulates, or because it is
+  // close enough to be rendered by the ordinary pipeline.
+  const bool wantParticles = simulatePhysics || nearPromoted;
+  if (wantParticles && renderedObject.isStarfield) {
     if (renderedObject.isGalaxy || !renderedObject.cloudParticles.empty())
       materializeGalaxy();
-    else
+    else if (simulatePhysics)
       simulatePhysics = false;   // catalogue starfield: no recipe, no velocities
-  } else if (!simulatePhysics && demoteToChunks && !renderedObject.isStarfield) {
+    else
+      nearPromoted = false;      // nothing to build it from
+  } else if (!wantParticles && demoteToChunks && !renderedObject.isStarfield) {
     if (simDirty) {
       renderedObject.BuildStarfieldFromParticles();
     } else if (renderedObject.isGalaxy) {

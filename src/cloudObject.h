@@ -97,6 +97,11 @@ public:
   // rebuilds the cheap chunked render cache FROM THE PARTICLES (which stay —
   // after a simulation they, not the generator recipe, are the truth).
   bool demoteToChunks{false};
+  // Close enough that the cheap chunked stand-in is no longer good enough:
+  // render it through the ORDINARY cloud pipeline instead — the same path a
+  // hand-made cloud uses, so a galaxy up close IS a normal cloud rather than
+  // something tuned to resemble one.
+  bool nearPromoted{false};
   // True once a physics step has actually moved this cloud's particles. A
   // clean promote->demote round-trip (nothing ever simulated) returns to the
   // recipe instead of freezing the galaxy as data.

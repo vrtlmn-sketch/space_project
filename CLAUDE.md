@@ -49,6 +49,7 @@ Env gates:
 | `DUST_DEBUG=1` | log the dust/star-hash scale each cloud renders with |
 | `BRING_TEST=1` | "Bring to me" the first cloud at frame 2 and log the framing it produced |
 | `SCALE_DEBUG=1` | log the scene scale: focus distance, nearest surface, near plane |
+| `NEAR_PIPE=<frac>` | view share above which a galaxy uses the real pipeline (default 0.05; 9 = always sample, 0.001 = never) |
 
 **The harness uses `harness_imgui.ini`, not `imgui.ini`.** Viewport height feeds
 the LOD star budget, and the live app rewrites `imgui.ini` as the user works —
@@ -163,6 +164,26 @@ unresolvedStrength 3.4, unresolvedSize 45.55, bloom 0.045, edgeLight 0.45,
 spikeStrength 1.56, spikeDecay 0.966, rtExposure 0.92, dustSkinContrast 6.5,
 dustDetail 14000). Verified: stripping those keys from a project renders the
 same image the explicit values do.
+
+## ONE rendering model
+
+A cloud is a cloud. Anything you can actually see — a hand-made formation, a
+procedural cloud, a generated galaxy, inside a universe or outside one — is
+drawn by the ORDINARY cloud pipeline: every point, standard passes. There is no
+second look to keep in sync, and no brightness compensation to tune.
+
+The chunked starfield is a SAMPLED STAND-IN, and only that: it exists because
+3555 galaxies x 50000 stars is 178M points, so objects too small to resolve are
+drawn with fewer. A galaxy switches to the real pipeline once it covers 5% of
+view height (`NEAR_PIPE=<frac>` to move the line, `nearPromoted` on the cloud),
+and back below half that. Under 5% it is a smudge tens of pixels tall where
+sampling cannot be seen.
+
+Do NOT try to make the stand-in match the real path by scaling brightness or
+re-thresholding stars. That was tried (a `uSampleWeight` uniform) and it is the
+wrong shape: brightness in this renderer is proportional to points drawn, so a
+sampled object is a different look, not a coarser one. Either draw the object
+properly or accept it is a distant smudge.
 
 ## Scene scale is ONE rule, for every kind of object
 

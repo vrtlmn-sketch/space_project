@@ -195,6 +195,7 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     // recipe is no longer the truth, so the ladder must never rebuild them
     // from the desc (it would erase the simulation).
     if (!ro.isStarfield || ro.simulatableParticleCount() > 0) continue;
+    // (screen share is computed just below; the near/far switch uses it too)
     const RenderedObject::StarChunk& sc = ro.starChunks[0];
     // Camera-relative in double, as everywhere else at this scale.
     double dx = (ro.coordinates.x + sc.center.x - gCamAnchor[0]) + camT[0];
@@ -246,6 +247,47 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
 
     // Nearest galaxy first: it is the one whose detail you can actually see.
     if (frac > bestFrac) { bestFrac = frac; rebuild = c.get(); rebuildTo = target; }
+  }
+
+  // ── Anything you can actually see uses the ORDINARY cloud pipeline ────────
+  // ONE rendering model. The chunked starfield is not a second look to be
+  // tuned against this one — it is a sampled STAND-IN for objects too small to
+  // resolve, and nothing else. The moment a galaxy covers a noticeable part of
+  // the screen it becomes a real particle cloud and goes down exactly the path
+  // a hand-made cloud uses, so "spawn a galaxy anywhere" renders one way.
+  // 5% of view height is the agreed line: below it a galaxy is a smudge a few
+  // dozen pixels tall and sampling is invisible; above it, sampling is what
+  // made galaxies look unlike milky_way. Hysteresis stops boundary flip-flop.
+  // Harness gate: NEAR_PIPE=<frac> moves the switch (0 = always stand-in,
+  // 9 = always the real pipeline), so the two can be compared at one distance.
+  static const float kUseRealPipeline = []{
+    const char* e = std::getenv("NEAR_PIPE");
+    return e ? (float)std::atof(e) : 0.05f;
+  }();
+  const float kBackToStandIn = kUseRealPipeline * 0.5f;
+  for (auto& c : clouds) {
+    if (!c) continue;
+    RenderedObject& ro = c->renderedObject;
+    if (!ro.isGalaxy || ro.galaxyFullStars <= 0) continue;
+    if (c->simulatePhysics || c->simDirty) continue;   // physics owns it already
+    // Its screen share, measured the same way the ladder measures it.
+    const RenderedObject::StarChunk* sc =
+        ro.starChunks.empty() ? nullptr : &ro.starChunks[0];
+    double extent = sc ? (double)sc->extent : (double)ro.galaxyDesc.radius;
+    dvec3 cen; double rad = extent;
+    if (!sc) { c->boundsEstimate(cen, rad); extent = rad; }
+    double dx = (c->position.x - gCamAnchor[0]) + camT[0];
+    double dy = (c->position.y - gCamAnchor[1]) + camT[1];
+    double dz = (c->position.z - gCamAnchor[2]) + camT[2];
+    double d   = std::sqrt(dx*dx + dy*dy + dz*dz);
+    double ang = 2.0 * std::atan2(extent, std::max(d, 1.0)) * 57.2957795;
+    float  frac = (float)(ang / (double)std::max(fovDeg, 1.0f));
+    // Building every star of a huge galaxy is a real cost, so only take the
+    // step when the object is genuinely the thing you are looking at.
+    if (!c->nearPromoted && frac > kUseRealPipeline && ro.galaxyFullStars <= 2000000)
+      c->nearPromoted = true;
+    else if (c->nearPromoted && frac < kBackToStandIn)
+      c->nearPromoted = false;
   }
 
   // One rebuild per frame. A full 50k-star galaxy costs ~4.9 ms to generate,
