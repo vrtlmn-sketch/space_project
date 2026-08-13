@@ -95,7 +95,7 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 ## Regression baseline
 
 `RASTER_ONLY=1 ./bin/blackholesim --compare` on `projects/milky_way.json` gives a
-raster mean luminance of **~46.68** (band 46.67–46.69 across runs; wider when
+raster mean luminance of **~48.63** (band 48.63–48.65 across runs; wider when
 the user's live session holds the GPU). Check it after any shared-shader or
 cloud-pipeline change.
 
@@ -103,8 +103,14 @@ cloud-pipeline change.
 long stretch, ~61.61 after the float->double position work, then 46.68 when the
 user retuned milky_way.json (resolvedCut 0.6->0.0, unresolvedStrength
 6.83->3.4, dustDetail 200->14000, softer bloom/edge light, RT as the main
-view). Before calling a mean shift a regression, check
+view), then 48.63 when the empty sky stopped being pure black (a near-black
+blue background adds a floor to every pixel: `lit` jumps 51.6% -> 88.9% while
+`sat` is unchanged). Before calling a mean shift a regression, check
 `git diff projects/milky_way.json` — a retune is not a bug.
+
+The same applies to `projects/universe.json`, which the user re-saves from the
+live app: its camera, keyframes and look settings change under you. It is not a
+fixed baseline.
 
 ## Large-world coordinates
 
