@@ -116,6 +116,8 @@ private:
   // to cap the haze lobe by the cloud's own projected size — the same fix the
   // chunk path got — so a distant float cloud stops rendering as a bloated ball.
   float cloudBoundRadius{0.0f};
+  // 2x RMS radius, same measure boundsEstimate uses, refreshed alongside it.
+  float cloudRmsRadius{0.0f};
 
   unsigned int ssboParticles{};
   unsigned int ssboObjects{};
@@ -322,6 +324,20 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // reports GPU stars for a chunked starfield whose cloudParticles is empty —
   // treating that as "has particles" is what crashed the physics path.
   int  simulatableParticleCount() const { return (int)cloudParticles.size(); }
+  // World scale this cloud's per-star hashes (colour, magnitude, dust lanes)
+  // are measured in. It MUST come from the cloud's own structure: a single
+  // global taken from clouds[0] meant one small object could set the scale for
+  // every galaxy in the scene, collapsing `aLocal / uDustInfluence` past float
+  // precision so every star hashed identically — uniform colour, no resolved
+  // stars, just haze. `fallback` keeps the old value when a cloud has no
+  // measurable extent yet.
+  float ownDustInfluence(float fallback) const {
+    float scale = 0.0f;
+    if (isStarfield && !starChunks.empty()) scale = starChunks[starChunks.size()/2].extent;
+    else if (cloudRmsRadius > 0.0f)         scale = cloudRmsRadius;
+    if (scale <= 0.0f) return fallback;
+    return std::max(scale * 0.04f, 1e-6f);
+  }
   const std::vector<CloudParticle>& particles() const { return cloudParticles; }
   // Cloud particle positions (galaxy-local xyz triples) — read-only access for
   // viewport picking/outline (projected hull), which lives in the Renderer.

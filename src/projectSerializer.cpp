@@ -168,7 +168,13 @@ bool ProjectSerializer::Save(const std::string& path,
           {"theta",              ov.theta},
           {"fullStars",          ov.fullStars},
           {"simulatePhysics", ov.simulatePhysics},
-          {"dataFile",        ov.dataFile}
+          {"dataFile",        ov.dataFile},
+          {"formationFile",   ov.formationFile},
+          {"count",           ov.count},
+          {"sizeX",           ov.sizeX},
+          {"sizeY",           ov.sizeY},
+          {"sizeZ",           ov.sizeZ},
+          {"scale",           ov.scale}
         };
         if (!ov.keyframes.empty()) o["keyframes"] = keyframesToJson(ov.keyframes);
         ovArr.push_back(o);
@@ -468,6 +474,12 @@ ProjectData ProjectSerializer::Load(const std::string& path)
           ov.fullStars          = o.value("fullStars",          0);
           ov.simulatePhysics = o.value("simulatePhysics", false);
           ov.dataFile        = o.value("dataFile",        std::string{});
+          ov.formationFile   = o.value("formationFile",   std::string{});
+          ov.count           = o.value("count",           0);
+          ov.sizeX           = o.value("sizeX",           3.f);
+          ov.sizeY           = o.value("sizeY",           3.f);
+          ov.sizeZ           = o.value("sizeZ",           3.f);
+          ov.scale           = o.value("scale",           1.0f);
           if (o.contains("keyframes")) ov.keyframes = jsonToKeyframes(o["keyframes"]);
           if (ov.index >= 0) rec.overrides.push_back(ov);
         }

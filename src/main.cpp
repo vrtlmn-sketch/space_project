@@ -214,8 +214,33 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
 
     // One rung per rebuild, with a 4x deadband between climbing and dropping so
     // drifting around a boundary cannot thrash.
+    //
+    // EXCEPT for the galaxy you are actually looking at (it fills more than
+    // DOMINANT_FRAC of the view): that one goes straight to its target in a
+    // single rebuild, up and down. Doubling made it fade in over ~10 frames —
+    // the dust is drawn from every point but bright stars are the rare tail of
+    // the luminosity function, so a half-built galaxy reads as "glow, no
+    // stars". Jumping is also CHEAPER: the ladder's own final rung already
+    // costs a full build (4.9 ms), so the peak frame cost is unchanged while
+    // the total drops 2.3x — and the chunk frame is re-derived once instead of
+    // ten times, so the star colours settle once instead of churning.
+    // Small/distant galaxies keep doubling, which is what keeps flying cheap.
+    // Harness gate: LOD_JUMP=0 restores pure doubling (the old ramp).
+    static const float DOMINANT_FRAC = []{
+      const char* e = std::getenv("LOD_JUMP");
+      if (!e) return 0.15f;
+      float v = (float)std::atof(e);
+      return (v <= 0.0f) ? 1e9f : v;      // 0 = never dominant = old behaviour
+    }();
+    const bool dominant = (frac > DOMINANT_FRAC);
     int target = cur;
-    if      (want > cur * 1.5 && cur < full) target = std::min(cur * 2, full);
+    if (dominant) {
+      target = std::clamp((int)std::min(want, (double)full), low, full);
+      // Same deadband, so sitting still cannot thrash between two counts.
+      if (target > cur && want <= cur * 1.5) target = cur;
+      if (target < cur && want >= cur * 0.35) target = cur;
+    }
+    else if (want > cur * 1.5 && cur < full) target = std::min(cur * 2, full);
     else if (want < cur * 0.35 && cur > low) target = std::max(cur / 2, low);
     if (target == ro.galaxyStarCount) continue;
 
@@ -223,8 +248,8 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     if (frac > bestFrac) { bestFrac = frac; rebuild = c.get(); rebuildTo = target; }
   }
 
-  // One rebuild per frame. The full galaxy can cost ~25 ms to generate, and doing
-  // several in a frame turns a hitch into a freeze.
+  // One rebuild per frame. A full 50k-star galaxy costs ~4.9 ms to generate,
+  // and doing several in a frame turns a hitch into a freeze.
   if (!rebuild) return;
   RenderedObject& ro = rebuild->renderedObject;
   GalaxyDesc desc = ro.galaxyDesc;          // copy: BuildGalaxyStarfield overwrites it
@@ -473,6 +498,33 @@ int main(int argc, char** argv) {
         if (ov->fullStars > 0) cloud->renderedObject.galaxyFullStars = ov->fullStars;
         cloud->simulatePhysics = ov->simulatePhysics;
         cloud->keyframes       = ov->keyframes;
+        if (!ov->formationFile.empty()) {
+          // Identity is a formation file (the user respawned this galaxy onto
+          // one). Rebuild it as that cloud, keeping its universe identity.
+          CloudData fd;
+          fd.position        = ov->position;
+          fd.rotation        = ov->rotation;
+          fd.formationFile   = ov->formationFile;
+          fd.count           = ov->count > 0 ? ov->count : 2000;
+          fd.sizeX = ov->sizeX; fd.sizeY = ov->sizeY; fd.sizeZ = ov->sizeZ;
+          fd.scale           = ov->scale;
+          fd.temperature     = ov->temperature;
+          fd.renderMode      = ov->renderMode;
+          fd.nebulaScatterScale = ov->nebulaScatterScale;
+          fd.particleSizeSpread = ov->particleSizeSpread;
+          fd.computeMethod   = ov->computeMethod;
+          fd.theta           = ov->theta;
+          fd.simulatePhysics = ov->simulatePhysics;
+          fd.keyframes       = ov->keyframes;
+          fd.name            = ov->name;
+          fd.universeMember  = ov->member;
+          auto rebuilt = buildCloudFromData(fd, baseDir);
+          rebuilt->uniRecord = recIdx;
+          rebuilt->uniIndex  = gi;
+          clouds.push_back(std::move(rebuilt));
+          ++spawned;
+          continue;
+        }
         if (!ov->dataFile.empty()) {
           // Identity is DATA: the galaxy was simulated. Restore the exact
           // particles; render promoted (physics on) or as chunks-from-data.
@@ -528,7 +580,16 @@ int main(int argc, char** argv) {
     cd.rotation = clouds[cloudIdx]->rotationDeg;      // keep current orientation
     cd.name           = clouds[cloudIdx]->name;       // keep identity in the scene list
     cd.universeMember = clouds[cloudIdx]->universeMember;
+    // A respawn REPLACES the object, so its universe identity has to be carried
+    // across by hand. Losing it made a respawned galaxy save as a loose cloud
+    // AND mark the real galaxy deleted in the universe record — the galaxy was
+    // silently replaced by a formation cloud, which then also hijacked the
+    // scene's dust scale (see ownDustInfluence).
+    const int uRec = clouds[cloudIdx]->uniRecord;
+    const int uIdx = clouds[cloudIdx]->uniIndex;
     clouds[cloudIdx] = buildCloudFromData(cd);
+    clouds[cloudIdx]->uniRecord = uRec;
+    clouds[cloudIdx]->uniIndex  = uIdx;
   };
 
   procGen.onGenerate = [&](std::vector<CloudParticle> pts, int cm, float temp) {
@@ -725,7 +786,8 @@ int main(int argc, char** argv) {
           c->computeMethod != CloudComputeMethod::BarnesHutGPU ||
           c->barnesHutTheta != 0.5f ||
           c->renderedObject.galaxyFullStars != rec.starsPerGalaxy ||
-          c->simulatePhysics || !c->keyframes.empty() || dataIdentity;
+          c->simulatePhysics || !c->keyframes.empty() || dataIdentity ||
+          !c->formationFile.empty();
         if (!edited) continue;
         UniverseOverride ov;
         ov.index              = c->uniIndex;
@@ -742,6 +804,10 @@ int main(int argc, char** argv) {
         ov.fullStars          = c->renderedObject.galaxyFullStars;
         ov.simulatePhysics    = c->simulatePhysics;
         ov.keyframes          = c->keyframes;
+        // Respawned onto a formation file: that file IS its identity now.
+        ov.formationFile      = c->formationFile;
+        ov.count              = c->particleCount();
+        ov.scale              = c->scale;
         if (dataIdentity) {
           ensureDataDir();
           std::string rel = dataDirName + "/u" + std::to_string(r) + "_g"
@@ -1106,6 +1172,18 @@ int main(int argc, char** argv) {
       if (clouds[0]->renderedObject.isStarfield && !sc0.empty())
         scaleRad = sc0[sc0.size() / 2].extent;      // representative chunk
       renderer.dustInfluence = std::max(scaleRad * 0.04f, 1e-6f);
+      static const bool dustDbg = std::getenv("DUST_DEBUG") != nullptr;
+      if (dustDbg) {
+        static int dbgN = 0;
+        if ((dbgN++ % 20) == 0) {
+          const auto& r0 = clouds[0]->renderedObject;
+          std::cerr << "[dust] clouds[0] " << clouds[0]->name
+                    << " starfield=" << r0.isStarfield
+                    << " builtStars=" << r0.galaxyStarCount
+                    << " chunkExtent=" << (r0.starChunks.empty() ? -1.0f : r0.starChunks[r0.starChunks.size()/2].extent)
+                    << "  => dustInfluence=" << renderer.dustInfluence << "\n";
+        }
+      }
       // Camera-relative centre (RT objects are pushed camera-relative), so the
       // clump pattern is anchored to the galaxy and doesn't swim with the camera.
       renderer.dustCenter[0] = (float)((dcen.x - gCamAnchor[0]) + renderer.cameraTranslate[0]);
@@ -1246,7 +1324,8 @@ int main(int argc, char** argv) {
           c->renderedObject.uploadRenderMode(c->renderMode);
           c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                              renderer.dustCoverage, renderer.dustClumpScale,
-                                             renderer.dustInfluence, renderer.dustContrast);
+                                             c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                             renderer.dustContrast);
           renderer.Draw(c->renderedObject);
         }
         for (auto& obj : physicsObjects)
@@ -1302,7 +1381,8 @@ int main(int argc, char** argv) {
         c->renderedObject.uploadRenderMode(c->renderMode);
         c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                            renderer.dustCoverage, renderer.dustClumpScale,
-                                           renderer.dustInfluence, renderer.dustContrast);
+                                           c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                           renderer.dustContrast);
         renderer.Draw(c->renderedObject);
       }
       for (auto& obj : physicsObjects)
@@ -1382,7 +1462,8 @@ int main(int argc, char** argv) {
           c->renderedObject.uploadRenderMode(c->renderMode);
           c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                              renderer.dustCoverage, renderer.dustClumpScale,
-                                             renderer.dustInfluence, renderer.dustContrast);
+                                             c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                             renderer.dustContrast);
           renderer.Draw(c->renderedObject);
         }
         for (auto& obj : physicsObjects)
@@ -1466,7 +1547,8 @@ int main(int argc, char** argv) {
       c->renderedObject.uploadRenderMode(c->renderMode);
       c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                          renderer.dustCoverage, renderer.dustClumpScale,
-                                         renderer.dustInfluence, renderer.dustContrast);
+                                         c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                         renderer.dustContrast);
       renderer.Draw(c->renderedObject);
     }
     for (auto& obj : physicsObjects)

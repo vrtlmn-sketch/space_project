@@ -2306,12 +2306,26 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     // Refresh the local bounding radius on the same trigger the VBO refreshes
     // (load, physics step, snapshot restore) — one O(n) pass, no per-frame cost.
     float r2max = 0.0f;
+    double cx = 0, cy = 0, cz = 0; size_t np = 0;
     for (size_t i = 0; i + 2 < UVObjectMeshBuffer.size(); i += 3) {
       float x = UVObjectMeshBuffer[i], y = UVObjectMeshBuffer[i+1], z = UVObjectMeshBuffer[i+2];
       float r2 = x*x + y*y + z*z;
       if (r2 > r2max) r2max = r2;
+      cx += x; cy += y; cz += z; ++np;
     }
     cloudBoundRadius = std::sqrt(r2max);
+    // 2x RMS about the centroid — the same measure boundsEstimate reports, so
+    // a cloud's own dust scale matches what the renderer used to derive from it.
+    if (np) {
+      cx /= (double)np; cy /= (double)np; cz /= (double)np;
+      double r2sum = 0;
+      for (size_t i = 0; i + 2 < UVObjectMeshBuffer.size(); i += 3) {
+        double dx = UVObjectMeshBuffer[i] - cx, dy = UVObjectMeshBuffer[i+1] - cy,
+               dz = UVObjectMeshBuffer[i+2] - cz;
+        r2sum += dx*dx + dy*dy + dz*dz;
+      }
+      cloudRmsRadius = (float)std::max(2.0 * std::sqrt(r2sum / (double)np), 0.1);
+    }
   }
 
   glUseProgram(program);

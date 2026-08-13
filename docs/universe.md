@@ -267,6 +267,14 @@ Lifecycle (`CloudObject::Update` transitions):
   and 34k after, with the anchor itself pixel-neutral (`CAM_ANCHOR=0` A/B).
 - **RT cost blowup with thousands of galaxies** (5 GB, ~10 s/frame): sub-pixel
   chunked clouds are skipped in the RT path.
+- **One object could break every galaxy's stars.** `uDustInfluence` was a
+  global taken from `clouds[0]`; a 3 AU formation cloud at index 0 collapsed
+  the per-star hash for a whole universe (uniform colour, no resolved stars).
+  Per-cloud now — see CLAUDE.md.
+- **Respawn silently destroyed a galaxy's universe identity**: the rebuilt
+  object lost `uniRecord`/`uniIndex`, so it saved as a loose cloud AND the
+  galaxy was written out as `deleted`. Identity is carried across now, and an
+  override can hold a formation swap (file/count/size/scale).
 
 ## Old notes (kept for context — status corrected above)
 
@@ -378,6 +386,16 @@ never controls LOD star counts; that is an implementation detail.
   cannot thrash. At most ONE rebuild per frame — a full galaxy can cost ~25 ms.
 - `starBudgetOverride` is set to the built count: generation IS the LOD, so the
   global star budget must not second-guess it and drop stars we chose to build.
+- **The galaxy that fills the view (>15% of view height) jumps STRAIGHT to its
+  target rung**, up or down; everything else still doubles one rung per frame.
+  Doubling made the thing you are looking at fade in over ~11 frames, and a
+  half-built galaxy reads as "glow with no stars" because dust comes from every
+  point while bright stars are the rare tail of the luminosity function. The
+  jump is also cheaper: the ladder's own final rung already costs a full build
+  (4.9 ms for 50k stars), so the peak frame is unchanged while total generation
+  work drops 2.3x, and the chunk frame is re-derived once instead of ten times.
+  Settled output is pixel-identical either way (verified on four scenes);
+  `LOD_JUMP=0` restores pure doubling for A/B.
 - The UI reports `galaxyFullStars`, never the live count. The built count changes
   as you fly and watching it jump reads as a bug (it was reported as one).
 

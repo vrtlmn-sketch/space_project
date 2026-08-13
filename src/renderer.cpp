@@ -591,12 +591,14 @@ void Renderer::Draw(RenderedObject& ro) {
                         : 1e9;
         if (radiusPx < 0.5) return;
       }
-      ro.updateCloudDustLight(dustInfluence, dustClumpScale, dustCoverage, dustContrast, dustReddening,
+      // Per-cloud dust scale, matching the raster path (see ownDustInfluence).
+      const float dInf = ro.ownDustInfluence(dustInfluence);
+      ro.updateCloudDustLight(dInf, dustClumpScale, dustCoverage, dustContrast, dustReddening,
                               dustSkinDepth, dustSkinContrast);
       ro.renderCloudRaytraced(cameraTranslate, rayTracedObjects,
-                              dustInfluence, dustClumpScale, dustCoverage, dustContrast);
+                              dInf, dustClumpScale, dustCoverage, dustContrast);
       if (dopplerMode) ro.renderCloudRaytracedDoppler(cameraTranslate, rtDopplerObjects,
-                              dustInfluence, dustClumpScale, dustCoverage, dustContrast);
+                              dInf, dustClumpScale, dustCoverage, dustContrast);
     }
   }
 }

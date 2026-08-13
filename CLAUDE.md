@@ -45,6 +45,8 @@ Env gates:
 | `EDIT_TEMP_OUT=<K>` | same, but only clouds outside the universe |
 | `CAM_ANCHOR=0` | freeze the camera anchor at 0 (pre-anchor absolute-double camera) |
 | `UNIVERSE_CAM_DIST=<AU>` | park the camera this far from the galaxy (8 = inside the core) |
+| `LOD_JUMP=<frac>` | view share above which a galaxy jumps straight to its target rung (default 0.15; 0 = old pure-doubling ladder) |
+| `DUST_DEBUG=1` | log the dust/star-hash scale each cloud renders with |
 
 ### Traps in the harness
 
@@ -132,6 +134,22 @@ chunked galaxies a CPU sample silently pulled them into the RT accumulator.
 Before touching a shared pass, capture a before/after on BOTH a near view and
 an in-galaxy view (`UNIVERSE_CAM_DIST=8`) and diff them — a scene-average
 mean can hide a large local change.
+
+## Never derive a per-scene render parameter from ONE object
+
+`uDustInfluence` — the world scale the per-star colour/magnitude hash and the
+dust-lane field are measured in — used to be a single global taken from
+`clouds[0]` and applied to every cloud. Respawning a galaxy onto a 3 AU
+formation file put that object at index 0, which set the scale to 0.106 for a
+universe of 1e9 AU galaxies: `aLocal / uDustInfluence` reached 1e10, past
+float's 24-bit mantissa, so every star in every galaxy hashed IDENTICALLY —
+uniform colour, nothing above the resolved-star cut, just haze. It looked like
+"the spread of the stars but not the stars".
+
+Each cloud now derives its own scale (`RenderedObject::ownDustInfluence`) from
+its own chunk extent or RMS radius. Any new shared render parameter must be
+per-object the same way; one object must never be able to define how another
+one is drawn.
 
 ## Cost traps
 

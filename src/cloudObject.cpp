@@ -527,7 +527,8 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     renderedObject.uploadParticleSizeSpread(particleSizeSpread);
     renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
                                     renderer.dustCoverage, renderer.dustClumpScale,
-                                    renderer.dustInfluence, renderer.dustContrast);
+                                    renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                    renderer.dustContrast);
     renderer.Draw(renderedObject);
     return;
   }

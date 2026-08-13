@@ -97,6 +97,12 @@ struct UniverseOverride {
   int   fullStars{0};
   bool  simulatePhysics{false};
   std::string dataFile;        // non-empty: identity is simulated DATA (sidecar)
+  // Set when the user respawned the galaxy onto a formation file: its identity
+  // is that formation, not the generator recipe.
+  std::string formationFile;
+  int   count{0};
+  float sizeX{3.f}, sizeY{3.f}, sizeZ{3.f};
+  float scale{1.0f};
   std::vector<CameraKeyframe> keyframes;
 };
 
