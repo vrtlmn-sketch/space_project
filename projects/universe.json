@@ -13,13 +13,13 @@
   "physicsObjects": [],
   "projectName": "Universe",
   "settings": {
-    "bloomStrength": 0.44999998807907104,
+    "bloomStrength": 0.044999998062849045,
     "bloomThreshold": 0.0,
     "camPitch": -1.079452395439148,
     "camRoll": 0.6530316472053528,
     "camRotation": -0.7595091462135315,
     "camX": 32307162251983.316,
-    "camY": -2.207773040418296e+15,
+    "camY": -2207773040418296.0,
     "camZ": 902866172424380.1,
     "camZoom": 45.0,
     "cameraKeyframes": [],
@@ -35,10 +35,10 @@
     "dustGlow": 1.399999976158142,
     "dustPhaseG": 0.05000000074505806,
     "dustReddening": 0.7200000286102295,
-    "dustSkinContrast": 10.0,
+    "dustSkinContrast": 6.5,
     "dustSkinDepth": 8.0,
     "dustStrength": 1.0,
-    "edgeLightStrength": 2.1500000953674316,
+    "edgeLightStrength": 0.45000001788139343,
     "exaggeratedSizes": false,
     "gasStrength": 0.5,
     "keypoints": [],
@@ -57,7 +57,7 @@
     "recordWidth": 1920,
     "resolvedCut": 0.0,
     "rtCloudPointCap": 20000,
-    "rtExposure": 1.0,
+    "rtExposure": 0.9200000166893005,
     "rtLiveHeight": 80,
     "rtLiveResPreset": 1,
     "rtLiveWidth": 142,
@@ -72,14 +72,14 @@
     "spikeAngle": 0.0,
     "spikeChroma": 0.6499999761581421,
     "spikeCount": 6,
-    "spikeDecay": 1.1100000143051147,
+    "spikeDecay": 0.9660000205039978,
     "spikeLength": 0.27000001072883606,
     "spikeSecondary": 0.7200000286102295,
-    "spikeStrength": 1.4500000476837158,
+    "spikeStrength": 1.559999942779541,
     "starBudget": 80000,
     "starSize": 1.0,
-    "unresolvedSize": 32.400001525878906,
-    "unresolvedStrength": 6.829999923706055
+    "unresolvedSize": 45.54999923706055,
+    "unresolvedStrength": 3.4000000953674316
   },
   "unitsVersion": 2,
   "universes": [
@@ -101,8 +101,8 @@
           "particleSizeSpread": 0.0,
           "position": [
             -634109696109926.5,
-            -1.7906638576593325e+15,
-            -2.1198712920689435e+15
+            -1790663857659332.5,
+            -2119871292068943.5
           ],
           "renderMode": 0,
           "rotation": [
@@ -132,8 +132,8 @@
           "particleSizeSpread": 0.0,
           "position": [
             -817617544765366.9,
-            -2.1364292495977483e+15,
-            -1.0981038220951918e+15
+            -2136429249597748.2,
+            -1098103822095191.8
           ],
           "renderMode": 0,
           "rotation": [
