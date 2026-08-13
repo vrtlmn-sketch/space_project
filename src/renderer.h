@@ -52,6 +52,11 @@ struct SpawnFormState {
   float  temperature = 5778.0f; // Kelvin (meaningful for stars)
   char   meshPath[256] = "";    // free object: OBJ mesh path (empty = none)
   float  visualRadius  = 0.01f; // free object: mesh bounding radius (AU)
+  // Spawn in front of the camera, framed by the object's size, instead of at
+  // the position fields. On by default: a true-scale planet dropped at a fixed
+  // coordinate is invisible, and after visiting a universe the camera is ~1e15
+  // AU from the origin. Ghost-drag placement clears this (it IS a placement).
+  bool   placeInFront  = true;
 };
 
 // ---- Universe spawner (see docs/universe.md) --------------------------------
@@ -550,6 +555,19 @@ public:
   double cameraTranslate[3] = { 0, 0, 0 };
   // Camera forward in world space (camMatrix rows map world→camera; looks down -Z).
   vec3 CameraForward() const { return vec3{ -camMatrix[6], -camMatrix[7], -camMatrix[8] }; }
+  // Where an object of this radius should sit to be framed in front of the
+  // camera — the reverse of LocateCamera, and the same 5.7x framing, so
+  // "bring it here" and "go to it" end up looking identical.
+  dvec3 CameraFramingPosition(double radius) const;
+  // Move an object (exactly one of the two) to that spot. Placement only:
+  // velocity, orientation and every other property are left alone.
+  void BringToCamera(PhysicsObject* obj, CloudObject* cloud);
+  void ClampNearPlaneFor(double radius);
+  // Harness only: load a FIXED dock/viewport layout and never write it back.
+  // The live app rewrites imgui.ini as you work, and viewport height feeds the
+  // LOD star budget — so a harness sharing that file renders differently
+  // depending on what you were doing, which faked a regression once already.
+  void UseFixedUiState(const char* iniPath);
   float rotation{};
   float pitch{};
   float roll{};

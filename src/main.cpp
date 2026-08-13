@@ -317,6 +317,9 @@ int main(int argc, char** argv) {
     renderer.showStartupModal = false;
     renderer.startupChoice = Renderer::StartupChoice::Template;
     compareMode = (std::string(argv[1]) == "--compare");
+    // Harness runs get their own frozen UI layout, so a render never depends
+    // on what the live session did to imgui.ini while a test was running.
+    if (compareMode) renderer.UseFixedUiState("harness_imgui.ini");
   }
 
   std::vector<PhysicsObject>               physicsObjects;
@@ -362,7 +365,11 @@ int main(int argc, char** argv) {
         po.renderedObject.GenerateMeshSphere(po.visualRadius * renderer.activeSizeExag(), 32, 32);
       }
     }
-    lineObjects.emplace_back(vec3{form.posX, form.posY, form.posZ});
+    // Framed in front of the camera by default — a true-scale planet at a
+    // fixed coordinate is invisible, and after visiting a universe the origin
+    // is ~1e15 AU away. Ghost-drag placement clears the flag.
+    if (form.placeInFront) renderer.BringToCamera(&po, nullptr);
+    lineObjects.emplace_back(static_cast<vec3>(po.data.position));
   };
 
   cb.applyGrid = [&](const GridFormState& gf) {
@@ -400,20 +407,10 @@ int main(int argc, char** argv) {
   // (5.7× its radius). Clouds used to spawn at a hardcoded {0,0,-3}: after
   // visiting a universe the camera is ~1e15 AU out, so a new cloud landed
   // invisibly at the origin and read as "it broke / I can't find it".
+  // Same framing "Bring to me" uses, so a spawned cloud lands exactly where
+  // bringing an existing one would put it.
   auto placeAheadOfCamera = [&](CloudObject& cloud) {
-    dvec3 c; double r;
-    cloud.boundsEstimate(c, r);
-    dvec3 localCenter{ c.x - cloud.position.x, c.y - cloud.position.y, c.z - cloud.position.z };
-    dvec3 camPos{ gCamAnchor[0] - renderer.cameraTranslate[0],
-                  gCamAnchor[1] - renderer.cameraTranslate[1],
-                  gCamAnchor[2] - renderer.cameraTranslate[2] };
-    vec3 f = renderer.CameraForward();
-    dvec3 fwd{ (double)f.x, (double)f.y, (double)f.z };
-    double dist = std::max(r * 5.7, 3.0);
-    cloud.position = dvec3{ camPos.x + fwd.x * dist - localCenter.x,
-                            camPos.y + fwd.y * dist - localCenter.y,
-                            camPos.z + fwd.z * dist - localCenter.z };
-    cloud.renderedObject.coordinates = cloud.position;
+    renderer.BringToCamera(nullptr, &cloud);
   };
 
   cb.applyCloud = [&](const CloudFormState& cf) {
@@ -1401,6 +1398,26 @@ int main(int argc, char** argv) {
       // round-trip (chunks -> particles -> chunks-from-data) runs headlessly.
       if (std::getenv("UNIVERSE_DEMOTE") && cmpFrame == 2)
         for (auto& c : clouds) if (c && c->demoteToChunks) c->simulatePhysics = false;
+      // Harness gate: "Bring to me" on the first cloud at frame 2, and report
+      // the framing it produced.
+      if (std::getenv("BRING_TEST") && cmpFrame == 2 && !clouds.empty()) {
+        CloudObject& c = *clouds[0];
+        dvec3 cen; double rad = 1.0;
+        c.boundsEstimate(cen, rad);
+        renderer.BringToCamera(nullptr, &c);
+        c.boundsEstimate(cen, rad);
+        const dvec3 cam{ gCamAnchor[0] - renderer.cameraTranslate[0],
+                         gCamAnchor[1] - renderer.cameraTranslate[1],
+                         gCamAnchor[2] - renderer.cameraTranslate[2] };
+        double dx = cen.x-cam.x, dy = cen.y-cam.y, dz = cen.z-cam.z;
+        double d  = std::sqrt(dx*dx+dy*dy+dz*dz);
+        vec3 f = renderer.CameraForward();
+        double align = (dx*f.x + dy*f.y + dz*f.z) / std::max(d, 1e-12);
+        std::cerr << "[bring] radius " << rad << " AU, distance " << d
+                  << " AU, ratio " << d/std::max(rad,1e-12)
+                  << ", forward-alignment " << align
+                  << ", angular size " << 2.0*std::atan2(rad,d)*57.2957795 << " deg\n";
+      }
       // Harness gate: recolour every cloud MID-SESSION at frame 2, exactly what
       // the inspector's temperature slider does — verifies live property edits.
       if (const char* et = std::getenv("EDIT_TEMP"); et && cmpFrame == 2)

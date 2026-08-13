@@ -1709,7 +1709,17 @@ static std::string PrettyTexLabel(const std::string& filename) {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
   // ── Adaptive near plane: 10% of the nearest object's surface distance ──
+  // ── Scene scale: the nearest SURFACE, over EVERYTHING in the scene ────────
+  // One rule for every project. This used to consider only physics objects,
+  // and the camera-speed fallback below then skipped clouds entirely whenever
+  // a single planet existed — so one distant planet dropped into a universe
+  // drove the speed for 3555 galaxies, and a universe with no planets left
+  // the near plane at 0.05 AU, which swallowed any true-scale planet whole.
+  // A planet, a galaxy and a hand-made cloud are all just "something with a
+  // surface at a distance" here.
   double nearestSurface = 1e30;
+  bool   nearestIsField  = false;   // nearest thing is a diffuse cloud/galaxy
+  double largestFieldRad = 0.0;
   {
     for (auto& o : physicsObjects) {
       double dx = (o.data.position.x - gCamAnchor[0]) + cameraTranslate[0];
@@ -1717,8 +1727,37 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
       double dz = (o.data.position.z - gCamAnchor[2]) + cameraTranslate[2];
       double d  = std::sqrt(dx*dx + dy*dy + dz*dz)
                 - (double)(o.renderRadius() * activeSizeExag());
-      if (d < nearestSurface) nearestSurface = d;
+      if (d < nearestSurface) { nearestSurface = d; nearestIsField = false; }
     }
+    for (const auto& cl : clouds) {
+      if (!cl) continue;
+      const RenderedObject& ro = cl->renderedObject;
+      const double cx = (cl->position.x - gCamAnchor[0]) + cameraTranslate[0];
+      const double cy = (cl->position.y - gCamAnchor[1]) + cameraTranslate[1];
+      const double cz = (cl->position.z - gCamAnchor[2]) + cameraTranslate[2];
+      if (ro.isStarfield && !ro.starChunks.empty()) {
+        // Per chunk, so a galaxy you are INSIDE reports its own local scale
+        // rather than the distance to its far side.
+        for (const auto& sc : ro.starChunks) {
+          const double dx = cx + sc.center.x, dy = cy + sc.center.y, dz = cz + sc.center.z;
+          double d = std::sqrt(dx*dx + dy*dy + dz*dz) - (double)sc.extent;
+          if (d < sc.extent * 0.25) d = sc.extent * 0.25;   // inside: use its own size
+          if (d < nearestSurface) { nearestSurface = d; nearestIsField = true; }
+          largestFieldRad = std::max(largestFieldRad, (double)sc.extent);
+        }
+      } else {
+        dvec3 cen; double rad = 1.0;
+        cl->boundsEstimate(cen, rad);
+        const double dx = (cen.x - gCamAnchor[0]) + cameraTranslate[0];
+        const double dy = (cen.y - gCamAnchor[1]) + cameraTranslate[1];
+        const double dz = (cen.z - gCamAnchor[2]) + cameraTranslate[2];
+        double d = std::sqrt(dx*dx + dy*dy + dz*dz) - rad;
+        if (d < rad * 0.25) d = rad * 0.25;
+        if (d < nearestSurface) { nearestSurface = d; nearestIsField = true; }
+        largestFieldRad = std::max(largestFieldRad, rad);
+      }
+    }
+    if (nearestSurface > 1e29) nearestSurface = 3.0;   // empty scene
     RenderedObject::sZNear = (float)std::clamp(nearestSurface * 0.1, 1e-7, 0.05);
     RenderedObject::sZFar  = 1.0e10f;
   }
@@ -1742,60 +1781,27 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     focusFrom(sceneCameras[camSel].position);
   } else if (cloudSel >= 0 && cloudSel < (int)clouds.size()) {
     focusFrom(dvec3(clouds[cloudSel]->position));
-  } else if (!physicsObjects.empty()) {
-    focusDistance = (float)std::max(nearestSurface, 0.001);
+  } else {
+    // Nothing selected: the SCENE's own scale. One rule for every project —
+    // the nearest surface, whether that is a planet, a galaxy or a hand-made
+    // cloud. This used to be "nearest planet if any planet exists, else scan
+    // clouds", so a single far-away planet in a universe set the speed for
+    // 3555 galaxies and approaching one never slowed you down.
+    double scale = std::max(nearestSurface, 1e-6);
+    // Standing inside a diffuse field, the nearest surface is a poor scale for
+    // TRAVEL — crossing it would take tens of thousands of keypresses. Allow
+    // field-scale movement, but only when a field really is the closest thing;
+    // next to a planet the planet still wins.
+    if (nearestIsField) scale = std::max(scale, largestFieldRad * 0.02);
+    focusDistance = (float)scale;
   }
-
-  // Nothing selected and no planets — a pure star-catalogue scene. Without this
-  // focusDistance stays -1, movement falls back to a constant step tuned for
-  // AU-scale scenes, and flying through a field 2e10 AU across feels frozen.
-  // Scale to the nearest actual STARS: for a starfield that is the closest
-  // chunk, for an ordinary cloud its bounding surface.
-  if (focusDistance <= 0.0f && !clouds.empty()) {
-    double best = 1e300;
-    for (const auto& cl : clouds) {
-      if (!cl) continue;
-      const RenderedObject& ro = cl->renderedObject;
-      double cx = (cl->position.x - gCamAnchor[0]) + cameraTranslate[0];
-      double cy = (cl->position.y - gCamAnchor[1]) + cameraTranslate[1];
-      double cz = (cl->position.z - gCamAnchor[2]) + cameraTranslate[2];
-      if (ro.isStarfield && !ro.starChunks.empty()) {
-        for (const auto& sc : ro.starChunks) {
-          double dx = cx + sc.center.x, dy = cy + sc.center.y, dz = cz + sc.center.z;
-          double d  = std::sqrt(dx*dx + dy*dy + dz*dz) - sc.extent;
-          // INSIDE a chunk d goes negative. Clamping that to a couple of AU
-          // (as this first did) pins the camera to planet-scale steps in a
-          // scene 1e10 AU across — flying then feels like standing still.
-          // Fall back to the chunk's own size: that IS the local scale.
-          if (d < sc.extent * 0.25) d = sc.extent * 0.25;
-          if (d < best) best = d;
-        }
-      } else {
-        dvec3 cen; double rad = 1.0;
-        cl->boundsEstimate(cen, rad);
-        // cen is WORLD now, so difference against the camera directly.
-        double dx = (cen.x - gCamAnchor[0]) + cameraTranslate[0],
-               dy = (cen.y - gCamAnchor[1]) + cameraTranslate[1],
-               dz = (cen.z - gCamAnchor[2]) + cameraTranslate[2];
-        double d = std::sqrt(dx*dx + dy*dy + dz*dz) - rad;
-        if (d < rad * 0.25) d = rad * 0.25;
-        if (d < best) best = d;
-      }
-    }
-    // Inside a star catalogue the nearest chunk is a poor scale for travel:
-    // it makes crossing the field take tens of thousands of keypresses. Blend
-    // in a fraction of the whole field's radius so flying across it is possible
-    // while approaching a star still slows you down.
-    if (best < 1e299) {
-      double scale = best;
-      for (const auto& cl : clouds) {
-        if (!cl) continue;
-        dvec3 cen; double rad = 1.0;
-        cl->boundsEstimate(cen, rad);
-        scale = std::max(scale, rad * 0.02);
-      }
-      focusDistance = (float)std::max(scale, 1.0);
-    }
+  if (std::getenv("SCALE_DEBUG")) {
+    static int n = 0;
+    if ((n++ % 40) == 0)
+      std::cerr << "[scale] focusDistance " << focusDistance
+                << "  nearestSurface " << nearestSurface
+                << "  nearest is " << (nearestIsField ? "field" : "planet")
+                << "  zNear " << RenderedObject::sZNear << "\n";
   }
 
   // ── Fullscreen DockSpace ──
@@ -2441,6 +2447,15 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
               LocateCamera(cen, (float)rad);
             }
           }
+          // Reverse of Locate: move the OBJECT to the camera instead.
+          if (ImGui::Button("Bring to me", ImVec2(96, 0))) {
+            BringToCamera(hObj, hCloud);
+            selectedIdx = hoverIdx;
+            highlightMode = 0;
+            focusInspectorNext = true;
+          }
+          if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Move it in front of the camera, framed by its size");
           bool* phys = hObj ? &hObj->simulatePhysics : &hCloud->simulatePhysics;
           const bool catalogueSf = hCloud && hCloud->renderedObject.isStarfield &&
                                    !hCloud->renderedObject.isGalaxy &&
@@ -4085,12 +4100,18 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       }
       ImGui::Spacing();
 
+      ImGui::Checkbox("Spawn in front of camera##sfront", &spawnForm.placeInFront);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Place it ahead of the camera, framed by its size,\n"
+                          "instead of at the position below.");
+      ImGui::BeginDisabled(spawnForm.placeInFront);
       ImGui::Text("Position (AU)");
       ImGui::SetNextItemWidth(-1);
       float pos[3] = { spawnForm.posX, spawnForm.posY, spawnForm.posZ };
       if (ImGui::DragFloat3("##spos", pos, 0.1f, -50.f, 50.f, "%.2f")) {
         spawnForm.posX = pos[0]; spawnForm.posY = pos[1]; spawnForm.posZ = pos[2];
       }
+      ImGui::EndDisabled();
 
       ImGui::Text("Velocity (AU/yr)");
       ImGui::SetNextItemWidth(-1);
@@ -4150,6 +4171,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       if (!canSpawn) ImGui::BeginDisabled();
       if (ImGui::Button("Spawn", ImVec2(-1, 28))) {
         if (cb.spawnPhysicsObject) cb.spawnPhysicsObject(spawnForm);
+        spawnForm.placeInFront = true;   // back to the default for the next spawn
       }
       if (!canSpawn) {
         ImGui::EndDisabled();
@@ -4567,6 +4589,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         effR = std::max(effR, obj.schwarzschildRadius * 2.6f); // shadow size
       LocateCamera(obj.data.position, effR);
     }
+    if (ImGui::Button("Bring to me##obring", ImVec2(-1, 0))) {
+      BringToCamera(&obj, nullptr);
+    }
 
     // Position (AU)
     ImGui::Text("Position (AU)");
@@ -4958,6 +4983,8 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         cloud->boundsEstimate(center, radius);
         LocateCamera(center, (float)radius);   // world coords: works at any distance
       }
+      if (ImGui::Button("Bring to me##cbring", ImVec2(-1, 0)))
+        BringToCamera(nullptr, cloud);
 
       // Simulate physics: when off, the cloud centre is driven by timeline
       // keyframes (capture with C) instead of particle gravity. A galaxy is
@@ -5224,6 +5251,7 @@ bool Renderer::UpdateGhostDrag(SpawnFormState& form) {
     form.posX = ghostX;
     form.posY = ghostY;
     form.posZ = ghostZ;
+    form.placeInFront = false;   // dragging IS the placement
     ghostDragActive = false;
     return true; // signal: spawn the object
   }
@@ -5368,6 +5396,61 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
 // LocateCamera — teleport in front of a target, facing it.
 // Approaches along the current camera→target line so context is kept.
 // ─────────────────────────────────────────────────────────────────────────────
+dvec3 Renderer::CameraFramingPosition(double radius) const {
+  // True camera position = anchor - local translate (see renderedObject.h).
+  const dvec3 camPos{ gCamAnchor[0] - cameraTranslate[0],
+                      gCamAnchor[1] - cameraTranslate[1],
+                      gCamAnchor[2] - cameraTranslate[2] };
+  const vec3 f = CameraForward();
+  // Same framing LocateCamera uses. The floor is an absolute one, NOT the
+  // current near plane: in a universe the near plane sits at its 0.05 AU cap
+  // (nothing planet-sized is nearby yet), and flooring on that would park a
+  // true-scale planet 0.05 AU away, i.e. 0.03 degrees wide — invisible, the
+  // very problem this is meant to solve. The scene-scale rule re-derives the
+  // near plane from whatever is nearest, so any distance settles correctly.
+  const double dist = std::max(radius * 5.7, 1.0e-5);
+  return dvec3{ camPos.x + (double)f.x * dist,
+                camPos.y + (double)f.y * dist,
+                camPos.z + (double)f.z * dist };
+}
+
+void Renderer::BringToCamera(PhysicsObject* obj, CloudObject* cloud) {
+  if (obj) {
+    float effR = obj->renderRadius() * activeSizeExag();
+    if (obj->shaderType == ObjectType::BlackHole)
+      effR = std::max(effR, obj->schwarzschildRadius * 2.6f);
+    const dvec3 p = CameraFramingPosition(effR);
+    obj->data.position = p;
+    obj->renderedObject.coordinates = p;
+    ClampNearPlaneFor(effR);
+  } else if (cloud) {
+    // A cloud's origin is not necessarily its visual centre, so frame the
+    // CENTRE and move the origin by the same delta.
+    dvec3 cen; double rad = 1.0;
+    cloud->boundsEstimate(cen, rad);
+    const dvec3 target = CameraFramingPosition(rad);
+    cloud->position = dvec3{ cloud->position.x + (target.x - cen.x),
+                             cloud->position.y + (target.y - cen.y),
+                             cloud->position.z + (target.z - cen.z) };
+    cloud->renderedObject.coordinates = cloud->position;
+    ClampNearPlaneFor(rad);
+  }
+}
+
+// The object arrives THIS frame, but the near plane was computed from the
+// scene as it was BEFORE it moved — so pull it in now, or the thing you just
+// summoned is clipped for a frame.
+void Renderer::UseFixedUiState(const char* iniPath) {
+  ImGuiIO& io = ImGui::GetIO();
+  io.IniFilename = nullptr;                  // never write the layout back
+  if (iniPath) ImGui::LoadIniSettingsFromDisk(iniPath);
+}
+
+void Renderer::ClampNearPlaneFor(double radius) {
+  const double dist = std::max(radius * 5.7, 1.0e-5);
+  RenderedObject::sZNear = (float)std::clamp((dist - radius) * 0.1, 1e-7, 0.05);
+}
+
 void Renderer::LocateCamera(dvec3 target, float effRadius) {
   double dist = std::max((double)effRadius * 5.7, 1e-4);
 

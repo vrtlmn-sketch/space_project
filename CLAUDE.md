@@ -47,6 +47,15 @@ Env gates:
 | `UNIVERSE_CAM_DIST=<AU>` | park the camera this far from the galaxy (8 = inside the core) |
 | `LOD_JUMP=<frac>` | view share above which a galaxy jumps straight to its target rung (default 0.15; 0 = old pure-doubling ladder) |
 | `DUST_DEBUG=1` | log the dust/star-hash scale each cloud renders with |
+| `BRING_TEST=1` | "Bring to me" the first cloud at frame 2 and log the framing it produced |
+| `SCALE_DEBUG=1` | log the scene scale: focus distance, nearest surface, near plane |
+
+**The harness uses `harness_imgui.ini`, not `imgui.ini`.** Viewport height feeds
+the LOD star budget, and the live app rewrites `imgui.ini` as the user works —
+so a shared file makes the same binary render differently depending on what was
+happening in another window. That produced a 52.86–55.01 spread on one scene and
+a phantom regression hunt. The harness now loads a frozen layout and never
+writes it back; universe.json is stable at **54.338** across runs.
 
 ### Traps in the harness
 
@@ -154,6 +163,25 @@ unresolvedStrength 3.4, unresolvedSize 45.55, bloom 0.045, edgeLight 0.45,
 spikeStrength 1.56, spikeDecay 0.966, rtExposure 0.92, dustSkinContrast 6.5,
 dustDetail 14000). Verified: stripping those keys from a project renders the
 same image the explicit values do.
+
+## Scene scale is ONE rule, for every kind of object
+
+Camera speed (`focusDistance`) and the clip planes come from the nearest
+SURFACE across everything in the scene — planets (distance − visual radius),
+galaxies (per chunk, so being inside one reports its own size) and hand-made
+clouds (distance − bounds radius) alike. It used to branch on what KINDS of
+things existed: "nearest planet if any planet exists, else scan clouds". So a
+single planet dropped into a universe drove the speed for 3555 galaxies, a
+universe with no planets left the near plane at its 0.05 AU cap (swallowing any
+true-scale planet), and milky_way only felt right because it happens to have
+planets at AU scale. Verified with `SCALE_DEBUG=1`: planet 50 AU away in a
+universe → focus 50 (planet wins); the same planet at 5e9 AU → 2.7e8 (field
+wins); milky_way unchanged.
+
+The one property that is still per-kind is deliberate: if the nearest thing is
+a diffuse FIELD, travel may use field scale (`largestFieldRad * 0.02`), because
+crossing a galaxy at "nearest star" speed takes tens of thousands of
+keypresses. Next to a planet, the planet still wins.
 
 ## Never derive a per-scene render parameter from ONE object
 
