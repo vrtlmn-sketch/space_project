@@ -965,7 +965,17 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE);
   glDisable(GL_DEPTH_TEST);
-  glDrawArrays(GL_POINTS, 0, bufferSize);
+  if (isStarfield) {
+    // The chunk VAO is int16 chunk-relative — drawing it as a flat float
+    // buffer misread every star as sitting within 1 AU of the cloud origin,
+    // so chunked galaxies fed garbage into the rim-light density map. There
+    // is no per-star rim data on this VAO; a neutral constant makes the
+    // screen-space edge light treat the galaxy as half-lit everywhere.
+    glVertexAttrib1f(2, 0.5f);
+    drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+  } else {
+    glDrawArrays(GL_POINTS, 0, bufferSize);
+  }
   glEnable(GL_DEPTH_TEST);
   // The post chain (bloom/tonemap) relies on overwrite semantics — leaking
   // additive blending here makes every later pass ACCUMULATE frame over frame
@@ -998,6 +1008,10 @@ void RenderedObject::renderCloudRaytracedDoppler(const double cameraTranslate[3]
 
   if (cachedRenderMode == 0 && stride > 1)
     pRadius *= std::sqrt((float)stride);
+  // A chunked galaxy's CPU copy is a small SAMPLE of its bufferSize stars —
+  // scale the point radius so the RT coverage matches the full population.
+  if (isStarfield && cachedRenderMode == 0 && bufferSize > particleCount && particleCount > 0)
+    pRadius *= std::sqrt((float)bufferSize / (float)particleCount);
 
   for (int i = 0; i < particleCount; i += stride)
   {
@@ -1085,6 +1099,9 @@ void RenderedObject::renderCloudRaytraced(const double cameraTranslate[3], std::
   // coverage (∝ radius²) stays the same after subsampling.
   if (cachedRenderMode == 0 && stride > 1)
     pRadius *= std::sqrt((float)stride);
+  // Chunked galaxies: the CPU copy is a sample of bufferSize stars (see above).
+  if (isStarfield && cachedRenderMode == 0 && bufferSize > particleCount && particleCount > 0)
+    pRadius *= std::sqrt((float)bufferSize / (float)particleCount);
 
   for (int i = 0; i < particleCount; i += stride)
   {
@@ -1649,6 +1666,19 @@ void RenderedObject::BuildGalaxyStarfield(const GalaxyDesc& d, int starCount)
   sc.first  = 0;
   sc.count  = (int)stars.size();
   starChunks.push_back(sc);
+
+  // Small CPU sample (a generator PREFIX, so it is a valid sub-galaxy) for
+  // everything that needs positions on the CPU: the RT view, the dust-light
+  // bake and the rim factors. The render VBO stays int16 — this is never
+  // uploaded (renderCloud's re-upload path is gated on !isStarfield).
+  const size_t sampleN = std::min(stars.size(), (size_t)2000);
+  UVObjectMeshBuffer.clear();
+  UVObjectMeshBuffer.reserve(sampleN * 3);
+  for (size_t i = 0; i < sampleN; ++i) {
+    UVObjectMeshBuffer.push_back(stars[i].x);
+    UVObjectMeshBuffer.push_back(stars[i].y);
+    UVObjectMeshBuffer.push_back(stars[i].z);
+  }
 
   isStarfield     = true;
   meshType        = MeshType::cloud;

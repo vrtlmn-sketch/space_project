@@ -2149,11 +2149,16 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
       if (baseOk && (showMoveGizmo || showRotateGizmo)) {
         ImVec2 mp = io.MousePos;
 
-        // Build rotate rings (world circles of radius arrowLen, projected).
-        std::vector<ImVec2> rings[3];
+        // Build rotate rings (world circles of radius arrowLen, projected) as
+        // RUNS that break where a point fails to project. Skipping clipped
+        // points but keeping one polyline connected the survivors with
+        // straight chords — up close (camera inside the ring radius) half a
+        // ring clips and the rest drew as hard 90-degree corners.
+        std::vector<std::vector<ImVec2>> rings[3];
         if (showRotateGizmo) {
           constexpr int kSeg = 48;
           for (int a = 0; a < 3; ++a) {
+            std::vector<ImVec2> run;
             for (int i = 0; i <= kSeg; ++i) {
               float t = (float)i / kSeg * 2.0f * (float)M_PI;
               float c = std::cos(t) * arrowLen, s = std::sin(t) * arrowLen;
@@ -2161,8 +2166,16 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
                        : (a == 1) ? dvec3{pos.x + c, pos.y, pos.z + s}
                                   : dvec3{pos.x + c, pos.y + s, pos.z};
               float sx, sy;
-              if (WorldToScreen(wp, sx, sy)) rings[a].push_back({sx, sy});
+              if (WorldToScreen(wp, sx, sy)) {
+                run.push_back({sx, sy});
+              } else if (run.size() > 1) {
+                rings[a].push_back(std::move(run));
+                run.clear();
+              } else {
+                run.clear();
+              }
             }
+            if (run.size() > 1) rings[a].push_back(std::move(run));
           }
         }
 
@@ -2184,10 +2197,11 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
           }
           if (showRotateGizmo) {
             for (int a = 0; a < 3; ++a)
-              for (size_t i = 1; i < rings[a].size(); ++i) {
-                float d = pointToSegDist(mp, rings[a][i-1], rings[a][i]);
-                if (d < best) { best = d; hovKind = 1; hovAxis = a; }
-              }
+              for (const auto& run : rings[a])
+                for (size_t i = 1; i < run.size(); ++i) {
+                  float d = pointToSegDist(mp, run[i-1], run[i]);
+                  if (d < best) { best = d; hovKind = 1; hovAxis = a; }
+                }
           }
         }
 
@@ -2255,9 +2269,11 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
           const ImU32 dim[3] = { IM_COL32(180,50,50,180), IM_COL32(50,160,50,180), IM_COL32(70,110,200,180) };
           const ImU32 hot[3] = { IM_COL32(255,130,130,255), IM_COL32(130,255,130,255), IM_COL32(130,160,255,255) };
           for (int a = 0; a < 3; ++a) {
-            if (rings[a].size() < 2) continue;
             ImU32 col = (hovKind==1 && hovAxis==a) ? hot[a] : dim[a];
-            dl->AddPolyline(rings[a].data(), (int)rings[a].size(), col, 0, 2.2f);
+            for (const auto& run : rings[a]) {
+              if (run.size() < 2) continue;
+              dl->AddPolyline(run.data(), (int)run.size(), col, 0, 2.2f);
+            }
           }
         }
 

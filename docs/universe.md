@@ -185,7 +185,83 @@ Cheap to reserve now, expensive to retrofit.
 
 ---
 
-# Implementation status  (updated at session end)
+# Implementation status  (rewritten 2026-08-13 — the sections below were stale)
+
+## The object model that shipped
+
+Every cloud has two layers (this is the unification the whole feature rests on):
+
+1. **Identity** — what the object IS. Either a RECIPE (`GalaxyDesc` + seed +
+   sparse edits; regenerates bit-identically) or DATA (`cloudParticles` with
+   velocities — the hand-made representation). Identity becomes data the
+   moment the recipe can no longer reproduce it, i.e. after a simulation.
+2. **Render cache** — the chunked int16 starfield with the LOD ladder. Never
+   authoritative, rebuilt on demand from whichever identity layer exists.
+
+Lifecycle (`CloudObject::Update` transitions):
+- **Promote** (`materializeGalaxy`): enabling physics on a chunk-rendered
+  galaxy generates its full stars + rotation-curve velocities into
+  `cloudParticles`. It IS a hand-made-style cloud now: physics, picking, RT,
+  rim lighting all work. `demoteToChunks` is set.
+- **Demote** (`BuildStarfieldFromParticles`): physics off again rebuilds the
+  cheap chunk cache FROM the particles, which stay as the identity. A CLEAN
+  round-trip (no sim step ever ran — tracked by `simDirty`) discards the
+  particles and returns to the recipe instead, pixel-identical.
+- Catalogue starfields (`.starfield`, no recipe/velocities) can never simulate;
+  the physics checkbox is disabled for them.
+
+## Persistence (built — recipe + sparse overrides, as designed above)
+
+- Each "Create Universe" press is a `UniverseRecord` (params) in the project
+  JSON; galaxies regenerate from the seed on load.
+- Only edited galaxies get a `UniverseOverride` (position, rotation, name,
+  membership, temperature, render mode, scatter, spread, compute method,
+  theta, star count, physics flag, keyframes, `deleted`).
+- Simulated/data-identity clouds write a binary particle sidecar
+  (`projects/<name>.data/*.pcl`, 28 B/particle) and reload promoted or as
+  chunks-from-data. Hand-made procedural clouds sidecar too (they used to
+  reload as random blobs).
+- **Stable id v1 = generation index** (`uniRecord`, `uniIndex`). Limitation:
+  editing galaxies and THEN changing that universe's params orphans the
+  overrides. The cell+index ids this doc calls for are still the right fix.
+- Membership (`universeMember`) is an ownership TAG, not a transform parent
+  and not a render switch. Drag rows in/out of the [U] node (or right-click);
+  it round-trips through saves.
+
+## Fixed since the notes below were written (do not re-investigate)
+
+- **Selection sentinel collision**: clouds -(2+i) hit cameras -(1000+i) at
+  ≥998 clouds; every cloud added after a big universe selected as a
+  nonexistent camera. Camera base is now 1e8 (`kCameraSelBase`).
+- **Rotation was structurally unreachable for chunks**: `cloudVert.glsl`'s
+  starfield branch ignored `uCloudRot`. Now applied (stars on GPU, chunk
+  centres in double on CPU); hashes stay on unrotated aLocal so stars keep
+  their colour when the cloud turns.
+- **Galaxies couldn't be click-picked**: `CloudScreenHull` needed the CPU
+  particle copy. It now hulls chunk cube corners.
+- **Five double->float position truncations**, incl. one that re-quantised
+  every non-simulated cloud to the float grid EVERY FRAME (`cloudObject.cpp`
+  keyframe path). Dragging a galaxy used to do nothing or teleport.
+- **`setupRender` discarded freshly built VBOs** (unconditional glGen): every
+  universe galaxy's stars collapsed to one point until its first LOD rebuild;
+  a galaxy already at full count stayed a saturated point forever. setupRender
+  is idempotent now.
+- **Stale per-object uniform caches**: a galaxy rebuilt by the LOD ladder
+  BEFORE its first draw skipped `setupRender`; its `uploadTemperature` wrote
+  to uniform location 0 forever ("can't change the colour"). Guarded by
+  `uniformsCached`.
+- **Physics truth**: `cloudParticleCount()` counted GPU stars for chunked
+  starfields with empty `cloudParticles` — zero-storage SSBO dispatches, a
+  nullptr memcpy into FrameStore, and one inert physics-on cloud pinning the
+  whole timeline playhead at 0. Physics callers now use
+  `simulatableParticleCount()`.
+- **Draw order** (list-order clouds with depth writes off) fixed in the live
+  loop, recordings, screenshots and the harness.
+- **Float-path far field**: haze lobes are now capped by the cloud's projected
+  radius (`cloudBoundRadius` -> `uChunkScreenPx`), same treatment the chunk
+  path got — promoted/hand-made clouds no longer bloat into balls at distance.
+
+## Old notes (kept for context — status corrected above)
 
 ## Built and working
 
@@ -244,19 +320,33 @@ PROJECT=<path>             load a specific project
    scale every star in a galaxy hashed to the same value. Now scales to a
    representative chunk extent (local structure).
 
-## Known broken
+## Still open (verified current as of the 2026-08-13 rewrite)
 
-- **Close-up galaxies look sparse.** Not an LOD failure: `LocateCamera` frames at
-  5.7x radius (~20 degrees), which covers ~500k pixels on a 1080p screen, and a
-  galaxy has 50k stars — 0.1 stars per pixel. Cannot be fixed by raising the
-  global count (200 galaxies x 400k = 80M stars, ~480 MB VRAM).
-- **Grid and gizmo overlays shred at ~1e15 AU** — the editor overlays still build
-  geometry in float. Same root cause as the fixed items above, not yet converted.
-- **Scale sweep**: renders at 0.001 Gly, black from 0.01 Gly up. The position and
-  chunk-centre fixes improved it (0.000 -> 0.003 mean) but did not resolve it.
-  Bisect between those two radii to find the remaining float narrowing.
-- **milky_way regression baseline drifted 60.95 -> 60.94** after the float->double
-  position change. Almost certainly benign, unverified.
+- **Close-up galaxies look sparse.** Not an LOD failure: a galaxy has 50k stars
+  over ~500k pixels when framed. Only more stars fix it; the look-preserving
+  dynamic-density design (v2) is pending — v1 was rejected because it changed
+  the rendered look and lagged. HARD CONSTRAINT for v2: every state that exists
+  today must render bit-identically with the feature off.
+- **The re-paint knot**: every LOD rebuild derives the chunk frame from the
+  sampled bbox; the frame shifts per rung and star colour/magnitude/dust hash
+  on frame-relative position, so a galaxy re-rolls as the ladder climbs (and
+  once on promote). A look-preserving fixed-frame design is the root blocker
+  for deep zoom and density work.
+- **Distant galaxies flicker in motion** — prime suspect is still the
+  `vHazeBoost` size-cap/boost pair (see Open issues below). The setupRender
+  VBO fix may have reduced the rebuild "pop"; unverified in flight.
+- **Rim/edge-light, dust-density and RT passes** don't work on chunked
+  objects (they read the CPU particle copy or draw the VBO non-chunked).
+  Promoted galaxies get all of them; chunked ones don't.
+- **Grid overlay shreds at ~1e15 AU** (still float; gizmo/picking are fixed).
+- **Near-field on tiny (~AU-scale) clouds**: can't zoom close enough, gizmo
+  rings degrade — reported on model-scale formations like milky_way_2k.
+- **Scale sweep**: renders at 0.001 Gly, black from 0.01 Gly up — status not
+  re-checked since the earlier notes; re-verify before trusting.
+- **Galaxy dynamics at real scale is DEFERRED by decision**: rotation-curve
+  self-gravity needs per-star mass = v²R/G/N (~3e6 M☉) and dt ~5e5 yr/frame
+  (today's cap: 0.005). The sample formations that simulate nicely are
+  MODEL-scale (~2 AU). Design agreed, parked as a future task.
 
 ## Galaxy level of detail  (built)
 
@@ -380,24 +470,16 @@ Attempted and REVERTED (all three changed the look without fixing the flicker):
 - Quantising the capped sprite size to integer pixels. Also shifted the
   milky_way baseline 61.62 -> 61.79 when applied unconditionally.
 
-## 2. Draw order: things render through things  (diagnosed, not fixed)
+## 2. Draw order: things render through things  (FIXED)
 
-Two symptoms, one cause:
-- Background galaxies shine through a foreground galaxy's dark dust lanes.
-- Galaxy haze edges overflow ON TOP OF planets.
+Fixed by drawing clouds far-to-near via a sorted INDEX list
+(`BuildCloudDrawOrder`) in the live loop, recordings, screenshots and the
+harness. The rule stands: never reorder the `clouds` vector itself —
+selection sentinels encode cloud indices as `-(2 + i)`.
 
-Clouds draw in LIST ORDER with `glDepthMask(GL_FALSE)`, so a background galaxy
-drawn later paints over an earlier galaxy's multiplicative dust. A point sprite
-also carries ONE depth for the whole quad, so a large haze lobe centred beside a
-planet bleeds across the planet's silhouette instead of being clipped by it.
+## 3. Editor overlays shred past ~1e15 AU  (grid still open)
 
-Fix: draw back-to-front by camera distance. CRITICAL: build a sorted INDEX LIST
-for drawing — do NOT reorder the `clouds` vector. Selection sentinels encode
-cloud indices as `-(2 + i)`, so shuffling it silently retargets selections and
-deletes.
-
-## 3. Editor overlays shred past ~1e15 AU
-
-Grid and gizmo still build geometry in float. Same conversion the rest of the
-scene already had: camera-relative differences in double on the CPU, small
-floats to the GPU. See "Large-world coordinates" in CLAUDE.md.
+The gizmo and cloud picking now difference in double (fixed). The GRID still
+builds geometry in float — same conversion the rest of the scene already had:
+camera-relative differences in double on the CPU, small floats to the GPU.
+See "Large-world coordinates" in CLAUDE.md.
