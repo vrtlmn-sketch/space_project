@@ -559,7 +559,7 @@ void Renderer::Draw(RenderedObject& ro) {
                                                                           (float)ro.coordinates.z,
                                                                           ro.sphereRadius()}); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             if (realisticRasterView) rimClouds.push_back(&ro); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -3152,6 +3152,11 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("How many stars resolve as sharp points. Higher = fewer sharp\n"
                         "stars, more unresolved glow (real telescope look).");
+    norm01("Distance",   "##farfall", &farFalloff,          0.05f, 1.0f, false);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How fast a galaxy dims as it gets far enough away to stop\n"
+                        "shrinking on screen. Higher = the deep field falls off toward\n"
+                        "black (1 = physically exact); lower keeps distant galaxies lit.");
 
     ImGui::Spacing();
     ImGui::SeparatorText("Diffraction Spikes");

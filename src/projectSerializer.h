@@ -163,6 +163,10 @@ struct SceneSettings {
   float unresolvedSize{45.55f};
   float resolvedCut{0.0f};
   float gasStrength{0.5f};
+  // How hard light is compressed once an object is too small for its sprites
+  // and sample count to shrink any further (see FarFieldDim). 1 = follow flux
+  // exactly, which renders the deep field black; lower keeps it visible.
+  float farFalloff{0.08f};
   int   rtCloudPointCap{2000};
   // Dust
   float dustStrength{1.0f};

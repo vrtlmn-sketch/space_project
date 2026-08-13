@@ -450,6 +450,7 @@
     "dustStrength": 1.0,
     "edgeLightStrength": 0.45000001788139343,
     "exaggeratedSizes": false,
+    "farFalloff": 0.07999999821186066,
     "gasStrength": 0.5,
     "keypoints": [],
     "nebulaDetail": 0.0,

@@ -50,13 +50,23 @@ Env gates:
 | `BRING_TEST=1` | "Bring to me" the first cloud at frame 2 and log the framing it produced |
 | `SCALE_DEBUG=1` | log the scene scale: focus distance, nearest surface, near plane |
 | `NEAR_PIPE=<frac>` | view share above which a galaxy uses the real pipeline (default 0.10; 9 = always sample, 0.001 = never) |
+| `STARDEBUG4=1` | far-field ledger per visible chunk: screen radius, samples its size is worth, built, drawn, flux correction |
+| `FAR_FALLOFF=<g>` | override the project's Distance Falloff for an A/B (1 = exact flux, which makes anything past a few Gly invisible) |
 
 **The harness uses `harness_imgui.ini`, not `imgui.ini`.** Viewport height feeds
 the LOD star budget, and the live app rewrites `imgui.ini` as the user works —
 so a shared file makes the same binary render differently depending on what was
 happening in another window. That produced a 52.86–55.01 spread on one scene and
 a phantom regression hunt. The harness now loads a frozen layout and never
-writes it back; universe.json is stable at **54.338** across runs.
+writes it back; universe.json is stable across runs.
+
+**universe.json's saved camera sees NO galaxies** — `STARDEBUG=1` reports "0
+chunks visible" on every frame, so its mean luminance measures the rest of the
+scene, not the universe. It is a fine determinism check and useless as a
+far-field check. For anything about how galaxies look at distance, generate one
+and park the camera: `UNIVERSE_TEST=200 UNIVERSE_STARS=20000
+UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixels,
+1e13 ≈ the deep field).
 
 ### Traps in the harness
 
@@ -162,8 +172,8 @@ carry the same values for the pre-project startup state; keep the two in sync.
 The current defaults ARE the signed-off milky_way look (resolvedCut 0.0,
 unresolvedStrength 3.4, unresolvedSize 45.55, bloom 0.045, edgeLight 0.45,
 spikeStrength 1.56, spikeDecay 0.966, rtExposure 0.92, dustSkinContrast 6.5,
-dustDetail 14000). Verified: stripping those keys from a project renders the
-same image the explicit values do.
+dustDetail 14000, farFalloff 0.08). Verified: stripping those keys from a
+project renders the same image the explicit values do.
 
 ## ONE rendering model
 
@@ -184,6 +194,43 @@ re-thresholding stars. That was tried (a `uSampleWeight` uniform) and it is the
 wrong shape: brightness in this renderer is proportional to points drawn, so a
 sampled object is a different look, not a coarser one. Either draw the object
 properly or accept it is a distant smudge.
+
+## Light falls off because objects get SMALLER — until the floors stop it
+
+Nothing in this renderer has a 1/d² term. A sprite is a fixed screen size and a
+fixed intensity; an object dims with distance only because it covers fewer
+pixels and therefore draws fewer, smaller sprites. That works right up until the
+floors: a sprite is at least a pixel, a visible chunk draws at least eight
+points. Past that an object's light stops falling off ENTIRELY — a galaxy
+0.001 px across still drew eight full-brightness stars, so the far field
+outshone nearby stars and every galaxy sat at the same brightness no matter how
+far away it was (measured: 333x the distance gave 11x less light).
+
+`FarFieldDim(want, drawn)` (renderedObject.cpp) is the correction, and it is
+subtractive ONLY — it never manufactures light, which is what separates it from
+the rejected `uSampleWeight`:
+
+- `want` is what an object's angular size is worth, at the same stars-per-pixel
+  the draw budget uses. Both paths compute it the same way, so a hand-made cloud
+  and a galaxy at the same distance dim by the same amount, and the
+  chunked→real-pipeline switch is flux-continuous instead of a pop.
+- Dividing by `drawn` is EXACT, so which LOD rung the ladder happens to be
+  holding cannot change how bright an object is. That is what stops rungs from
+  popping as you fly.
+- Below the floor the object's own light is compressed rather than followed
+  exactly. One fixed exposure spans 1 AU to 1e15 AU, so an exact falloff renders
+  the deep field black. How hard to compress is a LOOK decision, so it is a
+  setting — `farFalloff`, Stars → Star Haze → **Distance**, default 0.08, range
+  0.05 (barely dims) to 1.0 (physically exact). `FAR_FALLOFF=<g>` overrides it
+  headlessly. What it selects is effectively how deep you can see: at any
+  setting a nearer galaxy always outlives a further one.
+
+An earlier attempt did the opposite — `vHazeBoost` gave back the light a
+size-capped haze lobe had lost, up to 48x. That holds an object's TOTAL light
+constant as it shrinks, i.e. per-pixel brightness rising as d². Removed.
+
+Never add a floor to a size or a count on a render path without asking what it
+does to flux at the small end.
 
 ## Scene scale is ONE rule, for every kind of object
 

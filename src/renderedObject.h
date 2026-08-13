@@ -201,6 +201,7 @@ public:
   float cineResolvedCut{0.6f};   // brightness cutoff: only brighter stars draw as sharp cores
   float cineGasStrength{0.5f};   // glowing-gas emission brightness (0 = off)
   float cineStarSize{1.0f};      // artistic scale on resolved star-core sprites
+  float cineFarFalloff{0.08f};   // far-field light compression (see FarFieldDim)
   // Procedural cloud layer params (shared packing, both views):
   // P0 = (coverage, scale, bandedness, turbulence); P1 = (softness, altitude,
   // whiteness, driftPhase). coverage 0 = clouds off.

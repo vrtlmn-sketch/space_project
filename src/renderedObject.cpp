@@ -1400,6 +1400,44 @@ void RenderedObject::LoadStarfield(const std::string& indexPath)
 }
 
 
+// ── Far-field flux: how much light one drawn sample is still entitled to ─────
+// Brightness here is proportional to points drawn, and the falloff with
+// distance comes from an object covering fewer pixels — not from any 1/d² term.
+// That works only while the sprites and the sample count can keep shrinking.
+// Both hit floors (a sprite is at least a pixel, a visible chunk draws at least
+// eight points), and past that an object's light stops falling off at all: a
+// galaxy 0.001 px across was drawing eight full-brightness stars, which is why
+// the far field outshone nearby stars and every galaxy looked the same
+// brightness no matter how far away it was.
+//
+// wantSamples is what the object's true angular size is worth (the same stars-
+// per-pixel rule the budget uses). Dividing by what was actually drawn is
+// EXACT, so how many points the LOD ladder happens to be holding cannot change
+// how bright an object is — that is what stops the rungs from popping.
+//
+// The object's own light is compressed below the floor rather than followed
+// exactly: one fixed exposure has to span 1 AU to 1e15 AU, and the honest
+// answer (falloff 1) makes anything past a few Gly mathematically correct and
+// completely invisible. Lower keeps a distant galaxy visible while still
+// ranking it by distance — it is a look control (Stars → Star Haze →
+// "Distance"), so it lives in SceneSettings. FAR_FALLOFF overrides it for
+// headless A/Bs.
+static float FarFieldDim(double wantSamples, int drawnSamples, float falloff)
+{
+  if (drawnSamples <= 0) return 1.0f;
+  const double kFloorSamples = 8.0;      // the draw never goes below this
+  static const double envGamma = []{
+    const char* e = std::getenv("FAR_FALLOFF");
+    return e ? std::clamp(std::atof(e), 0.05, 1.0) : 0.0;   // 0 = not set
+  }();
+  const double gamma = (envGamma > 0.0) ? envGamma
+                                        : std::clamp((double)falloff, 0.05, 1.0);
+  double eff = wantSamples;
+  if (eff < kFloorSamples)
+    eff = std::pow(kFloorSamples, 1.0 - gamma) * std::pow(std::max(eff, 1e-12), gamma);
+  return (float)std::clamp(eff / (double)drawnSamples, 0.0, 1.0);
+}
+
 // ── Starfield draw: frustum-cull chunks, then spend a fixed point budget ─────
 // Two jobs at once. Culling removes chunks that are off-screen or behind the
 // camera. The budget then shares the remaining points out by how much SCREEN
@@ -1428,7 +1466,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   const bool hasRot = (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f);
   if (hasRot) EulerDegToMat3d(rotationDeg, rotD);
 
-  struct Vis { int idx; float weight; int cap; float screenPx; double cx, cy, cz; };
+  struct Vis { int idx; float weight; int cap; float want; float screenPx; int drew; double cx, cy, cz; };
   static std::vector<Vis> vis;      // reused: this runs every frame
   vis.clear();
   double wsum = 0.0;
@@ -1476,11 +1514,15 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     // stars into a chunk that covers four pixels is pure waste AND sums to a
     // blown-out white dot. Cap what it can be given by its own screen area.
     float pixels = onScreen * 0.25f * (float)fbWidth * (float)fbHeight;
-    int   capByArea = (int)(pixels * 4.0f) + 8;
+    // What this chunk's angular size is actually worth, at the same stars-per-
+    // pixel the cap uses. The cap adds a floor on top so a chunk is never
+    // blank; the floor is what the flux correction below then pays back.
+    float want = pixels * 4.0f;
+    int   capByArea = (int)want + 8;
     // Projected radius in pixels — the haze lobe is capped by it so a galaxy a
     // few pixels wide is not drawn as a stack of much larger glowing sprites.
     float screenPx = ry * 0.5f * (float)fbHeight;
-    vis.push_back({i, w, capByArea, screenPx, wx, wy, wz});
+    vis.push_back({i, w, capByArea, want, screenPx, 0, wx, wy, wz});
     wsum += w;
   }
 
@@ -1494,6 +1536,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   GLint lc = glGetUniformLocation(program, "uChunkCenter");
   GLint le = glGetUniformLocation(program, "uChunkExtent");
   GLint lp = glGetUniformLocation(program, "uChunkScreenPx");
+  GLint ld = glGetUniformLocation(program, "uPointDim");
 
   const int budget = (starBudget > 0) ? starBudget : 80000;
 
@@ -1549,8 +1592,22 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
                                  (float)vis[k].cz);
     if (le >= 0) glUniform1f(le, sc.extent);
     if (lp >= 0) glUniform1f(lp, vis[k].screenPx);
+    if (ld >= 0) glUniform1f(ld, FarFieldDim(vis[k].want, n, cineFarFalloff));
     glDrawArrays(GL_POINTS, sc.first, n);
+    vis[k].drew = n;
     drawn += n;
+  }
+  // STARDEBUG4: the far-field ledger — what a chunk's angular size is worth,
+  // what was drawn, and the flux correction that closes the gap.
+  if (std::getenv("STARDEBUG4")) {
+    std::vector<size_t> ord(vis.size()); for (size_t k=0;k<ord.size();++k) ord[k]=k;
+    std::sort(ord.begin(), ord.end(), [&](size_t a,size_t b){return vis[a].screenPx>vis[b].screenPx;});
+    for (size_t t=0; t<ord.size() && t<3; ++t) {
+      size_t k=ord[t];
+      std::cerr << "[far] screenPx " << vis[k].screenPx << "  want " << vis[k].want
+                << "  built " << starChunks[vis[k].idx].count << "  drawn " << vis[k].drew
+                << "  dim " << FarFieldDim(vis[k].want, vis[k].drew, cineFarFalloff) << "\n";
+    }
   }
   lastDrawnStars = drawn;
   if (starBudgetOverride > 0 && std::getenv("STARDEBUG3"))
@@ -1564,6 +1621,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   }
   if (le >= 0) glUniform1f(le, 0.0f);              // back to plain float positions
   if (lp >= 0) glUniform1f(lp, 0.0f);              // cap off for non-chunk draws
+  if (ld >= 0) glUniform1f(ld, 1.0f);              // full light for non-chunk draws
 }
 
 
@@ -2376,6 +2434,14 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       }
       // 0 = inactive (camera inside/behind the cloud, or radius unknown).
       glUniform1f(spLoc, screenPx);
+      // Same far-field flux rule the chunked path uses, so a hand-made cloud
+      // and a galaxy seen from the same distance dim by the same amount. A
+      // chunk's own pixel area works out to (2 x radius)^2, hence 16 x r^2.
+      GLint pdLoc = glGetUniformLocation(program, "uPointDim");
+      if (pdLoc >= 0)
+        glUniform1f(pdLoc, (screenPx > 0.0f)
+                             ? FarFieldDim(16.0 * (double)screenPx * (double)screenPx, bufferSize, cineFarFalloff)
+                             : 1.0f);
     }
   }
 

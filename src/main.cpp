@@ -706,6 +706,7 @@ int main(int argc, char** argv) {
     renderer.unresolvedSize     = s.unresolvedSize;
     renderer.resolvedCut        = s.resolvedCut;
     renderer.gasStrength        = s.gasStrength;
+    renderer.farFalloff         = s.farFalloff;
     RenderedObject::rtCloudPointCap = s.rtCloudPointCap;
     renderer.dustStrength       = s.dustStrength;
     renderer.dustReddening      = s.dustReddening;
@@ -899,6 +900,7 @@ int main(int argc, char** argv) {
     s.unresolvedSize     = renderer.unresolvedSize;
     s.resolvedCut        = renderer.resolvedCut;
     s.gasStrength        = renderer.gasStrength;
+    s.farFalloff         = renderer.farFalloff;
     s.rtCloudPointCap    = RenderedObject::rtCloudPointCap;
     s.dustStrength       = renderer.dustStrength;
     s.dustReddening      = renderer.dustReddening;

@@ -11,6 +11,14 @@ uniform float uDustReddening;
 uniform float uDustStrength;       // overall dust amount (also gates in the vert)
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
 uniform float uGasStrength;        // glowing-gas emission brightness
+// Far-field flux correction. A drawn point is a SAMPLE standing in for many
+// stars, but its sprite has a screen-size floor and the sample count has a
+// floor of its own, so once an object shrinks past a pixel neither can shrink
+// any further and its light stops falling off with distance. uPointDim is the
+// light each sample is still entitled to (1 = full, set by the CPU from the
+// object's true angular size). Without it a galaxy 0.001 px across drew eight
+// full-brightness stars and outshone everything nearby.
+uniform float uPointDim;
 
 in vec3  vColor;            // per-particle blackbody colour (from cloudVert)
 in float vMag;              // per-particle magnitude 0..1
@@ -18,7 +26,6 @@ in float vDust;             // dust density at this particle (0 = not dusty)
 in float vSeed;             // per-cloud seed → unique billowing FBM shape
 in float vHot;
 in float vRim;              // 1 = hot blue star
-in float vHazeBoost;        // light returned after the haze lobe was size-capped
 
 // 2D value-noise FBM — carves each dust sprite into a wispy cloud (soft edges),
 // so a big dust sprite is a sculpted cloud form, not a smooth disc.
@@ -108,7 +115,7 @@ void main() {
             float dens = smoothstep(0.30, 0.90, env * (0.22 + 0.9 * n));
             if (dens <= 0.001) discard;
             vec3 gasCol = mix(vec3(1.0, 0.30, 0.45), vec3(0.45, 0.6, 1.0), 0.25 * vHot);
-            FragColor = vec4(gasCol * dens * uGasStrength * 0.02, 1.0);
+            FragColor = vec4(gasCol * dens * uGasStrength * 0.02 * uPointDim, 1.0);
             return;
         }
 
@@ -124,12 +131,12 @@ void main() {
             // the budget just whited out the screen instead of adding depth.
             float coreI = (uStarfield == 1) ? (0.015 + 4.0 * vMag * vMag)
                                             : (0.30  + 3.5 * vMag);
-            c = vColor * core * edge * coreI;
+            c = vColor * core * edge * coreI * uPointDim;
         } else {
             // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.
             // Thousands overlap → density-driven volumetric glow the dust carves into.
             float halo = exp(-r2 * 1.4);
-            c = vColor * halo * uUnresolvedStrength * 0.008 * vHazeBoost;
+            c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim;
         }
         FragColor = vec4(c, 1.0);
         return;

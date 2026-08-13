@@ -453,32 +453,42 @@ catalogues already dim and brighten as the LOD budget drops stars with distance.
 
 # Open issues  (handoff — read before touching galaxy rendering)
 
-## 1. Distant galaxies flicker while moving  (UNSOLVED, prime suspect known)
+## 1. Distant galaxies too bright, and flicker while moving  (ADDRESSED)
 
-Symptom: distant galaxies pulse/flicker as the camera moves. Only in motion —
-invisible in a still, so DO NOT try to diagnose it from harness mean luminance.
-Get a screenshot or fly. Three wrong guesses were burned reasoning from means.
+Symptom: distant galaxies were brighter than nearby stars, all at the SAME
+brightness regardless of distance, and pulsed as the camera moved. Only the
+pulsing is invisible in a still, so DO NOT diagnose that part from harness mean
+luminance — get a screenshot or fly. Three wrong guesses were burned on means.
 
-PRIME SUSPECT, in `cloudVert.glsl`, added while fixing the "yellow balls":
+Measured cause. Nothing here has a 1/d² term: light falls off only because an
+object covers fewer pixels. Two floors stop that dead — the haze lobe never goes
+under a pixel, and a visible chunk never draws under eight points. `STARDEBUG4`
+on a generated universe showed galaxies at **0.001 px** drawing **8** points
+when their angular size was worth **3e-5**. Over 333x of distance the frame lost
+only 11x of light.
+
+`vHazeBoost` made it worse, not better:
 
 ```
-vHazeBoost = clamp((sz * sz) / max(capped * capped, 1e-4), 1.0, 48.0);
+vHazeBoost = clamp((sz * sz) / max(capped * capped, 1e-4), 1.0, 48.0);   // removed
 ```
 
-`capped` comes from `uChunkScreenPx`, recomputed EVERY FRAME from camera
-distance, so the boost varies continuously as you fly — brightness pumping,
-which is what flicker looks like. It also reaches 48x, and combined with an
-experiment that drew every built star (instead of a screen-area subset) it
-whited out the whole view.
+It returned the light a size-capped lobe had lost, up to 48x — holding an
+object's TOTAL light constant while it shrank, which is per-pixel brightness
+rising as d². (The old note here treated the cap and the boost as a necessary
+pair. They are not: capping WITHOUT the boost is what produces the correct
+falloff, because the lobe keeps its brightness per pixel and covers fewer.)
 
-FIRST EXPERIMENT: force `vHazeBoost = 1.0` and fly. If the flicker stops, it is
-confirmed. Then the real question is how to keep distant galaxies visible
-WITHOUT a multiplier that tracks live camera distance — e.g. derive it from the
-galaxy's own fixed properties, or cap it far below 48.
+Fixed by `FarFieldDim(want, drawn, farFalloff)` — see "Light falls off because
+objects get SMALLER" in CLAUDE.md. Measured after: 3e10 → 1e13 AU now loses 480x
+instead of 11x, and galaxies at different distances read as different
+brightnesses. How hard the far tail is compressed is the **Distance** slider
+under Stars → Star Haze (`farFalloff`, default 0.08); it effectively sets how
+deep into the universe you can see.
 
-The size cap and the boost are A PAIR: the cap shrinks the lobe, the boost
-returns the light. Removing the boost alone makes distant galaxies dimmer than
-the version that was signed off.
+Still to confirm by flying (means cannot show it): the rung-pop part of the
+flicker. Dividing by `drawn` is exact, so an LOD rebuild should no longer change
+an object's brightness — but this has NOT been verified in motion.
 
 Ruled out (verified, do not re-investigate):
 - Stars do NOT move between LOD levels. `GenerateGalaxyStars` is a proper
