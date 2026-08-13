@@ -147,21 +147,21 @@ struct SceneSettings {
   int   rtLiveHeight{80};
 
   // Photographic HDR (RT views)
-  float rtExposure{1.0f};
-  float bloomStrength{0.45f};
+  float rtExposure{0.92f};
+  float bloomStrength{0.045f};
   float bloomThreshold{0.0f};
-  float edgeLightStrength{2.15f};
-  float spikeStrength{1.14f};
+  float edgeLightStrength{0.45f};
+  float spikeStrength{1.56f};
   int   spikeCount{6};
   float spikeAngle{0.0f};
   float spikeLength{0.27f};
-  float spikeDecay{1.11f};
+  float spikeDecay{0.966f};
   float spikeSecondary{0.72f};
   float spikeChroma{0.65f};
   // Unresolved-star haze + resolved-point density
-  float unresolvedStrength{6.83f};
-  float unresolvedSize{32.4f};
-  float resolvedCut{0.6f};
+  float unresolvedStrength{3.4f};
+  float unresolvedSize{45.55f};
+  float resolvedCut{0.0f};
   float gasStrength{0.5f};
   int   rtCloudPointCap{2000};
   // Dust
@@ -175,9 +175,9 @@ struct SceneSettings {
   float dustGlow{1.4f};
   float dustPhaseG{0.05f};
   float dustSkinDepth{8.0f};
-  float dustSkinContrast{10.0f};
+  float dustSkinContrast{6.5f};
   float cineSSAA{1.5f};
-  int   dustDetail{200};
+  int   dustDetail{14000};
 
   // Simulation
   float simSpeed{1.0f};

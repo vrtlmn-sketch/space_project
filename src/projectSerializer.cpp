@@ -525,20 +525,20 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.rtLiveResPreset = s.value("rtLiveResPreset", 1);
     st.rtLiveWidth     = s.value("rtLiveWidth",     142);
     st.rtLiveHeight    = s.value("rtLiveHeight",    80);
-    st.rtExposure         = s.value("rtExposure",         1.0f);
-    st.bloomStrength      = s.value("bloomStrength",      0.45f);
+    st.rtExposure         = s.value("rtExposure",         SceneSettings{}.rtExposure);
+    st.bloomStrength      = s.value("bloomStrength",      SceneSettings{}.bloomStrength);
     st.bloomThreshold     = s.value("bloomThreshold",     0.0f);
-    st.edgeLightStrength  = s.value("edgeLightStrength",  2.15f);
-    st.spikeStrength      = s.value("spikeStrength",      1.45f);
+    st.edgeLightStrength  = s.value("edgeLightStrength",  SceneSettings{}.edgeLightStrength);
+    st.spikeStrength      = s.value("spikeStrength",      SceneSettings{}.spikeStrength);
     st.spikeCount         = s.value("spikeCount",         6);
     st.spikeAngle         = s.value("spikeAngle",         0.0f);
     st.spikeLength        = s.value("spikeLength",        0.27f);
-    st.spikeDecay         = s.value("spikeDecay",         1.11f);
+    st.spikeDecay         = s.value("spikeDecay",         SceneSettings{}.spikeDecay);
     st.spikeSecondary     = s.value("spikeSecondary",     0.72f);
     st.spikeChroma        = s.value("spikeChroma",        0.65f);
-    st.unresolvedStrength = s.value("unresolvedStrength", 6.83f);
-    st.unresolvedSize     = s.value("unresolvedSize",     32.4f);
-    st.resolvedCut        = s.value("resolvedCut",        0.6f);
+    st.unresolvedStrength = s.value("unresolvedStrength", SceneSettings{}.unresolvedStrength);
+    st.unresolvedSize     = s.value("unresolvedSize",     SceneSettings{}.unresolvedSize);
+    st.resolvedCut        = s.value("resolvedCut",        SceneSettings{}.resolvedCut);
     st.gasStrength        = s.value("gasStrength",        0.5f);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
     st.dustStrength       = s.value("dustStrength",       1.0f);
@@ -551,9 +551,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dustGlow           = s.value("dustGlow",           1.4f);
     st.dustPhaseG         = s.value("dustPhaseG",         0.05f);
     st.dustSkinDepth      = s.value("dustSkinDepth",      8.0f);
-    st.dustSkinContrast   = s.value("dustSkinContrast",   10.0f);
+    st.dustSkinContrast   = s.value("dustSkinContrast",   SceneSettings{}.dustSkinContrast);
     st.cineSSAA           = s.value("cineSSAA",           1.5f);
-    st.dustDetail         = s.value("dustDetail",         14000);
+    st.dustDetail         = s.value("dustDetail",         SceneSettings{}.dustDetail);
 
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);

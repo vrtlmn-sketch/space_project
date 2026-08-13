@@ -586,9 +586,9 @@ public:
   float dopplerBrightnessStr{2.0f}; // brightness exponent: brightness *= D^this
   float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
-  float unresolvedStrength{6.83f};// unresolved-star field brightness (0 = off)
-  float unresolvedSize{32.4f};   // unresolved lobe angular width (x fixed PSF floor)
-  float resolvedCut{0.6f};       // only stars brighter than this draw as sharp cores
+  float unresolvedStrength{3.4f};// unresolved-star field brightness (0 = off)
+  float unresolvedSize{45.55f};   // unresolved lobe angular width (x fixed PSF floor)
+  float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)
   float dustStrength{1.0f};     // dust extinction amount (0 = off)
   float dustInfluence{1.0f};     // world-space dust radius, set from the cloud bounds
@@ -601,10 +601,10 @@ public:
   float dustGlow{1.4f};         // dust in-scatter: 0 = extinction only, >0 = glowing dust
   float dustPhaseG{0.05f};       // scatter directionality: 0 = even everywhere, high = backlit-only
   float dustSkinDepth{8.0f};    // clump-scale self-shadow march step (in clump radii)
-  float dustSkinContrast{10.0f}; // opacity per clump radius → how hard shape is exposed
+  float dustSkinContrast{6.5f}; // opacity per clump radius → how hard shape is exposed
   int   dustDetail{14000};        // target # of points the dust samples (fixed resolution)
   float dustSampleFrac{1.0f};    // computed each frame = dustDetail / cloud points sent
-  float edgeLightStrength{2.15f}; // screen-space rim light on dust edges (0 = off)
+  float edgeLightStrength{0.45f}; // screen-space rim light on dust edges (0 = off)
   float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
   // ── Simulation vs playback speed ──
@@ -847,16 +847,16 @@ public:
   void RescanProjects();
 
   // ---- RT photographic post-process (bloom + ACES tonemap) ----
-  float  rtExposure{1.0f};      // photographic exposure multiplier
-  float  bloomStrength{0.45f};   // how much bloom is added back
+  float  rtExposure{0.92f};      // photographic exposure multiplier
+  float  bloomStrength{0.045f};   // how much bloom is added back
   float  bloomThreshold{0.0f};  // brightness above which pixels bloom
 
   // ---- Diffraction spikes (synthetic PSF) ----
-  float  spikeStrength{1.45f};   // spike intensity (0 = off)
+  float  spikeStrength{1.56f};   // spike intensity (0 = off)
   int    spikeCount{6};         // number of spikes (6 = JWST, 4 = Hubble)
   float  spikeAngle{0.0f};      // base rotation (radians)
   float  spikeLength{0.27f};     // reach, fraction of the smaller bloom dimension
-  float  spikeDecay{1.11f};      // falloff along the spike (higher = shorter)
+  float  spikeDecay{0.966f};      // falloff along the spike (higher = shorter)
   float  spikeSecondary{0.72f}; // faint secondary spike pair (0 = off)
   float  spikeChroma{0.65f};     // chromatic tint toward the spike tips (0 = white)
 

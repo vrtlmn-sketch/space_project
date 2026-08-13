@@ -141,6 +141,20 @@ Before touching a shared pass, capture a before/after on BOTH a near view and
 an in-galaxy view (`UNIVERSE_CAM_DIST=8`) and diff them — a scene-average
 mean can hide a large local change.
 
+## Defaults live in ONE place
+
+`SceneSettings` (projectSerializer.h) holds the default look. The JSON loader's
+fallbacks now read `SceneSettings{}.field` instead of repeating a literal —
+they used to be a second, silently diverging copy, so changing a struct default
+did nothing for any project file that omitted the key. `Renderer`'s own members
+carry the same values for the pre-project startup state; keep the two in sync.
+
+The current defaults ARE the signed-off milky_way look (resolvedCut 0.0,
+unresolvedStrength 3.4, unresolvedSize 45.55, bloom 0.045, edgeLight 0.45,
+spikeStrength 1.56, spikeDecay 0.966, rtExposure 0.92, dustSkinContrast 6.5,
+dustDetail 14000). Verified: stripping those keys from a project renders the
+same image the explicit values do.
+
 ## Never derive a per-scene render parameter from ONE object
 
 `uDustInfluence` — the world scale the per-star colour/magnitude hash and the
