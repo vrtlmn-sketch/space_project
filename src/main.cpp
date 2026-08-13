@@ -990,7 +990,14 @@ int main(int argc, char** argv) {
                                      physicsObjects[i].data.velocity,
                                      physicsObjects[i].data.color);
         }
-        for (auto& c : clouds) {
+        // Far to near, like the live view: clouds draw with depth writes off,
+        // so list order let a distant galaxy LOD paint over a near galaxy in
+        // RECORDINGS even after the live fix. cameraTranslate here is already
+        // the RECORD camera (BeginRecordCamera swaps it in).
+        static std::vector<int> recOrder;
+        BuildCloudDrawOrder(clouds, renderer.cameraTranslate, recOrder);
+        for (int ci : recOrder) {
+          auto& c = clouds[ci];
           c->renderedObject.uploadTemperature(c->temperature);
           c->renderedObject.uploadRenderMode(c->renderMode);
           c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
@@ -1042,7 +1049,11 @@ int main(int argc, char** argv) {
                                    physicsObjects[i].data.velocity,
                                    physicsObjects[i].data.color);
       }
-      for (auto& c : clouds) {
+      // Same far-to-near order as the live view and recordings (see above).
+      static std::vector<int> snapOrder;
+      BuildCloudDrawOrder(clouds, renderer.cameraTranslate, snapOrder);
+      for (int ci : snapOrder) {
+        auto& c = clouds[ci];
         c->renderedObject.uploadTemperature(c->temperature);
         c->renderedObject.uploadRenderMode(c->renderMode);
         c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
