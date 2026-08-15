@@ -138,12 +138,19 @@ vec4 ringSample(int i, vec3 ro, vec3 rd, float tMax, out float tOut)
     return vec4(Lo * alpha, alpha);
 }
 
-// Composite every ring the ray crosses in front of tMax, over an already-shaded
-// colour. Front to back, so overlapping rings blend in the right order.
-vec3 ringsComposite(vec3 color, vec3 ro, vec3 rd, float tMax)
+// Accumulate the rings a STRAIGHT sub-segment crosses, front to back, into a
+// running (colour, transmittance) pair. The geodesic shaders walk their bent ray
+// as a chain of these, so rings lens along with everything else instead of being
+// tested once against the straight camera ray. Pass tMax = the segment's solid
+// hit distance and a ring behind that surface cannot show through it.
+//
+// The plane test at the top of ringSample is the cheap reject: across a few
+// hundred steps only one or two segments actually cross a given ring.
+void ringsAccumulateSegment(vec3 ro, vec3 rd, float tMax, inout vec3 acc, inout float T)
 {
+    if (T <= 0.002) return;
     int n = min(uRingCount, RT_RING_SCAN);
-    if (n <= 0) return color;
+    if (n <= 0) return;
 
     float ts[RT_RING_HITS];
     vec4  cs[RT_RING_HITS];
@@ -153,10 +160,6 @@ vec3 ringsComposite(vec3 color, vec3 ro, vec3 rd, float tMax)
         vec4 s = ringSample(i, ro, rd, tMax, t);
         if (s.a > 0.0005) { ts[m] = t; cs[m] = s; m++; }
     }
-    if (m == 0) return color;
-
-    vec3  acc = vec3(0.0);
-    float T   = 1.0;
     for (int k = 0; k < m; k++) {
         int   best = -1;
         float bt   = 1e30;
@@ -167,6 +170,14 @@ vec3 ringsComposite(vec3 color, vec3 ro, vec3 rd, float tMax)
         T   *= 1.0 - cs[best].a;
         ts[best] = -1.0;
     }
+}
+
+// Straight-ray convenience wrapper (the Simple raytracer).
+vec3 ringsComposite(vec3 color, vec3 ro, vec3 rd, float tMax)
+{
+    vec3  acc = vec3(0.0);
+    float T   = 1.0;
+    ringsAccumulateSegment(ro, rd, tMax, acc, T);
     return acc + T * color;
 }
 

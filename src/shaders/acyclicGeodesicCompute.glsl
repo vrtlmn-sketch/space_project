@@ -354,6 +354,8 @@ uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 =
 // Shared galaxy look (colours, luminosity + core-gating, FBM dust, gas,
 // pointSourceGlow) — one file, included by every RT method so they stay 1:1.
 #include "galaxy_common.glsl"
+#include "rings_common.glsl"
+#include "rings_rt.glsl"
 
 // ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.
@@ -441,8 +443,10 @@ vec3 applyAtmospheres(vec3 ro, vec3 rd, float maxT, vec3 col)
 // Shading (identical to geodesic shader)
 // ---------------------------------------------------------------------------
 
-vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor)
+vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor, int selfIdx)
 {
+    // Footprint of one pixel on this surface, for the ring profile filter.
+    float ringPix = ringPixelWidth(length(ro - hitPos));
     // Mirrors the rasterizer's defaultFrag.glsl lighting exactly:
     // strong distance falloff + tiny ambient = harsh space lighting.
     vec3 viewDir    = normalize(ro - hitPos);
@@ -463,7 +467,8 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 normal, vec3 baseColor)
         vec3  ldir    = normalize(toLight);
 
         // Inverse square, normalised: full brightness at 1 AU from a star
-        float attenuation = 1.0 / max(dist2, 1e-9);
+        float attenuation = ringShadowRT(selfIdx, hitPos, ldir, ringPix)
+                          / max(dist2, 1e-9);
 
         float diff  = max(dot(normal, ldir), 0.0);
         vec3  half_ = normalize(ldir + viewDir);
@@ -512,7 +517,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
             }
             else
             {
-                reflCol = shadePlanet(ro, rHit, rNorm, objects[i].color.xyz);
+                reflCol = shadePlanet(ro, rHit, rNorm, objects[i].color.xyz, -1);
             }
             break;
         }
@@ -831,6 +836,10 @@ void main()
 
     // Track state for glow accumulation during integration
     vec3  curvedGlow         = vec3(0.0);
+    // Rings accumulate ALONG the bent ray, segment by segment, so they
+    // lens with everything else instead of riding the straight camera ray.
+    vec3  ringAcc            = vec3(0.0);
+    float ringT              = 1.0;
     float cloudTransmittance = 1.0;
     vec3  nebulaScatter      = vec3(0.0);
     bool  captured   = false;
@@ -955,6 +964,8 @@ void main()
                         segHitTan  = mtan;
                     }
                 }
+
+                ringsAccumulateSegment(prevPos, segNorm, segTMin, ringAcc, ringT);
 
                 if (segHit >= 0)
                 {
@@ -1184,6 +1195,11 @@ void main()
                 hitTangent = mtan;
             }
         }
+        // Rings along the straight escape line, clipped at whatever it hit.
+        // Rays that leave the marched region finish as a straight ray, so the
+        // ansae of a ring far from the black hole live out here, not in the loop.
+        ringsAccumulateSegment(finalPos, finalVel, escTMin, ringAcc, ringT);
+
 
         // Glow from objects along escape direction
         for (int i = 0; i < uObjectCount; i++)
@@ -1380,7 +1396,7 @@ void main()
                          ? texture(uPlanetTextures, vec3(hitUV, float(dLayer))).rgb
                          : objects[hitIdx].color.xyz;
             vec3 N = applyMeshNormalMap(hitNorm, hitTangent, hitUV, objects[hitIdx].material);
-            color = shadePlanet(ro, hitPos, N, base);
+            color = shadePlanet(ro, hitPos, N, base, -1);
         }
         else
         {
@@ -1388,7 +1404,7 @@ void main()
             vec3 nObj = invRotateN(objects[hitIdx].rotation, hitNorm);
             vec3 base = planetBaseColor(objects[hitIdx].color, nObj);
             vec3 Nw   = rotateN(objects[hitIdx].rotation, applyPlanetNormalMap(nObj, objects[hitIdx].material));
-            vec3 lit  = shadePlanet(ro, hitPos, Nw, base);
+            vec3 lit  = shadePlanet(ro, hitPos, Nw, base, hitIdx);
             vec3 refl = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, finalVel, hitPos, Nw);
@@ -1416,6 +1432,9 @@ void main()
         else
             color = applyAtmospheres(finalPos, finalVel, 1e9, color);
     }
+
+    // Rings last, matching the rasterizer's planet -> atmosphere -> rings order.
+    color = ringAcc + ringT * color;
 
     color  = color * cloudTransmittance + nebulaScatter;
     color += curvedGlow;

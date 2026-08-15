@@ -99,6 +99,11 @@ raster mean luminance of **~48.63** (band 48.63–48.65 across runs; wider when
 the user's live session holds the GPU). Check it after any shared-shader or
 cloud-pipeline change.
 
+The same scene's other two renderers, for changes that touch the compute path:
+**RT ~21.65** (`/tmp/cmp_rt.png`) and **geodesic ~29.50** (`/tmp/cmp_geo.png`,
+spread 29.49–29.52, so treat anything under ~0.05 as noise). Note this scene as
+committed has NO rings, which is what makes it a valid control for ring work.
+
 **The number tracks the PROJECT FILE, not just the code.** History: 60.95 for a
 long stretch, ~61.61 after the float->double position work, then 46.68 when the
 user retuned milky_way.json (resolvedCut 0.6->0.0, unresolvedStrength
@@ -272,13 +277,18 @@ rings need not be coplanar. Radii, thickness and centre offset are in PLANET
 RADII, so a ring keeps its proportions when `visualRadius` is edited or size
 exaggeration is switched on.
 
-Rings render in the rasterizer and in **Simple RT** (`raytracerCompute` +
-`raytracerDopplerCompute`). The four GEODESIC shaders do not have them yet.
+Rings render in the rasterizer and in **all six** compute shaders.
 `RayTracerObject` is a fixed 96-byte struct with every spare `.w` lane already
 carrying cloud params, so rings ride their own SSBO on **binding 6** (`RtRing`,
-10x vec4). The look comes from `rings_common.glsl` for both views, and
-`rings_rt.glsl` holds the RT-only plumbing — so the geodesic port is three small
-edits per shader, not a second definition of the look.
+10x vec4). The look comes from `rings_common.glsl` for both views and
+`rings_rt.glsl` holds the RT-only plumbing, so there is exactly ONE definition
+of how a ring looks.
+
+In the geodesic shaders rings are **lensed**: `ringsAccumulateSegment` runs on
+each marched sub-segment with the segment's own solid-hit distance as its
+clip, so rings bend with everything else and a ring behind a surface cannot
+show through it. Verified by parking a black hole beside Saturn — the ansae
+warp exactly as the planet does.
 
 ### Traps the RT port hit
 
@@ -302,6 +312,19 @@ edits per shader, not a second definition of the look.
 - **Compute shaders have no `fwidth`.** The profile's filter width comes from
   the projection instead: `t * 2 / (uProj[1][1] * uResolution.y)`. That is exact
   rather than a screen-space difference, so it is the better source anyway.
+- **A geodesic ray does NOT end when the marching loop does.** Rays that leave
+  the marched region finish as a straight line from `pos`/`vel` (`finalPos`/
+  `finalVel` in the acyclic pair), and that escape block runs its own solid-hit
+  scan. Accumulating rings only inside the loop rendered the ring that crossed
+  the planet and dropped both ansae — anything volumetric needs a second call on
+  the escape line, clipped at `escTMin`.
+- **The two acyclic shaders carry a DIFFERENT `shadePlanet`** —
+  `(ro, hitPos, normal, baseColor)`, the nav-style LDR model, with no clouds and
+  no night lights. A patch written against the other four will not apply; the
+  ring shadow rides their `attenuation` term instead of a radiance vector.
+- Under extreme lensing the geodesic shaders draw hard-edged black wedges across
+  a planet. That is **pre-existing** integrator stepping, not rings — it renders
+  identically with rings switched off.
 
 - **ONE proxy mesh per planet.** `GenerateRingMesh` makes a unit annulus
   parameterised by (radial 0..1, azimuth); `ringVert` builds the real geometry
@@ -338,8 +361,7 @@ edits per shader, not a second definition of the look.
   the shot off the plane.
 - `Snap` renders through `CaptureImage()` (the raytracer) unless the Cinematic
   View is on AND set to Performant, in which case it renders the raster path.
-  Both carry rings now; a screenshot taken with the geodesic methods still will
-  not, until those four shaders are ported.
+  Both carry rings, in every render method.
 - **"Vertical Falloff" is an exponent, not a literal vertical density profile.**
   For a ray fully crossing a slab, any normalised vertical profile integrates to
   the same column, so the parameter would do nothing if taken literally. What it

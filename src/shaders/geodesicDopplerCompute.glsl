@@ -354,6 +354,8 @@ uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 =
 // Shared galaxy look (colours, luminosity + core-gating, FBM dust, gas,
 // pointSourceGlow) — one file, included by every RT method so they stay 1:1.
 #include "galaxy_common.glsl"
+#include "rings_common.glsl"
+#include "rings_rt.glsl"
 #include "clouds_common.glsl"
 
 // ---------------------------------------------------------------------------
@@ -463,8 +465,11 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 // DAY-GATED ambient (night side goes genuinely black), and emissive night-side
 // city lights (nightEm, pre-sampled by the caller; vec3(0) = none).
 vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 nightEm,
-                 vec3 nObj, vec3 pColor, vec4 rot, vec4 cloudP0, vec4 cloudP1)
+                 vec3 nObj, vec3 pColor, vec4 rot, vec4 cloudP0, vec4 cloudP1,
+                 int selfIdx)
 {
+    // Footprint of one pixel on this surface, for the ring profile filter.
+    float ringPix = ringPixelWidth(length(ro - hitPos));
     vec3  V      = normalize(ro - hitPos);
     float NdotVg = max(dot(geoN, V), 1e-3);
     float NdotV  = max(dot(N, V), 1e-3);
@@ -492,7 +497,10 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 n
         dayMax      = max(dayMax, dot(geoN, L));
         float lT    = objects[i].temperature;
         vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
-        vec3  radiance = lCol * (1.0 / max(dist2, 1e-9));
+        // This planet's own rings block the light, but must not move the
+        // terminator, so the shadow scales radiance only.
+        vec3  radiance = lCol * (ringShadowRT(selfIdx, hitPos, L, ringPix)
+                                 / max(dist2, 1e-9));
         float D = distributionGGX(N, H, rough);
         float G = geometrySmith(N, V, L, rough);
         vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
@@ -539,7 +547,9 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 n
                 vec3  L     = normalize(toL);
                 float lT    = objects[i].temperature;
                 vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
-                cloudLo += cloudBase * lCol * (max(dot(Ncw, L), 0.0) / max(dist2, 1e-9));
+                cloudLo += cloudBase * lCol
+                         * (max(dot(Ncw, L), 0.0) * ringShadowRT(selfIdx, hitPos, L, ringPix)
+                            / max(dist2, 1e-9));
                 cnL++;
             }
             if (cnL == 0)
@@ -595,7 +605,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
                 reflCol = blackbody(objects[i].temperature) * limb;
             }
             else reflCol = shadePlanet(ro, rHit, rNorm, rNorm, objects[i].color.xyz, vec3(0.0),
-                                      rNorm, objects[i].color.xyz, objects[i].rotation, vec4(0.0), vec4(0.0));
+                                      rNorm, objects[i].color.xyz, objects[i].rotation, vec4(0.0), vec4(0.0), -1);
             break;
         }
     }
@@ -691,6 +701,10 @@ void main()
     vec3  hitTangent = vec3(1.0, 0.0, 0.0);
 
     vec3  curvedGlow          = vec3(0.0);
+    // Rings accumulate ALONG the bent ray, segment by segment, so they
+    // lens with everything else instead of riding the straight camera ray.
+    vec3  ringAcc             = vec3(0.0);
+    float ringT               = 1.0;
     float cloudTransmittance  = 1.0;
     float dustTau             = 0.0;   // dust column, integrated along the BENT path
     // Per-particle dust (converged with Simple RT), segment-ownership gated.
@@ -770,6 +784,8 @@ void main()
                 }
                 if (t > 0.0 && t < segTMin) { segTMin = t; segHit = i; segHitNorm = nrm; segHitUV = muv; segHitTan = mtan; }
             }
+
+            ringsAccumulateSegment(prevPos, segNorm, segTMin, ringAcc, ringT);
 
             if (segHit >= 0)
             {
@@ -988,6 +1004,11 @@ void main()
                 hitTangent = mtan;
             }
         }
+        // Rings along the straight escape line, clipped at whatever it hit.
+        // Rays that leave the marched region finish as a straight ray, so the
+        // ansae of a ring far from the black hole live out here, not in the loop.
+        ringsAccumulateSegment(pos, vel, escTMin, ringAcc, ringT);
+
 
         for (int i = 0; i < uObjectCount; i++)
         {
@@ -1092,7 +1113,7 @@ void main()
                          : objects[hitIdx].color.xyz;
             vec3 N = applyMeshNormalMap(hitNorm, hitTangent, hitUV, objects[hitIdx].material);
             color = shadePlanet(ro, hitPos, hitNorm, N, base, vec3(0.0),
-                                hitNorm, objects[hitIdx].color.xyz, objects[hitIdx].rotation, vec4(0.0), vec4(0.0));
+                                hitNorm, objects[hitIdx].color.xyz, objects[hitIdx].rotation, vec4(0.0), vec4(0.0), -1);
         }
         else
         {
@@ -1104,7 +1125,7 @@ void main()
             vec4 cldP1   = vec4(objects[hitIdx].atmo.w, objects[hitIdx].atmoScatter.w,
                                 objects[hitIdx].rotation.w, objects[hitIdx].position.w);
             vec3 lit  = shadePlanet(ro, hitPos, hitNorm, Nw, base, nightEm,
-                                    nObj, objects[hitIdx].color.xyz, objects[hitIdx].rotation, cldP0, cldP1);
+                                    nObj, objects[hitIdx].color.xyz, objects[hitIdx].rotation, cldP0, cldP1, hitIdx);
             vec3 refl = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, vel, hitPos, Nw);
@@ -1137,6 +1158,9 @@ void main()
         else
             color = applyAtmospheres(pos, vel, 1e9, color);
     }
+
+    // Rings last, matching the rasterizer's planet -> atmosphere -> rings order.
+    color = ringAcc + ringT * color;
 
     color  = color * cloudTransmittance + nebulaScatter;
     color += curvedGlow;
