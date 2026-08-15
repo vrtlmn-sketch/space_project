@@ -141,6 +141,7 @@ static void buildScene(
     po.cloudAltitude       = pod.cloudAltitude;
     po.cloudWhiteness      = pod.cloudWhiteness;
     po.cloudDrift          = pod.cloudDrift;
+    po.rings               = pod.rings;
     po.atmosphereHeight    = pod.atmosphereHeight;
     po.atmosphereFalloff   = pod.atmosphereFalloff;
     po.atmosphereIntensity = pod.atmosphereIntensity;
@@ -1136,6 +1137,10 @@ int main(int argc, char** argv) {
           obj.EnsureAtmosphere();
           obj.atmosphereObject.uploadStarLighting(starPositions, starColors);
         }
+        if (obj.shaderType == ObjectType::Planet && obj.hasVisibleRings()) {
+          obj.EnsureRingMesh();
+          obj.ringMesh.uploadStarLighting(starPositions, starColors);
+        }
       }
       if (obj.shaderType == ObjectType::Star) {
         obj.renderedObject.uploadTemperature(obj.temperature);
@@ -1242,8 +1247,10 @@ int main(int argc, char** argv) {
     }
 
     // Atmosphere shells — blended pass after all solid geometry
-    for (auto& obj : physicsObjects)
+    for (auto& obj : physicsObjects) {
       renderer.DrawAtmosphere(obj);
+      renderer.DrawRings(obj);
+    }
 
     if (recOverridePause) renderer.paused = savedPaused;
 
@@ -1373,8 +1380,10 @@ int main(int argc, char** argv) {
                                              renderer.dustContrast);
           renderer.Draw(c->renderedObject);
         }
-        for (auto& obj : physicsObjects)
+        for (auto& obj : physicsObjects) {
           renderer.DrawAtmosphere(obj);
+          renderer.DrawRings(obj);
+        }
         renderer.CaptureRecordRasterVideo(rw, rh);
         renderer.EndRecordRaster();
       } else {
@@ -1430,8 +1439,10 @@ int main(int argc, char** argv) {
                                            renderer.dustContrast);
         renderer.Draw(c->renderedObject);
       }
-      for (auto& obj : physicsObjects)
+      for (auto& obj : physicsObjects) {
         renderer.DrawAtmosphere(obj);
+        renderer.DrawRings(obj);
+      }
       renderer.CaptureRecordRasterImage(rw, rh);
       renderer.EndRecordRaster();
       renderer.rayTracerView = sRt; renderer.realisticRasterView = sRR;
@@ -1531,8 +1542,10 @@ int main(int argc, char** argv) {
                                              renderer.dustContrast);
           renderer.Draw(c->renderedObject);
         }
-        for (auto& obj : physicsObjects)
+        for (auto& obj : physicsObjects) {
           renderer.DrawAtmosphere(obj);
+          renderer.DrawRings(obj);
+        }
         renderer.SetImagePath("/tmp/cmp_raster.png");
         renderer.CaptureRecordRasterImage(W, H);
         renderer.EndRecordRaster();
@@ -1616,8 +1629,10 @@ int main(int argc, char** argv) {
                                          renderer.dustContrast);
       renderer.Draw(c->renderedObject);
     }
-    for (auto& obj : physicsObjects)
+    for (auto& obj : physicsObjects) {
       renderer.DrawAtmosphere(obj);
+      renderer.DrawRings(obj);
+    }
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO

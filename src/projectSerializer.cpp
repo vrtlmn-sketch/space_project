@@ -97,6 +97,30 @@ bool ProjectSerializer::Save(const std::string& path,
     o["cloudAltitude"]       = obj.cloudAltitude;
     o["cloudWhiteness"]      = obj.cloudWhiteness;
     o["cloudDrift"]          = obj.cloudDrift;
+    if (!obj.rings.empty()) {
+      json ringsArr = json::array();
+      for (const auto& rg : obj.rings) {
+        json r;
+        r["enabled"]           = rg.enabled;
+        r["name"]              = rg.name;
+        r["innerRadius"]       = rg.innerRadius;
+        r["outerRadius"]       = rg.outerRadius;
+        r["orientation"]       = vec3ToJson(rg.orientation);
+        r["tilt"]              = rg.tilt;
+        r["warp"]              = rg.warp;
+        r["thickness"]         = rg.thickness;
+        r["verticalFalloff"]   = rg.verticalFalloff;
+        r["edgeSoftness"]      = rg.edgeSoftness;
+        r["opacity"]           = rg.opacity;
+        r["banding"]           = rg.banding;
+        r["color"]             = vec3ToJson(rg.color);
+        r["eccentricity"]      = rg.eccentricity;
+        r["eccentricityAngle"] = rg.eccentricityAngle;
+        r["centerOffset"]      = vec3ToJson(rg.centerOffset);
+        ringsArr.push_back(r);
+      }
+      o["rings"] = ringsArr;
+    }
     o["simulatePhysics"]     = obj.simulatePhysics;
     o["keyframes"]           = keyframesToJson(obj.keyframes);
     o["meshPath"]            = obj.meshPath;
@@ -389,6 +413,30 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.cloudAltitude       = o.value("cloudAltitude",       0.02f);
       pod.cloudWhiteness      = o.value("cloudWhiteness",      1.0f);
       pod.cloudDrift          = o.value("cloudDrift",          0.0f);
+      if (o.contains("rings") && o["rings"].is_array()) {
+        const PlanetRing def{};   // one source of ring defaults (physicsObject.h)
+        for (const auto& r : o["rings"]) {
+          PlanetRing rg;
+          rg.enabled           = r.value("enabled",           def.enabled);
+          rg.name              = r.value("name",              std::string{});
+          rg.innerRadius       = r.value("innerRadius",       def.innerRadius);
+          rg.outerRadius       = r.value("outerRadius",       def.outerRadius);
+          rg.orientation       = r.contains("orientation") ? jsonToVec3(r["orientation"]) : def.orientation;
+          rg.tilt              = r.value("tilt",              def.tilt);
+          rg.warp              = r.value("warp",              def.warp);
+          rg.thickness         = r.value("thickness",         def.thickness);
+          rg.verticalFalloff   = r.value("verticalFalloff",   def.verticalFalloff);
+          rg.edgeSoftness      = r.value("edgeSoftness",      def.edgeSoftness);
+          rg.opacity           = r.value("opacity",           def.opacity);
+          rg.banding           = r.value("banding",           def.banding);
+          rg.color             = r.contains("color") ? jsonToVec3(r["color"]) : def.color;
+          rg.eccentricity      = r.value("eccentricity",      def.eccentricity);
+          rg.eccentricityAngle = r.value("eccentricityAngle", def.eccentricityAngle);
+          rg.centerOffset      = r.contains("centerOffset") ? jsonToVec3(r["centerOffset"]) : def.centerOffset;
+          pod.rings.push_back(rg);
+          if ((int)pod.rings.size() >= kMaxPlanetRings) break;
+        }
+      }
       pod.simulatePhysics     = o.value("simulatePhysics", true);
       if (o.contains("keyframes")) pod.keyframes = jsonToKeyframes(o["keyframes"]);
       pod.meshPath            = o.value("meshPath", std::string{});

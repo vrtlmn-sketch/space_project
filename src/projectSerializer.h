@@ -38,6 +38,7 @@ struct PhysicsObjectData {
   float cloudAltitude{0.02f};
   float cloudWhiteness{1.0f};
   float cloudDrift{0.0f};
+  std::vector<PlanetRing> rings;   // absent in the file = no rings
   bool  simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
   std::string meshPath{};  // free object: OBJ mesh path (empty = sphere object)

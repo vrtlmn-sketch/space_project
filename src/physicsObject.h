@@ -37,6 +37,36 @@ inline const char* TypeLabel(ObjectType t) {
 // Assign the rasterized shader for a type (FreeModel is lit like a planet).
 void ApplyShaderForType(RenderedObject& ro, ObjectType t);
 
+// One procedural ring around a planet. A planet holds a LIST of these, so a
+// system can be layered out of several — every parameter is per-ring, including
+// the plane, so two rings need not be coplanar.
+//
+// Radii, thickness and centre offset are in PLANET RADII, not AU: that way a
+// ring keeps its proportions when visualRadius is edited or size exaggeration
+// is switched on. Saturn's real rings run 1.11 to 2.27.
+struct PlanetRing {
+  bool  enabled{true};
+  std::string name;                        // "" = "Ring N"
+  float innerRadius{1.20f};
+  float outerRadius{2.27f};
+  vec3  orientation{0.0f, 0.0f, 0.0f};     // mean plane, Euler X/Y/Z degrees
+  float tilt{0.0f};                        // extra tilt about the ring's own X axis
+  float warp{0.0f};                        // out-of-plane bend, growing outward
+  float thickness{0.010f};                 // sets where edge-on thickening stops
+  float verticalFalloff{1.0f};             // 0 = none, 1 = physical, >1 = exaggerated
+  float edgeSoftness{0.06f};               // fade width as a fraction of the ring
+  float opacity{0.85f};
+  float banding{0.55f};                    // procedural gaps and ringlets
+  vec3  color{0.78f, 0.71f, 0.58f};
+  float eccentricity{0.0f};
+  float eccentricityAngle{0.0f};           // degrees
+  vec3  centerOffset{0.0f, 0.0f, 0.0f};
+};
+
+// Ring uniforms are fixed-size arrays in the surface shader, so the list is
+// capped. Keep this in step with MAX_RINGS in defaultFrag.glsl.
+inline constexpr int kMaxPlanetRings = 8;
+
 class PhysicsObject
 {
 private:
@@ -88,6 +118,19 @@ public:
   float cloudAltitude{0.02f};   // deck height (terminator offset, shadows)
   float cloudWhiteness{1.0f};   // 1 = white clouds; 0 = tinted by planet colour (bands)
   float cloudDrift{0.0f};       // drift speed (0 = static → RT stays cacheable)
+
+  // ---- Procedural rings (planets only) ----
+  // One shared proxy mesh drawn once per ring; every ring's geometry is built
+  // from its own uniforms in ringVert, so adding a ring costs a draw call and
+  // no memory.
+  std::vector<PlanetRing> rings;
+  RenderedObject ringMesh;
+  void EnsureRingMesh();
+  bool hasVisibleRings() const {
+    for (const auto& r : rings)
+      if (r.enabled && r.outerRadius > r.innerRadius) return true;
+    return false;
+  }
 
   // Visual size, decoupled from mass (mass only drives gravity).
   // Defaults to the old mass-derived formula at construction.

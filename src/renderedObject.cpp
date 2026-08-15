@@ -1230,6 +1230,30 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     GLint c1 = glGetUniformLocation(program, "uCloudP1");
     if (c1 >= 0) glUniform4f(c1, rtCloudP1.x, rtCloudP1.y, rtCloudP1.z, rtCloudP1.w);
   }
+  {
+    // Ring shadows. The count goes up on EVERY draw, not just when this object
+    // has rings: the program is shared, so a planet with rings would otherwise
+    // leave its uRingCount behind and stripe the next planet drawn after it.
+    GLint rcLoc = glGetUniformLocation(program, "uRingCount");
+    if (rcLoc >= 0) {
+      const int n = (int)std::min(ringShadows.size(), (size_t)8);
+      glUniform1i(rcLoc, n);
+      if (n > 0) {
+        float rot[8 * 9], geom[8 * 4], shape[8 * 4], cen[8 * 4];
+        for (int i = 0; i < n; i++) {
+          std::memcpy(&rot[i * 9], ringShadows[i].rot, 9 * sizeof(float));
+          const vec4& g = ringShadows[i].geom;  geom[i*4+0]=g.x;  geom[i*4+1]=g.y;  geom[i*4+2]=g.z;  geom[i*4+3]=g.w;
+          const vec4& s = ringShadows[i].shape; shape[i*4+0]=s.x; shape[i*4+1]=s.y; shape[i*4+2]=s.z; shape[i*4+3]=s.w;
+          const vec4& c = ringShadows[i].center; cen[i*4+0]=c.x;  cen[i*4+1]=c.y;   cen[i*4+2]=c.z;   cen[i*4+3]=c.w;
+        }
+        GLint l;
+        if ((l = glGetUniformLocation(program, "uRingRot"))    >= 0) glUniformMatrix3fv(l, n, GL_TRUE, rot);
+        if ((l = glGetUniformLocation(program, "uRingGeom"))   >= 0) glUniform4fv(l, n, geom);
+        if ((l = glGetUniformLocation(program, "uRingShape"))  >= 0) glUniform4fv(l, n, shape);
+        if ((l = glGetUniformLocation(program, "uRingCenter")) >= 0) glUniform4fv(l, n, cen);
+      }
+    }
+  }
 
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
@@ -1289,6 +1313,119 @@ void RenderedObject::renderSkybox(const double cameraTranslate[3], const float v
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
   glDepthMask(GL_TRUE);
   hasBeenRendered = true;
+}
+
+// A unit annulus: (radial 0..1, azimuth) per vertex, laid out exactly like a
+// generated sphere (pos/normal/uv) so it rides the existing sphere attribute
+// path. ringVert turns it into the actual ring, which is what lets ONE mesh
+// serve every ring on the planet — a second ring costs a draw call, not memory.
+void RenderedObject::GenerateRingMesh(int radialSegments, int azimuthSegments)
+{
+  meshType        = MeshType::sphere;   // pos(3)+normal(3)+uv(2) attribute layout
+  hasBeenRendered = false;
+  freeMesh        = false;
+  radius          = 0.0f;
+  freeUnitBuffer.clear();
+  bvhTris.clear();
+  bvhNodes.clear();
+
+  const int nr = std::max(radialSegments, 1);
+  const int na = std::max(azimuthSegments, 3);
+  const float kTwoPi = 6.28318530717958647692f;
+
+  bufferSize = nr * na * 6;
+  UVObjectMeshBuffer.clear();
+  UVObjectMeshBuffer.resize((size_t)bufferSize * 8);
+
+  int idx = 0;
+  auto emit = [&](float u, float th) {
+    UVObjectMeshBuffer[idx++] = std::cos(th);
+    UVObjectMeshBuffer[idx++] = 0.0f;
+    UVObjectMeshBuffer[idx++] = std::sin(th);
+    UVObjectMeshBuffer[idx++] = 0.0f;
+    UVObjectMeshBuffer[idx++] = 1.0f;
+    UVObjectMeshBuffer[idx++] = 0.0f;
+    UVObjectMeshBuffer[idx++] = u;
+    UVObjectMeshBuffer[idx++] = th;
+  };
+
+  for (int i = 0; i < nr; i++) {
+    const float u0 = (float)i / (float)nr;
+    const float u1 = (float)(i + 1) / (float)nr;
+    for (int j = 0; j < na; j++) {
+      const float t0 = kTwoPi * (float)j / (float)na;
+      const float t1 = kTwoPi * (float)(j + 1) / (float)na;
+      emit(u0, t0); emit(u1, t0); emit(u1, t1);
+      emit(u0, t0); emit(u1, t1); emit(u0, t1);
+    }
+  }
+}
+
+void RenderedObject::renderRing(const double cameraTranslate[3], const float viewRot[9], float fovDeg,
+                                int fbWidth, int fbHeight,
+                                float planetRadius, const PlanetRing& ring, bool realistic)
+{
+  if (!program || ring.outerRadius <= ring.innerRadius) return;
+  if (!hasBeenRendered) {
+    setupRender();
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size() * sizeof(float),
+                 UVObjectMeshBuffer.data(), GL_STATIC_DRAW);
+    hasBeenRendered = true;
+  }
+  glBindVertexArray(vao);
+  glUseProgram(program);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+
+  // Ring local -> world: the mean plane, then the extra tilt about the ring's
+  // own X axis (so the tilt slider stays independent of the Euler triple).
+  float R[9];
+  eulerMat3(ring.orientation, R);
+  const float d2r = 0.01745329252f;
+  const float ct = std::cos(ring.tilt * d2r), st = std::sin(ring.tilt * d2r);
+  const float T[9] = { 1, 0, 0,  0, ct, -st,  0, st, ct };
+  float M[9];
+  for (int r = 0; r < 3; r++)
+    for (int c = 0; c < 3; c++)
+      M[r * 3 + c] = R[r * 3 + 0] * T[0 * 3 + c]
+                   + R[r * 3 + 1] * T[1 * 3 + c]
+                   + R[r * 3 + 2] * T[2 * 3 + c];
+
+  glUniformMatrix3fv(glGetUniformLocation(program, "uRingRot"), 1, GL_TRUE, M);
+  glUniform1f(glGetUniformLocation(program, "uRingInner"),    ring.innerRadius * planetRadius);
+  glUniform1f(glGetUniformLocation(program, "uRingOuter"),    ring.outerRadius * planetRadius);
+  glUniform1f(glGetUniformLocation(program, "uRingEcc"),      ring.eccentricity);
+  glUniform1f(glGetUniformLocation(program, "uRingEccAngle"), ring.eccentricityAngle * d2r);
+  glUniform1f(glGetUniformLocation(program, "uRingWarp"),     ring.warp);
+  glUniform3f(glGetUniformLocation(program, "uRingCenter"),
+              ring.centerOffset.x * planetRadius,
+              ring.centerOffset.y * planetRadius,
+              ring.centerOffset.z * planetRadius);
+
+  glUniform1f(glGetUniformLocation(program, "uPlanetRadius"),  planetRadius);
+  glUniform3f(glGetUniformLocation(program, "uRingColor"),     ring.color.x, ring.color.y, ring.color.z);
+  glUniform1f(glGetUniformLocation(program, "uRingOpacity"),   ring.opacity);
+  glUniform1f(glGetUniformLocation(program, "uRingEdgeSoft"),  ring.edgeSoftness);
+  glUniform1f(glGetUniformLocation(program, "uRingBanding"),   ring.banding);
+  glUniform1f(glGetUniformLocation(program, "uRingFalloff"),   ring.verticalFalloff);
+  // Thickness only ever appears as the ratio that decides where edge-on
+  // thickening stops (past it the ray leaves the ring radially instead).
+  glUniform1f(glGetUniformLocation(program, "uRingMaxPath"),
+              ring.outerRadius / std::max(ring.thickness, 1e-6f));
+  glUniform1i(glGetUniformLocation(program, "uRealistic"), realistic ? 1 : 0);
+
+  // Translucent and two-sided: depth-TESTED so the planet hides the far half,
+  // but never depth-written, so the two halves blend instead of clipping.
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+  glDisable(GL_CULL_FACE);
+  glDepthMask(GL_FALSE);
+
+  glDrawArrays(GL_TRIANGLES, 0, bufferSize);
+
+  glDepthMask(GL_TRUE);
+  glDisable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 void RenderedObject::renderAtmosphere(const double cameraTranslate[3], const float viewRot[9], float fovDeg,

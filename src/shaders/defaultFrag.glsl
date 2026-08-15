@@ -31,6 +31,40 @@ uniform vec4      uCloudP1;          // (softness, altitude, whiteness, driftPha
 const float PI = 3.14159265359;
 
 #include "clouds_common.glsl"
+#include "rings_common.glsl"
+
+// ── Ring shadows ──
+// Keep MAX_RINGS in step with kMaxPlanetRings (physicsObject.h). uRingCount is
+// uploaded on every draw, including 0, because the program is shared between
+// objects — see renderMesh.
+#define MAX_RINGS 8
+uniform int   uRingCount;
+uniform mat3  uRingRot[MAX_RINGS];     // world -> ring local
+uniform vec4  uRingGeom[MAX_RINGS];    // inner, outer (world), opacity, edge softness
+uniform vec4  uRingShape[MAX_RINGS];   // eccentricity, ecc angle (rad), banding, max path
+uniform vec4  uRingCenter[MAX_RINGS];  // xyz = centre offset (world), w = vertical falloff
+
+// How much of a light this planet's own rings block on the way to a surface
+// point: one mean-plane crossing per ring, so several rings lay down several
+// bands. Warp is deliberately ignored — the shadow uses the flat mean plane.
+float ringShadowFactor(vec3 P, vec3 L, vec3 planetCentre)
+{
+  int n = min(uRingCount, MAX_RINGS);
+  float s = 1.0;
+  for (int i = 0; i < n; i++) {
+    vec3  o = uRingRot[i] * (P - planetCentre) - uRingCenter[i].xyz;
+    vec3  d = uRingRot[i] * L;
+    float t = ringPlaneHit(o, d);
+    if (t <= 0.0) continue;                       // ring plane is behind the surface
+    float u = ringRadialU(o + d * t, uRingGeom[i].x, uRingGeom[i].y,
+                          uRingShape[i].x, uRingShape[i].y);
+    float dens = ringDensity(u, uRingGeom[i].w, uRingShape[i].z);
+    if (dens <= 0.0005) continue;
+    s *= exp(-ringOpticalDepth(dens * uRingGeom[i].z, d.y,
+                               uRingShape[i].w, uRingCenter[i].w));
+  }
+  return s;
+}
 
 // ── GGX / Cook-Torrance helpers (used only in the realistic HDR path) ──
 float distributionGGX(vec3 N, vec3 H, float rough) {
@@ -138,7 +172,10 @@ void main() {
         vec3  H = normalize(L + V);
         float NdotL = max(dot(N, L), 0.0);
         dayMax = max(dayMax, dot(geoN, L));
-        vec3  radiance = uLightColors[i] * (1.0 / max(dist2, 1e-9));
+        // Rings block the light but must not move the terminator, so the shadow
+        // scales the radiance only — dayMax stays geometric.
+        vec3  radiance = uLightColors[i] * (ringShadowFactor(vPos, L, uPointCoordinates)
+                                            / max(dist2, 1e-9));
         float D = distributionGGX(N, H, rough);
         float G = geometrySmith(N, V, L, rough);
         vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
@@ -205,7 +242,9 @@ void main() {
             vec3  toL   = uLightPositions[i] - vPos;
             float dist2 = dot(toL, toL);
             vec3  L     = normalize(toL);
-            cloudLo += cloudBase * uLightColors[i] * (max(dot(Ncw, L), 0.0) / max(dist2, 1e-9));
+            cloudLo += cloudBase * uLightColors[i]
+                     * (max(dot(Ncw, L), 0.0) * ringShadowFactor(vPos, L, uPointCoordinates)
+                        / max(dist2, 1e-9));
           }
         }
         // Self-shadow: thick decks darken away from the sun (1 tap toward light).
@@ -242,7 +281,8 @@ void main() {
       float dist2       = dot(toLight, toLight);
       vec3  lightDir    = normalize(toLight);
       // Inverse square, normalised: full brightness at 1 AU from a star
-      float attenuation = 1.0 / max(dist2, 1e-9);
+      float attenuation = ringShadowFactor(vPos, lightDir, uPointCoordinates)
+                        / max(dist2, 1e-9);
 
       float diff  = max(dot(norm, lightDir), 0.0);
       vec3  half_ = normalize(lightDir + viewDir);

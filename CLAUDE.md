@@ -243,6 +243,43 @@ constant as it shrinks, i.e. per-pixel brightness rising as d². Removed.
 Never add a floor to a size or a count on a render path without asking what it
 does to flux at the small end.
 
+## Planetary rings are a LIST, and RASTER ONLY
+
+A planet holds `std::vector<PlanetRing> rings` (physicsObject.h), capped at
+`kMaxPlanetRings` = 8. Every parameter is per-ring including the plane, so two
+rings need not be coplanar. Radii, thickness and centre offset are in PLANET
+RADII, so a ring keeps its proportions when `visualRadius` is edited or size
+exaggeration is switched on.
+
+Rings render in the **rasterizer only** — the nav viewport and Cinematic
+Performant. They are absent in RT, which is a deliberate scope call, not a bug:
+`RayTracerObject` is a fixed 96-byte struct with every spare `.w` lane already
+carrying cloud params, so a variable-length ring list needs its own SSBO
+(binding 6 is free) plus the same three edits in all SIX compute shaders. The
+density model lives in `rings_common.glsl` precisely so that port needs no
+second definition of the look.
+
+- **ONE proxy mesh per planet.** `GenerateRingMesh` makes a unit annulus
+  parameterised by (radial 0..1, azimuth); `ringVert` builds the real geometry
+  — elliptical radius, centre offset, warp — from uniforms. A second ring costs
+  a draw call, not memory. Measured: no change to the 700 MB / ~3 s cost.
+- **`uRingCount` must be uploaded on EVERY `renderMesh`, including 0.** Shader
+  programs are shared via `s_programCache`, so a planet with rings otherwise
+  leaves its count set and stripes the next planet drawn with the same program.
+- **The shadow and the ring read the SAME `ringDensity`**, so a shadow band
+  always lines up with the ringlet that cast it. Warp is ignored on the shadow
+  side (it uses the flat mean plane) — that is the one deliberate divergence.
+- **"Vertical Falloff" is an exponent, not a literal vertical density profile.**
+  For a ray fully crossing a slab, any normalised vertical profile integrates to
+  the same column, so the parameter would do nothing if taken literally. What it
+  actually selects is how fast the ring thickens toward edge-on:
+  `pow(min(1/cos, outer/thickness), falloff)` — 0 = no thickening, 1 = exact,
+  >1 = exaggerated.
+- Draw order is planet → atmosphere → rings, all depth-TESTED and never
+  depth-WRITTEN. So the planet correctly hides the far half of a ring, but a
+  ring in front of an atmosphere limb draws over it. Only visible on a planet
+  that has both.
+
 ## The empty sky is ONE value, for both views
 
 `backgroundColor` x `backgroundLevel` (Background & Grid → Empty Sky) is what

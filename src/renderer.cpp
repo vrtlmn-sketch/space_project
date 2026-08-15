@@ -620,6 +620,25 @@ void Renderer::DrawAtmosphere(PhysicsObject& obj) {
                                         obj.atmosphereScatter);
 }
 
+// Rings, drawn after the planet so the depth buffer already holds it and the
+// far half of each ring is hidden correctly. Rasterizer only for now; the ring
+// math lives in rings_common.glsl so the RT path can be added without a second
+// definition of the look.
+void Renderer::DrawRings(PhysicsObject& obj) {
+  if (rayTracerView) return;
+  if (obj.shaderType != ObjectType::Planet || !obj.hasVisibleRings()) return;
+  obj.EnsureRingMesh();
+  obj.ringMesh.coordinates = obj.data.position;
+  const float r = obj.renderRadius() * activeSizeExag();
+  int drawn = 0;
+  for (const auto& rg : obj.rings) {
+    if (!rg.enabled || rg.outerRadius <= rg.innerRadius) continue;
+    if (drawn++ >= kMaxPlanetRings) break;
+    obj.ringMesh.renderRing(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight,
+                            r, rg, realisticRasterView);
+  }
+}
+
 // Blit a list of 2D textures into a fresh GL_TEXTURE_2D_ARRAY (one per layer).
 static GLuint packTextureArray(const std::vector<GLuint>& sources, int LW, int LH) {
   GLuint arr = 0;
@@ -4831,6 +4850,90 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##iclddrift", &obj.cloudDrift, 0.0f, 0.2f, "%.3f");
       }
+      }
+
+      if (ImGui::CollapsingHeader("Rings")) {
+      // Full-width labelled slider — there are 15 of these per ring, so the
+      // Text/SetNextItemWidth/Slider triple used elsewhere is folded up here.
+      auto ringF = [](const char* label, const char* id, float* v, float lo, float hi,
+                      const char* fmt = "%.2f", const char* tip = nullptr,
+                      ImGuiSliderFlags flags = 0) {
+        ImGui::Text("%s", label);
+        if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderFloat(id, v, lo, hi, fmt, flags);
+      };
+
+      ImGui::TextDisabled("Rendered in the viewport and Cinematic Performant.");
+      if ((int)obj.rings.size() < kMaxPlanetRings) {
+        if (ImGui::Button("Add Ring", ImVec2(-1, 0))) obj.rings.push_back(PlanetRing{});
+      } else {
+        ImGui::TextDisabled("Ring limit reached (%d).", kMaxPlanetRings);
+      }
+
+      int removeRing = -1;
+      for (int ri = 0; ri < (int)obj.rings.size(); ri++) {
+        PlanetRing& rg = obj.rings[ri];
+        ImGui::PushID(ri);
+        char header[96];
+        std::snprintf(header, sizeof(header), "%s###ringhdr",
+                      rg.name.empty() ? "Ring" : rg.name.c_str());
+        if (ImGui::CollapsingHeader(header, ImGuiTreeNodeFlags_DefaultOpen)) {
+          ImGui::Checkbox("Enabled", &rg.enabled);
+
+          ImGui::SeparatorText("Extent");
+          ringF("Inner Radius", "##rin", &rg.innerRadius, 1.0f, 10.0f, "%.2f",
+                "Planet radii. Saturn's rings run 1.11 to 2.27.");
+          ringF("Outer Radius", "##rout", &rg.outerRadius, 1.0f, 12.0f, "%.2f",
+                "Planet radii. Must be larger than the inner radius.");
+          if (rg.outerRadius <= rg.innerRadius)
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Outer must exceed inner.");
+          ringF("Edge Softness", "##redge", &rg.edgeSoftness, 0.001f, 0.5f, "%.3f",
+                "How far the ring fades in at each edge, as a fraction of its width.");
+
+          ImGui::SeparatorText("Plane");
+          ImGui::Text("Orientation");
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mean plane, Euler X/Y/Z degrees.");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat3("##rorient", &rg.orientation.x, -180.0f, 180.0f, "%.1f");
+          ringF("Tilt", "##rtilt", &rg.tilt, -90.0f, 90.0f, "%.1f",
+                "Extra tilt about the ring's own axis, on top of the orientation.");
+          ringF("Warp", "##rwarp", &rg.warp, -0.5f, 0.5f, "%.3f",
+                "Bends the disc out of its plane, growing toward the outer edge.");
+
+          ImGui::SeparatorText("Body");
+          ringF("Thickness", "##rthick", &rg.thickness, 0.0005f, 0.5f, "%.4f",
+                "Sets how near edge-on the ring goes opaque. Thinner = a harder line.",
+                ImGuiSliderFlags_Logarithmic);
+          ringF("Vertical Falloff", "##rvfall", &rg.verticalFalloff, 0.0f, 2.0f, "%.2f",
+                "How much the ring thickens as it turns edge-on. "
+                "0 = not at all, 1 = physically exact, above 1 = exaggerated.");
+          ringF("Opacity", "##ropac", &rg.opacity, 0.0f, 3.0f, "%.2f",
+                "How much light the ring blocks - drives both its own brightness "
+                "and the strength of the shadow it casts.");
+          ringF("Banding", "##rband", &rg.banding, 0.0f, 1.0f, "%.2f",
+                "Procedural gaps and ringlets. 0 = a smooth sheet.");
+          ImGui::Text("Colour");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::ColorEdit3("##rcol", &rg.color.x, ImGuiColorEditFlags_Float);
+
+          ImGui::SeparatorText("Offset");
+          ringF("Eccentricity", "##recc", &rg.eccentricity, 0.0f, 0.6f, "%.3f",
+                "Stretches the ring into an ellipse.");
+          ringF("Ecc. Direction", "##reccd", &rg.eccentricityAngle, 0.0f, 360.0f, "%.1f",
+                "Which way the ellipse points.");
+          ImGui::Text("Centre Offset");
+          if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Shifts the ring off the planet centre, in planet radii.");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat3("##rcen", &rg.centerOffset.x, -2.0f, 2.0f, "%.3f");
+
+          ImGui::Spacing();
+          if (ImGui::Button("Remove Ring", ImVec2(-1, 0))) removeRing = ri;
+        }
+        ImGui::PopID();
+      }
+      if (removeRing >= 0) obj.rings.erase(obj.rings.begin() + removeRing);
       }
     }
 

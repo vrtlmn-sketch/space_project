@@ -207,6 +207,20 @@ public:
   // whiteness, driftPhase). coverage 0 = clouds off.
   vec4 rtCloudP0{0.0f, 6.0f, 0.0f, 0.5f};
   vec4 rtCloudP1{0.18f, 0.02f, 1.0f, 0.0f};
+  // ── Ring shadows cast ONTO this surface ──
+  // Filled per-frame by PhysicsObject::Update from the planet's own ring list,
+  // in the same camera-relative world frame the vertex positions use. Empty for
+  // everything that has no rings, and the count is uploaded either way — the
+  // shader program is SHARED between objects, so leaving a stale uRingCount set
+  // would shadow the next planet drawn with someone else's rings.
+  struct RingShadow {
+    float rot[9];   // world -> ring local, row-major
+    vec4  geom;     // inner, outer (world units), opacity, edge softness
+    vec4  shape;    // eccentricity, ecc angle (radians), banding, max path
+    vec4  center;   // xyz = centre offset (world units), w = vertical falloff
+  };
+  std::vector<RingShadow> ringShadows;
+
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
   float rtAtmoFalloff{4.0f};
@@ -220,6 +234,14 @@ public:
   int   cachedRenderMode{0};            // set by uploadRenderMode(), used by renderCloudRaytraced()
   float cachedNebulaScatterScale{0.4f}; // set by uploadNebulaScatterScale(), used by renderCloudRaytraced()
   float cachedParticleSizeSpread{0.0f}; // set by uploadParticleSizeSpread(), used by renderCloudRaytraced()
+
+  // Proxy grid for procedural rings: a unit annulus parameterised by
+  // (radial 0..1, azimuth). ringVert builds the actual ring from it, so ONE
+  // mesh serves every ring on the planet.
+  void GenerateRingMesh(int radialSegments = 12, int azimuthSegments = 192);
+  void renderRing(const double cameraTranslate[3], const float viewRot[9], float fovDeg,
+                  int fbWidth, int fbHeight,
+                  float planetRadius, const struct PlanetRing& ring, bool realistic);
 
   void setupRender();
   void transformPerspectiveMesh(GLuint program, const double cameraTranslate[3], const float viewRot[9],
