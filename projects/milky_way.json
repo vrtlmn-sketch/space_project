@@ -419,6 +419,103 @@
         0.0
       ],
       "visualRadius": 0.08192931115627289
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.05999999865889549,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "mass": 3e-06,
+      "meshPath": "",
+      "name": "Saturn",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "",
+      "normalMapStrength": 1.0,
+      "position": [
+        0.8265690854693725,
+        0.021130606429513744,
+        -2.7940798793001247
+      ],
+      "rings": [
+        {
+          "enabled": true,
+          "name": "Rings",
+          "innerRadius": 1.24,
+          "outerRadius": 2.27,
+          "orientation": [
+            63.6,
+            -45.0,
+            0.0
+          ],
+          "tilt": 0.0,
+          "warp": 0.0,
+          "thickness": 0.008,
+          "verticalFalloff": 1.0,
+          "edgeSoftness": 0.02,
+          "opacity": 1.15,
+          "banding": 0.5,
+          "gapCount": 4.0,
+          "gapWidth": 0.035,
+          "gapDepth": 0.9,
+          "zoneContrast": 0.85,
+          "detail": 1.0,
+          "seed": 3.0,
+          "color": [
+            0.86,
+            0.8,
+            0.68
+          ],
+          "colorOuter": [
+            0.9,
+            0.88,
+            0.83
+          ],
+          "eccentricity": 0.0,
+          "eccentricityAngle": 0.0,
+          "centerOffset": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 5.922600734495354e-14,
+      "shaderType": 0,
+      "simulatePhysics": true,
+      "temperature": 5778.0,
+      "texturePath": "assets/saturn.jpg",
+      "velocity": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "visualRadius": 2.872773984563537e-05
     }
   ],
   "projectName": "milky_way",
@@ -431,12 +528,12 @@
     "backgroundLevel": 1.2000000476837158,
     "bloomStrength": 0.044999998062849045,
     "bloomThreshold": 0.0,
-    "camPitch": -0.011173445731401443,
-    "camRoll": 0.1632463037967682,
-    "camRotation": -0.07309074699878693,
-    "camX": 0.9398163308531318,
-    "camY": -2.8265202654087496e-05,
-    "camZ": 3.3416801780365954,
+    "camPitch": -0.7690061890894431,
+    "camRoll": 0.0,
+    "camRotation": 2.0177680904947546,
+    "camX": -0.8263977510408504,
+    "camY": -0.02118771790568773,
+    "camZ": 2.7941388944921712,
     "camZoom": 45.0,
     "cameraKeyframes": [],
     "cineSSAA": 1.5,

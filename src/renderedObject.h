@@ -216,8 +216,10 @@ public:
   struct RingShadow {
     float rot[9];   // world -> ring local, row-major
     vec4  geom;     // inner, outer (world units), opacity, edge softness
-    vec4  shape;    // eccentricity, ecc angle (radians), banding, max path
+    vec4  shape;    // eccentricity, ecc angle (radians), max path, unused
     vec4  center;   // xyz = centre offset (world units), w = vertical falloff
+    vec4  prof0;    // ringlet strength, gap count, gap width, gap depth
+    vec4  prof1;    // zone contrast, ringlet detail, seed, unused
   };
   std::vector<RingShadow> ringShadows;
 

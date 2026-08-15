@@ -41,15 +41,27 @@ const float PI = 3.14159265359;
 uniform int   uRingCount;
 uniform mat3  uRingRot[MAX_RINGS];     // world -> ring local
 uniform vec4  uRingGeom[MAX_RINGS];    // inner, outer (world), opacity, edge softness
-uniform vec4  uRingShape[MAX_RINGS];   // eccentricity, ecc angle (rad), banding, max path
+uniform vec4  uRingShape[MAX_RINGS];   // eccentricity, ecc angle (rad), max path, unused
 uniform vec4  uRingCenter[MAX_RINGS];  // xyz = centre offset (world), w = vertical falloff
+uniform vec4  uRingProf0[MAX_RINGS];   // ringlet strength, gap count, gap width, gap depth
+uniform vec4  uRingProf1[MAX_RINGS];   // zone contrast, ringlet detail, seed, unused
 
 // How much of a light this planet's own rings block on the way to a surface
 // point: one mean-plane crossing per ring, so several rings lay down several
 // bands. Warp is deliberately ignored — the shadow uses the flat mean plane.
+//
+// It runs the SAME ringDensity the visible ring does, so a gap in the ring is a
+// bright line in its shadow and a dense zone is a dark one, automatically.
 float ringShadowFactor(vec3 P, vec3 L, vec3 planetCentre)
 {
   int n = min(uRingCount, MAX_RINGS);
+  if (n == 0) return 1.0;
+
+  // Filter width for the profile, taken OUTSIDE the loop: derivatives inside
+  // divergent control flow are undefined. World size of one pixel on this
+  // surface, converted to a fraction of the ring's width.
+  float pixelWorld = length(vec3(fwidth(P.x), fwidth(P.y), fwidth(P.z)));
+
   float s = 1.0;
   for (int i = 0; i < n; i++) {
     vec3  o = uRingRot[i] * (P - planetCentre) - uRingCenter[i].xyz;
@@ -58,10 +70,11 @@ float ringShadowFactor(vec3 P, vec3 L, vec3 planetCentre)
     if (t <= 0.0) continue;                       // ring plane is behind the surface
     float u = ringRadialU(o + d * t, uRingGeom[i].x, uRingGeom[i].y,
                           uRingShape[i].x, uRingShape[i].y);
-    float dens = ringDensity(u, uRingGeom[i].w, uRingShape[i].z);
+    float filt = pixelWorld / max(uRingGeom[i].y - uRingGeom[i].x, 1e-9);
+    float dens = ringDensity(u, uRingGeom[i].w, uRingProf0[i], uRingProf1[i], filt);
     if (dens <= 0.0005) continue;
     s *= exp(-ringOpticalDepth(dens * uRingGeom[i].z, d.y,
-                               uRingShape[i].w, uRingCenter[i].w));
+                               uRingShape[i].z, uRingCenter[i].w));
   }
   return s;
 }

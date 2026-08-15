@@ -44,20 +44,35 @@ void ApplyShaderForType(RenderedObject& ro, ObjectType t);
 // Radii, thickness and centre offset are in PLANET RADII, not AU: that way a
 // ring keeps its proportions when visualRadius is edited or size exaggeration
 // is switched on. Saturn's real rings run 1.11 to 2.27.
+// Defaults describe a Saturn-like system in ONE ring: C-through-A extent, a
+// handful of procedural divisions, warm inner / pale outer, and an optical
+// depth around 1 (Saturn's B ring sits near there, the C ring near 0.1). A new
+// ring should already look like a ring.
 struct PlanetRing {
   bool  enabled{true};
   std::string name;                        // "" = "Ring N"
-  float innerRadius{1.20f};
+  float innerRadius{1.24f};
   float outerRadius{2.27f};
-  vec3  orientation{0.0f, 0.0f, 0.0f};     // mean plane, Euler X/Y/Z degrees
+  vec3  orientation{26.7f, 0.0f, 0.0f};    // mean plane, Euler X/Y/Z degrees
   float tilt{0.0f};                        // extra tilt about the ring's own X axis
   float warp{0.0f};                        // out-of-plane bend, growing outward
-  float thickness{0.010f};                 // sets where edge-on thickening stops
+  float thickness{0.008f};                 // sets where edge-on thickening stops
   float verticalFalloff{1.0f};             // 0 = none, 1 = physical, >1 = exaggerated
-  float edgeSoftness{0.06f};               // fade width as a fraction of the ring
-  float opacity{0.85f};
-  float banding{0.55f};                    // procedural gaps and ringlets
-  vec3  color{0.78f, 0.71f, 0.58f};
+  float edgeSoftness{0.02f};               // fade width as a fraction of the ring
+  // Optical depth at normal incidence. 1 is about Saturn's dense B ring; the
+  // whole radial profile is a MULTIPLIER on this, so pushing it far past 1
+  // saturates every gap and ringlet to a flat sheet.
+  float opacity{1.0f};
+  // ── Radial structure (see rings_common.glsl) ──
+  float banding{0.50f};                    // ringlet strength (kept: old key name)
+  float gapCount{4.0f};                    // hard divisions, Cassini-style
+  float gapWidth{0.035f};
+  float gapDepth{0.90f};
+  float zoneContrast{0.85f};               // broad dense/thin zones
+  float detail{1.0f};                      // ringlet frequency scale
+  float seed{3.0f};                        // dials a different ring system
+  vec3  color{0.74f, 0.66f, 0.53f};        // inner edge
+  vec3  colorOuter{0.80f, 0.76f, 0.70f};   // outer edge
   float eccentricity{0.0f};
   float eccentricityAngle{0.0f};           // degrees
   vec3  centerOffset{0.0f, 0.0f, 0.0f};

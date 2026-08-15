@@ -1239,18 +1239,25 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
       const int n = (int)std::min(ringShadows.size(), (size_t)8);
       glUniform1i(rcLoc, n);
       if (n > 0) {
-        float rot[8 * 9], geom[8 * 4], shape[8 * 4], cen[8 * 4];
+        float rot[8 * 9], geom[8 * 4], shape[8 * 4], cen[8 * 4], p0[8 * 4], p1[8 * 4];
+        auto pack = [](float* dst, int i, const vec4& v) {
+          dst[i*4+0] = v.x; dst[i*4+1] = v.y; dst[i*4+2] = v.z; dst[i*4+3] = v.w;
+        };
         for (int i = 0; i < n; i++) {
           std::memcpy(&rot[i * 9], ringShadows[i].rot, 9 * sizeof(float));
-          const vec4& g = ringShadows[i].geom;  geom[i*4+0]=g.x;  geom[i*4+1]=g.y;  geom[i*4+2]=g.z;  geom[i*4+3]=g.w;
-          const vec4& s = ringShadows[i].shape; shape[i*4+0]=s.x; shape[i*4+1]=s.y; shape[i*4+2]=s.z; shape[i*4+3]=s.w;
-          const vec4& c = ringShadows[i].center; cen[i*4+0]=c.x;  cen[i*4+1]=c.y;   cen[i*4+2]=c.z;   cen[i*4+3]=c.w;
+          pack(geom,  i, ringShadows[i].geom);
+          pack(shape, i, ringShadows[i].shape);
+          pack(cen,   i, ringShadows[i].center);
+          pack(p0,    i, ringShadows[i].prof0);
+          pack(p1,    i, ringShadows[i].prof1);
         }
         GLint l;
         if ((l = glGetUniformLocation(program, "uRingRot"))    >= 0) glUniformMatrix3fv(l, n, GL_TRUE, rot);
         if ((l = glGetUniformLocation(program, "uRingGeom"))   >= 0) glUniform4fv(l, n, geom);
         if ((l = glGetUniformLocation(program, "uRingShape"))  >= 0) glUniform4fv(l, n, shape);
         if ((l = glGetUniformLocation(program, "uRingCenter")) >= 0) glUniform4fv(l, n, cen);
+        if ((l = glGetUniformLocation(program, "uRingProf0"))  >= 0) glUniform4fv(l, n, p0);
+        if ((l = glGetUniformLocation(program, "uRingProf1"))  >= 0) glUniform4fv(l, n, p1);
       }
     }
   }
@@ -1403,10 +1410,16 @@ void RenderedObject::renderRing(const double cameraTranslate[3], const float vie
               ring.centerOffset.z * planetRadius);
 
   glUniform1f(glGetUniformLocation(program, "uPlanetRadius"),  planetRadius);
-  glUniform3f(glGetUniformLocation(program, "uRingColor"),     ring.color.x, ring.color.y, ring.color.z);
+  glUniform3f(glGetUniformLocation(program, "uRingColorInner"),
+              ring.color.x, ring.color.y, ring.color.z);
+  glUniform3f(glGetUniformLocation(program, "uRingColorOuter"),
+              ring.colorOuter.x, ring.colorOuter.y, ring.colorOuter.z);
   glUniform1f(glGetUniformLocation(program, "uRingOpacity"),   ring.opacity);
   glUniform1f(glGetUniformLocation(program, "uRingEdgeSoft"),  ring.edgeSoftness);
-  glUniform1f(glGetUniformLocation(program, "uRingBanding"),   ring.banding);
+  glUniform4f(glGetUniformLocation(program, "uRingProf0"),
+              ring.banding, ring.gapCount, ring.gapWidth, ring.gapDepth);
+  glUniform4f(glGetUniformLocation(program, "uRingProf1"),
+              ring.zoneContrast, ring.detail, ring.seed, 0.0f);
   glUniform1f(glGetUniformLocation(program, "uRingFalloff"),   ring.verticalFalloff);
   // Thickness only ever appears as the ratio that decides where edge-on
   // thickening stops (past it the ray leaves the ring radially instead).

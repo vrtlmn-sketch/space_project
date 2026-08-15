@@ -4883,13 +4883,33 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
           ImGui::SeparatorText("Extent");
           ringF("Inner Radius", "##rin", &rg.innerRadius, 1.0f, 10.0f, "%.2f",
-                "Planet radii. Saturn's rings run 1.11 to 2.27.");
+                "Planet radii. Saturn's rings run 1.24 to 2.27.");
           ringF("Outer Radius", "##rout", &rg.outerRadius, 1.0f, 12.0f, "%.2f",
                 "Planet radii. Must be larger than the inner radius.");
           if (rg.outerRadius <= rg.innerRadius)
             ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Outer must exceed inner.");
           ringF("Edge Softness", "##redge", &rg.edgeSoftness, 0.001f, 0.5f, "%.3f",
-                "How far the ring fades in at each edge, as a fraction of its width.");
+                "How far the ring fades in at each edge. Real ring edges are "
+                "razor sharp - keep this low or it looks airbrushed.");
+
+          ImGui::SeparatorText("Structure");
+          ringF("Divisions", "##rgapn", &rg.gapCount, 0.0f, 12.0f, "%.0f",
+                "Hard-edged gaps, Cassini-style. This is what makes ONE ring a "
+                "whole ring system - you no longer need a second ring to get a gap.");
+          ringF("Division Width", "##rgapw", &rg.gapWidth, 0.002f, 0.15f, "%.3f",
+                "Widths vary around this: mostly narrow, with the occasional wide one.");
+          ringF("Division Depth", "##rgapd", &rg.gapDepth, 0.0f, 1.0f, "%.2f",
+                "1 = the gap is empty.");
+          ringF("Zone Contrast", "##rzone", &rg.zoneContrast, 0.0f, 1.0f, "%.2f",
+                "Broad dense and thin regions across the ring, like Saturn's "
+                "faint C ring against its dense B ring. 0 = uniform.");
+          ringF("Ringlets", "##rband", &rg.banding, 0.0f, 1.0f, "%.2f",
+                "Fine radial texture. 0 = a smooth sheet.");
+          ringF("Ringlet Detail", "##rdet", &rg.detail, 0.2f, 4.0f, "%.2f",
+                "How fine the ringlets are. Detail below one pixel is filtered "
+                "out rather than left to shimmer.");
+          ringF("Seed", "##rseed", &rg.seed, 0.0f, 64.0f, "%.0f",
+                "Dials a different ring system. Everything above is regenerated.");
 
           ImGui::SeparatorText("Plane");
           ImGui::Text("Orientation");
@@ -4909,13 +4929,21 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                 "How much the ring thickens as it turns edge-on. "
                 "0 = not at all, 1 = physically exact, above 1 = exaggerated.");
           ringF("Opacity", "##ropac", &rg.opacity, 0.0f, 3.0f, "%.2f",
-                "How much light the ring blocks - drives both its own brightness "
-                "and the strength of the shadow it casts.");
-          ringF("Banding", "##rband", &rg.banding, 0.0f, 1.0f, "%.2f",
-                "Procedural gaps and ringlets. 0 = a smooth sheet.");
-          ImGui::Text("Colour");
+                "Optical depth at normal incidence. 1 is about Saturn's dense B "
+                "ring. The whole radial profile MULTIPLIES this, so pushing it "
+                "well past 1 saturates every gap and ringlet to a flat sheet.");
+          if (rg.opacity > 1.8f)
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                               "High: structure is washing out.");
+          ImGui::Text("Colour (inner)");
           ImGui::SetNextItemWidth(-1);
           ImGui::ColorEdit3("##rcol", &rg.color.x, ImGuiColorEditFlags_Float);
+          ImGui::Text("Colour (outer)");
+          if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Colour is mixed across the ring, and thin regions "
+                              "desaturate toward grey on their own.");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::ColorEdit3("##rcolo", &rg.colorOuter.x, ImGuiColorEditFlags_Float);
 
           ImGui::SeparatorText("Offset");
           ringF("Eccentricity", "##recc", &rg.eccentricity, 0.0f, 0.6f, "%.3f",

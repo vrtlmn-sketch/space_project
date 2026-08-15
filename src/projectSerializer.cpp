@@ -113,7 +113,14 @@ bool ProjectSerializer::Save(const std::string& path,
         r["edgeSoftness"]      = rg.edgeSoftness;
         r["opacity"]           = rg.opacity;
         r["banding"]           = rg.banding;
+        r["gapCount"]          = rg.gapCount;
+        r["gapWidth"]          = rg.gapWidth;
+        r["gapDepth"]          = rg.gapDepth;
+        r["zoneContrast"]      = rg.zoneContrast;
+        r["detail"]            = rg.detail;
+        r["seed"]              = rg.seed;
         r["color"]             = vec3ToJson(rg.color);
+        r["colorOuter"]        = vec3ToJson(rg.colorOuter);
         r["eccentricity"]      = rg.eccentricity;
         r["eccentricityAngle"] = rg.eccentricityAngle;
         r["centerOffset"]      = vec3ToJson(rg.centerOffset);
@@ -429,7 +436,16 @@ ProjectData ProjectSerializer::Load(const std::string& path)
           rg.edgeSoftness      = r.value("edgeSoftness",      def.edgeSoftness);
           rg.opacity           = r.value("opacity",           def.opacity);
           rg.banding           = r.value("banding",           def.banding);
+          rg.gapCount          = r.value("gapCount",          def.gapCount);
+          rg.gapWidth          = r.value("gapWidth",          def.gapWidth);
+          rg.gapDepth          = r.value("gapDepth",          def.gapDepth);
+          rg.zoneContrast      = r.value("zoneContrast",      def.zoneContrast);
+          rg.detail            = r.value("detail",            def.detail);
+          rg.seed              = r.value("seed",              def.seed);
           rg.color             = r.contains("color") ? jsonToVec3(r["color"]) : def.color;
+          // A file written before the ring gained a second colour only has one.
+          // Defaulting the outer edge to it keeps that ring looking the same.
+          rg.colorOuter        = r.contains("colorOuter") ? jsonToVec3(r["colorOuter"]) : rg.color;
           rg.eccentricity      = r.value("eccentricity",      def.eccentricity);
           rg.eccentricityAngle = r.value("eccentricityAngle", def.eccentricityAngle);
           rg.centerOffset      = r.contains("centerOffset") ? jsonToVec3(r["centerOffset"]) : def.centerOffset;

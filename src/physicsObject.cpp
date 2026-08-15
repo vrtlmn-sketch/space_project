@@ -233,10 +233,12 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
         for (int c = 0; c < 3; c++)
           rs.rot[r * 3 + c] = (float)M[c * 3 + r];
       rs.geom   = vec4{rg.innerRadius * pr, rg.outerRadius * pr, rg.opacity, rg.edgeSoftness};
-      rs.shape  = vec4{rg.eccentricity, rg.eccentricityAngle * d2r, rg.banding,
-                       rg.outerRadius / std::max(rg.thickness, 1e-6f)};
+      rs.shape  = vec4{rg.eccentricity, rg.eccentricityAngle * d2r,
+                       rg.outerRadius / std::max(rg.thickness, 1e-6f), 0.0f};
       rs.center = vec4{rg.centerOffset.x * pr, rg.centerOffset.y * pr,
                        rg.centerOffset.z * pr, rg.verticalFalloff};
+      rs.prof0  = vec4{rg.banding, rg.gapCount, rg.gapWidth, rg.gapDepth};
+      rs.prof1  = vec4{rg.zoneContrast, rg.detail, rg.seed, 0.0f};
       renderedObject.ringShadows.push_back(rs);
     }
   }

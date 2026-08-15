@@ -112,6 +112,26 @@ The same applies to `projects/universe.json`, which the user re-saves from the
 live app: its camera, keyframes and look settings change under you. It is not a
 fixed baseline.
 
+## Pointing the camera from a script
+
+`camRotation` / `camPitch` / `camRoll` are **RADIANS**, not degrees, and they
+are unwrapped for continuity — a saved -18.04 is a camera that was spun round
+several times, not 18 of anything. The camera POSITION is `camX/Y/Z = -P`
+(position = anchor - translate, and the anchor is 0 in a saved project).
+
+`camMatrix` is the view rotation Rx(pitch)·Ry(yaw), row-major, and the world
+direction the camera looks is **minus its third ROW**:
+
+```
+forward = ( sin y,  -cos y · sin p,  -cos y · cos p )
+```
+
+Inverting that has TWO solutions (`cos y = ±sqrt(fy²+fz²)`); they differ by the
+camera being upside down, so take the one with the smaller `|pitch|`. Both
+branches reduce to `(0,0,-1)` at yaw = pitch = 0, so a test aimed straight down
+-Z will not catch a wrong derivation — always rebuild the forward vector from
+the angles you solved and compare it against the one you wanted.
+
 ## Large-world coordinates
 
 The scene spans ~1 AU to ~1e15 AU, which no single float frame can hold.
@@ -245,7 +265,8 @@ does to flux at the small end.
 
 ## Planetary rings are a LIST, and RASTER ONLY
 
-A planet holds `std::vector<PlanetRing> rings` (physicsObject.h), capped at
+Defaults describe a Saturn-like system in ONE ring, so "Add Ring" already looks
+like a ring. A planet holds `std::vector<PlanetRing> rings` (physicsObject.h), capped at
 `kMaxPlanetRings` = 8. Every parameter is per-ring including the plane, so two
 rings need not be coplanar. Radii, thickness and centre offset are in PLANET
 RADII, so a ring keeps its proportions when `visualRadius` is edited or size
@@ -269,6 +290,32 @@ second definition of the look.
 - **The shadow and the ring read the SAME `ringDensity`**, so a shadow band
   always lines up with the ringlet that cast it. Warp is ignored on the shadow
   side (it uses the flat mean plane) — that is the one deliberate divergence.
+- **`opacity` is optical depth, and the radial profile MULTIPLIES it.** Real
+  values: Saturn's B ring ~1, its C ring ~0.1. The first version shipped a 0–3
+  slider that `verticalFalloff` then squared, so a setting of 2.76 gave
+  `tau = density x 11` and every gap and ringlet clipped to alpha 0.99 — a flat
+  white sheet. The structure was being computed and thrown away. **If a ring
+  looks like a solid disc, it is saturated, not under-detailed.**
+- **A ring is THREE frequencies, not one noise function.** `ringDensity` =
+  broad zones (dense B vs thin C) x hard-edged gaps (Cassini, Encke) x fine
+  ringlets. The first version was five octaves of smooth value noise, which
+  cannot produce a hard edge at any setting — so a Cassini division needed a
+  SECOND ring stacked on the first. Generating gaps inside one ring is what
+  makes a single ring a whole system.
+- **Fine detail is pixel-filtered, not just drawn.** `ringDensity` takes a
+  filter width (`fwidth(vU)` in ringFrag; world-pixel / ring-width on the shadow
+  side) and drops octaves finer than a pixel, and no gap edge is allowed below
+  one pixel. Without it a ring crawls with moire the moment it is small on
+  screen. In `defaultFrag` that derivative is taken OUTSIDE the ring loop —
+  derivatives inside divergent control flow are undefined.
+- Saturn in `projects/milky_way.json` is the reference ring: ONE ring, near
+  defaults, framed by the saved camera. **The backdrop matters** — pointed into
+  the galactic plane the rings are dimmer than the starfield behind them and
+  read as washed-out grey; against empty sky the same rings look right. Frame
+  the shot off the plane.
+- **Rings do not survive "Snap" unless the Cinematic View is on AND set to
+  Performant.** `Snap` falls back to `CaptureImage()` (the raytracer) in every
+  other case, and rings are raster-only.
 - **"Vertical Falloff" is an exponent, not a literal vertical density profile.**
   For a ray fully crossing a slab, any normalised vertical profile integrates to
   the same column, so the parameter would do nothing if taken literally. What it
