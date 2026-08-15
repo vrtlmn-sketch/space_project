@@ -1236,7 +1236,7 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     // leave its uRingCount behind and stripe the next planet drawn after it.
     GLint rcLoc = glGetUniformLocation(program, "uRingCount");
     if (rcLoc >= 0) {
-      const int n = (int)std::min(ringShadows.size(), (size_t)8);
+      const int n = (int)std::min(resolvedRings.size(), (size_t)8);
       glUniform1i(rcLoc, n);
       if (n > 0) {
         float rot[8 * 9], geom[8 * 4], shape[8 * 4], cen[8 * 4], p0[8 * 4], p1[8 * 4];
@@ -1244,12 +1244,12 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
           dst[i*4+0] = v.x; dst[i*4+1] = v.y; dst[i*4+2] = v.z; dst[i*4+3] = v.w;
         };
         for (int i = 0; i < n; i++) {
-          std::memcpy(&rot[i * 9], ringShadows[i].rot, 9 * sizeof(float));
-          pack(geom,  i, ringShadows[i].geom);
-          pack(shape, i, ringShadows[i].shape);
-          pack(cen,   i, ringShadows[i].center);
-          pack(p0,    i, ringShadows[i].prof0);
-          pack(p1,    i, ringShadows[i].prof1);
+          std::memcpy(&rot[i * 9], resolvedRings[i].rot, 9 * sizeof(float));
+          pack(geom,  i, resolvedRings[i].geom);
+          pack(shape, i, resolvedRings[i].shape);
+          pack(cen,   i, resolvedRings[i].center);
+          pack(p0,    i, resolvedRings[i].prof0);
+          pack(p1,    i, resolvedRings[i].prof1);
         }
         GLint l;
         if ((l = glGetUniformLocation(program, "uRingRot"))    >= 0) glUniformMatrix3fv(l, n, GL_TRUE, rot);

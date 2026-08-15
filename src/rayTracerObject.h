@@ -33,6 +33,26 @@ struct alignas(16) RayTracerObject{
   vec4  material;    // x = normal-map array layer (-1 none), y = normal strength
 };
 
+// A planetary ring resolved into the raytracer's camera-relative world frame.
+// Rings cannot ride inside RayTracerObject — that struct is a fixed 96 bytes
+// with every spare .w lane already carrying cloud params — so they get their own
+// SSBO on binding 6. std430: 10 x vec4 = 160 bytes, no padding.
+//
+// ownerIndex is the ring's planet's index in the SAME object list, which is what
+// lets several rings shadow their own planet and no one else's.
+struct alignas(16) RtRing {
+  vec4 r0;          // world->ring-local rotation row 0 | w = planet radius
+  vec4 r1;          // row 1                            | w = warp
+  vec4 r2;          // row 2                            | w = owner object index
+  vec4 center;      // ring centre (planet centre + rotated offset), camera-relative
+  vec4 geom;        // inner, outer (world), opacity, edge softness
+  vec4 shape;       // eccentricity, ecc angle (rad), max path, vertical falloff
+  vec4 prof0;       // ringlet strength, gap count, gap width, gap depth
+  vec4 prof1;       // zone contrast, ringlet detail, seed, unused
+  vec4 colorInner;
+  vec4 colorOuter;
+};
+
 // Extended struct for Doppler-mode shaders — adds velocity (96 bytes, std430-compatible)
 struct alignas(16) RayTracerObjectDoppler {
   vec4  coordinates;   // xyz = position, w = 0

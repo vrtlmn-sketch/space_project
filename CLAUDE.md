@@ -272,13 +272,36 @@ rings need not be coplanar. Radii, thickness and centre offset are in PLANET
 RADII, so a ring keeps its proportions when `visualRadius` is edited or size
 exaggeration is switched on.
 
-Rings render in the **rasterizer only** — the nav viewport and Cinematic
-Performant. They are absent in RT, which is a deliberate scope call, not a bug:
+Rings render in the rasterizer and in **Simple RT** (`raytracerCompute` +
+`raytracerDopplerCompute`). The four GEODESIC shaders do not have them yet.
 `RayTracerObject` is a fixed 96-byte struct with every spare `.w` lane already
-carrying cloud params, so a variable-length ring list needs its own SSBO
-(binding 6 is free) plus the same three edits in all SIX compute shaders. The
-density model lives in `rings_common.glsl` precisely so that port needs no
-second definition of the look.
+carrying cloud params, so rings ride their own SSBO on **binding 6** (`RtRing`,
+10x vec4). The look comes from `rings_common.glsl` for both views, and
+`rings_rt.glsl` holds the RT-only plumbing — so the geodesic port is three small
+edits per shader, not a second definition of the look.
+
+### Traps the RT port hit
+
+- **Planets are drawn by `DrawPhysicsObject`, NOT `Renderer::Draw`.** Both have
+  a `meshType == sphere` RT branch that pushes to `rayTracedObjects`, and the
+  one in `Draw` never sees a planet. Anything new that must accompany a planet
+  into the RT buffers goes in `DrawPhysicsObject`.
+- **`CaptureImage` uploads `rtLastObjects`, the SNAPSHOT, not the live list**
+  (so does the compare harness's RT capture, which goes through it). A new SSBO
+  must upload the matching snapshot, and its COUNT uniform has to come from the
+  same list — mixing a snapshot buffer with a live count silently renders
+  nothing.
+- **`rtDirty` will not notice a ring edit.** RT re-renders only when something
+  changed, and the check memcmps `rayTracedObjects` — which a ring edit leaves
+  byte-identical, because rings are in their own buffer. `DispatchRaytracer`
+  memcmps `rtRings` against `rtLastRings` for exactly this reason. Any future
+  per-frame RT buffer needs the same treatment or its sliders will do nothing.
+- **A ring's owner index is per-object-LIST.** Doppler and plain keep separate
+  object lists and clouds push different counts into each, so the two cannot
+  share one ring list.
+- **Compute shaders have no `fwidth`.** The profile's filter width comes from
+  the projection instead: `t * 2 / (uProj[1][1] * uResolution.y)`. That is exact
+  rather than a screen-space difference, so it is the better source anyway.
 
 - **ONE proxy mesh per planet.** `GenerateRingMesh` makes a unit annulus
   parameterised by (radial 0..1, azimuth); `ringVert` builds the real geometry
@@ -313,9 +336,10 @@ second definition of the look.
   the galactic plane the rings are dimmer than the starfield behind them and
   read as washed-out grey; against empty sky the same rings look right. Frame
   the shot off the plane.
-- **Rings do not survive "Snap" unless the Cinematic View is on AND set to
-  Performant.** `Snap` falls back to `CaptureImage()` (the raytracer) in every
-  other case, and rings are raster-only.
+- `Snap` renders through `CaptureImage()` (the raytracer) unless the Cinematic
+  View is on AND set to Performant, in which case it renders the raster path.
+  Both carry rings now; a screenshot taken with the geodesic methods still will
+  not, until those four shaders are ported.
 - **"Vertical Falloff" is an exponent, not a literal vertical density profile.**
   For a ray fully crossing a slab, any normalised vertical profile integrates to
   the same column, so the parameter would do nothing if taken literally. What it

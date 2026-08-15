@@ -264,6 +264,7 @@ private:
   GLuint rtSSBO{0};                      // SSBO for raytracer objects (compute shader)
   GLuint rtTriSSBO{0};                   // SSBO (binding 4) for free-object triangles
   GLuint rtNodeSSBO{0};                  // SSBO (binding 5) for free-object BVH nodes
+  GLuint rtRingSSBO{0};                  // SSBO (binding 6) for planetary rings
 
   // Compute shader uniform locations (simple raytracer)
   GLint rtLocObjectCount{-1};
@@ -402,6 +403,12 @@ private:
   int    rtLastWidth{};
   int    rtLastHeight{};
   size_t rtLastObjectCount{};
+  // Rings for the RT pass. One list per object list, so a ring's owner index
+  // means the same object in both. Built in Draw, cleared in EndFrame.
+  std::vector<RtRing>                 rtRings;
+  std::vector<RtRing>                 rtDopplerRings;
+  std::vector<RtRing>                 rtLastRings;          // snapshot for memcmp + CaptureImage
+  std::vector<RtRing>                 rtLastDopplerRings;
   std::vector<RayTracerObject>        rtLastObjects;        // snapshot for memcmp
   std::vector<RayTracerObjectDoppler> rtLastDopplerObjects; // Doppler snapshot for CaptureImage
   std::vector<RtTri>                  rtLastTriangles;      // triangle snapshot for recording

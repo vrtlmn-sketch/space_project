@@ -335,6 +335,8 @@ uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 =
 // pointSourceGlow) — one file, included by every RT method so they stay 1:1.
 #include "galaxy_common.glsl"
 #include "clouds_common.glsl"
+#include "rings_common.glsl"
+#include "rings_rt.glsl"
 
 // ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.
@@ -447,8 +449,11 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 // DAY-GATED ambient (night side goes genuinely black), and emissive night-side
 // city lights (nightEm, pre-sampled by the caller; vec3(0) = none).
 vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 nightEm,
-                 vec3 nObj, vec3 pColor, vec4 rot, vec4 cloudP0, vec4 cloudP1)
+                 vec3 nObj, vec3 pColor, vec4 rot, vec4 cloudP0, vec4 cloudP1,
+                 int selfIdx)
 {
+    // Footprint of one pixel on this surface, for the ring profile filter.
+    float ringPix = ringPixelWidth(length(ro - hitPos));
     vec3  V      = normalize(ro - hitPos);
     float NdotVg = max(dot(geoN, V), 1e-3);
     float NdotV  = max(dot(N, V), 1e-3);
@@ -476,7 +481,10 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 n
         dayMax      = max(dayMax, dot(geoN, L));
         float lT    = objects[i].temperature;
         vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
-        vec3  radiance = lCol * (1.0 / max(dist2, 1e-9));
+        // This planet's own rings block the light, but must not move the
+        // terminator, so the shadow scales radiance only.
+        vec3  radiance = lCol * (ringShadowRT(selfIdx, hitPos, L, ringPix)
+                                 / max(dist2, 1e-9));
         float D = distributionGGX(N, H, rough);
         float G = geometrySmith(N, V, L, rough);
         vec3  F = fresnelSchlick(max(dot(H, V), 0.0), F0);
@@ -523,7 +531,9 @@ vec3 shadePlanet(vec3 ro, vec3 hitPos, vec3 geoN, vec3 N, vec3 baseColor, vec3 n
                 vec3  L     = normalize(toL);
                 float lT    = objects[i].temperature;
                 vec3  lCol  = (lT > 100.0) ? blackbody(lT) : vec3(1.0);
-                cloudLo += cloudBase * lCol * (max(dot(Ncw, L), 0.0) / max(dist2, 1e-9));
+                cloudLo += cloudBase * lCol
+                         * (max(dot(Ncw, L), 0.0) * ringShadowRT(selfIdx, hitPos, L, ringPix)
+                            / max(dist2, 1e-9));
                 cnL++;
             }
             if (cnL == 0)
@@ -583,7 +593,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
             else
             {
                 reflCol = shadePlanet(ro, rHit, rNorm, rNorm, objects[i].color.xyz, vec3(0.0),
-                                      rNorm, objects[i].color.xyz, objects[i].rotation, vec4(0.0), vec4(0.0));
+                                      rNorm, objects[i].color.xyz, objects[i].rotation, vec4(0.0), vec4(0.0), -1);
             }
             break;
         }
@@ -685,7 +695,7 @@ void main()
                           : objects[hitIdx].color.xyz;
             vec3 N = applyMeshNormalMap(hitNormal, hitTangent, hitUV, objects[hitIdx].material);
             color = shadePlanet(ro, hitPos, hitNormal, N, base, vec3(0.0),
-                                hitNormal, objects[hitIdx].color.xyz, objects[hitIdx].rotation, vec4(0.0), vec4(0.0));
+                                hitNormal, objects[hitIdx].color.xyz, objects[hitIdx].rotation, vec4(0.0), vec4(0.0), -1);
         }
         else
         {
@@ -704,7 +714,7 @@ void main()
             vec4  cldP1  = vec4(objects[hitIdx].atmo.w, objects[hitIdx].atmoScatter.w,
                                 objects[hitIdx].rotation.w, objects[hitIdx].position.w);
             vec3  lit    = shadePlanet(ro, hitPos, normal, Nw, base, nightEm,
-                                       nObj, objects[hitIdx].color.xyz, objects[hitIdx].rotation, cldP0, cldP1);
+                                       nObj, objects[hitIdx].color.xyz, objects[hitIdx].rotation, cldP0, cldP1, hitIdx);
             vec3  refl   = vec3(0.0);
             if (uMaxBounces > 0)
                 refl = reflectionBounce(ro, rd, hitPos, Nw);
@@ -719,6 +729,9 @@ void main()
 
     // Atmosphere shells along the view ray
     color = applyAtmospheres(ro, rd, (hitIdx >= 0) ? tMin : 1e9, color);
+
+    // Rings last, matching the rasterizer's planet -> atmosphere -> rings order.
+    color = ringsComposite(color, ro, rd, (hitIdx >= 0) ? tMin : 1e30);
 
     // -----------------------------------------------------------------------
     // Star glow — only for stars in front of (or at) the nearest solid hit

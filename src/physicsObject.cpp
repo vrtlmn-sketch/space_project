@@ -209,13 +209,13 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
   // Forward the rings this planet's own surface has to be shadowed by, in the
   // same camera-relative world frame the surface vertices use. Rebuilt every
   // frame because size exaggeration and the ring parameters are both live.
-  renderedObject.ringShadows.clear();
+  renderedObject.resolvedRings.clear();
   if (shaderType == ObjectType::Planet && !rings.empty()) {
     const float pr  = renderRadius() * renderer.activeSizeExag();
     const float d2r = 0.01745329252f;
     for (const auto& rg : rings) {
       if (!rg.enabled || rg.outerRadius <= rg.innerRadius) continue;
-      if ((int)renderedObject.ringShadows.size() >= kMaxPlanetRings) break;
+      if ((int)renderedObject.resolvedRings.size() >= kMaxPlanetRings) break;
       double R[9];
       EulerDegToMat3d(rg.orientation, R);
       const double ct = std::cos((double)rg.tilt * d2r);
@@ -228,18 +228,20 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
                        + R[r * 3 + 1] * T[1 * 3 + c]
                        + R[r * 3 + 2] * T[2 * 3 + c];
 
-      RenderedObject::RingShadow rs{};
+      RenderedObject::ResolvedRing rs{};
       for (int r = 0; r < 3; r++)          // transpose: the shader wants world -> local
         for (int c = 0; c < 3; c++)
           rs.rot[r * 3 + c] = (float)M[c * 3 + r];
       rs.geom   = vec4{rg.innerRadius * pr, rg.outerRadius * pr, rg.opacity, rg.edgeSoftness};
       rs.shape  = vec4{rg.eccentricity, rg.eccentricityAngle * d2r,
-                       rg.outerRadius / std::max(rg.thickness, 1e-6f), 0.0f};
+                       rg.outerRadius / std::max(rg.thickness, 1e-6f), rg.warp};
       rs.center = vec4{rg.centerOffset.x * pr, rg.centerOffset.y * pr,
                        rg.centerOffset.z * pr, rg.verticalFalloff};
       rs.prof0  = vec4{rg.banding, rg.gapCount, rg.gapWidth, rg.gapDepth};
-      rs.prof1  = vec4{rg.zoneContrast, rg.detail, rg.seed, 0.0f};
-      renderedObject.ringShadows.push_back(rs);
+      rs.prof1  = vec4{rg.zoneContrast, rg.detail, rg.seed, pr};
+      rs.colorInner = rg.color;
+      rs.colorOuter = rg.colorOuter;
+      renderedObject.resolvedRings.push_back(rs);
     }
   }
 

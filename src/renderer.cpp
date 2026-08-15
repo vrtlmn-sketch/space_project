@@ -527,6 +527,8 @@ void Renderer::EndFrame() {
   rimOccluders.clear();
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
+  rtRings.clear();
+  rtDopplerRings.clear();
   rtDopplerObjects.clear();
   rtTriangles.clear();
   rtNodes.clear();
@@ -550,6 +552,9 @@ void Renderer::EndFrame() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Draw  (scene dispatch — threads framebuffer dims through all render calls)
 // ─────────────────────────────────────────────────────────────────────────────
+static void AppendRtRings(const RenderedObject& ro, const double camT[3],
+                          std::vector<RtRing>& out, int owner);
+
 void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -618,6 +623,40 @@ void Renderer::DrawAtmosphere(PhysicsObject& obj) {
                                         r, r * (1.0f + obj.atmosphereHeight),
                                         obj.atmosphereFalloff, obj.atmosphereIntensity,
                                         obj.atmosphereScatter);
+}
+
+// Convert this object's already-resolved rings into the raytracer's ring
+// records. The rotation stored on the object is world->local; the RT struct
+// wants the same rows, plus the ring centre folded into ONE world position:
+// local = R^T(P - C) - offset  ==  local = R^T(P - (C + R*offset)).
+static void AppendRtRings(const RenderedObject& ro, const double camT[3],
+                          std::vector<RtRing>& out, int owner)
+{
+  if (ro.resolvedRings.empty() || owner < 0) return;
+  const double cx = ro.coordinates.x, cy = ro.coordinates.y, cz = ro.coordinates.z;
+  for (const auto& rs : ro.resolvedRings) {
+    // R (local->world) is the transpose of the stored world->local rows.
+    const float* M = rs.rot;
+    const float ox = M[0]*rs.center.x + M[3]*rs.center.y + M[6]*rs.center.z;
+    const float oy = M[1]*rs.center.x + M[4]*rs.center.y + M[7]*rs.center.z;
+    const float oz = M[2]*rs.center.x + M[5]*rs.center.y + M[8]*rs.center.z;
+
+    RtRing r{};
+    r.r0 = vec4{M[0], M[1], M[2], rs.prof1.w};                 // w = planet radius
+    r.r1 = vec4{M[3], M[4], M[5], rs.shape.w};                 // w = warp
+    r.r2 = vec4{M[6], M[7], M[8], (float)owner};
+    r.center = vec4{
+      (float)((cx - gCamAnchor[0]) + camT[0]) + ox,
+      (float)((cy - gCamAnchor[1]) + camT[1]) + oy,
+      (float)((cz - gCamAnchor[2]) + camT[2]) + oz, 0.0f};
+    r.geom  = rs.geom;
+    r.shape = vec4{rs.shape.x, rs.shape.y, rs.shape.z, rs.center.w};  // w = vertical falloff
+    r.prof0 = rs.prof0;
+    r.prof1 = vec4{rs.prof1.x, rs.prof1.y, rs.prof1.z, 0.0f};
+    r.colorInner = vec4{rs.colorInner.x, rs.colorInner.y, rs.colorInner.z, 0.0f};
+    r.colorOuter = vec4{rs.colorOuter.x, rs.colorOuter.y, rs.colorOuter.z, 0.0f};
+    out.push_back(r);
+  }
 }
 
 // Rings, drawn after the planet so the depth buffer already holds it and the
@@ -751,9 +790,14 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
     if (ro.meshType == MeshType::sphere) {
       ro.renderMeshRaytraced(cameraTranslate, rayTracedObjects, mass, temperature, objectType, color,
                              &rtTriangles, &rtNodes);
-      if (dopplerMode)
+      AppendRtRings(ro, cameraTranslate, rtRings, (int)rayTracedObjects.size() - 1);
+      if (dopplerMode) {
         ro.renderMeshRaytracedDoppler(cameraTranslate, rtDopplerObjects, velocity, mass, temperature, objectType, color,
                                       &rtTriangles, &rtNodes);
+        // Owner index is per-list: clouds push different counts into each, so
+        // the two object lists can diverge and each needs its own ring list.
+        AppendRtRings(ro, cameraTranslate, rtDopplerRings, (int)rtDopplerObjects.size() - 1);
+      }
     }
   }
 }
@@ -6012,6 +6056,8 @@ void Renderer::BeginSecondaryPass() {
   // (they belong to the primary view; the secondary pass will re-accumulate)
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
+  rtRings.clear();
+  rtDopplerRings.clear();
   rtDopplerObjects.clear();
   rtTriangles.clear();
   rtNodes.clear();
@@ -6060,6 +6106,8 @@ void Renderer::EndSecondaryPass() {
   // Clear secondary raytracer objects (EndFrame will clear primary ones)
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
+  rtRings.clear();
+  rtDopplerRings.clear();
   rtDopplerObjects.clear();
   rtTriangles.clear();
   rtNodes.clear();
@@ -6574,6 +6622,14 @@ void Renderer::DispatchRaytracer(int width, int height) {
              nebulaDetail != lastNebulaDetail ||
              rayTracedObjects.size() != rtLastObjectCount);
   }
+  if (!dirty) {
+    // Rings live in their own SSBO, so an edit to one leaves rayTracedObjects
+    // byte-identical. Without this the RT view would never redraw for a ring.
+    dirty = (rtRings.size() != rtLastRings.size()) ||
+            (!rtRings.empty() &&
+             std::memcmp(rtRings.data(), rtLastRings.data(),
+                         rtRings.size() * sizeof(RtRing)) != 0);
+  }
   if (!dirty && rayTracedObjects.size() == rtLastObjects.size()) {
     dirty = (std::memcmp(rayTracedObjects.data(), rtLastObjects.data(),
                          rayTracedObjects.size() * sizeof(RayTracerObject)) != 0);
@@ -6618,6 +6674,17 @@ void Renderer::DispatchRaytracer(int width, int height) {
                rtNodes.empty() ? nullptr : rtNodes.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
 
+  // Rings (binding 6). Doppler and plain keep separate lists because a ring's
+  // owner index addresses whichever object list its shader was handed.
+  {
+    const std::vector<RtRing>& rl = dopplerMode ? rtDopplerRings : rtRings;
+    if (!rtRingSSBO) glGenBuffers(1, &rtRingSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtRingSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)(rl.size() * sizeof(RtRing)),
+                 rl.empty() ? nullptr : rl.data(), GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, rtRingSSBO);
+  }
+
   // Bind output image
   glBindImageTexture(0, rtOutputTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
 
@@ -6625,6 +6692,12 @@ void Renderer::DispatchRaytracer(int width, int height) {
 
   int activeObjectCount = dopplerMode ? (int)rtDopplerObjects.size() : (int)rayTracedObjects.size();
   glUniform1i(locObjectCount, activeObjectCount);
+  {
+    GLint locRingCount = glGetUniformLocation(activeProgram, "uRingCount");
+    if (locRingCount >= 0)
+      glUniform1i(locRingCount,
+                  (int)(dopplerMode ? rtDopplerRings.size() : rtRings.size()));
+  }
 
   // Build projection matrix (same as transformPerspectiveMesh)
   float aspect = (height > 0) ? (float)width / (float)height : 1.0f;
@@ -6783,7 +6856,9 @@ void Renderer::DispatchRaytracer(int width, int height) {
   lastNebulaDetail     = nebulaDetail;
   rtLastObjectCount    = rayTracedObjects.size();
   rtLastObjects        = rayTracedObjects;         // snapshot for memcmp
+  rtLastRings          = rtRings;
   rtLastDopplerObjects = rtDopplerObjects;         // snapshot for CaptureImage
+  rtLastDopplerRings   = rtDopplerRings;
   rtLastTriangles      = rtTriangles;              // triangle snapshot for recording
   rtLastNodes          = rtNodes;                  // BVH node snapshot for recording
   rtDirty              = false;
@@ -7416,9 +7491,28 @@ void Renderer::CaptureImage() {
                std::max<size_t>(rtLastNodes.size(), 1) * sizeof(BVHNode),
                rtLastNodes.empty() ? nullptr : rtLastNodes.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
+
+  // Rings (binding 6). Doppler and plain keep separate lists because a ring's
+  // owner index addresses whichever object list its shader was handed.
+  {
+    const std::vector<RtRing>& rl = dopplerMode ? rtLastDopplerRings : rtLastRings;
+    if (!rtRingSSBO) glGenBuffers(1, &rtRingSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtRingSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)(rl.size() * sizeof(RtRing)),
+                 rl.empty() ? nullptr : rl.data(), GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, rtRingSSBO);
+  }
   glUseProgram(activeProgram);
   int capObjCount = dopplerMode ? (int)rtLastDopplerObjects.size() : (int)rtLastObjects.size();
   glUniform1i(locObjectCount, capObjCount);
+  {
+    // Must be the SAME snapshot the SSBO above was filled from, or the count and
+    // the buffer disagree and the rings silently vanish.
+    GLint locRingCount = glGetUniformLocation(activeProgram, "uRingCount");
+    if (locRingCount >= 0)
+      glUniform1i(locRingCount,
+                  (int)(dopplerMode ? rtLastDopplerRings.size() : rtLastRings.size()));
+  }
 
   float aspect = (h > 0) ? (float)w / (float)h : 1.0f;
   float fovy   = zoom * M_PI / 180.0f;
@@ -7733,10 +7827,27 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
                std::max<size_t>(rtNodes.size(), 1) * sizeof(BVHNode),
                rtNodes.empty() ? nullptr : rtNodes.data(), GL_DYNAMIC_DRAW);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, rtNodeSSBO);
+
+  // Rings (binding 6). Doppler and plain keep separate lists because a ring's
+  // owner index addresses whichever object list its shader was handed.
+  {
+    const std::vector<RtRing>& rl = dopplerMode ? rtDopplerRings : rtRings;
+    if (!rtRingSSBO) glGenBuffers(1, &rtRingSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, rtRingSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)(rl.size() * sizeof(RtRing)),
+                 rl.empty() ? nullptr : rl.data(), GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, rtRingSSBO);
+  }
   glUseProgram(activeProgram);
 
   int recObjCount = dopplerMode ? (int)rtDopplerObjects.size() : (int)rayTracedObjects.size();
   glUniform1i(locObjectCount, recObjCount);
+  {
+    GLint locRingCount = glGetUniformLocation(activeProgram, "uRingCount");
+    if (locRingCount >= 0)
+      glUniform1i(locRingCount,
+                  (int)(dopplerMode ? rtDopplerRings.size() : rtRings.size()));
+  }
   if (locMaxBounces >= 0)
     glUniform1i(locMaxBounces, rtMaxBounces);
 

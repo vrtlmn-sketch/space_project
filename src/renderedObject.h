@@ -207,21 +207,26 @@ public:
   // whiteness, driftPhase). coverage 0 = clouds off.
   vec4 rtCloudP0{0.0f, 6.0f, 0.0f, 0.5f};
   vec4 rtCloudP1{0.18f, 0.02f, 1.0f, 0.0f};
-  // ── Ring shadows cast ONTO this surface ──
-  // Filled per-frame by PhysicsObject::Update from the planet's own ring list,
-  // in the same camera-relative world frame the vertex positions use. Empty for
-  // everything that has no rings, and the count is uploaded either way — the
-  // shader program is SHARED between objects, so leaving a stale uRingCount set
-  // would shadow the next planet drawn with someone else's rings.
-  struct RingShadow {
+  // ── This object's rings, resolved to world units for the frame ──
+  // Filled per-frame by PhysicsObject::Update, in the same camera-relative world
+  // frame the vertex positions use. ONE resolve feeds two consumers: the raster
+  // surface shader (which reads it as the shadow the rings cast on the planet)
+  // and the raytracer's ring SSBO. Empty for everything that has no rings.
+  //
+  // The raster count is uploaded even when it is 0 — shader programs are SHARED
+  // between objects, so a stale uRingCount would shadow the next planet drawn
+  // with someone else's rings.
+  struct ResolvedRing {
     float rot[9];   // world -> ring local, row-major
     vec4  geom;     // inner, outer (world units), opacity, edge softness
-    vec4  shape;    // eccentricity, ecc angle (radians), max path, unused
-    vec4  center;   // xyz = centre offset (world units), w = vertical falloff
+    vec4  shape;    // eccentricity, ecc angle (radians), max path, warp
+    vec4  center;   // xyz = centre offset in ring-LOCAL space, w = vertical falloff
     vec4  prof0;    // ringlet strength, gap count, gap width, gap depth
-    vec4  prof1;    // zone contrast, ringlet detail, seed, unused
+    vec4  prof1;    // zone contrast, ringlet detail, seed, planet radius
+    vec3  colorInner{1.0f, 1.0f, 1.0f};
+    vec3  colorOuter{1.0f, 1.0f, 1.0f};
   };
-  std::vector<RingShadow> ringShadows;
+  std::vector<ResolvedRing> resolvedRings;
 
   // Atmosphere params forwarded to the RT object structs (radius 0 = none)
   float rtAtmoRadius{0.0f};
