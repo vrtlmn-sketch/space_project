@@ -373,6 +373,40 @@ warp exactly as the planet does.
   ring in front of an atmosphere limb draws over it. Only visible on a planet
   that has both.
 
+## Render resolution is a HEIGHT plus the target's aspect
+
+Both resolution settings (Quality & Speed → **RT Resolution**, **Raster
+Resolution**) store a w/h pair, but only the **height** is used as the quality
+knob — the width is recomputed from the actual target's aspect at render time. A
+fixed 16:9 image blitted into a non-16:9 window shifted everything sideways
+against the mouse and the overlays, so a preset must never dictate the aspect.
+`Renderer::RasterRenderSize(w, h, outW, outH)` is the one place that rule lives
+for the raster side; the raytracer's two dispatch sites do the same inline.
+
+`Raster Resolution` defaults to **1080p** (`0,0` = Viewport = follow the window).
+It drives the live Performant view, its Snap, and the Performant recording
+override in `StartRecording`, so the preview and the output cannot disagree.
+
+- **`CineBeginIfActive` is the ONE funnel** for every live raster-cinematic pass
+  — editor viewport, fullscreen and PiP all go through it, so the resolution
+  rule only has to be applied there. Note this means the PiP renders at the full
+  chosen resolution too, which is deliberate (its look must match a Snap) and is
+  the main cost of a high setting.
+- `cineSSAA` MULTIPLIES the chosen resolution rather than replacing it, and
+  `currentPixelScale` is `bufferHeight / targetHeight` so sprites keep their
+  apparent size however the two combine. 4K at 2x SSAA is a 7680x4320 RGBA16F
+  plus depth, about 400 MB, reallocated whenever the preset changes.
+- **The post chain is measured against the RENDER size, not the display.**
+  `CineResolveIfActive` passes `cinePostW/H` (the raster render size) to
+  `RunPostProcess`, which halves it for the bloom/spike/dust-density targets. Pass
+  the display size instead and a 1080p preview blooms differently from the 1080p
+  snap it is previewing. At Viewport the two are equal, so the old behaviour is
+  reproduced exactly.
+- **The `--compare` harness is unaffected** — its raster capture calls
+  `BeginRecordRaster(W, H)` with explicit sizes and `currentPixelScale = 1`, so
+  the regression baseline stays valid whatever the setting is. Verified
+  byte-identical across the change.
+
 ## The empty sky is ONE value, for both views
 
 `backgroundColor` x `backgroundLevel` (Background & Grid → Empty Sky) is what

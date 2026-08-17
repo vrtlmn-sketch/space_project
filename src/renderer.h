@@ -391,6 +391,13 @@ private:
   int    rtLiveWidth{142};               // 0 = use framebuffer size
   int    rtLiveHeight{80};
 
+  // Live rasterizer resolution for the Cinematic Performant view. The preset
+  // HEIGHT is the quality knob and the WIDTH follows the target's aspect (same
+  // rule the raytracer uses), so a fixed 16:9 buffer can never stretch the image.
+  int    rasterLiveResPreset{3};         // index into rasterPresets (default = 1080p)
+  int    rasterLiveWidth{1920};          // 0 = follow the target size (Viewport)
+  int    rasterLiveHeight{1080};
+
   // Raytracer quality settings
   int    rtMaxBounces{1};                // reflection bounces (0 = no reflections)
   int    rtMaxSteps{256};                // geodesic integration steps per ray
@@ -479,6 +486,9 @@ private:
   bool   cineActive{false};          // transient: HDR redirect live for the current pass
   GLuint cineResolveTarget{0};       // real FBO to composite back into
   int    cineResolveW{0}, cineResolveH{0};
+  // Resolution the post chain (bloom, spikes, rim light) is measured against —
+  // the raster render size, not the display size, so a preview matches its snap.
+  int    cinePostW{0}, cinePostH{0};
   void   EnsureCineFBO(int w, int h);
   void   CineBeginIfActive(GLuint realTargetFBO, int w, int h);
   void   CineResolveIfActive();
@@ -792,6 +802,11 @@ public:
   int  GetRtMaxBounces()     const { return rtMaxBounces; }
   int  GetRtMaxSteps()       const { return rtMaxSteps; }
   int  GetRtLiveResPreset()  const { return rtLiveResPreset; }
+  int  GetRasterLiveWidth()     const { return rasterLiveWidth; }
+  int  GetRasterLiveHeight()    const { return rasterLiveHeight; }
+  int  GetRasterLiveResPreset() const { return rasterLiveResPreset; }
+  // Resolution the raster cinematic image is computed at for a target of (w,h).
+  void RasterRenderSize(int w, int h, int& outW, int& outH) const;
   int  GetRecordResPreset()  const { return recordResPreset; }
   int  GetRecordWidth()      const { return recordWidth; }
   int  GetRecordHeight()     const { return recordHeight; }
@@ -801,6 +816,7 @@ public:
   void SetRtMaxBounces(int v)  { rtMaxBounces = v; rtDirty = true; }
   void SetRtMaxSteps(int v)    { rtMaxSteps = v;   rtDirty = true; }
   void SetRtLiveRes(int preset, int w, int h) { rtLiveResPreset = preset; rtLiveWidth = w; rtLiveHeight = h; }
+  void SetRasterLiveRes(int preset, int w, int h) { rasterLiveResPreset = preset; rasterLiveWidth = w; rasterLiveHeight = h; }
   void SetRecordRes(int preset, int w, int h) { recordResPreset = preset; recordWidth = w; recordHeight = h; }
   void SetRecordFps(int v)     { recordFps = v; }
   void SetRecordPath(const std::string& p) {

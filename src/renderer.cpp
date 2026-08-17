@@ -3346,6 +3346,26 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     }
 
     ImGui::Spacing();
+    static const struct { const char* label; int w; int h; } rasterPresets[] = {
+      { "Viewport", 0, 0 },
+      { "480p",   854,  480 }, { "720p",  1280,  720 }, { "1080p", 1920, 1080 },
+      { "1440p", 2560, 1440 }, { "4K",    3840, 2160 },
+    };
+    static const int numRasterPresets = (int)(sizeof(rasterPresets) / sizeof(rasterPresets[0]));
+    ImGui::Text("Raster Resolution");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::Combo("##rasterres", &rasterLiveResPreset, [](void*, int idx) -> const char* {
+      static const char* labels[] = { "Viewport", "480p", "720p", "1080p", "1440p", "4K" };
+      return labels[idx];
+    }, nullptr, numRasterPresets)) {
+      rasterLiveWidth  = rasterPresets[rasterLiveResPreset].w;
+      rasterLiveHeight = rasterPresets[rasterLiveResPreset].h;
+    }
+    ImGui::TextDisabled("Resolution the Performant view renders and snaps at.\n"
+                        "Viewport follows the window; a preset sets the height and\n"
+                        "takes its width from the view's aspect.");
+
+    ImGui::Spacing();
     ImGui::Text("Max Bounces");
     ImGui::SetNextItemWidth(-1);
     ImGui::SliderInt("##bounce2", &rtMaxBounces, 0, 4, "%d");
@@ -3492,6 +3512,17 @@ void Renderer::DrawBenchmarkPanel() {
       ImGui::Text("%.1f ms", bench.dispatchMs);
     else
       ImGui::TextDisabled("--");
+
+    ImGui::TextDisabled("Frame");    ImGui::SameLine(90);
+    ImGui::Text("%.1f ms", bench.frameMs);
+
+    ImGui::TextDisabled("FPS");      ImGui::SameLine(90);
+    ImGui::Text("%.1f", bench.fps);
+  } else if (cinematicViewEnabled && cinematicRaster) {
+    int rw = 0, rh = 0;
+    RasterRenderSize(sceneRenderW, sceneRenderH, rw, rh);
+    ImGui::TextDisabled("Live res"); ImGui::SameLine(90);
+    ImGui::Text("%dx%d", rw, rh);
 
     ImGui::TextDisabled("Frame");    ImGui::SameLine(90);
     ImGui::Text("%.1f ms", bench.frameMs);
@@ -5899,6 +5930,18 @@ void Renderer::CineBlankIfNeeded() {
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
+// Resolution the raster cinematic image is computed at for a target of (w,h).
+// The preset height is the quality; the width follows the target's aspect so a
+// 16:9 preset in a non-16:9 window cannot stretch the image (the raytracer's
+// dispatch does the same, for the same reason).
+void Renderer::RasterRenderSize(int w, int h, int& outW, int& outH) const {
+  outW = std::max(1, w);
+  outH = std::max(1, h);
+  if (rasterLiveHeight <= 0 || w <= 0 || h <= 0) return;
+  outH = rasterLiveHeight;
+  outW = std::max(16, (int)std::lround((double)outH * w / h));
+}
+
 // Redirect the rasterized scene into the HDR buffer for this pass (only when the
 // pass renders the realistic HDR rasterizer). No-op otherwise — leaves GL state
 // untouched so the nav rasterizer and RT paths behave exactly as before.
@@ -5908,16 +5951,20 @@ void Renderer::CineBeginIfActive(GLuint realTargetFBO, int w, int h) {
   if (w <= 0 || h <= 0) return;
   // Supersample: draw the scene into a larger buffer; the tonemap composite in
   // CineResolveIfActive downsamples it to (w,h), averaging out sub-pixel flicker.
+  int rw = 0, rh = 0;
+  RasterRenderSize(w, h, rw, rh);      // chosen quality; SSAA multiplies it
   float ss  = std::clamp(cineSSAA, 1.0f, 2.0f);
-  int   ssW = std::max(1, (int)std::lround(w * ss));
-  int   ssH = std::max(1, (int)std::lround(h * ss));
+  int   ssW = std::max(1, (int)std::lround(rw * ss));
+  int   ssH = std::max(1, (int)std::lround(rh * ss));
   EnsureCineFBO(ssW, ssH);
   if (!cineFBO) return;
   cineActive         = true;
   cineResolveTarget  = realTargetFBO;
-  cineResolveW       = w;              // real (downsampled) target size
+  cineResolveW       = w;              // real (resolved) target size
   cineResolveH       = h;
-  currentPixelScale  = ss;             // keep point sprites the same apparent size
+  cinePostW          = rw;
+  cinePostH          = rh;
+  currentPixelScale  = (float)ssH / (float)h;  // keep point sprites the same apparent size
   glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
   glViewport(0, 0, ssW, ssH);
   ClearSceneTarget();
@@ -5928,7 +5975,7 @@ void Renderer::CineResolveIfActive() {
   if (!cineActive) return;
   glBindFramebuffer(GL_FRAMEBUFFER, cineResolveTarget);
   glViewport(0, 0, cineResolveW, cineResolveH);
-  RunPostProcess(cineColorTex, cineResolveW, cineResolveH);  // samples the larger cineColorTex → downsample
+  RunPostProcess(cineColorTex, cinePostW, cinePostH);  // samples the larger cineColorTex → downsample
   cineActive = false;
   currentPixelScale = 1.0f;
 }
@@ -7160,11 +7207,10 @@ void Renderer::BlitRaytracerToScreen() {
 void Renderer::StartRecording() {
   if (recording) return;
 
-  // Performant cinematic records at the on-screen viewport resolution.
-  if (cinematicRaster) {
-    if (sceneRenderW > 0) recordWidth  = sceneRenderW;
-    if (sceneRenderH > 0) recordHeight = sceneRenderH;
-  }
+  // Performant cinematic records at the resolution the live view renders at, so
+  // the video can never come out smaller than what was previewed.
+  if (cinematicRaster && sceneRenderW > 0 && sceneRenderH > 0)
+    RasterRenderSize(sceneRenderW, sceneRenderH, recordWidth, recordHeight);
 
   // Ensure even dimensions (x264 requires it)
   int w = recordWidth  & ~1;

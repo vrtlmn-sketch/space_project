@@ -158,6 +158,9 @@ struct SceneSettings {
   int   rtLiveResPreset{1};
   int   rtLiveWidth{142};
   int   rtLiveHeight{80};
+  int   rasterLiveResPreset{3};   // 1080p; 0 = Viewport (follow the window)
+  int   rasterLiveWidth{1920};
+  int   rasterLiveHeight{1080};
 
   // Photographic HDR (RT views)
   float rtExposure{0.92f};

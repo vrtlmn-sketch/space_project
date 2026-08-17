@@ -263,6 +263,9 @@ bool ProjectSerializer::Save(const std::string& path,
     s["rtLiveResPreset"] = settings.rtLiveResPreset;
     s["rtLiveWidth"]     = settings.rtLiveWidth;
     s["rtLiveHeight"]    = settings.rtLiveHeight;
+    s["rasterLiveResPreset"] = settings.rasterLiveResPreset;
+    s["rasterLiveWidth"]     = settings.rasterLiveWidth;
+    s["rasterLiveHeight"]    = settings.rasterLiveHeight;
     s["rtExposure"]        = settings.rtExposure;
     s["bloomStrength"]     = settings.bloomStrength;
     s["bloomThreshold"]    = settings.bloomThreshold;
@@ -602,6 +605,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.rtLiveResPreset = s.value("rtLiveResPreset", 1);
     st.rtLiveWidth     = s.value("rtLiveWidth",     142);
     st.rtLiveHeight    = s.value("rtLiveHeight",    80);
+    st.rasterLiveResPreset = s.value("rasterLiveResPreset", SceneSettings{}.rasterLiveResPreset);
+    st.rasterLiveWidth     = s.value("rasterLiveWidth",     SceneSettings{}.rasterLiveWidth);
+    st.rasterLiveHeight    = s.value("rasterLiveHeight",    SceneSettings{}.rasterLiveHeight);
     st.rtExposure         = s.value("rtExposure",         SceneSettings{}.rtExposure);
     st.bloomStrength      = s.value("bloomStrength",      SceneSettings{}.bloomStrength);
     st.bloomThreshold     = s.value("bloomThreshold",     0.0f);

@@ -740,6 +740,7 @@ int main(int argc, char** argv) {
     renderer.SetRtMaxBounces(s.rtMaxBounces);
     renderer.SetRtMaxSteps(s.rtMaxSteps);
     renderer.SetRtLiveRes(s.rtLiveResPreset, s.rtLiveWidth, s.rtLiveHeight);
+    renderer.SetRasterLiveRes(s.rasterLiveResPreset, s.rasterLiveWidth, s.rasterLiveHeight);
     renderer.SetRecordRes(s.recordResPreset, s.recordWidth, s.recordHeight);
     renderer.SetRecordFps(s.recordFps);
     renderer.SetRecordPath(s.recordPath);
@@ -927,6 +928,9 @@ int main(int argc, char** argv) {
     s.rtLiveResPreset = renderer.GetRtLiveResPreset();
     s.rtLiveWidth     = renderer.GetRtLiveWidth();
     s.rtLiveHeight    = renderer.GetRtLiveHeight();
+    s.rasterLiveResPreset = renderer.GetRasterLiveResPreset();
+    s.rasterLiveWidth     = renderer.GetRasterLiveWidth();
+    s.rasterLiveHeight    = renderer.GetRasterLiveHeight();
     s.simSpeed        = renderer.simSpeed;
     s.playbackSpeed   = renderer.playbackSpeed;
     s.exaggeratedSizes = renderer.exaggeratedSizes;
@@ -1417,7 +1421,8 @@ int main(int argc, char** argv) {
       renderer.rasterSnapRequested = false;
       bool sRt = renderer.rayTracerView, sRR = renderer.realisticRasterView;
       renderer.rayTracerView = false; renderer.realisticRasterView = true;
-      int rw = renderer.GetFbWidth(), rh = renderer.GetFbHeight();
+      int rw = 0, rh = 0;
+      renderer.RasterRenderSize(renderer.GetFbWidth(), renderer.GetFbHeight(), rw, rh);
       renderer.BeginRecordRaster(rw, rh);
       renderer.DrawSkybox(skybox);
       for (int i = 0; i < (int)physicsObjects.size(); i++) {
