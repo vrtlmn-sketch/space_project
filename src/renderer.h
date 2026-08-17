@@ -595,13 +595,16 @@ public:
   std::vector<RtTri>                  rtTriangles{};         // free-object triangles (both paths)
   std::vector<BVHNode>                rtNodes{};             // free-object BVH nodes (both paths)
   bool rayTracerView{false};
-  bool raytracerIsMain{false};   // false = rasterizer fullscreen, raytracer PiP
+  // Which SLOT is fullscreen. It does NOT choose a renderer: the Cinematic
+  // View's content is cinematicRaster's job. The old name (raytracerIsMain)
+  // claimed otherwise and misled for a long time.
+  bool cinematicFullscreen{false};  // false = viewport fullscreen, cinematic in the PiP
   bool cinematicViewEnabled{false};  // master on/off for the Cinematic View (both modes). RT runs only when on + Realistic
   int  raytracerMethod{0};       // 0 = Simple, 1 = Geodesic, 2 = Geodesic Acyclic
   // ── Cinematic View content ──
   // The Cinematic View (secondary window) shows one of two things, chosen here.
   // The Viewport (nav rasterizer) is never affected by this.
-  bool cinematicRaster{true};    // false = Realistic (raytracer), true = Performant (HDR rasterizer)
+  bool cinematicRaster{true};    // false = Realistic (raytracer), true = Performant (HDR rasterizer). Persisted.
   bool realisticRasterView{false}; // per-pass: this pass renders the realistic HDR rasterizer
   bool cinematicBlank{false};      // per-pass: cinematic slot with the view OFF → render black
   void SetPassView(bool cinematicSlot); // set rayTracerView / realisticRasterView / cinematicBlank
@@ -895,6 +898,7 @@ public:
   // drawn into goes through here; post-process ping-pong buffers (bloom, spike,
   // dust density) must stay black and are cleared directly.
   void   ClearSceneTarget();
+  const char* MainSlotLabel() const;   // what the fullscreen slot is showing
   vec3   backgroundRGB() const {
     return {backgroundColor.x * backgroundLevel,
             backgroundColor.y * backgroundLevel,

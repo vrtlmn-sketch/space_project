@@ -125,8 +125,14 @@ struct SceneSettings {
 
   // Render mode
   int  raytracerMethod{0};       // 0=Simple, 1=Geodesic, 2=Acyclic
-  bool raytracerIsMain{false};
-  bool raytracerEnabled{false};
+  // Which SLOT is fullscreen, and what the Cinematic View puts in it. These are
+  // three separate things and the old names hid that: "raytracerIsMain" never
+  // meant the raytracer, it meant the cinematic slot, whose CONTENT is chosen by
+  // cinematicRaster — which used to not be saved at all, so a project always
+  // reopened in Performant however you left it.
+  bool cinematicFullscreen{false};  // false = viewport fullscreen, cinematic in the PiP
+  bool cinematicViewEnabled{false}; // master on/off for the Cinematic View
+  bool cinematicRaster{true};       // true = Performant (HDR raster), false = Realistic (RT)
 
   // Doppler effect
   bool  dopplerMode{false};

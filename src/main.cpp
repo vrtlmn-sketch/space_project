@@ -676,8 +676,9 @@ int main(int argc, char** argv) {
     renderer.zoom     = s.camZoom;
     renderer.syncMatrixFromEuler();
     renderer.raytracerMethod  = s.raytracerMethod;
-    renderer.raytracerIsMain  = s.raytracerIsMain;
-    renderer.cinematicViewEnabled = s.raytracerEnabled;
+    renderer.cinematicFullscreen  = s.cinematicFullscreen;
+    renderer.cinematicViewEnabled = s.cinematicViewEnabled;
+    renderer.cinematicRaster      = s.cinematicRaster;
     renderer.dopplerMode          = s.dopplerMode;
     renderer.dopplerVelScale      = s.dopplerVelScale;
     renderer.dopplerBrightnessStr = s.dopplerBrightnessStr;
@@ -878,8 +879,9 @@ int main(int argc, char** argv) {
     s.camRoll     = renderer.roll;
     s.camZoom     = renderer.zoom;
     s.raytracerMethod  = renderer.raytracerMethod;
-    s.raytracerIsMain  = renderer.raytracerIsMain;
-    s.raytracerEnabled = renderer.cinematicViewEnabled;
+    s.cinematicFullscreen  = renderer.cinematicFullscreen;
+    s.cinematicViewEnabled = renderer.cinematicViewEnabled;
+    s.cinematicRaster      = renderer.cinematicRaster;
     s.dopplerMode          = renderer.dopplerMode;
     s.dopplerVelScale      = renderer.dopplerVelScale;
     s.dopplerBrightnessStr = renderer.dopplerBrightnessStr;
@@ -1068,9 +1070,9 @@ int main(int argc, char** argv) {
     if (!renderer.BeginFrame()) continue;
 
     // Set primary view based on which view is "main"
-    // raytracerIsMain=false → rasterizer fullscreen (primary), raytracer PiP (secondary)
-    // raytracerIsMain=true  → raytracer fullscreen (primary), rasterizer PiP (secondary)
-    renderer.SetPassView(renderer.raytracerIsMain);
+    // cinematicFullscreen=false → viewport fullscreen, Cinematic View in the PiP
+    // cinematicFullscreen=true  → Cinematic View fullscreen, viewport in the PiP
+    renderer.SetPassView(renderer.cinematicFullscreen);
 
     // In editor viewport mode, redirect all primary drawing into the viewport FBO.
     // Must happen before any draw calls so every object ends up in the FBO.

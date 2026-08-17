@@ -239,8 +239,9 @@ bool ProjectSerializer::Save(const std::string& path,
 
     // Render mode
     s["raytracerMethod"]  = settings.raytracerMethod;
-    s["raytracerIsMain"]  = settings.raytracerIsMain;
-    s["raytracerEnabled"] = settings.raytracerEnabled;
+    s["cinematicFullscreen"]  = settings.cinematicFullscreen;
+    s["cinematicViewEnabled"] = settings.cinematicViewEnabled;
+    s["cinematicRaster"]      = settings.cinematicRaster;
 
     // Doppler
     s["dopplerMode"]         = settings.dopplerMode;
@@ -571,8 +572,13 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 
     // Render mode
     st.raytracerMethod  = s.value("raytracerMethod",  0);
-    st.raytracerIsMain  = s.value("raytracerIsMain",  false);
-    st.raytracerEnabled = s.value("raytracerEnabled", false);
+    // Legacy key names are still read: raytracerIsMain/raytracerEnabled were
+    // this pair before they were named after what they do.
+    st.cinematicFullscreen  = s.value("cinematicFullscreen",
+                                      s.value("raytracerIsMain", false));
+    st.cinematicViewEnabled = s.value("cinematicViewEnabled",
+                                      s.value("raytracerEnabled", false));
+    st.cinematicRaster      = s.value("cinematicRaster", SceneSettings{}.cinematicRaster);
 
     // Doppler
     st.dopplerMode         = s.value("dopplerMode",         false);

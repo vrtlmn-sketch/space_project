@@ -945,7 +945,7 @@ bool Renderer::UpdateInputs() {
     // Toggle keys (fire on release)
     // F = flip main/PiP views
     if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)  flipKeyPressed = true;
-    else { if (flipKeyPressed) raytracerIsMain = !raytracerIsMain; flipKeyPressed = false; }
+    else { if (flipKeyPressed) cinematicFullscreen = !cinematicFullscreen; flipKeyPressed = false; }
 
     // T = toggle the Cinematic View on/off (edge-triggered)
     if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS)  rtToggleKeyPressed = true;
@@ -2099,7 +2099,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
 
   // Gizmo + click-to-select only make sense over the rasterized view —
   // the raytraced view uses its own projection (and bends light).
-  if (!raytracerIsMain)
+  if (!cinematicFullscreen)
     DrawCameraFrustums();
     DrawGizmoAndPick(physicsObjects, clouds);
 
@@ -2599,6 +2599,15 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawControlsPanel  (docked top bar — compact single row)
 // ─────────────────────────────────────────────────────────────────────────────
+// What the fullscreen slot is actually showing. The status bar used to print
+// "RT main" for any fullscreen cinematic slot, including when that slot was
+// rendering the rasterizer.
+const char* Renderer::MainSlotLabel() const {
+  if (!cinematicFullscreen)   return "Viewport main";
+  if (!cinematicViewEnabled)  return "Cinematic off";
+  return cinematicRaster ? "Performant main" : "Realistic main";
+}
+
 void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Controls", nullptr, flags);
@@ -2630,8 +2639,8 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   }
   ImGui::SameLine();
 
-  if (ImGui::Button(raytracerIsMain ? "Flip [F]##rt" : "Flip [F]##rs", ImVec2(65, 0)))
-    raytracerIsMain = !raytracerIsMain;
+  if (ImGui::Button(cinematicFullscreen ? "Flip [F]##rt" : "Flip [F]##rs", ImVec2(65, 0)))
+    cinematicFullscreen = !cinematicFullscreen;
   ImGui::SameLine();
 
   // Cinematic View master on/off (drives both Realistic/RT and Performant modes)
@@ -3545,7 +3554,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     ImGui::GetIO().Framerate,
     physicsObjects.size(),
     paused ? "PAUSED" : (playingForward ? "FWD" : "REV"),
-    raytracerIsMain ? "RT main" : "Rast main");
+    MainSlotLabel());
 
   // Compute current / max frame. curFrame tracks the simulated bodies (all
   // advance in lockstep); anySimulated decides whether the playhead follows
@@ -6032,7 +6041,7 @@ void Renderer::BeginSecondaryPass() {
 
   // Switch to the OTHER slot for the secondary pass. Secondary is the cinematic
   // slot exactly when the Viewport (primary) is the nav rasterizer.
-  SetPassView(!raytracerIsMain);
+  SetPassView(!cinematicFullscreen);
 
   // If a spawned camera drives the secondary view, swap the freecam transform
   // to that camera's for the duration of the pass (restored in EndSecondaryPass).
@@ -6091,7 +6100,7 @@ void Renderer::EndSecondaryPass() {
   fbHeight = fbh;
 
   // Restore the primary (Viewport) slot's view flags
-  SetPassView(raytracerIsMain);
+  SetPassView(cinematicFullscreen);
 
   // Restore the freecam transform if a spawned camera drove this pass
   if (secondaryOverride) {
@@ -6167,8 +6176,8 @@ void Renderer::DrawPipWindow() {
   if (performantActive) ImGui::PopStyleColor(3);
 
   // The Cinematic View shows the secondary slot; it is the cinematic slot unless
-  // the Viewport was flipped to show it (raytracerIsMain).
-  bool pipIsCinematic = !raytracerIsMain;
+  // the Viewport was flipped to show it (cinematicFullscreen).
+  bool pipIsCinematic = !cinematicFullscreen;
 
   // Reserve one bottom status line, then centre the image in the remaining area
   // (both axes) so it matches the centred Viewport when docked side by side.
@@ -6191,8 +6200,8 @@ void Renderer::DrawPipWindow() {
   const char* pipContent;
   if (!pipIsCinematic)            pipContent = "Rasterizer";       // nav raster (flipped in)
   else if (!cinematicViewEnabled) pipContent = "Cinematic Off";
-  else if (cinematicRaster)       pipContent = "Realistic Raster";
-  else                            pipContent = "Raytracer";
+  else if (cinematicRaster)       pipContent = "Cinematic Performant";
+  else                            pipContent = "Cinematic Realistic";
   ImGui::SetCursorPosY(cur.y + boxH);
   ImGui::TextDisabled("%s  %dx%d", pipContent, pipWidth, pipHeight);
   ImGui::End();
