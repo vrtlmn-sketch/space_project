@@ -308,6 +308,59 @@ wrong shape: brightness in this renderer is proportional to points drawn, so a
 sampled object is a different look, not a coarser one. Either draw the object
 properly or accept it is a distant smudge.
 
+## Time step, playback, and the multi-scale regimes
+
+`simSpeed` is the TIME STEP: dt per recorded frame = `kDtYears (0.0005 yr) x
+simSpeed`, log range 0.01..1e11 (minutes to tens of Myr). `playbackSpeed` is
+frames per tick / 5, INDEPENDENT of dt (it used to hold world-time-per-tick
+constant across sim speeds — meaningless across ten orders of dt, and it forced
+Play off its own slider). Consequence for old projects: changing the step now
+also changes wall speed proportionally; the Play tooltip shows the world rate.
+**Auto** sets dt = T / autoStepsPerOrbit for the selected object/cloud, else
+the largest simulated cloud, else the fastest body. Numbers that motivated all
+of this: milky_way_5k orbits in ~113 yr; milky_way_real_20k in 5.6e7 yr — at the
+old max (Sim 10x, Play 10x) one galactic orbit took **43 days** of wall time.
+
+One dt cannot resolve a moon and a galaxy at once, so `dynamics.h` gives every
+simulated body a REGIME from its own dynamical time T against dt:
+- **Numeric** (dt <= T/200): integrated as always.
+- **Analytic** (otherwise): the orbit cannot be integrated at this dt (Euler at
+  a few steps per orbit does not get it wrong, it EJECTS it — measured: a
+  planet at 1 AU flung to 2e10 AU in 30 frames at a 5e4 yr step), so the body
+  rides its PARENT on an exact two-body Kepler orbit (universal variables,
+  handles hyperbolic too; verified to 1e-9 over 1e5 orbits). Same test with
+  the regimes: 1.0000 AU after 1.5 Myr.
+- Clouds whose internal T is unresolved are **rigid**: particles frozen (they
+  are phase-mixed — thousands of internal orbits per frame), the centre of mass
+  on a Kepler orbit around its parent, or coasting.
+- Parent = the HEAVIER attractor whose pull is largest (never a lighter one —
+  that gave Sun-orbits-Jupiter cycles), with 1.5x hysteresis. Cloud parents
+  are its centre of mass. Regime and parent are derived every frame, never
+  saved.
+- **A numeric body skips gravity from its analytic satellites.** A planet
+  whose orbit is unresolved delivers an impulse per step that is garbage
+  (dt >> its period) and would fling its star; its mass rides with the parent.
+- **Objects update parents-first** (`objectOrder` from UpdateSceneDynamics), so
+  an analytic satellite reads its parent's position for THIS tick — from the
+  parent's recorded frames at each sub-step, so it never lags by one step
+  (at galactic dt a one-step lag is millions of AU).
+- **`clearRecording` drops the regime** (epoch, elapsed): the analytic epoch was
+  taken from a state that a reset/Apply erased; re-enter from the new state or
+  the body jumps.
+- Softening is per cloud now: `max(0.001, (0.25 x RMS / N^(1/3))^2)`. The old
+  constant 0.001 AU^2 was spacing/4 for a 3 AU formation and 1e16x too small
+  for a real galaxy (spacing 1.4e7 AU). The floor keeps small clouds
+  bit-identical (verified); the CPU O(n^2) path still has no softening.
+- The cloud inspector shows T, steps per orbit, regime, and v/v_circ with a
+  **Virialize masses** button (explicit, clears the recording). Neither
+  bundled formation is self-consistent: the 5k has 400x too much gravity for
+  its speeds and collapses; milky_way_real_20k has 2e4 Msun for a 6 kly disc
+  and is unbound 1000x — under simulation it flies apart until virialized.
+- Harness: `DYN_DEBUG=1` logs regime transitions. `PLAY=1 COMPARE_FRAMES=n
+  SAVE_PROJECT=...` and reading positions back is how the ejection test above
+  was measured; when comparing physics across builds match FRAMES PER TICK, not
+  Play values (Play's meaning changed).
+
 ## Clouds draw in TWO phases: every cloud's light, then every cloud's dust
 
 Haze, gas and cores are additive (`GL_ONE, GL_ONE`); dust is multiplicative

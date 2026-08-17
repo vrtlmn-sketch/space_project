@@ -113,6 +113,7 @@ void CloudObject::initGPU() {
   locBigBodyCount  = glGetUniformLocation(bhProgram, "uBigBodyCount");
   locG             = glGetUniformLocation(bhProgram, "uG");
   locDt            = glGetUniformLocation(bhProgram, "uDt");
+  locSoftening2    = glGetUniformLocation(bhProgram, "uSoftening2");
   locTheta         = glGetUniformLocation(bhProgram, "uTheta");
   locFrameOffset   = glGetUniformLocation(bhProgram, "uFrameOffset");
 
@@ -263,6 +264,7 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   glUniform1i(locBigBodyCount, bbCount);
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
+  glUniform1f(locSoftening2, renderedObject.softening2());
   glUniform1f(locTheta, barnesHutTheta);
   if (locFrameOffset >= 0) glUniform3f(locFrameOffset, 0.0f, 0.0f, 0.0f);  // sim frame = cloud frame
 
@@ -305,6 +307,7 @@ void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
   glUniform1i(locBigBodyCount, bbCount);
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
+  glUniform1f(locSoftening2, renderedObject.softening2());
   glUniform1f(locTheta, barnesHutTheta);
   if (locFrameOffset >= 0)
     glUniform3f(locFrameOffset, (float)(position.x - simOrigin.x),
@@ -339,6 +342,7 @@ void CloudObject::SimulateSharedForward(
     CloudObject* c = up.get();
     if (c->computeMethod != CloudComputeMethod::BarnesHutGPU) continue;
     if (!c->simulatePhysics) continue;
+    if (c->dynRigid) continue;   // unresolved at this step: transported as one body instead
     if (!c->gpuInitialized) c->initGPU();
     if (!c->gpuInitialized) continue;   // init failed → Update() runs CPU fallback
     c->renderedObject.coordinates = c->position;
@@ -549,9 +553,11 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     // their per-cloud forward stepping here so they aren't stepped twice.
     bool sharedHandled = (computeMethod == CloudComputeMethod::BarnesHutGPU
                           && gpuInitialized && renderer.playingForward);
-    if(sharedHandled)
+    if(sharedHandled || dynRigid)
     {
-      // physics already advanced by the shared coordinator this frame
+      // physics already advanced by the shared coordinator this frame — or the
+      // cloud is RIGID at this step (dyn::TransportRigidClouds moves it as one
+      // body; its particles stay put)
     }
     else if(renderer.playingForward)
     {
@@ -650,6 +656,9 @@ void CloudObject::clearRecording()
 {
   if (frameStore) frameStore->clear();
   timeframe = 0;
+  dynRigid   = false;   // same as PhysicsObject::clearRecording: re-enter from the current state
+  dynElapsed = 0.0;
+  dynMass    = 0.0;     // and re-measure
 }
 
 void CloudObject::resetToInitial()
@@ -809,4 +818,37 @@ bool CloudObject::gravitySource(vec3& comWorld, float& totalMass) const {
   comWorld  = vec3{(float)(mx / mtot), (float)(my / mtot), (float)(mz / mtot)};
   totalMass = (float)mtot;
   return true;
+}
+
+
+// ── Virial balance ───────────────────────────────────────────────────────────
+double CloudObject::virialRatio() const {
+  const auto& ps = renderedObject.particles();
+  const size_t n = ps.size();
+  if (n < 16) return 0.0;
+  const size_t stride = std::max<size_t>(1, n / 4096);
+  std::vector<double> rs, vs; double mtot = 0.0; size_t cnt = 0;
+  for (size_t i = 0; i < n; i += stride) {
+    const auto& p = ps[i];
+    rs.push_back(std::sqrt((double)p.position.x*p.position.x + (double)p.position.y*p.position.y + (double)p.position.z*p.position.z));
+    vs.push_back(std::sqrt((double)p.velocity.x*p.velocity.x + (double)p.velocity.y*p.velocity.y + (double)p.velocity.z*p.velocity.z));
+    mtot += (double)p.mass; cnt++;
+  }
+  mtot *= (double)n / (double)cnt;
+  std::nth_element(rs.begin(), rs.begin() + rs.size()/2, rs.end());
+  std::nth_element(vs.begin(), vs.begin() + vs.size()/2, vs.end());
+  const double rMed = rs[rs.size()/2], vMed = vs[vs.size()/2];
+  if (rMed <= 0.0 || mtot <= 0.0) return 0.0;
+  const double vCirc = std::sqrt(units::kG * mtot / rMed);
+  return (vCirc > 0.0) ? vMed / vCirc : 0.0;
+}
+
+void CloudObject::virializeMasses() {
+  const double q = virialRatio();
+  if (q <= 0.0) return;
+  // v_circ scales as sqrt(M): to make v_circ == v_median, scale M by q^2.
+  const float f = (float)(q * q);
+  for (auto& p : renderedObject.cloudParticles) p.mass *= f;
+  if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) uploadParticlesToGPU();
+  dynMass = 0.0;   // force the dynamics cache to refresh next frame
 }

@@ -47,7 +47,12 @@ uniform float uTheta;        // Barnes-Hut opening angle (0.5)
 uniform vec3  uFrameOffset;
 
 // ── Softening to avoid singularity ──
-const float SOFTENING2 = 0.001;       // increased to prevent close-encounter blow-ups
+// Plummer softening squared. It used to be a constant 0.001 AU^2 — fine for a
+// 3 AU formation (spacing/4), 1e16x too small for a real galaxy at 1e9 AU,
+// where any close pass was a point-mass singularity. Per cloud now: the CPU
+// sends max(0.001, (0.25 * RMS radius / N^(1/3))^2), so small clouds simulate
+// exactly as before and huge ones stop exploding.
+uniform float uSoftening2 = 0.001;
 const float SELF_DIST2 = 1e-8;        // if leaf COM is this close to us, it's our own leaf
 
 void main() {
@@ -80,7 +85,7 @@ void main() {
     if (node.com.w <= 0.0) continue;
 
     vec3 r = node.com.xyz - pos;
-    float d2 = dot(r, r) + SOFTENING2;
+    float d2 = dot(r, r) + uSoftening2;
     float d  = sqrt(d2);
 
     float nodeSize = node.bnd.w * 2.0;  // full width of the node
@@ -110,7 +115,7 @@ void main() {
   // ── 2. Gravity from big bodies (exact, no approximation) ──
   for (int b = 0; b < uBigBodyCount; b++) {
     vec3 r = bigBodies[b].posM.xyz - pos;
-    float d2 = dot(r, r) + SOFTENING2;
+    float d2 = dot(r, r) + uSoftening2;
     // accel = G * bigMass / d^2  (F/m = GM/r²)
     float accel = uG * bigBodies[b].posM.w / d2;
     acc += normalize(r) * accel;

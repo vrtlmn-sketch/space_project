@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "dynamics.h"
 #include "physicsObject.h"
 #include "units.h"
 #include "cloudObject.h"
@@ -1234,7 +1235,7 @@ void Renderer::ComputeFrameAdvance() {
   // constant as the frame advance, so it always tracks the sim speed.
   playbackSpeed = std::max(playbackSpeed, minPlaybackSpeed());
 
-  float framesPerTick = kBaseFramesPerTick * playbackSpeed / std::max(simSpeed, 0.01f);
+  float framesPerTick = kBaseFramesPerTick * playbackSpeed;
   accum += framesPerTick;
   framesThisTick = (int)accum;
 
@@ -2755,19 +2756,59 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
-  // Simulation speed (data resolution) + playback speed (visual rate)
-  ImGui::Text("Sim");
+  // Time step (data resolution) + playback (frames per tick)
+  ImGui::Text("Step");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(60);
-  ImGui::DragFloat("##simspeed", &pendingSimSpeed, 0.01f, 0.05f, 10.0f, "%.2fx");
-  if (std::abs(pendingSimSpeed - simSpeed) > 1e-4f) {
+  ImGui::SetNextItemWidth(92);
+  {
+    // Log slider over eleven orders of magnitude, labelled in real time units.
+    const std::string lbl = units::FormatTimeYears(units::kDtYears * (double)pendingSimSpeed);
+    ImGui::SliderFloat("##simstep", &pendingSimSpeed, kSimSpeedMin, kSimSpeedMax,
+                       lbl.c_str(), ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat);
+    if (ImGui::IsItemHovered()) {
+      const double dt = units::kDtYears * (double)pendingSimSpeed;
+      ImGui::BeginTooltip();
+      ImGui::Text("Time step per recorded frame: %s", lbl.c_str());
+      if (dynFastestT > 0.0)
+        ImGui::Text("Fastest body in the scene: %.0f steps per orbit%s",
+                    dynFastestT / dt, dynFastestT / dt < dyn::kResolvedSteps ? "  (carried analytically)" : "");
+      ImGui::TextDisabled("Bodies whose orbit this step cannot resolve ride their\n"
+                          "parent on an exact Kepler orbit instead of being integrated.");
+      ImGui::EndTooltip();
+    }
+  }
+  ImGui::SameLine();
+  {
+    const bool canAuto = dynAutoT > 0.0;
+    if (!canAuto) ImGui::BeginDisabled();
+    if (ImGui::SmallButton("Auto##step")) {
+      const double dt = dynAutoT / std::max(autoStepsPerOrbit, 10);
+      pendingSimSpeed = (float)std::clamp(dt / units::kDtYears, (double)kSimSpeedMin, (double)kSimSpeedMax);
+    }
+    if (!canAuto) ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      ImGui::BeginTooltip();
+      if (canAuto) ImGui::Text("Step = %s / %d   (%s: orbit %s)",
+                               dynAutoLabel, autoStepsPerOrbit, dynAutoLabel,
+                               units::FormatTimeYears(dynAutoT).c_str());
+      else ImGui::Text("Nothing simulated to fit the step to.");
+      ImGui::TextDisabled("Target: the selected object or cloud; else the largest\n"
+                          "simulated cloud; else the fastest body.");
+      ImGui::EndTooltip();
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(52);
+    ImGui::DragInt("##stepsorbit", &autoStepsPerOrbit, 5.0f, 50, 100000, "%d/orb");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steps per orbit the Auto step aims for.");
+  }
+  if (std::abs(pendingSimSpeed - simSpeed) > 1e-4f * std::max(simSpeed, 1.0f)) {
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, SemBtn(ImVec4(0.70f, 0.45f, 0.05f, 1.00f)));
     if (ImGui::Button("Save##simspeed"))
-      ImGui::OpenPopup("Apply Sim Speed?");
+      ImGui::OpenPopup("Apply Time Step?");
     ImGui::PopStyleColor();
   }
-  if (ImGui::BeginPopupModal("Apply Sim Speed?", nullptr,
+  if (ImGui::BeginPopupModal("Apply Time Step?", nullptr,
                              ImGuiWindowFlags_AlwaysAutoResize)) {
     ImGui::Text("Your simulation data will be deleted.");
     ImGui::TextDisabled("All recorded frames are cleared and the timeline\n"
@@ -2791,8 +2832,16 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGui::Text("Play");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(60);
-  if (ImGui::DragFloat("##playspeed", &playbackSpeed, 0.01f, 0.01f, 10.0f, "%.2fx"))
+  if (ImGui::SliderFloat("##playspeed", &playbackSpeed, minPlaybackSpeed(), 12.8f, "%.2fx",
+                         ImGuiSliderFlags_Logarithmic))
     playbackSpeed = std::max(playbackSpeed, minPlaybackSpeed());
+  if (ImGui::IsItemHovered()) {
+    const double fpt  = kBaseFramesPerTick * playbackSpeed;
+    const double fps  = ImGui::GetIO().Framerate > 1.0f ? ImGui::GetIO().Framerate : 60.0;
+    const double rate = fpt * units::kDtYears * (double)simSpeed * fps;
+    ImGui::SetTooltip("%.1f frames per tick  =  about %s of world time per second",
+                      fpt, units::FormatTimeYears(rate).c_str());
+  }
   ImGui::SameLine();
 
   // Separator
@@ -5373,6 +5422,40 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         ImGui::SetTooltip("Star catalogues carry no velocities - physics needs a\ngenerated galaxy or a procedural cloud.");
       if (!catalogueSf && !cloud->simulatePhysics)
         ImGui::TextDisabled("Keyframed — press C to capture at the playhead");
+
+      // ── Dynamics: what the current step can do with this cloud ──
+      if (cloud->simulatePhysics && cloud->renderedObject.simulatableParticleCount() > 0) {
+        const double dt = units::kDtYears * (double)simSpeed;
+        const double T  = cloud->dynT;
+        ImGui::TextDisabled("Dynamics");
+        if (T > 0.0) {
+          const double steps = T / dt;
+          ImGui::Text("Dynamical time %s   %.0f steps per orbit", units::FormatTimeYears(T).c_str(), steps);
+          if (cloud->dynRigid)
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                               "Rigid at this step: particles frozen, moves as one body");
+          else
+            ImGui::TextDisabled("Integrated (particles simulate)");
+        }
+        const double q = cloud->virialRatio();
+        if (q > 0.0) {
+          const char* verdict = (q > 1.5) ? "unbound: flies apart"
+                              : (q < 0.67) ? "over-bound: collapses" : "roughly balanced";
+          ImGui::Text("v / v_circ = %.3g  (%s)", q, verdict);
+          if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Median particle speed over the circular speed the cloud's own\n"
+                              "mass gives at its median radius. 1 = the velocities match the gravity.");
+          if (std::fabs(q - 1.0) > 0.1) {
+            if (ImGui::Button("Virialize masses##cvir", ImVec2(-1, 0))) {
+              cloud->virializeMasses();
+              cloud->clearRecording();
+            }
+            if (ImGui::IsItemHovered())
+              ImGui::SetTooltip("Scale every particle's mass by %.3g so the gravity matches\n"
+                                "the velocities and the cloud holds together. Clears the recording.", q * q);
+          }
+        }
+      }
 
       // Position (AU) — cloud centre. Numeric field always works even when the
       // centre is at galactic distance (gizmo would be unreachable there).

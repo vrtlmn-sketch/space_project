@@ -3,6 +3,7 @@
 #include "units.h"
 #include "mathStructs.h"
 #include "physicsObject.h"
+#include "dynamics.h"
 
 void PhysicsObject::SetVelocity(const vec3& velocity)
 {
@@ -86,6 +87,10 @@ void PhysicsObject::clearRecording()
 {
   frameStore.clear();
   timeframe = 0;
+  // The analytic epoch was taken from a state that no longer exists; drop the
+  // regime so it re-enters from wherever the body is now instead of jumping.
+  dynAnalytic = false;
+  dynElapsed  = 0.0;
 }
 
 void PhysicsObject::resetToInitial()
@@ -132,15 +137,41 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
       // Simulate remaining steps at the head (dt = fine-grained data rate)
       double G  = units::kG;
       double dt = units::kDtYears * (double)renderer.simSpeed;
+      const int selfIdx = (int)(this - physicsObjetcs.data());
       for (int s = 0; s < steps; ++s) {
         if (frameStore.totalFrames() == 0) {
           initialPosition = data.position;
           initialVelocity = data.velocity;
           initialCaptured = true;
         }
+        if (dynAnalytic) {
+          // Unresolved orbit: ride the parent on the exact two-body solution.
+          // The parent stepped before us this tick (parents-first order), so
+          // its recorded frames hold its position at each of our sub-steps.
+          dvec3 ppos = dynParentPos, pvel{0,0,0};
+          if (dynParent >= 0 && dynParent < (int)physicsObjetcs.size()) {
+            const PhysicsObject& par = physicsObjetcs[dynParent];
+            const unsigned int want = par.timeframe - (unsigned int)(steps - s);
+            if (!par.positionAtFrame(want, ppos)) ppos = par.data.position;
+            pvel = par.data.velocity;
+          }
+          dynElapsed += dt;
+          dvec3 rel, relv;
+          if (dyn::KeplerPropagate(dynMu, dynRelPos0, dynRelVel0, dynElapsed, rel, relv)) {
+            data.position = ppos + rel;
+            data.velocity = pvel + relv;
+          }
+          frameStore.push(&data.position);
+          timeframe++;
+          continue;
+        }
         for (size_t i = 0; i < physicsObjetcs.size(); ++i) {
           const auto& other = physicsObjetcs[i];
           if (&other == this) continue;
+          // A satellite whose orbit around us is unresolved contributes an
+          // impulse that is pure garbage at this dt: skip it (its mass rides
+          // with us; the barycentre wobble it would cause is not resolvable).
+          if (other.dynAnalytic && other.dynIsSatelliteOf(selfIdx, physicsObjetcs)) continue;
           dvec3 r = other.data.position - this->data.position;
           double d2 = r.x*r.x + r.y*r.y + r.z*r.z;
           if (d2 == 0) continue;
@@ -256,4 +287,19 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
   }
 
   renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType, data.velocity, data.color);
+}
+
+
+// True if this body's parent chain reaches objIdx through analytic links only:
+// a planet around the star, a moon around that planet around the star.
+bool PhysicsObject::dynIsSatelliteOf(int objIdx, const std::vector<PhysicsObject>& objs) const {
+  int p = dynParent, guard = 0;
+  const PhysicsObject* cur = this;
+  while (p >= 0 && p < (int)objs.size() && guard++ < (int)objs.size()) {
+    if (!cur->dynAnalytic) return false;
+    if (p == objIdx) return true;
+    cur = &objs[p];
+    p = cur->dynParent;
+  }
+  return false;
 }

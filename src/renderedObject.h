@@ -1,5 +1,7 @@
 #pragma once
 #include <vector>
+#include <cmath>
+#include <algorithm>
 #include "mathStructs.h"
 #include "rayTracerObject.h"
 #include "physicsObjectStructure.h"
@@ -401,6 +403,15 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
     else if (cloudRmsRadius > 0.0f)         scale = cloudRmsRadius;
     if (scale <= 0.0f) return fallback;
     return std::max(scale * 0.04f, 1e-6f);
+  }
+  // Plummer softening^2 for this cloud's gravity: a quarter of the mean
+  // inter-particle spacing, floored at the historic constant 0.001 AU^2 so a
+  // small formation simulates exactly as it always did.
+  float softening2() const {
+    const double n   = std::max(1.0, (double)cloudParticles.size());
+    const double rms = 0.5 * (double)cloudRmsRadius;         // cloudRmsRadius is 2x RMS
+    const double eps = 0.25 * rms / std::cbrt(n);
+    return (float)std::max(0.001, eps * eps);
   }
   const std::vector<CloudParticle>& particles() const { return cloudParticles; }
   // Cloud particle positions (galaxy-local xyz triples) — read-only access for

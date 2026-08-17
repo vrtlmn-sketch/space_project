@@ -1,4 +1,5 @@
 #pragma once
+#include <cstring>
 #include <vector>
 #include <string>
 #include <cmath>
@@ -106,6 +107,31 @@ public:
   // timeline keyframes instead (position + rotationDeg animated on playback).
   bool  simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
+
+  // ── Multi-scale regime (see dynamics.h) — derived every frame, never saved ──
+  // Parent = the heavier body whose gravity dominates here (index into the
+  // physics objects, or ~k for cloud k), with hysteresis. Analytic = this
+  // body's orbit around its parent is unresolved at the current step, so it
+  // rides the parent on a Kepler orbit from the epoch state instead of being
+  // integrated (Euler at a few steps per orbit ejects it). Numeric bodies skip
+  // gravity from their analytic satellites: an impulse from a planet whose
+  // orbit is unresolved is garbage that would fling the star.
+  int    dynParent{-1};          // -1 none; >=0 object index; <0 (-2-k) cloud k
+  bool   dynAnalytic{false};
+  double dynT{0.0};              // dynamical time around the parent (yr); 0 = none
+  double dynMu{0.0};             // G(M_parent + m) at epoch
+  dvec3  dynRelPos0{}, dynRelVel0{};   // state relative to the parent at epoch
+  double dynElapsed{0.0};        // years since epoch
+  dvec3  dynParentPos{};         // parent position when the parent is a cloud (static within a tick)
+  bool   dynIsSatelliteOf(int objIdx, const std::vector<PhysicsObject>& objs) const;
+  // Recorded position at frame f (false if not recorded) — lets an analytic
+  // satellite follow its parent's own sub-steps within a tick.
+  bool   positionAtFrame(unsigned int f, dvec3& out) const {
+    const void* p = frameStore.get(f);
+    if (!p) return false;
+    std::memcpy(&out, p, sizeof(dvec3));
+    return true;
+  }
 
   // Free object: path to a user OBJ mesh. Empty = normal sphere-mesh object.
   std::string meshPath{};

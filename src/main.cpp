@@ -16,6 +16,7 @@
 #include "renderedObject.h"
 #include "physicsObject.h"
 #include "renderer.h"
+#include "dynamics.h"
 #include "planeObject.h"
 #include "lineObject.h"
 #include "cloudObject.h"
@@ -1206,8 +1207,13 @@ int main(int argc, char** argv) {
       }
     }
 
-    // Physics objects + trail lines
-    for (int i = 0; i < (int)physicsObjects.size(); i++) {
+    // Multi-scale regimes (dynamics.h): who orbits whom, what the current step
+    // can resolve, and the parents-first update order the analytic bodies need.
+    static std::vector<int> objectOrder;
+    dyn::UpdateSceneDynamics(physicsObjects, clouds, renderer, objectOrder);
+
+    // Physics objects + trail lines, parents first
+    for (int i : objectOrder) {
       physicsObjects[i].Update(physicsObjects, cloudSources, renderer);
       lineObjects[i].Update(renderer);
       // Only grow trails when simulating new frames forward
@@ -1237,6 +1243,7 @@ int main(int argc, char** argv) {
     // Step all GPU Barnes-Hut clouds together against one shared octree so
     // separate formations gravitate on each other, then draw each cloud.
     CloudObject::SimulateSharedForward(clouds, physData, renderer);
+    dyn::TransportRigidClouds(physicsObjects, clouds, renderer);
     static std::vector<int> cloudDrawOrder;
     BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cloudDrawOrder);
     for (int ci : cloudDrawOrder)

@@ -39,6 +39,7 @@ private:
   int locBigBodyCount{-1};
   int locG{-1};
   int locDt{-1};
+  int locSoftening2{-1};
   int locTheta{-1};
   int locFrameOffset{-1};
 
@@ -106,6 +107,21 @@ public:
   // clean promote->demote round-trip (nothing ever simulated) returns to the
   // recipe instead of freezing the galaxy as data.
   bool simDirty{false};
+  // ── Multi-scale regime (see dynamics.h) — derived every frame, never saved ──
+  // Rigid = the cloud's own dynamical time is unresolved at the current step
+  // (thousands of internal orbits per frame: phase-mixed), so its particles
+  // freeze and the cloud moves as ONE body: centre of mass on a Kepler orbit
+  // around its parent (a heavier object or cloud), or coasting if it has none.
+  int    dynParent{-1};          // -1 none; >=0 object index; <0 (-2-k) cloud k
+  bool   dynRigid{false};
+  double dynT{0.0};              // internal dynamical time 2π·median r / median v (yr)
+  double dynMu{0.0};
+  dvec3  dynRelPos0{}, dynRelVel0{};
+  double dynElapsed{0.0};
+  dvec3  dynComVel{};            // mean particle velocity, world frame (the cloud's drift)
+  dvec3  dynComWorld{};          // centre of mass, world frame
+  double dynMass{0.0};           // total particle mass
+  int    dynTCounter{0};         // T/COM/mass are O(n): refreshed every few frames
   std::string formationFile;  // empty = procedural generation
   CloudComputeMethod computeMethod{CloudComputeMethod::BarnesHutGPU};
   float barnesHutTheta{0.5f};
@@ -149,6 +165,12 @@ public:
   unsigned int getBufferSize() const { return frameStore ? static_cast<unsigned int>(frameStore->totalFrames()) : 0u; }
   void setTimeframeAndRestore(unsigned int frame);
   void clearRecording();
+  // Scale every particle's mass so the cloud's own gravity matches its
+  // velocities (GM/r = v^2 at the median radius): a formation that would fly
+  // apart or collapse becomes one that holds together under simulation. The
+  // ratio v_rms/v_circ it reports is 1 when balanced.
+  double virialRatio() const;        // v_median / v_circ(G M_total, r_median); 0 = unknown
+  void   virializeMasses();
   // Restore the state from before the first simulated frame, then clear
   void resetToInitial();
 

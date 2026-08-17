@@ -61,7 +61,9 @@ inline std::string FormatTimeYears(double y) {
   if (a < 1.0 / kDaysPerYr) snprintf(buf, sizeof(buf), "%.1f h", y * kDaysPerYr * 24.0);
   else if (a < 2.0)         snprintf(buf, sizeof(buf), "%.1f d", y * kDaysPerYr);
   else if (a < 2000.0)      snprintf(buf, sizeof(buf), "%.1f yr", y);
-  else                      snprintf(buf, sizeof(buf), "%.3g kyr", y / 1000.0);
+  else if (a < 2.0e6)       snprintf(buf, sizeof(buf), "%.3g kyr", y / 1.0e3);
+  else if (a < 2.0e9)       snprintf(buf, sizeof(buf), "%.3g Myr", y / 1.0e6);
+  else                      snprintf(buf, sizeof(buf), "%.3g Gyr", y / 1.0e9);
   return buf;
 }
 

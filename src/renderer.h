@@ -667,23 +667,35 @@ public:
   float edgeLightStrength{0.45f}; // screen-space rim light on dust edges (0 = off)
   float dustCenter[3]{0,0,0};    // primary cloud centre (camera-relative) — anchors the clump pattern
   float bhSchwarzschildRadius{0.05f}; // BH Schwarzschild radius sent to geodesic shaders
-  // ── Simulation vs playback speed ──
-  // simSpeed:      data resolution — dt per recorded frame = kDtYears · simSpeed
-  // playbackSpeed: visual rate — world-time per tick = 5 · kDtYears · playbackSpeed
-  //                (≈ 0.9 days/tick at 1×: Earth orbits in ~7 s of wall time)
-  // framesThisTick: recorded frames to advance this tick (= 5·playback/sim,
-  //                 fractional remainder carried in an accumulator)
-  // Recorded frames consumed per tick when playbackSpeed == simSpeed.
-  // Sole source of the sim-vs-playback rate ratio: both the frame advance
-  // and the playback floor derive from it.
+  // ── Time step vs playback ──
+  // simSpeed:      the TIME STEP — dt per recorded frame = kDtYears · simSpeed.
+  //                Log range 0.01 .. 1e11 (minutes .. tens of Myr): a solar
+  //                system needs hours, a galaxy needs ~1e5 yr, and the same
+  //                scene may hold both — see dynamics.h for how bodies whose
+  //                orbit a given dt cannot resolve are carried analytically.
+  // playbackSpeed: recorded frames per tick / kBaseFramesPerTick, INDEPENDENT
+  //                of dt. It used to hold world-time-per-tick constant across
+  //                sim speeds; over ten orders of magnitude of dt that is
+  //                meaningless, and it forced Play off its own slider. The UI
+  //                shows the resulting world rate ("≈ 3 Myr/s") instead.
+  // framesThisTick: frames to advance this tick (fractional remainder carried
+  //                 in an accumulator), capped at kMaxSteps physics steps.
   static constexpr float kBaseFramesPerTick = 5.0f;
-  float simSpeed{1.0f};        // ACTIVE sim speed (dt of recorded data)
+  static constexpr float kSimSpeedMin = 0.01f, kSimSpeedMax = 1.0e11f;
+  float simSpeed{1.0f};        // ACTIVE step (dt of recorded data)
   float pendingSimSpeed{1.0f}; // UI-edited value; applied via Save (clears data)
-  float playbackSpeed{1.0f};
+  float playbackSpeed{1.0f};   // 1 = 5 frames per tick
   int   framesThisTick{1};
   // Slowest useful playback: every recorded frame is displayed
-  // (framesThisTick == 1). Scales with the data resolution.
-  float minPlaybackSpeed() const { return simSpeed / kBaseFramesPerTick; }
+  // (framesThisTick == 1).
+  float minPlaybackSpeed() const { return 1.0f / kBaseFramesPerTick; }
+  // Auto step: dt = T / autoStepsPerOrbit for the target's dynamical time.
+  // The target is what you have selected; with nothing selected, the largest
+  // simulated cloud (the thing that needs the speed), else the fastest body.
+  int    autoStepsPerOrbit{1000};
+  double dynAutoT{0.0};        // dynamical time of the Auto target (s), set each frame by main; 0 = none
+  const char* dynAutoLabel{""};// what that target is
+  double dynFastestT{0.0};     // fastest dynamical time in the scene
   void  ComputeFrameAdvance();  // call once per tick, after pause state is final
   bool paused{true};
   bool playingForward{true};
