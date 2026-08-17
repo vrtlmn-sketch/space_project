@@ -2657,7 +2657,7 @@ void Renderer::DrawStepLandmarks(float x0, float y0, float x1, float y1, bool sl
   marks.push_back({ "star clusters", 1.0e6 / N,     false });
   marks.push_back({ "galaxies",  2.4e8 / N,         false });
 
-  const float stripH = 30.0f;
+  const float stripH = 46.0f;
   const ImVec2 stripMin(sMin.x - 4.0f, sMax.y);
   const ImVec2 stripMax(sMax.x + 4.0f, sMax.y + stripH);
   const ImVec2 mp = ImGui::GetMousePos();
@@ -2691,6 +2691,18 @@ void Renderer::DrawStepLandmarks(float x0, float y0, float x1, float y1, bool sl
     }
     if (stripHovered && std::fabs(mp.x - x) < 8.0f && (hovered < 0 || std::fabs(mp.x - xOf(marks[hovered].stepYears)) > std::fabs(mp.x - x)))
       hovered = i;
+  }
+  // Readout line: the current step and how the fastest body fares under it.
+  {
+    const double dt = units::kDtYears * (double)pendingSimSpeed;
+    char line[160];
+    if (dynFastestT > 0.0)
+      std::snprintf(line, sizeof(line), "step %s   fastest body: %.0f steps/orbit%s",
+                    units::FormatTimeYears(dt).c_str(), dynFastestT / dt,
+                    dynFastestT / dt < dyn::kResolvedSteps ? " (carried analytically)" : "");
+    else
+      std::snprintf(line, sizeof(line), "step %s", units::FormatTimeYears(dt).c_str());
+    fg->AddText(ImVec2(stripMin.x + 6.0f, stripMax.y - 16.0f), IM_COL32(190, 190, 200, 230), line);
   }
   if (hovered >= 0) {
     const Mark& m = marks[hovered];
@@ -2827,26 +2839,22 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   // Time step (data resolution) + playback (frames per tick)
   ImGui::Text("Step");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(230);
+  // As wide as the row allows: everything to the right of the slider (Auto,
+  // steps/orbit, Save, Play, the view buttons) needs ~520 px. A fixed width
+  // pushed those off the window on a narrower layout.
+  {
+    const float avail = ImGui::GetContentRegionAvail().x;
+    ImGui::SetNextItemWidth(std::clamp(avail - 520.0f, 160.0f, 520.0f));
+  }
   {
     // Log slider over eleven orders of magnitude, labelled in real time units.
     const std::string lbl = units::FormatTimeYears(units::kDtYears * (double)pendingSimSpeed);
     ImGui::SliderFloat("##simstep", &pendingSimSpeed, kSimSpeedMin, kSimSpeedMax,
                        lbl.c_str(), ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat);
     const ImVec2 sMin = ImGui::GetItemRectMin(), sMax = ImGui::GetItemRectMax();
-    const bool sliderHovered = ImGui::IsItemHovered();
-    if (sliderHovered) {
-      const double dt = units::kDtYears * (double)pendingSimSpeed;
-      ImGui::BeginTooltip();
-      ImGui::Text("Time step per recorded frame: %s", lbl.c_str());
-      if (dynFastestT > 0.0)
-        ImGui::Text("Fastest body in the scene: %.0f steps per orbit%s",
-                    dynFastestT / dt, dynFastestT / dt < dyn::kResolvedSteps ? "  (carried analytically)" : "");
-      ImGui::TextDisabled("Bodies whose orbit this step cannot resolve ride their\n"
-                          "parent on an exact Kepler orbit instead of being integrated.");
-      ImGui::EndTooltip();
-    }
-    DrawStepLandmarks(sMin.x, sMin.y, sMax.x, sMax.y, sliderHovered);
+    // No tooltip here: it sat on top of the landmark ruler. The ruler carries
+    // the step readout and the fastest-body line instead.
+    DrawStepLandmarks(sMin.x, sMin.y, sMax.x, sMax.y, ImGui::IsItemHovered());
   }
   ImGui::SameLine();
   {
