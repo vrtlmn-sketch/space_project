@@ -21,35 +21,45 @@ static dvec3 jsonToDVec3(const json& j) {
   return dvec3{j[0].get<double>(), j[1].get<double>(), j[2].get<double>()};
 }
 
-// Transform keyframes (shared by cameras and non-simulated objects/clouds)
+// Transform keyframes (shared by cameras and non-simulated objects/clouds).
+// ONE writer and ONE reader for every lane. The freecam and spawned-camera
+// lanes used to inline their own copies, which is how a new per-key field
+// would have silently gone missing from two of the five sites.
+static json keyframeToJson(const CameraKeyframe& kf) {
+  return {
+    {"frame",    kf.frame},
+    {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
+    {"rotation", kf.rotation}, {"pitch", kf.pitch}, {"roll", kf.roll}, {"zoom", kf.zoom},
+    {"smooth",   kf.smooth}
+  };
+}
+// `zoomDefault`: cameras fall back to 45 (FOV), object lanes to 0 (unused).
+static CameraKeyframe jsonToKeyframe(const json& kf, float zoomDefault) {
+  CameraKeyframe cf;
+  cf.frame    = kf.value("frame", 0u);
+  cf.rotation = kf.value("rotation", 0.0f);
+  cf.pitch    = kf.value("pitch", 0.0f);
+  cf.roll     = kf.value("roll", 0.0f);
+  cf.zoom     = kf.value("zoom", zoomDefault);
+  // A key saved before smoothing existed plays back exactly as it did then:
+  // 0 = the original linear segment. New keys default to 1 in the struct.
+  cf.smooth   = kf.value("smooth", 0.0f);
+  if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
+    cf.pos[0] = kf["pos"][0].get<double>();
+    cf.pos[1] = kf["pos"][1].get<double>();
+    cf.pos[2] = kf["pos"][2].get<double>();
+  }
+  return cf;
+}
 static json keyframesToJson(const std::vector<CameraKeyframe>& kfs) {
   json arr = json::array();
-  for (const auto& kf : kfs) {
-    arr.push_back({
-      {"frame",    kf.frame},
-      {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
-      {"rotation", kf.rotation}, {"pitch", kf.pitch}, {"roll", kf.roll}, {"zoom", kf.zoom}
-    });
-  }
+  for (const auto& kf : kfs) arr.push_back(keyframeToJson(kf));
   return arr;
 }
-static std::vector<CameraKeyframe> jsonToKeyframes(const json& arr) {
+static std::vector<CameraKeyframe> jsonToKeyframes(const json& arr, float zoomDefault = 0.0f) {
   std::vector<CameraKeyframe> out;
   if (!arr.is_array()) return out;
-  for (const auto& kf : arr) {
-    CameraKeyframe cf;
-    cf.frame    = kf.value("frame", 0u);
-    cf.rotation = kf.value("rotation", 0.0f);
-    cf.pitch    = kf.value("pitch", 0.0f);
-    cf.roll     = kf.value("roll", 0.0f);
-    cf.zoom     = kf.value("zoom", 0.0f);
-    if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
-      cf.pos[0] = kf["pos"][0].get<double>();
-      cf.pos[1] = kf["pos"][1].get<double>();
-      cf.pos[2] = kf["pos"][2].get<double>();
-    }
-    out.push_back(cf);
-  }
+  for (const auto& kf : arr) out.push_back(jsonToKeyframe(kf, zoomDefault));
   return out;
 }
 
@@ -320,34 +330,17 @@ bool ProjectSerializer::Save(const std::string& path,
       kpArr.push_back({{"frame", kp.frame}, {"label", kp.label}});
     s["keypoints"] = kpArr;
 
-    json kfArr = json::array();
-    for (const auto& kf : settings.cameraKeyframes)
-      kfArr.push_back({
-        {"frame",    kf.frame},
-        {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
-        {"rotation", kf.rotation},
-        {"pitch",    kf.pitch},
-        {"roll",     kf.roll},
-        {"zoom",     kf.zoom}
-      });
-    s["cameraKeyframes"] = kfArr;
+    s["cameraKeyframes"] = keyframesToJson(settings.cameraKeyframes);
 
     // Spawned camera objects (with their own keyframe lanes)
     json camArr = json::array();
     for (const auto& cam : settings.sceneCameras) {
-      json ckf = json::array();
-      for (const auto& kf : cam.keyframes)
-        ckf.push_back({
-          {"frame",    kf.frame},
-          {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
-          {"rotation", kf.rotation}, {"pitch", kf.pitch}, {"roll", kf.roll}, {"zoom", kf.zoom}
-        });
       camArr.push_back({
         {"name",     cam.name},
         {"position", json::array({cam.position.x, cam.position.y, cam.position.z})},
         {"rotation", json::array({cam.rotationDeg.x, cam.rotationDeg.y, cam.rotationDeg.z})},
         {"fov",      cam.fov},
-        {"keyframes", ckf}
+        {"keyframes", keyframesToJson(cam.keyframes)}
       });
     }
     s["sceneCameras"] = camArr;
@@ -666,22 +659,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       }
     }
 
-    if (s.contains("cameraKeyframes") && s["cameraKeyframes"].is_array()) {
-      for (const auto& kf : s["cameraKeyframes"]) {
-        CameraKeyframe cf;
-        cf.frame    = kf.value("frame", 0u);
-        cf.rotation = kf.value("rotation", 0.0f);
-        cf.pitch    = kf.value("pitch",    0.0f);
-        cf.roll     = kf.value("roll",     0.0f);
-        cf.zoom     = kf.value("zoom",    45.0f);
-        if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
-          cf.pos[0] = kf["pos"][0].get<double>();
-          cf.pos[1] = kf["pos"][1].get<double>();
-          cf.pos[2] = kf["pos"][2].get<double>();
-        }
-        st.cameraKeyframes.push_back(cf);
-      }
-    }
+    if (s.contains("cameraKeyframes"))
+      st.cameraKeyframes = jsonToKeyframes(s["cameraKeyframes"], 45.0f);
 
     // Spawned camera objects
     if (s.contains("sceneCameras") && s["sceneCameras"].is_array()) {
@@ -699,22 +678,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
                                   c["rotation"][2].get<float>() };
         }
         cam.fov = c.value("fov", 45.0f);
-        if (c.contains("keyframes") && c["keyframes"].is_array()) {
-          for (const auto& kf : c["keyframes"]) {
-            CameraKeyframe cf;
-            cf.frame    = kf.value("frame", 0u);
-            cf.rotation = kf.value("rotation", 0.0f);
-            cf.pitch    = kf.value("pitch",    0.0f);
-            cf.roll     = kf.value("roll",     0.0f);
-            cf.zoom     = kf.value("zoom",    45.0f);
-            if (kf.contains("pos") && kf["pos"].is_array() && kf["pos"].size() >= 3) {
-              cf.pos[0] = kf["pos"][0].get<double>();
-              cf.pos[1] = kf["pos"][1].get<double>();
-              cf.pos[2] = kf["pos"][2].get<double>();
-            }
-            cam.keyframes.push_back(cf);
-          }
-        }
+        if (c.contains("keyframes"))
+          cam.keyframes = jsonToKeyframes(c["keyframes"], 45.0f);
         st.sceneCameras.push_back(cam);
       }
     }

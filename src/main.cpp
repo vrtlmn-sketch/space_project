@@ -1290,39 +1290,21 @@ int main(int argc, char** argv) {
     // (play or scrub), driven by the timeline playhead — animates even with no
     // physics simulation.
     if ((!renderer.paused || renderer.playheadMoved) && !renderer.cameraKeyframes.empty()) {
-      unsigned int curFrame = renderer.timelinePlayhead;
-      auto& kfs = renderer.cameraKeyframes;
-      // Find bracketing keyframes
-      const CameraKeyframe* before = nullptr;
-      const CameraKeyframe* after  = nullptr;
-      for (auto& kf : kfs) {
-        if (kf.frame <= curFrame) before = &kf;
-        if (kf.frame >= curFrame && !after) after = &kf;
-      }
-      // Only interpolate if we're within the keyframed range
-      if (before && after) {
-        if (before->frame == after->frame) {
-          // Exactly on a keyframe
-          renderer.cameraTranslate[0] = before->pos[0] + gCamAnchor[0];
-          renderer.cameraTranslate[1] = before->pos[1] + gCamAnchor[1];
-          renderer.cameraTranslate[2] = before->pos[2] + gCamAnchor[2];
-          renderer.rotation = before->rotation;
-          renderer.pitch    = before->pitch;
-          renderer.roll     = before->roll;
-          renderer.zoom     = before->zoom;
-          renderer.syncMatrixFromEuler();
-        } else {
-          // Linear interpolation
-          float t = (float)(curFrame - before->frame) / (float)(after->frame - before->frame);
-          renderer.cameraTranslate[0] = before->pos[0] + t * (after->pos[0] - before->pos[0]) + gCamAnchor[0];
-          renderer.cameraTranslate[1] = before->pos[1] + t * (after->pos[1] - before->pos[1]) + gCamAnchor[1];
-          renderer.cameraTranslate[2] = before->pos[2] + t * (after->pos[2] - before->pos[2]) + gCamAnchor[2];
-          renderer.rotation = before->rotation + t * (after->rotation - before->rotation);
-          renderer.pitch    = before->pitch    + t * (after->pitch    - before->pitch);
-          renderer.roll     = before->roll     + t * (after->roll     - before->roll);
-          renderer.zoom     = before->zoom     + t * (after->zoom     - before->zoom);
-          renderer.syncMatrixFromEuler();
-        }
+      const unsigned int curFrame = renderer.timelinePlayhead;
+      const auto& kfs = renderer.cameraKeyframes;
+      // Only drive the camera inside the keyframed range: outside it the
+      // freecam stays free, so you can fly to the next shot before capturing.
+      if (curFrame >= kfs.front().frame && curFrame <= kfs.back().frame) {
+        KeyframePose p;
+        Renderer::EvalKeyframes(kfs, curFrame, p);
+        renderer.cameraTranslate[0] = p.pos[0] + gCamAnchor[0];
+        renderer.cameraTranslate[1] = p.pos[1] + gCamAnchor[1];
+        renderer.cameraTranslate[2] = p.pos[2] + gCamAnchor[2];
+        renderer.rotation = p.rotation;
+        renderer.pitch    = p.pitch;
+        renderer.roll     = p.roll;
+        renderer.zoom     = p.zoom;
+        renderer.syncMatrixFromEuler();
       }
     }
 

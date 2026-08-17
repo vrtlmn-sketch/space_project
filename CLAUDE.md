@@ -147,6 +147,61 @@ branches reduce to `(0,0,-1)` at yaw = pitch = 0, so a test aimed straight down
 -Z will not catch a wrong derivation — always rebuild the forward vector from
 the angles you solved and compare it against the one you wanted.
 
+## Keyframes are ONE evaluator, and "smooth 0" means the CHORD, not zero
+
+Every keyframe lane — freecam, spawned cameras, non-simulated planets and
+clouds — is played back by `Renderer::EvalKeyframes` (renderer.cpp). It used to
+be four separate copies of the bracketing-search-and-lerp, so a change to how
+playback feels had to be made four times; there is now exactly one, and the
+serializer likewise has ONE writer/reader (`keyframeToJson`/`jsonToKeyframe`)
+for all five save sites — two of them used to inline their own copies, which is
+how a new per-key field would silently have gone missing from a lane.
+
+The interpolant is cubic Hermite through the keys. Each key carries `smooth`
+in [0,1]. **The diamond IS the control**: drag it sideways to retime, drag it
+up/down to set smoothness (up = smoother, 90 px for the full range, relative
+to the grab so the value never jumps), click to jump. The gesture locks to
+whichever axis wins past a 4 px dead zone. There is deliberately NO selection
+state — the first version had click-to-select + wheel/slider, and a mode is
+what makes every adjustment cost a click. While a drag is live the lane turns
+into a curve editor: the path's value against time is drawn THROUGH the
+diamonds (which move onto the curve for the duration), so a sharp key reads as
+a kink and a smooth one as a bend, and the readout rides above the dragged
+diamond. Value = position along the keys' principal axis (power iteration on
+the keys' covariance); a lane whose keys share a position falls back to the
+angle/zoom with the widest swing. Held ends outside [first, last] are drawn
+dim. It lives on the foreground draw list so neighbouring lanes' text cannot
+cover it, and it is only visible during the drag. **The drag is applied
+BEFORE the curve is sampled** — sampled after the diamond loop it would trail
+the mouse by a frame. Its tangent for a segment blends between the
+segment's **chord** `(P1 - P0)` at 0 and the Catmull-Rom estimate through its
+neighbours at 1, scaled by segment length so a short segment next to a long
+one does not overshoot.
+
+- **The 0 end is the chord, NOT a zero tangent.** A Hermite segment whose two
+  tangents both equal the chord IS the straight line at constant speed, so a
+  project whose keys all load at 0 plays back bit-for-bit as the old lerp did
+  (checked to 2e-6 against the old code, all channels, every frame). A zero
+  tangent does something else entirely: an ease-in/ease-out S-curve — same
+  endpoints, different timing — which was the first version and is why the
+  standalone check exists. If a "sharp" key ever looks like it decelerates,
+  that is what went wrong.
+- **Loaded keys without the field default to 0; NEW keys default to 1.** Old
+  projects are untouched until you touch a key; new paths are smooth because
+  that is what smoothing is for. `jsonToKeyframe` and `CameraKeyframe{}` hold
+  the two defaults respectively — do not unify them.
+- Re-capturing on an existing key **keeps its smoothness** (all three insert
+  paths copy it across before overwriting).
+- The angles ride the same interpolant as position with no shortest-path
+  fixups. That is safe ONLY because `syncEulerFromMatrix` unwraps them for
+  continuity — a saved -18.04 is a camera that spun round several times.
+- **Smoothing an END key changes nothing visible** — the Catmull-Rom estimate
+  at an endpoint has only one neighbour, so it collapses to the chord and the
+  blend is chord-to-chord whatever the value. The graph says "end key: no bend
+  yet"; the value is kept and takes effect once a key exists past it.
+- The bundled font (DejaVuSansMono, default glyph range) has no arrow glyphs
+  — UTF-8 arrows in a tooltip render as `?`. Use words.
+
 ## Large-world coordinates
 
 The scene spans ~1 AU to ~1e15 AU, which no single float frame can hold.

@@ -3760,6 +3760,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     clearCaptureRequested = true;
   }
 
+
   // ── Timeline keyframe lanes — one per camera, all identical in style ──
   // A single helper draws every lane (freecam + spawned cameras) the same way,
   // so new timeline-driven objects can be added later with zero visual drift.
@@ -3780,54 +3781,178 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
                 selected ? IM_COL32(150, 130, 70, 200) : IM_COL32(60, 60, 72, 200));
     float yMid = laneP.y + laneH * 0.5f;
     int delK = -1;
+
+    // Pixels of vertical travel for the full 0..1 smoothness range.
+    constexpr float kSmoothPx   = 90.0f;
+    constexpr float kAxisDeadPx = 4.0f;
+    const bool laneDrag = (kfDragLane == laneId && kfDragIndex >= 0 && kfDragIndex < (int)kfs.size());
+
+    // 1) Apply the live drag FIRST, so the curve and every diamond drawn below
+    //    reflect this frame's mouse, not last frame's.
+    if (laneDrag) {
+      CameraKeyframe& ck = kfs[kfDragIndex];
+      const ImVec2 m = ImGui::GetMousePos();
+      const float dx = m.x - kfDragStartX, dy = m.y - kfDragStartY;
+      // Lock the gesture to the axis that wins first past the dead zone.
+      if (kfDragAxis == 0 && std::max(std::fabs(dx), std::fabs(dy)) > kAxisDeadPx)
+        kfDragAxis = (std::fabs(dx) >= std::fabs(dy)) ? 1 : 2;
+      if (kfDragAxis == 1) {
+        // Retime from the mouse X position (the diamond snaps under the cursor).
+        float mt = (m.x - laneP.x) / sliderW;
+        mt = mt < 0.0f ? 0.0f : (mt > 1.0f ? 1.0f : mt);
+        ck.frame = (unsigned int)(mt * denom + 0.5f);
+        kfDragMoved = true;
+      } else if (kfDragAxis == 2) {
+        // Up = smoother. Relative to where the press started, so the value
+        // never jumps on grab.
+        ck.smooth = std::clamp(kfDragStartSmooth - dy / kSmoothPx, 0.0f, 1.0f);
+        kfDragMoved = true;
+      }
+    }
+
+    // 2) While a key on this lane is being dragged, the lane becomes a curve
+    //    editor: the path's value against time, drawn THROUGH the diamonds so a
+    //    sharp key reads as a kink and a smooth one as a bend. Value = position
+    //    along the keys' principal axis (a camera path almost always moves);
+    //    a lane whose keys share a position falls back to the angle with the
+    //    widest swing. Only visible during the drag; goes on the foreground
+    //    list so neighbouring lanes' text cannot cover it.
+    const bool curveOn = laneDrag && kfDragMoved && kfs.size() >= 2;
+    std::vector<float> keyY(kfs.size(), yMid);
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    if (curveOn) {
+      // Scalar chooser.
+      double mean[3] = {0, 0, 0};
+      for (auto& k : kfs) for (int c = 0; c < 3; c++) mean[c] += k.pos[c];
+      for (int c = 0; c < 3; c++) mean[c] /= (double)kfs.size();
+      double cov[3][3] = {{0,0,0},{0,0,0},{0,0,0}};
+      for (auto& k : kfs) {
+        const double d[3] = { k.pos[0]-mean[0], k.pos[1]-mean[1], k.pos[2]-mean[2] };
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) cov[r][c] += d[r]*d[c];
+      }
+      double axis[3] = {0.577, 0.577, 0.577};
+      const double tr = cov[0][0] + cov[1][1] + cov[2][2];
+      const bool usePos = tr > 0.0;
+      if (usePos) {
+        for (int it = 0; it < 12; it++) {          // power iteration → principal axis
+          double nx[3] = {0, 0, 0};
+          for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) nx[r] += cov[r][c] * axis[c];
+          const double l = std::sqrt(nx[0]*nx[0] + nx[1]*nx[1] + nx[2]*nx[2]);
+          if (l <= 0.0) break;
+          for (int c = 0; c < 3; c++) axis[c] = nx[c] / l;
+        }
+      }
+      int angCh = 0;                                  // 0 rotation, 1 pitch, 2 roll, 3 zoom
+      if (!usePos) {
+        float lo[4] = {1e30f,1e30f,1e30f,1e30f}, hi[4] = {-1e30f,-1e30f,-1e30f,-1e30f};
+        for (auto& k : kfs) {
+          const float v[4] = { k.rotation, k.pitch, k.roll, k.zoom };
+          for (int c = 0; c < 4; c++) { lo[c] = std::min(lo[c], v[c]); hi[c] = std::max(hi[c], v[c]); }
+        }
+        float best = -1.0f;
+        for (int c = 0; c < 4; c++) if (hi[c] - lo[c] > best) { best = hi[c] - lo[c]; angCh = c; }
+      }
+      auto scalar = [&](const KeyframePose& p) -> double {
+        if (usePos) return (p.pos[0]-mean[0])*axis[0] + (p.pos[1]-mean[1])*axis[1] + (p.pos[2]-mean[2])*axis[2];
+        const float v[4] = { p.rotation, p.pitch, p.roll, p.zoom };
+        return (double)v[angCh];
+      };
+
+      // Sample across the lane's pixel width.
+      const int N = std::clamp((int)(sliderW / 2.0f), 64, 512);
+      std::vector<float> sx((size_t)N), sv((size_t)N);
+      const double fFirst = (double)kfs.front().frame, fLast = (double)kfs.back().frame;
+      double vmin = 1e300, vmax = -1e300;
+      for (int i = 0; i < N; i++) {
+        const double f = (double)denom * (double)i / (double)(N - 1);   // ruler frame at this pixel
+        KeyframePose p; EvalKeyframesAt(kfs, f, p);
+        sx[(size_t)i] = laneP.x + (float)i / (float)(N - 1) * sliderW;
+        sv[(size_t)i] = (float)scalar(p);
+        vmin = std::min(vmin, (double)sv[(size_t)i]); vmax = std::max(vmax, (double)sv[(size_t)i]);
+      }
+      const double span = std::max(vmax - vmin, 1e-12);
+      const float R = 26.0f;                          // half-height of the curve band
+      auto toY = [&](double v) { return (float)(yMid + R - (v - vmin) / span * 2.0 * R); };
+
+      // Held ends (outside [first, last]) dim; the live part bright.
+      for (int i = 0; i + 1 < N; i++) {
+        const double f = (double)denom * (double)i / (double)(N - 1);
+        const bool held = f < fFirst || f > fLast;
+        fg->AddLine(ImVec2(sx[(size_t)i], toY(sv[(size_t)i])), ImVec2(sx[(size_t)i+1], toY(sv[(size_t)i+1])),
+                    held ? IM_COL32(230, 90, 80, 90) : IM_COL32(235, 85, 75, 240), held ? 1.0f : 2.0f);
+      }
+      for (size_t ki = 0; ki < kfs.size(); ki++) {
+        KeyframePose p; EvalKeyframesAt(kfs, (double)kfs[ki].frame, p);
+        keyY[ki] = toY(scalar(p));
+      }
+    }
+    ImDrawList* ldl = curveOn ? fg : dl;   // diamonds go on top of the curve
+
+    // 3) Diamonds.
     for (int ki = 0; ki < (int)kfs.size(); ++ki) {
       CameraKeyframe& ck = kfs[ki];
       bool dragging = (kfDragLane == laneId && kfDragIndex == ki);
 
-      // While dragging, retime this keyframe from the mouse X position.
-      if (dragging) {
-        float mt = (ImGui::GetMousePos().x - laneP.x) / sliderW;
-        mt = mt < 0.0f ? 0.0f : (mt > 1.0f ? 1.0f : mt);
-        unsigned int nf = (unsigned int)(mt * denom + 0.5f);
-        if (nf != ck.frame) { ck.frame = nf; kfDragMoved = true; }
-      }
-
       float t = (float)ck.frame / denom;
       float x = laneP.x + t * sliderW;
+      float y = keyY[(size_t)ki];
       ImU32 col = dragging ? IM_COL32(255, 235, 150, 255)
                 : selected ? IM_COL32(255, 205, 90, 240)
                            : IM_COL32(150, 170, 210, 220);
-      dl->AddQuadFilled({x, yMid-6}, {x+6, yMid}, {x, yMid+6}, {x-6, yMid}, col);
+      // The diamond reads its own smoothness: a rounded key carries a filled
+      // dot, a sharp key is the plain diamond, with a blend between — so a
+      // whole lane's feel can be read at a glance.
+      const float sm = std::clamp(ck.smooth, 0.0f, 1.0f);
+      ldl->AddQuadFilled({x, y-6}, {x+6, y}, {x, y+6}, {x-6, y}, col);
+      if (sm > 0.0f)
+        ldl->AddCircleFilled({x, y}, 2.0f + 3.0f * sm, IM_COL32(20, 22, 30, (int)(200 * sm)));
 
       bool hovered = std::abs(ImGui::GetMousePos().x - x) < 8 &&
                      std::abs(ImGui::GetMousePos().y - yMid) < 8;
 
       if (dragging) {
-        ImGui::BeginTooltip();
-        ImGui::Text("%s @ frame %u", name, ck.frame);
-        ImGui::EndTooltip();
+        char lbl[48];
+        if (kfDragAxis == 2) {
+          ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+          std::snprintf(lbl, sizeof(lbl), "smooth %.2f", ck.smooth);
+        } else {
+          ImGui::SetMouseCursor(kfDragAxis == 1 ? ImGuiMouseCursor_ResizeEW
+                                                : ImGuiMouseCursor_ResizeAll);
+          std::snprintf(lbl, sizeof(lbl), "frame %u", ck.frame);
+        }
+        // Readout rides just above the dragged diamond, on the foreground list.
+        const ImVec2 ts = ImGui::CalcTextSize(lbl);
+        const ImVec2 tp(x - ts.x * 0.5f, y - 10.0f - ts.y);
+        fg->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2), ImVec2(tp.x + ts.x + 4, tp.y + ts.y + 2),
+                          IM_COL32(18, 20, 28, 220), 3.0f);
+        fg->AddText(tp, IM_COL32(240, 240, 245, 255), lbl);
+
         if (!ImGui::IsMouseDown(0)) {
           if (!kfDragMoved) {
-            // Never moved: treat the press as a click → jump to this keyframe.
+            // Never moved: a click → jump to this keyframe.
             paused = true;
             for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(ck.frame);
             for (auto& c : clouds) if (c) c->setTimeframeAndRestore(ck.frame);
             onJump(ck);
-          } else {
+          } else if (kfDragAxis == 1) {
             // Retimed: keep the lane sorted so interpolation stays well-ordered.
             std::sort(kfs.begin(), kfs.end(),
                       [](const CameraKeyframe& a, const CameraKeyframe& b) {
                         return a.frame < b.frame;
                       });
           }
-          kfDragLane = -2; kfDragIndex = -1; kfDragMoved = false;
+          kfDragLane = -2; kfDragIndex = -1; kfDragMoved = false; kfDragAxis = 0;
         }
-      } else if (hovered) {
+      } else if (hovered && kfDragLane == -2) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         ImGui::BeginTooltip();
-        ImGui::Text("%s @ frame %u", name, ck.frame);
+        ImGui::Text("%s @ frame %u  ·  smooth %.2f", name, ck.frame, ck.smooth);
+        ImGui::TextDisabled("drag sideways: retime   drag up/down: smooth   click: jump   right-click: delete");
         ImGui::EndTooltip();
-        if (ImGui::IsMouseClicked(0) && kfDragLane == -2) {
-          kfDragLane = laneId; kfDragIndex = ki; kfDragMoved = false;
+        if (ImGui::IsMouseClicked(0)) {
+          kfDragLane = laneId; kfDragIndex = ki; kfDragMoved = false; kfDragAxis = 0;
+          kfDragStartX = ImGui::GetMousePos().x; kfDragStartY = ImGui::GetMousePos().y;
+          kfDragStartSmooth = ck.smooth;
         }
         if (ImGui::IsMouseClicked(1)) delK = ki;
       }
@@ -8146,7 +8271,7 @@ void Renderer::InsertSceneCameraKeyframe(int camIdx, unsigned int frame) {
   kf.roll     = cam.rotationDeg.z;
   kf.zoom     = cam.fov;
   for (auto& k : cam.keyframes)
-    if (k.frame == frame) { k = kf; return; }
+    if (k.frame == frame) { kf.smooth = k.smooth; k = kf; return; }   // re-capture keeps the tuned smoothness
   auto it = cam.keyframes.begin();
   while (it != cam.keyframes.end() && it->frame < frame) ++it;
   cam.keyframes.insert(it, kf);
@@ -8167,57 +8292,120 @@ void Renderer::RemoveSceneCameraKeyframe(int camIdx, unsigned int frame) {
 
 void Renderer::UpdateSceneCameraKeyframes(unsigned int frame) {
   for (auto& cam : sceneCameras) {
-    if (cam.keyframes.size() < 1) continue;
-    const CameraKeyframe* before = nullptr;
-    const CameraKeyframe* after  = nullptr;
-    for (auto& kf : cam.keyframes) {
-      if (kf.frame <= frame) before = &kf;
-      if (kf.frame >= frame && !after) after = &kf;
-    }
-    if (!before && !after) continue;
-    if (before && after && before->frame != after->frame) {
-      float t = (float)(frame - before->frame) / (float)(after->frame - before->frame);
-      cam.position = dvec3(before->pos[0] + t*(after->pos[0]-before->pos[0]),
-                           before->pos[1] + t*(after->pos[1]-before->pos[1]),
-                           before->pos[2] + t*(after->pos[2]-before->pos[2]));
-      cam.rotationDeg = { before->pitch    + t*(after->pitch    - before->pitch),
-                          before->rotation + t*(after->rotation - before->rotation),
-                          before->roll     + t*(after->roll     - before->roll) };
-      cam.fov = before->zoom + t*(after->zoom - before->zoom);
-    } else {
-      const CameraKeyframe* k = before ? before : after;
-      cam.position    = dvec3(k->pos[0], k->pos[1], k->pos[2]);
-      cam.rotationDeg = { k->pitch, k->rotation, k->roll };
-      cam.fov         = k->zoom;
-    }
+    KeyframePose p;
+    if (!EvalKeyframes(cam.keyframes, frame, p)) continue;
+    cam.position    = dvec3(p.pos[0], p.pos[1], p.pos[2]);
+    cam.rotationDeg = { p.pitch, p.rotation, p.roll };
+    cam.fov         = p.zoom;
   }
+}
+
+// ── The keyframe evaluator ───────────────────────────────────────────────────
+// Cubic Hermite between the two bracketing keys. Each end's tangent blends, by
+// that key's own `smooth`, between
+//   the segment's CHORD  (P1 - P0)             — smooth 0
+//   the Catmull-Rom estimate through its neighbours — smooth 1
+// A Hermite segment whose two tangents both equal the chord IS the straight
+// line at constant speed, so a project whose keys all load at 0 plays back
+// bit-for-bit as the old lerp did. (A zero tangent would NOT do that: it gives
+// an ease-in/ease-out S-curve — same endpoints, different timing — which was
+// the first version of this and is why the standalone check exists.) At 1 the
+// path curves through the key with continuous velocity, so the camera flies
+// through instead of stopping to turn.
+// Neighbour tangents are scaled by the segment length (non-uniform
+// parameterisation), so a short segment next to a long one does not overshoot.
+// Every channel — position, the three angles, zoom — rides the same
+// interpolant; the angles are already unwrapped for continuity, so no
+// shortest-path fixups are needed.
+namespace {
+
+struct KfChannels { double v[7]; };   // pos xyz, rotation, pitch, roll, zoom
+
+KfChannels kfChannels(const CameraKeyframe& k) {
+  return { { k.pos[0], k.pos[1], k.pos[2], k.rotation, k.pitch, k.roll, k.zoom } };
+}
+
+// Tangent at key i for the segment [i0, i0+1] of duration `segDur`, in units of
+// "change per segment" so the Hermite basis can use it directly.
+KfChannels kfTangent(const std::vector<CameraKeyframe>& kfs, int i, int i0, double segDur) {
+  const KfChannels p0 = kfChannels(kfs[i0]);
+  const KfChannels p1 = kfChannels(kfs[i0 + 1]);
+  KfChannels chord{};
+  for (int c = 0; c < 7; c++) chord.v[c] = p1.v[c] - p0.v[c];
+
+  const double sm = std::clamp((double)kfs[i].smooth, 0.0, 1.0);
+  if (sm <= 0.0) return chord;
+
+  const int n  = (int)kfs.size();
+  const int ip = std::max(i - 1, 0);
+  const int in = std::min(i + 1, n - 1);
+  const double span = (double)kfs[in].frame - (double)kfs[ip].frame;
+  KfChannels cr = chord;
+  if (span > 0.0) {
+    const KfChannels a = kfChannels(kfs[ip]);
+    const KfChannels b = kfChannels(kfs[in]);
+    const double s = segDur / span;
+    for (int c = 0; c < 7; c++) cr.v[c] = (b.v[c] - a.v[c]) * s;
+  }
+  KfChannels t{};
+  for (int c = 0; c < 7; c++) t.v[c] = chord.v[c] + (cr.v[c] - chord.v[c]) * sm;
+  return t;
+}
+
+}  // namespace
+
+bool Renderer::EvalKeyframes(const std::vector<CameraKeyframe>& kfs,
+                             unsigned int frame, KeyframePose& out) {
+  return EvalKeyframesAt(kfs, (double)frame, out);
+}
+
+bool Renderer::EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
+                               double frame, KeyframePose& out) {
+  if (kfs.empty()) return false;
+  const int n = (int)kfs.size();
+
+  auto writePose = [&](const KfChannels& c) {
+    out.pos[0]   = c.v[0]; out.pos[1] = c.v[1]; out.pos[2] = c.v[2];
+    out.rotation = (float)c.v[3];
+    out.pitch    = (float)c.v[4];
+    out.roll     = (float)c.v[5];
+    out.zoom     = (float)c.v[6];
+  };
+
+  if (frame <= (double)kfs[0].frame)     { writePose(kfChannels(kfs[0]));     return true; }
+  if (frame >= (double)kfs[n - 1].frame) { writePose(kfChannels(kfs[n - 1])); return true; }
+
+  int i = 0;
+  while (i + 1 < n && (double)kfs[i + 1].frame <= frame) ++i;
+  const CameraKeyframe& k0 = kfs[i];
+  const CameraKeyframe& k1 = kfs[i + 1];
+  if (k1.frame == k0.frame) { writePose(kfChannels(k0)); return true; }   // duplicate frames
+
+  const double dur = (double)k1.frame - (double)k0.frame;
+  const double t   = (frame - (double)k0.frame) / dur;
+  const double t2  = t * t, t3 = t2 * t;
+  const double h00 =  2.0*t3 - 3.0*t2 + 1.0;
+  const double h10 =        t3 - 2.0*t2 + t;
+  const double h01 = -2.0*t3 + 3.0*t2;
+  const double h11 =        t3 -     t2;
+
+  const KfChannels p0 = kfChannels(k0), p1 = kfChannels(k1);
+  const KfChannels m0 = kfTangent(kfs, i, i, dur), m1 = kfTangent(kfs, i + 1, i, dur);
+  KfChannels r{};
+  for (int c = 0; c < 7; c++)
+    r.v[c] = h00*p0.v[c] + h10*m0.v[c] + h01*p1.v[c] + h11*m1.v[c];
+  writePose(r);
+  return true;
 }
 
 // ── Generic transform-keyframe helpers (cameras + non-simulated bodies) ──────
 void Renderer::InterpolateKeyframeTransform(const std::vector<CameraKeyframe>& kfs,
                                             unsigned int frame,
                                             dvec3& pos, vec3& rotDeg) {
-  if (kfs.empty()) return;
-  const CameraKeyframe* before = nullptr;
-  const CameraKeyframe* after  = nullptr;
-  for (auto& kf : kfs) {
-    if (kf.frame <= frame) before = &kf;
-    if (kf.frame >= frame && !after) after = &kf;
-  }
-  if (!before && !after) return;
-  if (before && after && before->frame != after->frame) {
-    float t = (float)(frame - before->frame) / (float)(after->frame - before->frame);
-    pos = dvec3(before->pos[0] + t*(after->pos[0]-before->pos[0]),
-                before->pos[1] + t*(after->pos[1]-before->pos[1]),
-                before->pos[2] + t*(after->pos[2]-before->pos[2]));
-    rotDeg = { before->pitch    + t*(after->pitch    - before->pitch),
-               before->rotation + t*(after->rotation - before->rotation),
-               before->roll     + t*(after->roll     - before->roll) };
-  } else {
-    const CameraKeyframe* k = before ? before : after;
-    pos    = dvec3(k->pos[0], k->pos[1], k->pos[2]);
-    rotDeg = { k->pitch, k->rotation, k->roll };
-  }
+  KeyframePose p;
+  if (!EvalKeyframes(kfs, frame, p)) return;
+  pos    = dvec3(p.pos[0], p.pos[1], p.pos[2]);
+  rotDeg = { p.pitch, p.rotation, p.roll };
 }
 
 void Renderer::InsertTransformKeyframe(std::vector<CameraKeyframe>& kfs,
@@ -8231,7 +8419,7 @@ void Renderer::InsertTransformKeyframe(std::vector<CameraKeyframe>& kfs,
   kf.roll     = rotDeg.z;
   kf.zoom     = 0.0f;       // unused for objects/clouds
   for (auto& k : kfs)
-    if (k.frame == frame) { k = kf; return; }
+    if (k.frame == frame) { kf.smooth = k.smooth; k = kf; return; }
   auto it = kfs.begin();
   while (it != kfs.end() && it->frame < frame) ++it;
   kfs.insert(it, kf);

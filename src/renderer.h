@@ -40,6 +40,17 @@ struct CameraKeyframe {
   float pitch{};
   float roll{};
   float zoom{45.0f};
+  // How the path passes THROUGH this key. 0 = come to rest and turn (the
+  // original linear playback), 1 = full Catmull-Rom tangent, so the camera flies
+  // through with continuous velocity. Scales this key's spline tangent only, so
+  // one sharp key in a run of smooth ones behaves exactly as you'd expect.
+  float smooth{1.0f};
+};
+
+// One evaluated keyframe state — same channels as CameraKeyframe, minus frame.
+struct KeyframePose {
+  double pos[3]{};
+  float rotation{}, pitch{}, roll{}, zoom{};
 };
 
 // ---- Spawn form state ----
@@ -744,6 +755,17 @@ public:
   // Interpolate keyframed cameras' transforms to the given frame (playback)
   void UpdateSceneCameraKeyframes(unsigned int frame);
 
+  // ONE evaluator for every keyframe lane (freecam, spawned cameras, planets,
+  // clouds). There used to be four copies of the bracketing-search-and-lerp, so
+  // a change to how playback feels had to be made four times. Returns false
+  // when the lane is empty (nothing to apply); outside [first, last] it holds
+  // the end key. Cubic Hermite through the keys, tangents Catmull-Rom scaled by
+  // each key's `smooth`, so 0 reproduces the old linear playback exactly.
+  static bool EvalKeyframes(const std::vector<CameraKeyframe>& kfs,
+                            unsigned int frame, KeyframePose& out);
+  // Same, at a fractional frame — for drawing the curve, not for playback.
+  static bool EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
+                              double frame, KeyframePose& out);
   // Generic transform-keyframe helpers, shared by cameras and non-simulated
   // objects/clouds. A CameraKeyframe doubles as a transform keyframe: pos +
   // Euler (pitch=x, rotation=y, roll=z); zoom is unused for objects/clouds.
@@ -759,6 +781,14 @@ public:
   int  kfDragLane{-2};    // -2 = none, -1 = freecam, >=0 = spawned camera index
   int  kfDragIndex{-1};   // index into that lane's keyframe vector
   bool kfDragMoved{false};// distinguishes a drag (retime) from a click (jump)
+  // The diamond IS the control: drag left/right retimes it, drag up/down sets
+  // its smoothness. The gesture locks to whichever axis wins past a dead zone,
+  // so a smoothing drag cannot nudge the frame and vice versa. No selection
+  // state — nothing to click into or out of.
+  int   kfDragAxis{0};          // 0 undecided, 1 horizontal (retime), 2 vertical (smooth)
+  float kfDragStartX{0.0f}, kfDragStartY{0.0f};
+  float kfDragStartSmooth{0.0f};
+
 
   // Editable timeline domain, independent of how much has been simulated.
   // timelineFrames is the ruler length (also the zoom target for scroll);
