@@ -1097,6 +1097,36 @@ int main(int argc, char** argv) {
     // Must run before BindViewportFBO — it binds its own FBOs while blitting.
     renderer.UpdateRtPlanetTextures(physicsObjects);
 
+    // ── Keyframed cameras: pose them BEFORE anything is drawn ─────────────
+    // This used to run after the planets had already been rendered (their draw
+    // is inside PhysicsObject::Update), so every keyframed frame drew the scene
+    // from the PREVIOUS frame's camera and the PiP from the new one — planets
+    // looked like they teleported on playback while manual flight, applied at
+    // the END of the frame in UpdateInputs, was smooth. Same evaluator, moved
+    // to where the camera has to be right for the whole frame.
+    // Only when the playhead moved: a still playhead leaves the freecam free to
+    // fly, so a key can be re-posed and captured over.
+    if ((!renderer.paused || renderer.playheadMoved) && !renderer.cameraKeyframes.empty()) {
+      const unsigned int kfFrame = renderer.timelinePlayhead;
+      const auto& kfs = renderer.cameraKeyframes;
+      // Only drive the camera inside the keyframed range: outside it the
+      // freecam stays free, so you can fly to the next shot before capturing.
+      if (kfFrame >= kfs.front().frame && kfFrame <= kfs.back().frame) {
+        KeyframePose p;
+        Renderer::EvalKeyframes(kfs, kfFrame, p);
+        renderer.cameraTranslate[0] = p.pos[0] + gCamAnchor[0];
+        renderer.cameraTranslate[1] = p.pos[1] + gCamAnchor[1];
+        renderer.cameraTranslate[2] = p.pos[2] + gCamAnchor[2];
+        renderer.rotation = p.rotation;
+        renderer.pitch    = p.pitch;
+        renderer.roll     = p.roll;
+        renderer.zoom     = p.zoom;
+        renderer.syncMatrixFromEuler();
+      }
+    }
+    if (!renderer.paused || renderer.playheadMoved)
+      renderer.UpdateSceneCameraKeyframes(renderer.timelinePlayhead);
+
     renderer.BindViewportFBO();
 
     // Spheremap background — drawn first, depth writes off (rasterized view only)
@@ -1282,29 +1312,6 @@ int main(int argc, char** argv) {
         size_t maxTrailPoints = physicsObjects[0].getBufferSize();
         for (auto& line : lineObjects)
           line.TrimLinePoints(maxTrailPoints);
-      }
-    }
-
-    // ── Camera keyframe interpolation ──────────────────────────────────────
-    // Interpolate the freecam between its keyframes whenever the playhead moved
-    // (play or scrub), driven by the timeline playhead — animates even with no
-    // physics simulation.
-    if ((!renderer.paused || renderer.playheadMoved) && !renderer.cameraKeyframes.empty()) {
-      const unsigned int curFrame = renderer.timelinePlayhead;
-      const auto& kfs = renderer.cameraKeyframes;
-      // Only drive the camera inside the keyframed range: outside it the
-      // freecam stays free, so you can fly to the next shot before capturing.
-      if (curFrame >= kfs.front().frame && curFrame <= kfs.back().frame) {
-        KeyframePose p;
-        Renderer::EvalKeyframes(kfs, curFrame, p);
-        renderer.cameraTranslate[0] = p.pos[0] + gCamAnchor[0];
-        renderer.cameraTranslate[1] = p.pos[1] + gCamAnchor[1];
-        renderer.cameraTranslate[2] = p.pos[2] + gCamAnchor[2];
-        renderer.rotation = p.rotation;
-        renderer.pitch    = p.pitch;
-        renderer.roll     = p.roll;
-        renderer.zoom     = p.zoom;
-        renderer.syncMatrixFromEuler();
       }
     }
 
@@ -1699,10 +1706,6 @@ int main(int argc, char** argv) {
         renderer.RemoveCameraKeyframe(curFrame);
       }
     }
-
-    // ── Animate keyframed cameras to the current frame (play or scrub) ──────
-    if (!renderer.paused || renderer.playheadMoved)
-      renderer.UpdateSceneCameraKeyframes(curFrame);
 
     // ── Handle recording keyframe requests ─────────────────────────────────
     if (renderer.recStartRequested) {
