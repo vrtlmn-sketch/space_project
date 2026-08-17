@@ -74,12 +74,17 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 - **Project settings OVERRIDE `settings.json`.** The loader fills missing keys
   with defaults, so editing `settings.json` for an A/B does nothing. Always edit
   `projects/<name>.json` (back it up and restore).
-- **Reruns are byte-identical now** (milky_way and UNIVERSE alike, verified
-  with `cmp` on the same binary), so a byte compare against a control built
-  from the committed source is the test — a mean can hide a large local change.
-  There used to be a ~2% pixel noise floor on milky_way; if it ever comes back,
-  it is a regression in determinism, not weather. Always run a same-settings
-  control before believing a difference.
+- **Reruns are byte-identical BACK-TO-BACK** (milky_way and UNIVERSE alike,
+  verified with `cmp` on the same binary), so a byte compare against a control
+  built from the committed source is the test — a mean can hide a large local
+  change. But capture control and candidate within the same few minutes: a
+  control from 20 minutes earlier once differed by ±1 along the two hardest
+  edges in the frame (Saturn's outer ring boundary and one ringlet, 11k px, a
+  tail to 41) while the galaxy and planet were untouched — and rebuilding that
+  control's exact source reproduced the NEW image, not the old. Something in
+  the environment moved (root cause not found; no wall-clock path reaches the
+  camera or the rings). If a diff is a thin line on a hard edge and nothing
+  else, rebuild the control from source before blaming the change.
 - **A blocked run leaves the PREVIOUS run's `/tmp/cmp_raster.png` in place.**
   Renders can block on vsync while the user's live app holds the display; a
   `cp` after that grabs stale data and fabricates a result. `rm -f` the capture
@@ -104,10 +109,11 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 ## Regression baseline
 
 `RASTER_ONLY=1 ./bin/blackholesim --compare` on `projects/milky_way.json` gives a
-raster mean luminance of **29.161** — and it is now DETERMINISTIC: reruns are
+raster mean luminance of **29.161** (29.150 seen later the same day — see the
+hard-edge drift note in the harness traps). Back-to-back reruns are
 byte-identical (`cmp`), so on this scene a byte compare against a control built
-from the committed source is the right test, not a mean. Check it after any
-shared-shader or cloud-pipeline change.
+from the committed source, captured in the same sitting, is the right test, not
+a mean. Check it after any shared-shader or cloud-pipeline change.
 
 The same scene's other two renderers, for changes that touch the compute path:
 **RT 26.255** (`/tmp/cmp_rt.png`) and **geodesic 25.498** (`/tmp/cmp_geo.png`).

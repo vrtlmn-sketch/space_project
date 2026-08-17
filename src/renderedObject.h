@@ -112,6 +112,8 @@ private:
   // (nearest-cell lookup, hard f^3) fades instead of popping. Converges to the
   // same value it used to hold, so the still look is unchanged.
   static constexpr float kRimBlend = 1.0f / 6.0f;
+  std::vector<float> rimTargets{};       // last bake's exact values; blending continues toward them after motion stops
+  bool rimConverged{true};
   bool cloudGpuDirty{true};              // positions changed → re-upload (else the VBO is static)
   // True once setupRender has cached this object's uniform locations for the
   // current program. hasBeenRendered alone is NOT that: BuildGalaxyStarfield

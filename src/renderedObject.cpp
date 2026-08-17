@@ -622,9 +622,26 @@ void RenderedObject::updateCloudRimFactors()
   size_t n = UVObjectMeshBuffer.size() / 3;
   if (n < 16) return;
   // Bake once, then only when the positions actually moved. Called before
-  // renderCloud uploads, so cloudGpuDirty still says whether they did.
+  // renderCloud uploads, so cloudGpuDirty still says whether they did. When
+  // they did not, keep BLENDING toward the cached targets until converged —
+  // otherwise a pause or a timeline scrub freezes every factor mid-fade, up
+  // to 5/6 short of its true value, and a still frame reached that way keeps
+  // slightly wrong edge lighting until something moves again.
   const bool firstBake = rimFactors.size() != n;
-  if (!firstBake && !cloudGpuDirty) return;
+  if (!firstBake && !cloudGpuDirty) {
+    if (rimTargets.size() != n || rimConverged) return;
+    float maxD = 0.0f;
+    for (size_t i = 0; i < n; ++i) {
+      rimFactors[i] += (rimTargets[i] - rimFactors[i]) * kRimBlend;
+      maxD = std::max(maxD, std::fabs(rimTargets[i] - rimFactors[i]));
+    }
+    if (maxD < 1e-3f) { rimFactors = rimTargets; rimConverged = true; }
+    if (rimVbo) {
+      glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
+      glBufferData(GL_ARRAY_BUFFER, rimFactors.size()*sizeof(float), rimFactors.data(), GL_DYNAMIC_DRAW);
+    }
+    return;
+  }
 
   const int G = 48;
   vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
@@ -657,6 +674,8 @@ void RenderedObject::updateCloudRimFactors()
   };
 
   rimFactors.resize(n);
+  rimTargets.resize(n);
+  rimConverged = firstBake;   // a fresh bake IS its target; a blend has to catch up
   for (size_t i = 0; i < n; ++i) {
     float px=UVObjectMeshBuffer[i*3], py=UVObjectMeshBuffer[i*3+1], pz=UVObjectMeshBuffer[i*3+2];
     int gx=cellOf(px,lo.x,ext.x), gy=cellOf(py,lo.y,ext.y), gz=cellOf(pz,lo.z,ext.z);
@@ -686,6 +705,7 @@ void RenderedObject::updateCloudRimFactors()
     // Harsh shape-revealing falloff: direct light pops, grazing dies fast.
     f = f * f * f;
     const float target = surf * f;
+    rimTargets[i] = target;
     rimFactors[i] = firstBake ? target : rimFactors[i] + (target - rimFactors[i]) * kRimBlend;
   }
   if (rimVbo) {
