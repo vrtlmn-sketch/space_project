@@ -6887,6 +6887,9 @@ void Renderer::DestroyComputeResources() {
   if (bloomTex[0])      { glDeleteTextures(1, &bloomTex[0]);  bloomTex[0] = 0; }
   if (bloomTex[1])      { glDeleteTextures(1, &bloomTex[1]);  bloomTex[1] = 0; }
   if (bloomTex[2])      { glDeleteTextures(1, &bloomTex[2]);  bloomTex[2] = 0; }
+  if (spikeTmp[0])      { glDeleteTextures(1, &spikeTmp[0]);  spikeTmp[0] = 0; }
+  if (spikeTmp[1])      { glDeleteTextures(1, &spikeTmp[1]);  spikeTmp[1] = 0; }
+  if (spikeAccumProgram) { glDeleteProgram(spikeAccumProgram); spikeAccumProgram = 0; }
   if (recLdrFBO)        { glDeleteFramebuffers(1, &recLdrFBO); recLdrFBO = 0; }
   if (recLdrTex)        { glDeleteTextures(1, &recLdrTex);     recLdrTex = 0; }
   bloomTexW = bloomTexH = recLdrW = recLdrH = 0;
@@ -7266,6 +7269,7 @@ void Renderer::InitPostProcess() {
     {"src/shaders/tonemapFrag.glsl",        &tonemapProgram},
     {"src/shaders/spikeStreakFrag.glsl",    &spikeProgram},
     {"src/shaders/spikeSourceFrag.glsl",    &spikeSourceProgram},
+    {"src/shaders/spikeAccumFrag.glsl",     &spikeAccumProgram},
   };
   for (auto& ps : passes) {
     GLuint fs = compileShaderFromFile(ps.frag, GL_FRAGMENT_SHADER);
@@ -7301,14 +7305,19 @@ void Renderer::InitPostProcess() {
     tmLocTexelD   = glGetUniformLocation(tonemapProgram, "uTexelD");
   }
   if (spikeProgram) {
-    spkLocTex       = glGetUniformLocation(spikeProgram, "uTexture");
-    spkLocTexel     = glGetUniformLocation(spikeProgram, "uTexel");
-    spkLocCount     = glGetUniformLocation(spikeProgram, "uCount");
-    spkLocAngle     = glGetUniformLocation(spikeProgram, "uAngle");
-    spkLocLength    = glGetUniformLocation(spikeProgram, "uLength");
-    spkLocDecay     = glGetUniformLocation(spikeProgram, "uDecay");
-    spkLocSecondary = glGetUniformLocation(spikeProgram, "uSecondary");
-    spkLocChroma    = glGetUniformLocation(spikeProgram, "uChroma");
+    spkLocTex           = glGetUniformLocation(spikeProgram, "uTexture");
+    spkLocTexel         = glGetUniformLocation(spikeProgram, "uTexel");
+    spkLocDir           = glGetUniformLocation(spikeProgram, "uDir");
+    spkLocStride        = glGetUniformLocation(spikeProgram, "uStride");
+    spkLocTaps          = glGetUniformLocation(spikeProgram, "uTaps");
+    spkLocDecayPerTexel = glGetUniformLocation(spikeProgram, "uDecayPerTexel");
+    spkLocLength        = glGetUniformLocation(spikeProgram, "uLength");
+    spkLocChroma        = glGetUniformLocation(spikeProgram, "uChroma");
+  }
+  if (spikeAccumProgram) {
+    spkAccLocStreak = glGetUniformLocation(spikeAccumProgram, "uStreak");
+    spkAccLocSource = glGetUniformLocation(spikeAccumProgram, "uSource");
+    spkAccLocScale  = glGetUniformLocation(spikeAccumProgram, "uScale");
   }
   if (spikeSourceProgram) {
     spkSrcLocTex = glGetUniformLocation(spikeSourceProgram, "uTexture");
@@ -7319,15 +7328,17 @@ void Renderer::EnsureBloomTargets(int w, int h) {
   w = std::max(1, w); h = std::max(1, h);
   if (w == bloomTexW && h == bloomTexH && bloomFBO && bloomTex[0] && bloomTex[1] && bloomTex[2]) return;
   if (!bloomFBO) glGenFramebuffers(1, &bloomFBO);
-  for (int i = 0; i < 3; i++) {   // [0],[1] = bloom ping-pong; [2] = spike streaks
-    if (!bloomTex[i]) glGenTextures(1, &bloomTex[i]);
-    glBindTexture(GL_TEXTURE_2D, bloomTex[i]);
+  auto make = [&](GLuint& tex) {
+    if (!tex) glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  }
+  };
+  for (int i = 0; i < 3; i++) make(bloomTex[i]);   // [0],[1] = bloom ping-pong; [2] = spike streaks
+  make(spikeTmp[0]); make(spikeTmp[1]);            // per-direction streak ladder
   glBindTexture(GL_TEXTURE_2D, 0);
   // Clear the spike texture so a composite with spikes disabled never samples
   // uninitialised (possibly NaN) storage.
@@ -7438,7 +7449,7 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   //  (1) isolate point sources (bloomTex[0] → bloomTex[1]) so only stars spike —
   //      lit planets and the far-away galaxy blob are extended, so they drop out;
   //  (2) streak those isolated points into bloomTex[2].
-  bool spikesOn = spikeProgram && spikeSourceProgram && spikeStrength > 0.0f && spikeCount > 0;
+  bool spikesOn = spikeProgram && spikeSourceProgram && spikeAccumProgram && spikeStrength > 0.0f && spikeCount > 0;
   if (spikesOn) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[1], 0);
     glUseProgram(spikeSourceProgram);
@@ -7446,18 +7457,56 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     glUniform1i(spkSrcLocTex, 0);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
+    // Streak the isolated sources: per direction, an à-trous ladder of three
+    // passes with strides 1, K, K^2 (K = cbrt of the reach), then add the
+    // finished streak into bloomTex[2]. Continuous at any resolution, and the
+    // tap count barely grows with it (see spikeStreakFrag).
+    const float len = spikeLength * 0.5f * (float)std::min(bw, bh);   // reach in texels
+    const int   K   = std::clamp((int)std::ceil(std::cbrt((double)len)), 2, 16);
+    const float decayPerTexel = spikeDecay * 3.0f / std::max(len, 1.0f);   // == old exp(-decay*t*3), t = D/len
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[2], 0);
-    glUseProgram(spikeProgram);
-    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[1]);
-    glUniform1i(spkLocTex, 0);
-    glUniform2f(spkLocTexel, 1.0f / (float)bw, 1.0f / (float)bh);
-    glUniform1i(spkLocCount, spikeCount);
-    glUniform1f(spkLocAngle, spikeAngle);
-    glUniform1f(spkLocLength, spikeLength * 0.5f * (float)std::min(bw, bh));
-    glUniform1f(spkLocDecay, spikeDecay);
-    glUniform1f(spkLocSecondary, spikeSecondary);
-    glUniform1f(spkLocChroma, spikeChroma);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glClearColor(0.f, 0.f, 0.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    struct Fan { int count; float base; float lenScale; float weight; };
+    const Fan fans[2] = { { std::clamp(spikeCount, 1, 8), spikeAngle, 1.0f, 1.0f },
+                          { 2, spikeAngle + 1.5707963f, 0.8f, spikeSecondary } };
+    for (const Fan& f : fans) {
+      if (f.weight <= 0.0f) continue;
+      const float fLen = len * f.lenScale;
+      for (int d = 0; d < f.count; d++) {
+        const float a = f.base + 6.28318530718f * (float)d / (float)f.count;
+        const float dx = std::cos(a), dy = std::sin(a);
+        GLuint src = bloomTex[1];
+        float stride = 1.0f;
+        glUseProgram(spikeProgram);
+        glUniform2f(spkLocTexel, 1.0f / (float)bw, 1.0f / (float)bh);
+        glUniform2f(spkLocDir, dx, dy);
+        glUniform1i(spkLocTaps, K);
+        glUniform1f(spkLocDecayPerTexel, decayPerTexel * (len / std::max(fLen, 1.0f)));
+        glUniform1f(spkLocLength, fLen);
+        glUniform1f(spkLocChroma, spikeChroma);
+        glUniform1i(spkLocTex, 0);
+        for (int pass = 0; pass < 3; pass++) {
+          GLuint dst = spikeTmp[pass & 1];
+          glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
+          glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, src);
+          glUniform1f(spkLocStride, stride);
+          glDrawArrays(GL_TRIANGLES, 0, 6);
+          src = dst;
+          stride *= (float)K;
+        }
+        // Accumulate (streak - source) * weight / length into the spike texture.
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, bloomTex[2], 0);
+        glUseProgram(spikeAccumProgram);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, src);         glUniform1i(spkAccLocStreak, 0);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, bloomTex[1]); glUniform1i(spkAccLocSource, 1);
+        glUniform1f(spkAccLocScale, f.weight / std::max(fLen, 1.0f));
+        glEnable(GL_BLEND); glBlendFunc(GL_ONE, GL_ONE);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glDisable(GL_BLEND);
+        glActiveTexture(GL_TEXTURE0);
+      }
+    }
   }
 
   // Separable Gaussian: H (tex0→tex1) then V (tex1→tex0)

@@ -372,8 +372,11 @@ private:
   GLint tmLocDustDens{-1};
   GLint tmLocEdgeLight{-1};
   GLint tmLocTexelD{-1};
-  GLint  spkLocTex{-1}, spkLocTexel{-1}, spkLocCount{-1}, spkLocAngle{-1}, spkLocLength{-1}, spkLocDecay{-1};
-  GLint  spkLocSecondary{-1}, spkLocChroma{-1};
+  GLint  spkLocTex{-1}, spkLocTexel{-1}, spkLocDir{-1}, spkLocStride{-1}, spkLocTaps{-1};
+  GLint  spkLocDecayPerTexel{-1}, spkLocLength{-1}, spkLocChroma{-1};
+  GLuint spikeAccumProgram{0};   // adds one finished streak into the accumulator
+  GLint  spkAccLocStreak{-1}, spkAccLocSource{-1}, spkAccLocScale{-1};
+  GLuint spikeTmp[2]{0, 0};      // ping-pong for the per-direction ladder
   GLint  spkSrcLocTex{-1};
   GLuint bloomFBO{0}, bloomTex[3]{0, 0, 0};
   int    bloomTexW{0}, bloomTexH{0};
