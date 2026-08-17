@@ -2659,6 +2659,8 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   const int curRenderMode = cachedRenderMode;
 
   if (realisticShading) {
+    const bool drawLight = (cloudDrawPhase != CloudDrawPhase::Dust);
+    const bool drawDust  = (cloudDrawPhase != CloudDrawPhase::Light);
     // RT-like: pure-additive HDR glow, shader-controlled point size, no depth
     // writes. Two passes: a wide faint HAZE (continuous milk) then tiny crisp
     // CORES (individual stars).
@@ -2673,31 +2675,36 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     //    A star catalogue runs the SAME passes as a procedural cloud: the haze
     //    is where the dense, milky look comes from, and skipping it made the
     //    catalogue render as isolated dots unlike every other project.
-    glBlendFunc(GL_ONE, GL_ONE);
-    if (passLoc >= 0) glUniform1i(passLoc, 0);
-    if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-    else             glDrawArrays(GL_POINTS, 0, bufferSize);
+    if (drawLight) {
+      glBlendFunc(GL_ONE, GL_ONE);
+      if (passLoc >= 0) glUniform1i(passLoc, 0);
+      if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+      else             glDrawArrays(GL_POINTS, 0, bufferSize);
 
-    // 2. Glowing gas — emission nebulosity near hot young stars (additive).
-    if (cineGasStrength > 0.0f) {
-      if (passLoc >= 0) glUniform1i(passLoc, 4);
+      // 2. Glowing gas — emission nebulosity near hot young stars (additive).
+      if (cineGasStrength > 0.0f) {
+        if (passLoc >= 0) glUniform1i(passLoc, 4);
+        if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+        else             glDrawArrays(GL_POINTS, 0, bufferSize);
+      }
+
+      // 3. Star cores — the resolved (bright) individual stars only.
+      if (passLoc >= 0) glUniform1i(passLoc, 1);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
       else             glDrawArrays(GL_POINTS, 0, bufferSize);
     }
 
-    // 3. Star cores — the resolved (bright) individual stars only.
-    if (passLoc >= 0) glUniform1i(passLoc, 1);
-    if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-    else             glDrawArrays(GL_POINTS, 0, bufferSize);
-
-    // 3. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
+    // 4. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
     //    glow behind it, like a real dark cloud. Many small, density-placed sprites
     //    compound in the lanes into dark reddened clouds; thin dust just warms the
-    //    light so bright stars still show through the gaps.
-    glBlendFunc(GL_ZERO, GL_SRC_COLOR);
-    if (passLoc >= 0) glUniform1i(passLoc, 3);
-    if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-    else             glDrawArrays(GL_POINTS, 0, bufferSize);
+    //    light so bright stars still show through the gaps. In the two-phase
+    //    scene draw this runs in a separate call, after EVERY cloud's light.
+    if (drawDust) {
+      glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+      if (passLoc >= 0) glUniform1i(passLoc, 3);
+      if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+      else             glDrawArrays(GL_POINTS, 0, bufferSize);
+    }
 
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
@@ -2708,6 +2715,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     return;
   }
 
+  if (cloudDrawPhase == CloudDrawPhase::Dust) { hasBeenRendered = true; return; }   // nav path has no dust phase
   glEnable(GL_DEPTH_CLAMP);   // same far-plane fix for the nav point cloud
   glDepthFunc(GL_LEQUAL);
   if (curRenderMode == 1) {

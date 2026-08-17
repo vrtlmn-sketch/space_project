@@ -218,6 +218,17 @@ public:
   float normalStrength{1.0f};  // normal-map relief scale (forwarded to the shader)
   float nightStrength{1.6f};   // night-lights emissive brightness (forwarded to the shader)
   bool  realisticShading{false}; // set per-draw by the Renderer for the Cinematic Performant pass
+  // Which passes a renderCloud call draws in the realistic path. Light (haze,
+  // gas, cores) is additive and dust is multiplicative, so with every cloud's
+  // light drawn before any cloud's dust the result is a sum then a product —
+  // independent of cloud order. Drawing each cloud's dust right after its own
+  // light made the image depend on the far-to-near sort, and two colliding
+  // clouds crossing their equidistance plane swapped that order in one frame:
+  // a whole cloud's dust started (or stopped) darkening the other's light. The
+  // nav path ignores the phase (draws once, on Light).
+  enum class CloudDrawPhase { All, Light, Dust };
+  CloudDrawPhase cloudDrawPhase{CloudDrawPhase::All};
+  bool  cloudLightDrawn{false};  // set by the Light phase, consumed by the Dust phase: dust only where light was drawn this pass
   float cinePixelScale{1.0f};    // point-size scale so sprites keep apparent size under SSAA
   float cineHazeStrength{6.83f}; // unresolved-star haze brightness (RT Star Haze → Brightness)
   float cineHazeSpread{32.4f};   // unresolved-star haze spread (RT Star Haze → Spread)

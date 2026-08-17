@@ -571,7 +571,12 @@ void Renderer::Draw(RenderedObject& ro) {
                                             AddRimOccluder(ro); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+                                            // Light phase only; DrawCloudDust draws the dust after EVERY
+                                            // cloud's light (see CloudDrawPhase in renderedObject.h).
+                                            ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Light;
                                             ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+                                            ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::All;
+                                            ro.cloudLightDrawn = true;
                                             if (realisticRasterView) rimClouds.push_back(&ro); }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
@@ -781,6 +786,23 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
       rtDirty = true;
     }
   }
+}
+
+// Second phase of the scene's cloud draw: this cloud's dust, multiplied over
+// the light of EVERY cloud drawn before it. Only for a cloud whose light phase
+// ran this pass, so a site that skips a cloud cannot grow dust from nothing.
+// The dust uniforms are program-wide and per-object, so they are re-sent here
+// (another cloud's Draw has overwritten them since this cloud's).
+void Renderer::DrawCloudDust(RenderedObject& ro) {
+  if (rayTracerView || ro.meshType != MeshType::cloud) return;
+  if (!ro.cloudLightDrawn) return;
+  ro.cloudLightDrawn = false;
+  if (!ro.realisticShading) return;          // the nav path has no dust pass
+  ro.uploadDustParams(dustStrength, dustReddening, dustCoverage, dustClumpScale,
+                      ro.ownDustInfluence(dustInfluence), dustContrast);
+  ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Dust;
+  ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+  ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::All;
 }
 
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,

@@ -824,6 +824,7 @@ public:
   bool InitWindow(const char* wName, int wheight, int wwidth);
   bool BeginFrame();
   void Draw(RenderedObject& ro);
+  void DrawCloudDust(RenderedObject& ro);   // phase 2 of the cloud draw: call once per cloud after ALL clouds' Draw
   // Draw a physics object with mass+temperature+objectType (+optional velocity for Doppler)
   void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                          vec3 velocity = {0,0,0}, vec3 color = {0.55f,0.25f,0.15f});

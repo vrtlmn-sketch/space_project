@@ -1241,6 +1241,11 @@ int main(int argc, char** argv) {
     BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cloudDrawOrder);
     for (int ci : cloudDrawOrder)
       clouds[ci]->Update(renderer, physData);
+    // Phase 2: every cloud's dust over every cloud's light. Order-independent
+    // (light is a sum, dust a product), so two colliding clouds no longer swap
+    // which one darkens the other when the camera crosses their midplane.
+    for (int ci : cloudDrawOrder)
+      renderer.DrawCloudDust(clouds[ci]->renderedObject);
 
     // Scale the RT dust influence radius to the primary cloud's size (world
     // units) so dust works whether the cloud spans 1 AU or 26,000 ly.
@@ -1375,6 +1380,7 @@ int main(int argc, char** argv) {
                                              renderer.dustContrast);
           renderer.Draw(c->renderedObject);
         }
+        for (int ci : recOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
         for (auto& obj : physicsObjects) {
           renderer.DrawAtmosphere(obj);
           renderer.DrawRings(obj);
@@ -1435,6 +1441,7 @@ int main(int argc, char** argv) {
                                            renderer.dustContrast);
         renderer.Draw(c->renderedObject);
       }
+      for (int ci : snapOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
       for (auto& obj : physicsObjects) {
         renderer.DrawAtmosphere(obj);
         renderer.DrawRings(obj);
@@ -1542,6 +1549,7 @@ int main(int argc, char** argv) {
                                              renderer.dustContrast);
           renderer.Draw(c->renderedObject);
         }
+        for (int ci : cmpOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
         for (auto& obj : physicsObjects) {
           renderer.DrawAtmosphere(obj);
           renderer.DrawRings(obj);
@@ -1629,6 +1637,7 @@ int main(int argc, char** argv) {
                                          renderer.dustContrast);
       renderer.Draw(c->renderedObject);
     }
+    for (auto& c : clouds) renderer.DrawCloudDust(c->renderedObject);
     for (auto& obj : physicsObjects) {
       renderer.DrawAtmosphere(obj);
       renderer.DrawRings(obj);

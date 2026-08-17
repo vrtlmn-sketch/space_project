@@ -308,6 +308,37 @@ wrong shape: brightness in this renderer is proportional to points drawn, so a
 sampled object is a different look, not a coarser one. Either draw the object
 properly or accept it is a distant smudge.
 
+## Clouds draw in TWO phases: every cloud's light, then every cloud's dust
+
+Haze, gas and cores are additive (`GL_ONE, GL_ONE`); dust is multiplicative
+(`GL_ZERO, GL_SRC_COLOR`). Drawn as "each cloud: its light, then its dust", the
+image depended on the far-to-near cloud sort — and two COLLIDING clouds swap
+that order in one frame when the camera crosses their equidistance plane, so a
+whole cloud's dust started (or stopped) darkening the other's light: "a red
+blob appears in one frame, and goes back if I fly back". Reproduced in the
+harness with two overlapping 5k clouds: sorted vs `CLOUD_DRAW_SORT=0` at ONE
+camera differed by 633 px over 96/255 in blob shapes; now 0.
+
+`Renderer::Draw` on a cloud draws the LIGHT phase only and marks
+`cloudLightDrawn`; `Renderer::DrawCloudDust` (a second loop over the clouds,
+AFTER all their Draws) draws the dust and clears the mark, re-sending the
+per-object dust uniforms because another cloud's Draw overwrote them (shared
+program). Sum then product — cloud order no longer matters at all, so the sort
+is now cosmetic. The look is unchanged for a single cloud (same draw calls, same
+order; byte-identical against a back-to-back control) and changes only where
+clouds overlap on screen: a far cloud's dust now also darkens a near cloud's
+light there. Accepted deliberately — distant galaxies are never that close
+unless they are colliding, and far ones are LOD stand-ins anyway.
+
+- **Every raster site that loops Draw over the clouds MUST also loop
+  DrawCloudDust** (main.cpp: primary, record raster, snap, compare, PiP). A site
+  that forgets it renders no dust — visibly wrong, but at least not silently:
+  the flag means a skipped cloud can never grow dust from nothing. RT sites need
+  nothing (Draw's raster branch does not run under `rayTracerView`).
+- The nav path ignores the phase (draws once on Light; Dust is a no-op).
+- `CloudObject::Update` calls Draw itself; the primary loop's dust phase is a
+  second loop over `cloudDrawOrder` after the Update loop.
+
 ## Light falls off because objects get SMALLER — until the floors stop it
 
 Nothing in this renderer has a 1/d² term. A sprite is a fixed screen size and a
