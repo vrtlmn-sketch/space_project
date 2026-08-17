@@ -179,6 +179,8 @@ bool ProjectSerializer::Save(const std::string& path,
       {"nebulaScatterScale",cloud.nebulaScatterScale},
       {"particleSizeSpread",cloud.particleSizeSpread},
       {"scale",             cloud.scale},
+      {"haloVFlat",         cloud.haloVFlat},
+      {"haloRCore",         cloud.haloRCore},
       {"simulatePhysics",   cloud.simulatePhysics},
       {"keyframes",         keyframesToJson(cloud.keyframes)},
       {"name",              cloud.name},
@@ -491,6 +493,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
     cd.particleSizeSpread = c.value("particleSizeSpread", 0.0f);
     cd.scale              = c.value("scale",              1.0f);
+    cd.haloSet            = c.contains("haloVFlat");
+    cd.haloVFlat          = c.value("haloVFlat",          0.0f);
+    cd.haloRCore          = c.value("haloRCore",          0.0f);
     cd.simulatePhysics    = c.value("simulatePhysics",    true);
     if (c.contains("keyframes")) cd.keyframes = jsonToKeyframes(c["keyframes"]);
     cd.name           = c.value("name",           std::string{});

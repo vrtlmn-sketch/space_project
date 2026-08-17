@@ -2638,6 +2638,74 @@ const char* Renderer::MainSlotLabel() const {
   return cinematicRaster ? "Performant main" : "Realistic main";
 }
 
+// The step slider's landmarks: where on the axis each simulated thing in the
+// scene starts to MOVE (its dynamical time / autoStepsPerOrbit), plus a few
+// generic reference points, drawn under the slider while it or the strip is
+// hovered. Click a mark to set the pending step (nothing is applied — the
+// usual Save gate still stands). Foreground draw list: the panel is one row
+// and the strip hangs below it.
+void Renderer::DrawStepLandmarks(float x0, float y0, float x1, float y1, bool sliderHovered) {
+  const ImVec2 sMin(x0, y0), sMax(x1, y1);
+  struct Mark { std::string label; double stepYears; bool scene; };
+  std::vector<Mark> marks;
+  const double N = (double)std::max(autoStepsPerOrbit, 10);
+  for (const auto& l : dynLandmarks) marks.push_back({ l.label, l.T / N, true });
+  // Generic references (typical dynamical times / N).
+  marks.push_back({ "moons",     27.3 / 365.25 / N, false });
+  marks.push_back({ "planets",   1.0 / N,           false });
+  marks.push_back({ "outer planets", 30.0 / N,      false });
+  marks.push_back({ "star clusters", 1.0e6 / N,     false });
+  marks.push_back({ "galaxies",  2.4e8 / N,         false });
+
+  const float stripH = 30.0f;
+  const ImVec2 stripMin(sMin.x - 4.0f, sMax.y);
+  const ImVec2 stripMax(sMax.x + 4.0f, sMax.y + stripH);
+  const ImVec2 mp = ImGui::GetMousePos();
+  const bool stripHovered = mp.x >= stripMin.x && mp.x <= stripMax.x && mp.y >= stripMin.y && mp.y <= stripMax.y;
+  if (!sliderHovered && !stripHovered) return;
+
+  const double lo = std::log10((double)kSimSpeedMin), hi = std::log10((double)kSimSpeedMax);
+  auto xOf = [&](double stepYears) {
+    const double s = std::clamp(stepYears / units::kDtYears, (double)kSimSpeedMin, (double)kSimSpeedMax);
+    return sMin.x + (float)((std::log10(s) - lo) / (hi - lo)) * (sMax.x - sMin.x);
+  };
+  ImDrawList* fg = ImGui::GetForegroundDrawList();
+  fg->AddRectFilled(stripMin, stripMax, IM_COL32(18, 20, 28, 235), 3.0f);
+  fg->AddRect(stripMin, stripMax, IM_COL32(60, 60, 72, 200), 3.0f);
+
+  // Scene marks first so they win the label space; generic ones fill gaps.
+  std::stable_sort(marks.begin(), marks.end(), [](const Mark& a, const Mark& b) { return a.scene > b.scene; });
+  std::vector<float> usedX;
+  int hovered = -1;
+  for (int i = 0; i < (int)marks.size(); i++) {
+    const float x = xOf(marks[i].stepYears);
+    const ImU32 col = marks[i].scene ? IM_COL32(255, 205, 90, 240) : IM_COL32(150, 170, 210, 200);
+    fg->AddLine(ImVec2(x, stripMin.y), ImVec2(x, stripMin.y + 7.0f), col, marks[i].scene ? 2.0f : 1.0f);
+    bool room = true;
+    for (float ux : usedX) if (std::fabs(ux - x) < 46.0f) { room = false; break; }
+    if (room) {
+      const ImVec2 ts = ImGui::CalcTextSize(marks[i].label.c_str());
+      float tx = std::clamp(x - ts.x * 0.5f, stripMin.x + 2.0f, stripMax.x - ts.x - 2.0f);
+      fg->AddText(ImVec2(tx, stripMin.y + 9.0f), col, marks[i].label.c_str());
+      usedX.push_back(x);
+    }
+    if (stripHovered && std::fabs(mp.x - x) < 8.0f && (hovered < 0 || std::fabs(mp.x - xOf(marks[hovered].stepYears)) > std::fabs(mp.x - x)))
+      hovered = i;
+  }
+  if (hovered >= 0) {
+    const Mark& m = marks[hovered];
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    ImGui::BeginTooltip();
+    ImGui::Text("%s: step %s  (%d steps per orbit)", m.label.c_str(),
+                units::FormatTimeYears(m.stepYears).c_str(), (int)N);
+    ImGui::TextDisabled(m.scene ? "From this scene. Click to set the step (not applied until Save)."
+                                : "Typical value. Click to set the step (not applied until Save).");
+    ImGui::EndTooltip();
+    if (ImGui::IsMouseClicked(0))
+      pendingSimSpeed = (float)std::clamp(m.stepYears / units::kDtYears, (double)kSimSpeedMin, (double)kSimSpeedMax);
+  }
+}
+
 void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Controls", nullptr, flags);
@@ -2759,13 +2827,15 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   // Time step (data resolution) + playback (frames per tick)
   ImGui::Text("Step");
   ImGui::SameLine();
-  ImGui::SetNextItemWidth(92);
+  ImGui::SetNextItemWidth(230);
   {
     // Log slider over eleven orders of magnitude, labelled in real time units.
     const std::string lbl = units::FormatTimeYears(units::kDtYears * (double)pendingSimSpeed);
     ImGui::SliderFloat("##simstep", &pendingSimSpeed, kSimSpeedMin, kSimSpeedMax,
                        lbl.c_str(), ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat);
-    if (ImGui::IsItemHovered()) {
+    const ImVec2 sMin = ImGui::GetItemRectMin(), sMax = ImGui::GetItemRectMax();
+    const bool sliderHovered = ImGui::IsItemHovered();
+    if (sliderHovered) {
       const double dt = units::kDtYears * (double)pendingSimSpeed;
       ImGui::BeginTooltip();
       ImGui::Text("Time step per recorded frame: %s", lbl.c_str());
@@ -2776,6 +2846,7 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
                           "parent on an exact Kepler orbit instead of being integrated.");
       ImGui::EndTooltip();
     }
+    DrawStepLandmarks(sMin.x, sMin.y, sMax.x, sMax.y, sliderHovered);
   }
   ImGui::SameLine();
   {
@@ -5436,6 +5507,23 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                                "Rigid at this step: particles frozen, moves as one body");
           else
             ImGui::TextDisabled("Integrated (particles simulate)");
+        }
+        // Halo: the declared field that holds the galaxy together.
+        {
+          RenderedObject& hro = cloud->renderedObject;
+          float vf = hro.haloVFlat, rc = hro.haloRCore;
+          ImGui::Text("Halo");
+          ImGui::SameLine();
+          ImGui::SetNextItemWidth(70);
+          if (ImGui::DragFloat("##halov", &vf, 0.1f, 0.0f, 1.0e4f, "v %.3g", ImGuiSliderFlags_Logarithmic)) hro.haloVFlat = std::max(vf, 0.0f);
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flat rotation speed the halo enforces (AU/yr). 0 = no halo.");
+          ImGui::SameLine();
+          ImGui::SetNextItemWidth(84);
+          if (ImGui::DragFloat("##halor", &rc, 0.1f, 0.0f, 1.0e12f, "rc %.3g", ImGuiSliderFlags_Logarithmic)) hro.haloRCore = std::max(rc, 0.0f);
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Core radius the curve rises over (AU).");
+          ImGui::SameLine();
+          if (ImGui::SmallButton("Fit##halofit")) { cloud->fitHaloFromVelocities(); cloud->clearRecording(); }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit v_flat and rc to this cloud's own tangential speeds.\nClears the recording.");
         }
         const double q = cloud->virialRatio();
         if (q > 0.0) {

@@ -94,6 +94,7 @@ bool KeplerPropagate(double mu, const dvec3& r0, const dvec3& v0, double dt,
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 namespace dyn {
 namespace {
@@ -102,6 +103,29 @@ struct Attractor {           // anything heavy enough to be somebody's parent
   int    id;                 // >=0 object index; <0 (-2-k) cloud k
   double mass;
   dvec3  pos, vel;
+  float  haloVFlat{0.0f}, haloRCore{0.0f};   // clouds: their halo, centred on haloCenter
+  dvec3  haloCenter{};
+  double radius{0.0};        // clouds: RMS radius (0 for point bodies)
+  // Mass that would produce the pull actually felt at `at`: the particles'
+  // Plummer-enclosed fraction (M d^3/(d^2+R^2)^1.5 — all of it far away, ~0 at
+  // the centre) plus the halo's enclosed mass v_c(d)^2 d / G. This decides who
+  // is the parent and the two-body mu the analytic regime orbits with; the
+  // raw total mass made a black hole AT a galaxy's centre see 2e4 Msun at a
+  // few hundred AU.
+  double effectiveMass(const dvec3& at) const {
+    const dvec3 rp = at - pos;
+    const double dp = std::sqrt(rp.x*rp.x + rp.y*rp.y + rp.z*rp.z);
+    double m = mass;
+    if (radius > 0.0 && dp >= 0.0)
+      m = mass * dp*dp*dp / std::pow(dp*dp + radius*radius, 1.5);
+    if (haloVFlat > 0.0f) {
+      const dvec3 r = at - haloCenter;
+      const double d = std::sqrt(r.x*r.x + r.y*r.y + r.z*r.z);
+      const double vc = (d > 0.0) ? (double)haloVFlat * d / (d + (double)haloRCore) : 0.0;
+      m += vc * vc * d / units::kG;
+    }
+    return m;
+  }
 };
 
 double dist(const dvec3& a, const dvec3& b) {
@@ -159,21 +183,25 @@ void refreshCloudDynamics(CloudObject& c) {
 // 1.5x harder, so a body sitting near a boundary cannot flip every frame.
 int pickParent(const std::vector<Attractor>& atts, double m, const dvec3& p,
                int selfId, int incumbent, double& outT, double& outMu,
-               dvec3& outPos, dvec3& outVel) {
+               dvec3& outPos, dvec3& outVel, double selfRadius = 0.0) {
   int    best = -1; double bestA = 0.0; const Attractor* bestAt = nullptr;
   double incA = 0.0; const Attractor* incAt = nullptr;
   for (const auto& a : atts) {
     if (a.id == selfId) continue;
-    if (!(a.mass > m * 1.000001)) continue;          // strictly heavier: no cycles
+    const double am = a.effectiveMass(p);
+    if (!(am > m * 1.000001)) continue;              // strictly heavier: no cycles
     const double d = dist(a.pos, p);
     if (d <= 0.0) continue;
-    const double acc = units::kG * a.mass / (d * d);
+    // A cloud cannot orbit something INSIDE itself: a black hole at a galaxy's
+    // centre made the whole galaxy its rigid satellite on a 1e5-yr "orbit".
+    if (selfRadius > 0.0 && d < 2.0 * selfRadius) continue;
+    const double acc = units::kG * am / (d * d);
     if (a.id == incumbent) { incA = acc; incAt = &a; }
     if (acc > bestA) { bestA = acc; best = a.id; bestAt = &a; }
   }
   if (incAt && bestAt != incAt && bestA < 1.5 * incA) { best = incumbent; bestAt = incAt; }
   if (!bestAt) { outT = 0.0; outMu = 0.0; return -1; }
-  outMu  = units::kG * (bestAt->mass + m);
+  outMu  = units::kG * (bestAt->effectiveMass(p) + m);
   outT   = DynamicalTime(outMu, dist(bestAt->pos, p));
   outPos = bestAt->pos; outVel = bestAt->vel;
   return best;
@@ -193,6 +221,7 @@ void UpdateSceneDynamics(std::vector<PhysicsObject>& objects,
     if (!up) continue;
     CloudObject& c = *up;
     if (!c.simulatePhysics) { c.dynRigid = false; continue; }
+    if (!c.haloResolved && !c.renderedObject.particles().empty()) c.fitHaloFromVelocities();
     if ((c.dynTCounter++ % 15) == 0 || c.dynMass <= 0.0) refreshCloudDynamics(c);
   }
 
@@ -204,7 +233,9 @@ void UpdateSceneDynamics(std::vector<PhysicsObject>& objects,
       atts.push_back({ i, objects[i].data.mass, objects[i].data.position, objects[i].data.velocity });
   for (int k = 0; k < (int)clouds.size(); ++k)
     if (clouds[k] && clouds[k]->simulatePhysics && clouds[k]->dynMass > 0.0)
-      atts.push_back({ -2 - k, clouds[k]->dynMass, clouds[k]->dynComWorld, dvec3{0,0,0} });
+      atts.push_back({ -2 - k, clouds[k]->dynMass, clouds[k]->dynComWorld, dvec3{0,0,0},
+                       clouds[k]->renderedObject.haloVFlat, clouds[k]->renderedObject.haloRCore, clouds[k]->position,
+                       (double)clouds[k]->renderedObject.rmsRadius() });
 
   double fastestT = 0.0;
   auto noteT = [&](double T) { if (T > 0.0 && (fastestT <= 0.0 || T < fastestT)) fastestT = T; };
@@ -242,7 +273,8 @@ void UpdateSceneDynamics(std::vector<PhysicsObject>& objects,
     if (!c.simulatePhysics || c.dynMass <= 0.0) { c.dynRigid = false; c.dynParent = -1; continue; }
     noteT(c.dynT);
     double Tp = 0.0, mu = 0.0; dvec3 ppos{}, pvel{};
-    const int parent = pickParent(atts, c.dynMass, c.dynComWorld, -2 - k, c.dynParent, Tp, mu, ppos, pvel);
+    const int parent = pickParent(atts, c.dynMass, c.dynComWorld, -2 - k, c.dynParent, Tp, mu, ppos, pvel,
+                                  (double)c.renderedObject.rmsRadius());
     const bool parentChanged = (parent != c.dynParent);
     c.dynParent = parent;
     const double steps = (c.dynT > 0.0 && dt > 0.0) ? c.dynT / dt : 1e300;
@@ -274,6 +306,16 @@ void UpdateSceneDynamics(std::vector<PhysicsObject>& objects,
   objectOrder.resize(n);
   for (int i = 0; i < n; ++i) objectOrder[i] = i;
   std::stable_sort(objectOrder.begin(), objectOrder.end(), [&](int a, int b) { return depth[a] < depth[b]; });
+
+  // Landmarks for the step slider: every simulated thing with a dynamical time.
+  renderer.dynLandmarks.clear();
+  for (int i = 0; i < n; ++i)
+    if (objects[i].simulatePhysics && objects[i].dynT > 0.0)
+      renderer.dynLandmarks.push_back({ objects[i].name, objects[i].dynT });
+  for (int k = 0; k < (int)clouds.size(); ++k)
+    if (clouds[k] && clouds[k]->simulatePhysics && clouds[k]->dynT > 0.0)
+      renderer.dynLandmarks.push_back({ clouds[k]->name.empty() ? "Cloud " + std::to_string(k) : clouds[k]->name,
+                                        clouds[k]->dynT });
 
   // What Auto fits the step to.
   renderer.dynFastestT = fastestT;

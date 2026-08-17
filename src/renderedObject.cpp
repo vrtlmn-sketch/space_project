@@ -2760,6 +2760,14 @@ void RenderedObject::UpdateCloudPhysics
       float accel = G * other.mass / d2;
       first.velocity += dir * accel * dt;
     }
+    // Halo: identical to the shader's term (see haloVFlat in the header).
+    if (haloVFlat > 0.0f) {
+      const float rr = std::sqrt(first.position.x*first.position.x + first.position.y*first.position.y + first.position.z*first.position.z);
+      if (rr > 1e-9f) {
+        const float vc = HaloVCirc(haloVFlat, haloRCore, rr);
+        first.velocity += first.position * (-(vc * vc) / (rr * rr) * dt);
+      }
+    }
     first.position += first.velocity * dt;
 
     UVObjectMeshBuffer[i*3]   = first.position.x;

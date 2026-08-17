@@ -361,6 +361,47 @@ simulated body a REGIME from its own dynamical time T against dt:
   was measured; when comparing physics across builds match FRAMES PER TICK, not
   Play values (Play's meaning changed).
 
+## A galaxy is held together by its HALO, not by its stars or a black hole
+
+The generator gives every galaxy a real flat rotation curve (46 AU/yr = 220
+km/s) but each star 1 Msun, so a 50k galaxy weighs 5e4 Msun and holding
+220 km/s at 6 kly needs ~1.7e10 inside that radius: unbound by ~1e6 in mass,
+so simulated stars simply drift away from the centre. Sgr A*'s 4e6 Msun does
+not help (its sphere of influence is ~3 pc), and a giant central mass would
+give a Keplerian curve (v ~ 1/sqrt r), not the flat one the stars were placed
+on. Real galaxies get the flat curve from dark matter, and galaxy simulators
+model that as a STATIC ANALYTIC POTENTIAL — a declared field, not sampled mass.
+
+Per cloud: `haloVFlat`, `haloRCore` (RenderedObject; persisted in CloudData,
+absent keys = fitted at load). v_c(r) = vFlat·r/(r+rc); the force is the
+centripetal acceleration `a = -v_c(r)^2/r · r̂` toward the cloud's LOCAL
+origin (spherical, so orientation is irrelevant). Every star the generator
+placed at v_c(r) is then in equilibrium BY CONSTRUCTION — no mass fiddling.
+- **The SAME term, from the SAME two numbers, in every force path**: the BH
+  compute shader (`uHaloVFlat/uHaloRCore`, after the tree walk), the CPU
+  integrator (`UpdateCloudPhysics`), and the big bodies (`cloudSources` carry
+  `haloVFlat/haloRCore/haloCenter`, applied in `PhysicsObject::Update`). Add a
+  fourth force path and it must get the term too, or the paths disagree.
+- Generated galaxies take the recipe's curve exactly (`materializeGalaxy`).
+  Formations fit it from their own tangential speeds about the angular-
+  momentum axis (`fitHaloFromVelocities`: binned medians, least squares over
+  a log grid of rc). milky_way_real_20k fits to 217 km/s.
+- The regime picker (dynamics.cpp) uses the halo's ENCLOSED mass
+  `v_c(d)^2 d / G` as part of a cloud attractor's effective mass, so a star's
+  parent and analytic mu see the galaxy the star actually feels.
+- `virialRatio` counts the halo, so a fitted cloud reads "balanced" and
+  Virialize is not offered.
+- **The CPU cloud path has NO star-on-star gravity** (only big bodies + halo);
+  the halo is its only internal binding force.
+- **milky_way.json**: cloud switched to GPU Barnes-Hut (the file said CPU; the
+  spawn default was already GPU), halo keys written, and Sol given its
+  orbital velocity — 45.1 AU/yr tangential in the disc's rotation sense (from
+  the formation's angular-momentum axis), added to EVERY planet too so the
+  solar system keeps its relative motion. Sgr A* stays at rest: it IS the
+  centre. None of this changes a paused frame, so the raster baseline holds.
+  A star at rest 26 kly out was "moving consistently" because it was
+  free-falling toward the black hole with no tangential speed.
+
 ## Clouds draw in TWO phases: every cloud's light, then every cloud's dust
 
 Haze, gas and cores are additive (`GL_ONE, GL_ONE`); dust is multiplicative

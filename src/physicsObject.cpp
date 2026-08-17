@@ -186,9 +186,22 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
           dvec3 r = src.position - this->data.position;
           double d2 = r.x*r.x + r.y*r.y + r.z*r.z;
           if (d2 == 0) continue;
-          dvec3 dir = normalize(r);
-          double accel = G * src.mass / d2;
-          data.velocity += dir * (accel * dt);
+          // Plummer: G M d / (d^2 + eps^2)^(3/2) along r — the point-mass law far
+          // away, a gentle harmonic pull inside the cloud's radius.
+          const double e2 = src.softRadius * src.softRadius;
+          const double d  = std::sqrt(d2);
+          const double accel = G * src.mass * d / std::pow(d2 + e2, 1.5);
+          data.velocity += (r * (1.0 / d)) * (accel * dt);
+          // The cloud's halo, same term as its particles feel: this is what
+          // lets a star orbit a galaxy at the galaxy's rotation speed.
+          if (src.haloVFlat > 0.0f) {
+            const dvec3 rh = src.haloCenter - this->data.position;
+            const double rr = std::sqrt(rh.x*rh.x + rh.y*rh.y + rh.z*rh.z);
+            if (rr > 1e-9) {
+              const double vc = (double)RenderedObject::HaloVCirc(src.haloVFlat, src.haloRCore, (float)rr);
+              data.velocity += rh * (vc * vc / (rr * rr) * dt);
+            }
+          }
         }
         data.position += data.velocity * dt;
         frameStore.push(&data.position);

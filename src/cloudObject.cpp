@@ -114,6 +114,8 @@ void CloudObject::initGPU() {
   locG             = glGetUniformLocation(bhProgram, "uG");
   locDt            = glGetUniformLocation(bhProgram, "uDt");
   locSoftening2    = glGetUniformLocation(bhProgram, "uSoftening2");
+  locHaloVFlat     = glGetUniformLocation(bhProgram, "uHaloVFlat");
+  locHaloRCore     = glGetUniformLocation(bhProgram, "uHaloRCore");
   locTheta         = glGetUniformLocation(bhProgram, "uTheta");
   locFrameOffset   = glGetUniformLocation(bhProgram, "uFrameOffset");
 
@@ -265,6 +267,8 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
   glUniform1f(locSoftening2, renderedObject.softening2());
+  glUniform1f(locHaloVFlat, renderedObject.haloVFlat);
+  glUniform1f(locHaloRCore, renderedObject.haloRCore);
   glUniform1f(locTheta, barnesHutTheta);
   if (locFrameOffset >= 0) glUniform3f(locFrameOffset, 0.0f, 0.0f, 0.0f);  // sim frame = cloud frame
 
@@ -308,6 +312,8 @@ void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
   glUniform1f(locSoftening2, renderedObject.softening2());
+  glUniform1f(locHaloVFlat, renderedObject.haloVFlat);
+  glUniform1f(locHaloRCore, renderedObject.haloRCore);
   glUniform1f(locTheta, barnesHutTheta);
   if (locFrameOffset >= 0)
     glUniform3f(locFrameOffset, (float)(position.x - simOrigin.x),
@@ -476,6 +482,11 @@ void CloudObject::materializeGalaxy() {
   ro.isStarfield = false;
   ro.starChunks.clear();
   ro.starBudgetOverride = 0;
+  // The recipe's own rotation curve IS the halo: every star it placed at
+  // v_c(r) is then in equilibrium by construction.
+  ro.haloVFlat = ro.galaxyDesc.shape.vFlat;
+  ro.haloRCore = ro.galaxyDesc.shape.rCoreFrac * ro.galaxyDesc.radius;
+  haloResolved = true;
   demoteToChunks = true;   // physics off later -> rebuild chunks from the data
   if (gpuInitialized) uploadParticlesToGPU();
   std::cout << "[universe] " << (name.empty() ? "cloud" : name) << " promoted to "
@@ -839,7 +850,8 @@ double CloudObject::virialRatio() const {
   std::nth_element(vs.begin(), vs.begin() + vs.size()/2, vs.end());
   const double rMed = rs[rs.size()/2], vMed = vs[vs.size()/2];
   if (rMed <= 0.0 || mtot <= 0.0) return 0.0;
-  const double vCirc = std::sqrt(units::kG * mtot / rMed);
+  const double vh = (double)RenderedObject::HaloVCirc(renderedObject.haloVFlat, renderedObject.haloRCore, (float)rMed);
+  const double vCirc = std::sqrt(units::kG * mtot / rMed + vh * vh);
   return (vCirc > 0.0) ? vMed / vCirc : 0.0;
 }
 
@@ -851,4 +863,79 @@ void CloudObject::virializeMasses() {
   for (auto& p : renderedObject.cloudParticles) p.mass *= f;
   if (computeMethod == CloudComputeMethod::BarnesHutGPU && gpuInitialized) uploadParticlesToGPU();
   dynMass = 0.0;   // force the dynamics cache to refresh next frame
+}
+
+
+// ── Halo fit ─────────────────────────────────────────────────────────────────
+bool CloudObject::fitHaloFromVelocities() {
+  RenderedObject& ro = renderedObject;
+  const auto& ps = ro.particles();
+  const size_t n = ps.size();
+  ro.haloVFlat = 0.0f; ro.haloRCore = 0.0f;
+  haloResolved = true;
+  if (n < 64) return false;
+  const size_t stride = std::max<size_t>(1, n / 8192);
+  // Rotation axis from total angular momentum.
+  double Lx = 0, Ly = 0, Lz = 0;
+  for (size_t i = 0; i < n; i += stride) {
+    const auto& p = ps[i];
+    Lx += (double)p.position.y * p.velocity.z - (double)p.position.z * p.velocity.y;
+    Ly += (double)p.position.z * p.velocity.x - (double)p.position.x * p.velocity.z;
+    Lz += (double)p.position.x * p.velocity.y - (double)p.position.y * p.velocity.x;
+  }
+  const double L = std::sqrt(Lx*Lx + Ly*Ly + Lz*Lz);
+  if (L <= 0.0) return false;
+  const double nx = Lx / L, ny = Ly / L, nz = Lz / L;
+  // (r_perp, v_t) samples, then radial bins of median tangential speed.
+  std::vector<std::pair<double,double>> pts; pts.reserve(n / stride + 1);
+  double rMax = 0.0;
+  for (size_t i = 0; i < n; i += stride) {
+    const auto& p = ps[i];
+    const double px = p.position.x, py = p.position.y, pz = p.position.z;
+    const double along = px*nx + py*ny + pz*nz;
+    const double qx = px - along*nx, qy = py - along*ny, qz = pz - along*nz;
+    const double rp = std::sqrt(qx*qx + qy*qy + qz*qz);
+    if (rp <= 0.0) continue;
+    // specific angular momentum about the axis / r_perp = tangential speed
+    const double hx = (double)py * p.velocity.z - (double)pz * p.velocity.y;
+    const double hy = (double)pz * p.velocity.x - (double)px * p.velocity.z;
+    const double hz = (double)px * p.velocity.y - (double)py * p.velocity.x;
+    const double vt = (hx*nx + hy*ny + hz*nz) / rp;
+    pts.push_back({rp, vt});
+    rMax = std::max(rMax, rp);
+  }
+  if (pts.size() < 32 || rMax <= 0.0) return false;
+  const int B = 14;
+  std::vector<std::vector<double>> bins(B);
+  for (auto& q : pts) {
+    int b = std::min(B - 1, (int)(q.first / rMax * B));
+    bins[b].push_back(q.second);
+  }
+  std::vector<double> br, bv;
+  for (int b = 0; b < B; b++) {
+    if (bins[b].size() < 8) continue;
+    auto& v = bins[b];
+    std::nth_element(v.begin(), v.begin() + v.size()/2, v.end());
+    br.push_back((b + 0.5) * rMax / B);
+    bv.push_back(v[v.size()/2]);
+  }
+  if (br.size() < 3) return false;
+  // Sense of rotation is a sign; the halo is spherical, so fit |v|.
+  double sgn = 0.0; for (double v : bv) sgn += v;
+  if (sgn < 0.0) for (double& v : bv) v = -v;
+  // Least squares over rc (log grid); vFlat has a closed form for each rc.
+  double bestErr = 1e300, bestV = 0.0, bestRc = 0.0;
+  for (int k = 0; k <= 60; k++) {
+    const double rc = rMax * std::pow(10.0, -3.0 + 3.0 * k / 60.0);   // 0.001 R .. R
+    double sfv = 0, sff = 0;
+    for (size_t i = 0; i < br.size(); i++) { const double f = br[i] / (br[i] + rc); sfv += f * bv[i]; sff += f * f; }
+    if (sff <= 0.0) continue;
+    const double vf = sfv / sff;
+    double err = 0; for (size_t i = 0; i < br.size(); i++) { const double e = vf * br[i] / (br[i] + rc) - bv[i]; err += e * e; }
+    if (err < bestErr) { bestErr = err; bestV = vf; bestRc = rc; }
+  }
+  if (!(bestV > 0.0)) return false;
+  ro.haloVFlat = (float)bestV;
+  ro.haloRCore = (float)bestRc;
+  return true;
 }

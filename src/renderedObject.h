@@ -404,9 +404,22 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
     if (scale <= 0.0f) return fallback;
     return std::max(scale * 0.04f, 1e-6f);
   }
+  // ── Dark-matter halo (see docs/CLAUDE.md "halo") ──
+  // A declared field, not sampled mass: the centripetal acceleration that
+  // keeps a circular orbit at v_c(r) = haloVFlat · r / (r + haloRCore), toward
+  // the cloud's LOCAL origin (spherical, so orientation is irrelevant). Every
+  // force path — GPU tree, CPU integrator, big bodies — adds the SAME term
+  // from these SAME two numbers. 0 = no halo. Generated galaxies take them
+  // from their recipe; formations fit them from their velocities at load.
+  float haloVFlat{0.0f};   // AU/yr
+  float haloRCore{0.0f};   // AU
+  static float HaloVCirc(float vFlat, float rCore, float r) {
+    return (r > 0.0f && vFlat > 0.0f) ? vFlat * r / (r + rCore) : 0.0f;
+  }
   // Plummer softening^2 for this cloud's gravity: a quarter of the mean
   // inter-particle spacing, floored at the historic constant 0.001 AU^2 so a
   // small formation simulates exactly as it always did.
+  float rmsRadius() const { return 0.5f * cloudRmsRadius; }   // cloudRmsRadius is 2x RMS
   float softening2() const {
     const double n   = std::max(1.0, (double)cloudParticles.size());
     const double rms = 0.5 * (double)cloudRmsRadius;         // cloudRmsRadius is 2x RMS

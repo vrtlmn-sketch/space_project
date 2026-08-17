@@ -69,6 +69,10 @@ struct CloudData {
   float particleSizeSpread{0.0f};
   float scale{1.0f};
   bool  simulatePhysics{true};
+  // Dark-matter halo (see RenderedObject::haloVFlat). haloSet = the file had
+  // the keys; absent = fit from the particles' velocities at load.
+  float haloVFlat{0.0f}, haloRCore{0.0f};
+  bool  haloSet{false};
   std::vector<CameraKeyframe> keyframes;
   std::string name;            // display name ("" = "Cloud N")
   bool  universeMember{false}; // grouped under the [U] Universe node

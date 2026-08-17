@@ -40,6 +40,7 @@ private:
   int locG{-1};
   int locDt{-1};
   int locSoftening2{-1};
+  int locHaloVFlat{-1}, locHaloRCore{-1};
   int locTheta{-1};
   int locFrameOffset{-1};
 
@@ -171,6 +172,12 @@ public:
   // ratio v_rms/v_circ it reports is 1 when balanced.
   double virialRatio() const;        // v_median / v_circ(G M_total, r_median); 0 = unknown
   void   virializeMasses();
+  // Fit the halo (haloVFlat, haloRCore) to the particles' own tangential
+  // speeds about their angular-momentum axis: binned medians, least squares on
+  // v = vFlat·r/(r+rc). Returns false (halo left at 0) if the cloud does not
+  // rotate. Runs once at load when the project carries no halo keys.
+  bool   fitHaloFromVelocities();
+  bool   haloResolved{false};        // set once the halo is known (from file, recipe or fit)
   // Restore the state from before the first simulated frame, then clear
   void resetToInitial();
 

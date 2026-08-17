@@ -53,6 +53,11 @@ uniform vec3  uFrameOffset;
 // sends max(0.001, (0.25 * RMS radius / N^(1/3))^2), so small clouds simulate
 // exactly as before and huge ones stop exploding.
 uniform float uSoftening2 = 0.001;
+// Dark-matter halo of THIS cloud: v_c(r) = uHaloVFlat * r / (r + uHaloRCore),
+// centripetal toward the local origin. The same term, from the same two
+// numbers, is applied by the CPU integrator and to the big bodies.
+uniform float uHaloVFlat = 0.0;
+uniform float uHaloRCore = 0.0;
 const float SELF_DIST2 = 1e-8;        // if leaf COM is this close to us, it's our own leaf
 
 void main() {
@@ -119,6 +124,15 @@ void main() {
     // accel = G * bigMass / d^2  (F/m = GM/r²)
     float accel = uG * bigBodies[b].posM.w / d2;
     acc += normalize(r) * accel;
+  }
+
+  // ── Halo (see uHaloVFlat) ──
+  if (uHaloVFlat > 0.0) {
+    float r = length(pos);
+    if (r > 1e-9) {
+      float vc = uHaloVFlat * r / (r + uHaloRCore);
+      acc -= pos * (vc * vc / (r * r));
+    }
   }
 
   // ── 3. Euler integration (matching CPU: vel += acc*dt, pos += vel*dt) ──

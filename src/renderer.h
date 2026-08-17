@@ -693,6 +693,10 @@ public:
   // The target is what you have selected; with nothing selected, the largest
   // simulated cloud (the thing that needs the speed), else the fastest body.
   int    autoStepsPerOrbit{1000};
+  // Landmarks on the step slider: what step lets each thing in the scene move
+  // (T / autoStepsPerOrbit), revealed on hover, click sets the pending step.
+  struct DynLandmark { std::string label; double T; };
+  std::vector<DynLandmark> dynLandmarks;   // filled each frame by UpdateSceneDynamics
   double dynAutoT{0.0};        // dynamical time of the Auto target (s), set each frame by main; 0 = none
   const char* dynAutoLabel{""};// what that target is
   double dynFastestT{0.0};     // fastest dynamical time in the scene
@@ -968,6 +972,7 @@ public:
   // dust density) must stay black and are cleared directly.
   void   ClearSceneTarget();
   const char* MainSlotLabel() const;   // what the fullscreen slot is showing
+  void DrawStepLandmarks(float x0, float y0, float x1, float y1, bool sliderHovered);   // hover ruler under the Step slider
   vec3   backgroundRGB() const {
     return {backgroundColor.x * backgroundLevel,
             backgroundColor.y * backgroundLevel,

@@ -59,6 +59,11 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
   cloud->nebulaScatterScale = cd.nebulaScatterScale;
   cloud->particleSizeSpread = cd.particleSizeSpread;
   cloud->scale              = cd.scale;
+  if (cd.haloSet) {
+    cloud->renderedObject.haloVFlat = cd.haloVFlat;
+    cloud->renderedObject.haloRCore = cd.haloRCore;
+    cloud->haloResolved = true;
+  }
   cloud->rotationDeg        = cd.rotation;
   cloud->simulatePhysics    = cd.simulatePhysics;
   cloud->keyframes          = cd.keyframes;
@@ -781,6 +786,9 @@ int main(int argc, char** argv) {
       cd.nebulaScatterScale = c->nebulaScatterScale;
       cd.particleSizeSpread = c->particleSizeSpread;
       cd.scale = c->scale;
+      cd.haloVFlat = c->renderedObject.haloVFlat;
+      cd.haloRCore = c->renderedObject.haloRCore;
+      cd.haloSet   = true;
       cd.rotation = c->rotationDeg;
       cd.simulatePhysics = c->simulatePhysics;
       cd.keyframes = c->keyframes;
@@ -1198,11 +1206,17 @@ int main(int argc, char** argv) {
     std::vector<PhysicsObjectStructure> cloudSources;
     for (auto& c : clouds) {
       if (!c->simulatePhysics) continue;
-      vec3 com; float m;
-      if (c->gravitySource(com, m)) {
+      // Centre of mass and mass in DOUBLE from the dynamics cache (the float
+      // gravitySource COM quantised to 128 AU at galactic distance, and the
+      // jitter went straight into the force direction on a body at the centre).
+      if (c->dynMass > 0.0) {
         PhysicsObjectStructure src;
-        src.position = dvec3{com.x, com.y, com.z};
-        src.mass = m;
+        src.position   = c->dynComWorld;
+        src.mass       = c->dynMass;
+        src.softRadius = (double)c->renderedObject.rmsRadius();
+        src.haloVFlat  = c->renderedObject.haloVFlat;
+        src.haloRCore  = c->renderedObject.haloRCore;
+        src.haloCenter = c->position;
         cloudSources.push_back(src);
       }
     }

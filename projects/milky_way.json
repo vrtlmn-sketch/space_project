@@ -1,7 +1,7 @@
 {
   "clouds": [
     {
-      "computeMethod": 0,
+      "computeMethod": 1,
       "count": 20000,
       "dataFile": "",
       "enabled": true,
@@ -28,7 +28,9 @@
       "sizeZ": 3.0,
       "temperature": 11000.0,
       "theta": 0.5,
-      "universeMember": false
+      "universeMember": false,
+      "haloVFlat": 45.79808115554078,
+      "haloRCore": 25110467.90967121
     }
   ],
   "grid": {
@@ -90,8 +92,8 @@
       "temperature": 5778.0,
       "texturePath": "",
       "velocity": [
-        0.0,
-        0.0,
+        -45.10919402367303,
+        0.010697632824911643,
         0.0
       ],
       "visualRadius": 0.004650000017136335
@@ -144,8 +146,8 @@
       "temperature": 0.0,
       "texturePath": "assets/mercury.jpg",
       "velocity": [
-        0.0,
-        0.0,
+        -45.10919402367303,
+        0.010697632824911643,
         10.09
       ],
       "visualRadius": 1.630000042496249e-05
@@ -198,8 +200,8 @@
       "temperature": 0.0,
       "texturePath": "assets/venus.jpg",
       "velocity": [
-        -7.388,
-        0.0,
+        -52.497194023673025,
+        0.010697632824911643,
         0.0
       ],
       "visualRadius": 4.039999839733355e-05
@@ -252,8 +254,8 @@
       "temperature": 0.0,
       "texturePath": "assets/earth.jpg",
       "velocity": [
-        2.149,
-        0.0,
+        -42.960194023673026,
+        0.010697632824911643,
         -5.904
       ],
       "visualRadius": 4.260000059730373e-05
@@ -306,8 +308,8 @@
       "temperature": 0.0,
       "texturePath": "assets/mars.jpg",
       "velocity": [
-        4.407,
-        0.0,
+        -40.70219402367303,
+        0.010697632824911643,
         2.545
       ],
       "visualRadius": 2.2700000045006163e-05
@@ -360,8 +362,8 @@
       "temperature": 0.0,
       "texturePath": "assets/jupiter.jpg",
       "velocity": [
-        -1.948,
-        0.0,
+        -47.05719402367303,
+        0.010697632824911643,
         1.948
       ],
       "visualRadius": 0.0004670000053010881
@@ -511,8 +513,8 @@
       "temperature": 5778.0,
       "texturePath": "assets/saturn.jpg",
       "velocity": [
-        0.0,
-        0.0,
+        -45.10919402367303,
+        0.010697632824911643,
         0.0
       ],
       "visualRadius": 2.872773984563537e-05
