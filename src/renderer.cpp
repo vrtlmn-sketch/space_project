@@ -555,14 +555,20 @@ void Renderer::EndFrame() {
 static void AppendRtRings(const RenderedObject& ro, const double camT[3],
                           std::vector<RtRing>& out, int owner);
 
+// A solid body hides the dust behind it, so the tonemap cancels its rim/fringe
+// term inside this body's screen disc. Free meshes are skipped: their bounding
+// sphere is far larger than the visible hull, so the disc would blank a circle
+// of legitimate rim light around a ship.
+void Renderer::AddRimOccluder(const RenderedObject& ro) {
+  if (!realisticRasterView) return;              // rim light only exists in the raster path
+  if (ro.isFreeMesh() || ro.sphereRadius() <= 0.0f) return;
+  rimOccluders.push_back(RimOccluder{ CameraRelative(ro.coordinates), ro.sphereRadius() });
+}
+
 void Renderer::Draw(RenderedObject& ro) {
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
-                                            if (realisticRasterView)
-                                              rimOccluders.push_back(vec4{(float)ro.coordinates.x,
-                                                                          (float)ro.coordinates.y,
-                                                                          (float)ro.coordinates.z,
-                                                                          ro.sphereRadius()}); }
+                                            AddRimOccluder(ro); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -784,6 +790,7 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
       ro.uploadPlanetColor(color);
       ro.realisticShading = realisticRasterView;
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+      AddRimOccluder(ro);
     }
   }
   if (rayTracerView) {
@@ -7153,27 +7160,54 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glUniform2f(tmLocTexelD, 1.0f / (float)bw, 1.0f / (float)bh);
   // Solid-body screen discs (planets + their atmosphere shells): the tonemap
   // suppresses dust glow inside them so nothing shines THROUGH a planet.
-  // Projected with the same WorldToScreen the selection UI uses — proven math.
+  // Projected with the same RelToScreen the selection UI uses — proven math.
   {
-    float discs[8 * 4] = {0};
-    int   nd = 0;
-    for (const vec4& oc : rimOccluders) {
-      if (nd >= 8) break;
+    struct Disc { float x, y, r; };
+    constexpr int kMaxDiscs = 8;        // must match uOccDiscs[] in tonemapFrag
+    constexpr int kMaxCand  = 64;
+    Disc cand[kMaxCand];
+    int  nc = 0, overflow = 0;
+    for (const RimOccluder& oc : rimOccluders) {
+      if (nc >= kMaxCand) { overflow++; continue; }
       float sx, sy;
-      if (!WorldToScreen({oc.x, oc.y, oc.z}, sx, sy)) continue;
-      float effR = oc.w * activeSizeExag() * 1.12f;   // pad to the atmosphere shell
+      if (!RelToScreen(oc.rel, sx, sy)) continue;    // behind the camera
+      // radius already carries the size exaggeration: the mesh was generated at
+      // visualRadius * activeSizeExag(). Applying it again here scaled the disc
+      // by up to 750x and would have blanked the rim across the whole frame.
+      const float effR = oc.radius * 1.12f;          // pad to the atmosphere shell
       float esx, esy, pr = 4.0f;
-      if (WorldToScreen({oc.x + camMatrix[0]*effR, oc.y + camMatrix[1]*effR, oc.z + camMatrix[2]*effR}, esx, esy)) {
-        float ddx = esx - sx, ddy = esy - sy;
+      if (RelToScreen({oc.rel.x + camMatrix[0]*effR,
+                       oc.rel.y + camMatrix[1]*effR,
+                       oc.rel.z + camMatrix[2]*effR}, esx, esy)) {
+        const float ddx = esx - sx, ddy = esy - sy;
         pr = std::max(std::sqrt(ddx*ddx + ddy*ddy), 2.0f);
       }
-      // WorldToScreen yields overlay coords (top-down, incl. image offset);
+      // RelToScreen yields overlay coords (top-down, incl. image offset);
       // map into the render target's pixel space the tonemap runs over.
-      discs[nd*4+0] = sx - sceneImageOffX;
-      discs[nd*4+1] = (float)sceneRenderH - (sy - sceneImageOffY);   // flip to GL bottom-up
-      discs[nd*4+2] = pr;
-      discs[nd*4+3] = 1.0f;
-      nd++;
+      cand[nc++] = Disc{ sx - sceneImageOffX,
+                         (float)sceneRenderH - (sy - sceneImageOffY),  // flip to GL bottom-up
+                         pr };
+    }
+    // Keep the LARGEST discs. The cap is a shader array bound, and filling it in
+    // list order let a big near planet leak while a distant speck held a slot.
+    std::sort(cand, cand + nc, [](const Disc& a, const Disc& b) { return a.r > b.r; });
+    const int nd = std::min(nc, kMaxDiscs);
+    float discs[kMaxDiscs * 4] = {0};
+    for (int i = 0; i < nd; i++) {
+      discs[i*4+0] = cand[i].x;
+      discs[i*4+1] = cand[i].y;
+      discs[i*4+2] = cand[i].r;
+      discs[i*4+3] = 1.0f;
+    }
+    // Never drop coverage silently — but only say so when the count changes,
+    // this runs every frame.
+    if (int over = (nc - nd) + overflow; over > 0) {
+      static int lastReported = -1;
+      if (over != lastReported) {
+        lastReported = over;
+        std::cerr << "[rim] " << over << " solid body(ies) past the " << kMaxDiscs
+                  << "-disc cap keep their dust glow\n";
+      }
     }
     glUniform1i(glGetUniformLocation(tonemapProgram, "uOccCount"), rimOn ? nd : 0);
     if (nd > 0) glUniform4fv(glGetUniformLocation(tonemapProgram, "uOccDiscs"), 8, discs);

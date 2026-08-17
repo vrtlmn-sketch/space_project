@@ -295,7 +295,20 @@ warp exactly as the planet does.
 - **Planets are drawn by `DrawPhysicsObject`, NOT `Renderer::Draw`.** Both have
   a `meshType == sphere` RT branch that pushes to `rayTracedObjects`, and the
   one in `Draw` never sees a planet. Anything new that must accompany a planet
-  into the RT buffers goes in `DrawPhysicsObject`.
+  into the RT buffers goes in `DrawPhysicsObject`. **This trap has now been hit
+  twice** — the rim-light occluder push also lived only in `Draw`, so
+  `rimOccluders` was permanently empty, `uOccCount` permanently 0, and the
+  tonemap's "no dust glow on top of a planet" loop never executed once. Every
+  `renderer.Draw()` call site passes a CLOUD; that sphere branch is unreachable.
+  A push that belongs to a planet goes in BOTH, via one shared helper
+  (`AddRimOccluder`) — a second copy is what let this rot unnoticed.
+  Consequence worth remembering: **code on a path that never runs is not
+  reviewed by reality.** That dead push also stored an absolute world position
+  as `float` (quantises to ~1e8 AU in a universe, so the disc lands nowhere
+  near the planet) and its consumer multiplied `sphereRadius()` by
+  `activeSizeExag()` a second time, though the mesh is already generated at
+  `visualRadius * activeSizeExag()` — with exaggeration on, every disc would
+  have been 750x too big and blanked the rim across the whole frame.
 - **`CaptureImage` uploads `rtLastObjects`, the SNAPSHOT, not the live list**
   (so does the compare harness's RT capture, which goes through it). A new SSBO
   must upload the matching snapshot, and its COUNT uniform has to come from the

@@ -204,7 +204,14 @@ private:
   // Screen-space rim-lit dust (raster view): clouds drawn this frame + the
   // half-res density target the tonemap samples for edge lighting.
   std::vector<RenderedObject*> rimClouds;
-  std::vector<vec4> rimOccluders;      // solid bodies (xyz cam-rel, w radius) that cancel dust glow
+  // Solid bodies drawn this frame, whose screen discs cancel the dust glow.
+  // Camera-relative and in DOUBLE: an absolute world float quantises to ~1e8 AU
+  // out in a universe, which would put the disc nowhere near the planet.
+  struct RimOccluder { dvec3 rel; float radius; };
+  std::vector<RimOccluder> rimOccluders;
+  // ONE definition of what counts as an occluder — the push used to live only in
+  // Renderer::Draw, which planets never reach, so it never actually ran.
+  void AddRimOccluder(const RenderedObject& ro);
   GLuint dustDensFBO{0}, dustDensTex{0};
   int    dustDensW{0}, dustDensH{0};
 
