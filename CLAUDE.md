@@ -94,6 +94,16 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 
 ## Regression baseline
 
+> **STALE — the raster number below needs re-measuring.** Two rim-light fixes
+> landed without it: planets now populate `rimOccluders` (so the tonemap really
+> does cancel dust glow inside a planet's disc), and `BeginRecordRaster` no
+> longer shares the rim lists with the outer pass. The harness's raster capture
+> goes through `BeginRecordRaster` AFTER the live pass has filled `rimClouds`, so
+> **every raster capture up to now ran the dust-density pass twice** and its mean
+> includes doubled edge light. Neither fix could be measured (the compositor
+> stopped delivering frame callbacks, so `--compare` blocks in `do_poll`).
+> Re-measure and replace the number before treating any shift as a regression.
+
 `RASTER_ONLY=1 ./bin/blackholesim --compare` on `projects/milky_way.json` gives a
 raster mean luminance of **~48.63** (band 48.63–48.65 across runs; wider when
 the user's live session holds the GPU). Check it after any shared-shader or

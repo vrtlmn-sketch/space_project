@@ -209,6 +209,9 @@ private:
   // out in a universe, which would put the disc nowhere near the planet.
   struct RimOccluder { dvec3 rel; float radius; };
   std::vector<RimOccluder> rimOccluders;
+  // Outer pass's lists, parked while a record/snap pass builds its own.
+  std::vector<RenderedObject*> recSavedRimClouds;
+  std::vector<RimOccluder>     recSavedRimOccluders;
   // ONE definition of what counts as an occluder — the push used to live only in
   // Renderer::Draw, which planets never reach, so it never actually ran.
   void AddRimOccluder(const RenderedObject& ro);

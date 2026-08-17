@@ -7406,6 +7406,16 @@ void Renderer::EnsureRecRasterFBO(int w, int h) {
 void Renderer::BeginRecordRaster(int w, int h) {
   glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &recSavedDrawFBO);
   glGetIntegerv(GL_VIEWPORT, recSavedVp);
+  // This is a NESTED pass: it re-draws the whole scene, possibly from another
+  // camera, and refills the rim lists. It has to start empty and hand the outer
+  // pass its own back — sharing them put two copies of every cloud in the
+  // density pass (doubling the edge light in a snap AND in the live frame that
+  // took it) and left the outer pass holding discs projected with the record
+  // camera. The outer pass's resolve runs after this one returns.
+  recSavedRimClouds.swap(rimClouds);
+  recSavedRimOccluders.swap(rimOccluders);
+  rimClouds.clear();
+  rimOccluders.clear();
   EnsureRecRasterFBO(w, h);
   glBindFramebuffer(GL_FRAMEBUFFER, recRasterFBO);
   glViewport(0, 0, w, h);
@@ -7418,6 +7428,10 @@ void Renderer::EndRecordRaster() {
   glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)recSavedDrawFBO);
   glViewport(recSavedVp[0], recSavedVp[1], recSavedVp[2], recSavedVp[3]);
   fbWidth = recSavedVp[2]; fbHeight = recSavedVp[3];
+  rimClouds.swap(recSavedRimClouds);
+  rimOccluders.swap(recSavedRimOccluders);
+  recSavedRimClouds.clear();      // never hold this pass's stale cloud pointers
+  recSavedRimOccluders.clear();
 }
 
 // Shared: post-process recRasterColorTex to LDR and read it back (flipped) into dst.
