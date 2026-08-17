@@ -1449,6 +1449,10 @@ int main(int argc, char** argv) {
       static int cmpFrame = 0;
       static int cmpWait = std::getenv("COMPARE_FRAMES") ? std::atoi(std::getenv("COMPARE_FRAMES")) : 3;
       ++cmpFrame;
+      // Harness gate: PLAY=1 unpauses at frame 1 so physics actually steps
+      // between captures (pair COMPARE_FRAMES=n with n+1 to measure temporal
+      // flicker: the per-pixel change between adjacent frames).
+      if (std::getenv("PLAY") && cmpFrame == 1) { renderer.paused = false; renderer.playingForward = true; }
       // Harness gate: drop physics again at frame 2 so the full promote->demote
       // round-trip (chunks -> particles -> chunks-from-data) runs headlessly.
       if (std::getenv("UNIVERSE_DEMOTE") && cmpFrame == 2)

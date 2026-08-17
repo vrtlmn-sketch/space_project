@@ -52,6 +52,7 @@ Env gates:
 | `NEAR_PIPE=<frac>` | view share above which a galaxy uses the real pipeline (default 0.10; 9 = always sample, 0.001 = never) |
 | `STARDEBUG4=1` | far-field ledger per visible chunk: screen radius, samples its size is worth, built, drawn, flux correction |
 | `FAR_FALLOFF=<g>` | override the project's Distance Falloff for an A/B (1 = exact flux, which makes anything past a few Gly invisible) |
+| `PLAY=1` | unpause at frame 1 so physics steps between captures; pair `COMPARE_FRAMES=n` with `n+1` to measure temporal flicker |
 
 **The harness uses `harness_imgui.ini`, not `imgui.ini`.** Viewport height feeds
 the LOD star budget, and the live app rewrites `imgui.ini` as the user works —
@@ -73,10 +74,12 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 - **Project settings OVERRIDE `settings.json`.** The loader fills missing keys
   with defaults, so editing `settings.json` for an A/B does nothing. Always edit
   `projects/<name>.json` (back it up and restore).
-- **Noise floor is ~2% of pixels for milky_way.** Two identical runs differ by
-  that much, so any effect smaller cannot be measured this way. Always run a
-  same-settings control before believing a difference. UNIVERSE renders are
-  fully deterministic (0-diff reruns) — byte comparison is valid there.
+- **Reruns are byte-identical now** (milky_way and UNIVERSE alike, verified
+  with `cmp` on the same binary), so a byte compare against a control built
+  from the committed source is the test — a mean can hide a large local change.
+  There used to be a ~2% pixel noise floor on milky_way; if it ever comes back,
+  it is a regression in determinism, not weather. Always run a same-settings
+  control before believing a difference.
 - **A blocked run leaves the PREVIOUS run's `/tmp/cmp_raster.png` in place.**
   Renders can block on vsync while the user's live app holds the display; a
   `cp` after that grabs stale data and fabricates a result. `rm -f` the capture
@@ -87,6 +90,12 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
   `2>/tmp/log` and check `$?` when results look impossible.
 - **Only ever `pkill -f 'blackholesim --compare'`.** A bare pkill kills the
   user's live session.
+- **If `--compare` blocks forever right after "Loaded N objects", run it with
+  `env -u WAYLAND_DISPLAY`.** Under sway a window that receives no frame
+  callbacks blocks in `eglSwapBuffers` (the process sits in `do_poll`); GLFW
+  falls back to X11 through Xwayland, which presents on its own. This cost most
+  of a day of "the harness is stuck" before it was understood. Renders are
+  byte-identical either way.
 - **Discard the FIRST run after a rebuild.** It lands outside the noise band
   (46.745 against a 46.67–46.69 baseline; 19.43 against 20.98 on a universe
   scene) and every run after it is stable. Seen twice, both times mistaken for a
@@ -94,25 +103,17 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 
 ## Regression baseline
 
-> **STALE — the raster number below needs re-measuring.** Two rim-light fixes
-> landed without it: planets now populate `rimOccluders` (so the tonemap really
-> does cancel dust glow inside a planet's disc), and `BeginRecordRaster` no
-> longer shares the rim lists with the outer pass. The harness's raster capture
-> goes through `BeginRecordRaster` AFTER the live pass has filled `rimClouds`, so
-> **every raster capture up to now ran the dust-density pass twice** and its mean
-> includes doubled edge light. Neither fix could be measured (the compositor
-> stopped delivering frame callbacks, so `--compare` blocks in `do_poll`).
-> Re-measure and replace the number before treating any shift as a regression.
-
 `RASTER_ONLY=1 ./bin/blackholesim --compare` on `projects/milky_way.json` gives a
-raster mean luminance of **~48.63** (band 48.63–48.65 across runs; wider when
-the user's live session holds the GPU). Check it after any shared-shader or
-cloud-pipeline change.
+raster mean luminance of **29.161** — and it is now DETERMINISTIC: reruns are
+byte-identical (`cmp`), so on this scene a byte compare against a control built
+from the committed source is the right test, not a mean. Check it after any
+shared-shader or cloud-pipeline change.
 
 The same scene's other two renderers, for changes that touch the compute path:
-**RT ~21.65** (`/tmp/cmp_rt.png`) and **geodesic ~29.50** (`/tmp/cmp_geo.png`,
-spread 29.49–29.52, so treat anything under ~0.05 as noise). Note this scene as
-committed has NO rings, which is what makes it a valid control for ring work.
+**RT 26.255** (`/tmp/cmp_rt.png`) and **geodesic 25.498** (`/tmp/cmp_geo.png`).
+Note this scene as committed HAS Saturn's rings in frame (camera parked on the
+planet), so it is a valid control for ring work and a weak one for far-field
+galaxy work — see the UNIVERSE_TEST recipe above for that.
 
 **The number tracks the PROJECT FILE, not just the code.** History: 60.95 for a
 long stretch, ~61.61 after the float->double position work, then 46.68 when the
@@ -121,7 +122,12 @@ user retuned milky_way.json (resolvedCut 0.6->0.0, unresolvedStrength
 view), then 48.63 when the empty sky stopped being pure black (a near-black
 blue background adds a floor to every pixel: `lit` jumps 51.6% -> 88.9% while
 `sat` is unchanged). Before calling a mean shift a regression, check
-`git diff projects/milky_way.json` — a retune is not a bug.
+`git diff projects/milky_way.json` — a retune is not a bug. Latest step:
+48.63 -> 29.16 (RT 21.65 -> 26.26, geodesic 29.50 -> 25.50) when the user parked
+the camera on Saturn and rings landed in all renderers (project change at
+524e55b + the ring ports), then the two rim-light fixes (planets finally
+populate `rimOccluders`; snap/record passes keep their own rim lists — every
+harness raster capture before that ran the dust-density pass TWICE).
 
 The same applies to `projects/universe.json`, which the user re-saves from the
 live app: its camera, keyframes and look settings change under you. It is not a
@@ -524,6 +530,61 @@ The one property that is still per-kind is deliberate: if the nearest thing is
 a diffuse FIELD, travel may use field scale (`largestFieldRad * 0.02`), because
 crossing a galaxy at "nearest star" speed takes tens of thousands of
 keypresses. Next to a planet, the planet still wins.
+
+## A star's identity is FROZEN — a hash is not noise
+
+Every per-star attribute in the raster cloud path — colour, magnitude, whether
+it resolves as a core or melts into haze, whether it is hot enough to seed gas,
+and its dust-lane sample — is `hash13(position / dustScale + 17)`. A hash is
+not noise: `hash13` has a slope of ~30–60 per unit, so a move of 0.1 % of the
+galaxy radius wraps it completely. Hashing the LIVE position therefore
+re-rolled every moving star on every physics step: that was the flicker on a
+simulating galaxy, and why moving the CAMERA never flickered (positions did not
+change). Measured on the 5k formation at simSpeed 0.02, where per-frame motion
+is negligible: the old build still changed 46k pixels/frame (mean |Δ| 5.4) and
+the frame's total brightness wobbled; now 0.4, seventeen pixels over 32/255,
+none over 96.
+
+The fix is `aHashPos` (attribute 3, `hashVbo`) + `uHashScale`: a copy of the
+position and the dust scale captured when the particle SET is defined
+(`LoadCloudFromFormation`, `GenerateMeshCloud`, promote via
+`releaseCloudGlObjects`), flagged by `hashDirty`, and never refreshed by a
+physics readback or a timeline restore. For a cloud that has not moved the
+frozen values equal the live ones, so still images are bit-identical (verified
+by `cmp` against a control build). Dust is sampled at the frozen position too,
+so a star's dust rides with it instead of the star flowing through a lane field
+pinned to the galaxy frame — the whole galaxy moves as one thing.
+
+- **The chunk path (universe galaxies) deliberately still hashes on `aLocal`.**
+  Its stars never move, and a star must keep its colour across LOD rungs, which
+  only a position hash gives. `frozen = (uChunkExtent <= 0.0)` in cloudVert.
+- **Do NOT switch the particle path to `gl_VertexID`.** Zero-cost, but it would
+  reshuffle every existing cloud's per-star colours (same population, different
+  individuals) and make promote/demote pop between the two paths. The frozen
+  position keeps both consistent. (Particle ORDER is stable through the GPU
+  readback — index i is particle i throughout — so ID would be a valid key,
+  just a look-changing one.)
+- **The stale comment that started it**: cloudVert used to say position hashing
+  was for parity with the raytracer's `hash13`. `galaxy_common.glsl` shows the RT
+  hashes by INDEX (`gxStarMag(idx)`) with a different hash — that parity was
+  gone long ago. Read the other side before trusting a "for parity with X".
+- **`uHashScale` must be uploaded per object in BOTH `renderCloud` and
+  `renderCloudDustDensity`** — programs are shared, and the density pass runs
+  later for each rim cloud.
+- **Rim factors bake when positions changed, not on a clock.**
+  `updateCloudRimFactors` used to run every 30 draws (hold, then jump, twice a
+  second through a physics run — the "dust jumps around"), on a nearest-cell
+  48³ grid with a hard f³. Now it triggers on `cloudGpuDirty` (a static cloud
+  bakes once) and blends each star toward the new value (`kRimBlend` = 1/6) so a
+  cell crossing fades. TRAP: the first bake runs BEFORE `setupRender` has
+  created `rimVbo`, so it has nowhere to upload — it must not count as done
+  (`rimFactors.clear()` on the no-VBO path) or the factors are never uploaded
+  and a static cloud's rim light silently reads as zero. The old code survived
+  that only because its counter quirk baked twice. Found as 102 dark pixels on
+  the image's left edge in a byte compare — a mean would never have shown it.
+- Not touched, noted: the RT dust-light bake (`updateCloudDustLight`) keys its
+  placement stage on the live `dustInfluence`, so under physics it re-bakes the
+  expensive stage every frame. Perf, not flicker; RT-only.
 
 ## Never derive a per-scene render parameter from ONE object
 

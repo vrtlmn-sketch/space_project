@@ -91,6 +91,7 @@ void RenderedObject::GenerateMeshCloud(int objectCount , float (*distributionFun
   UVObjectMeshBuffer.reserve(objectCount*3);
   meshType=MeshType::cloud;
   this->hasBeenRendered=false;
+  hashDirty = true;          // a new particle SET: new identities
 
   // Over-generate grid candidates so that after the distribution filter
   // rejects some, we still reach the requested objectCount.
@@ -620,7 +621,10 @@ void RenderedObject::updateCloudRimFactors()
   if (isStarfield) return;
   size_t n = UVObjectMeshBuffer.size() / 3;
   if (n < 16) return;
-  if (!rimFactors.empty() && (rimUpdateCounter++ % 30) != 0) return;
+  // Bake once, then only when the positions actually moved. Called before
+  // renderCloud uploads, so cloudGpuDirty still says whether they did.
+  const bool firstBake = rimFactors.size() != n;
+  if (!firstBake && !cloudGpuDirty) return;
 
   const int G = 48;
   vec3 lo{1e30f,1e30f,1e30f}, hi{-1e30f,-1e30f,-1e30f};
@@ -681,11 +685,17 @@ void RenderedObject::updateCloudRimFactors()
     }
     // Harsh shape-revealing falloff: direct light pops, grazing dies fast.
     f = f * f * f;
-    rimFactors[i] = surf * f;
+    const float target = surf * f;
+    rimFactors[i] = firstBake ? target : rimFactors[i] + (target - rimFactors[i]) * kRimBlend;
   }
   if (rimVbo) {
     glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
     glBufferData(GL_ARRAY_BUFFER, rimFactors.size()*sizeof(float), rimFactors.data(), GL_DYNAMIC_DRAW);
+  } else {
+    // First draw: this runs BEFORE setupRender has created the VBO, so the bake
+    // has nowhere to go. Do not count it as done, or the factors are never
+    // uploaded and the rim light on a static cloud silently reads as zero.
+    rimFactors.clear();
   }
 }
 
@@ -965,6 +975,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glUniform1i(glGetUniformLocation(program, "uRealistic"),   1);
   glUniform1i(glGetUniformLocation(program, "uCloudPass"),   3);
   glUniform1i(glGetUniformLocation(program, "uDensityOnly"), 1);
+  glUniform1f(glGetUniformLocation(program, "uHashScale"),   hashScale);   // per-object; the program is shared
   glUniform1f(glGetUniformLocation(program, "uCinePixelScale"), 1.0f);
   glUniform1f(glGetUniformLocation(program, "uViewportH"), (float)fbHeight);
 
@@ -1922,9 +1933,11 @@ void RenderedObject::releaseCloudGlObjects()
   if (vao)           { glDeleteVertexArrays(1, &vao); vao = 0; }
   if (vbo)           { glDeleteBuffers(1, &vbo); vbo = 0; }
   if (rimVbo)        { glDeleteBuffers(1, &rimVbo); rimVbo = 0; }
+  if (hashVbo)       { glDeleteBuffers(1, &hashVbo); hashVbo = 0; }
   if (ssboParticles) { glDeleteBuffers(1, &ssboParticles); ssboParticles = 0; }
   if (ssboObjects)   { glDeleteBuffers(1, &ssboObjects); ssboObjects = 0; }
   hasBeenRendered = false;
+  hashDirty = true;
 }
 
 void RenderedObject::BuildStarfieldFromParticles()
@@ -2021,6 +2034,11 @@ void RenderedObject::setupRender()
       glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
       glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
       glEnableVertexAttribArray(2);
+      // Attribute 3 = frozen hash position (see hashVbo in the header).
+      if (!hashVbo) glGenBuffers(1, &hashVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, hashVbo);
+      glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+      glEnableVertexAttribArray(3);
     }
   }
 
@@ -2534,10 +2552,26 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       }
       cloudRmsRadius = (float)std::max(2.0 * std::sqrt(r2sum / (double)np), 0.1);
     }
+    // Freeze the star identities: the same positions and the same scale the
+    // live hash would use RIGHT NOW, so an unmoved cloud renders identically.
+    // Only when the particle set was redefined — a physics step or a snapshot
+    // restore re-uploads positions but keeps every star who it is.
+    if (hashDirty) {
+      if (!hashVbo) glGenBuffers(1, &hashVbo);
+      glBindBuffer(GL_ARRAY_BUFFER, hashVbo);
+      glBufferData(GL_ARRAY_BUFFER, UVObjectMeshBuffer.size()*sizeof(float),
+                   UVObjectMeshBuffer.data(), GL_STATIC_DRAW);
+      hashScale = std::max(cloudRmsRadius * 0.04f, 1e-6f);
+      hashDirty = false;
+    }
   }
 
   glUseProgram(program);
   setCloudPlacementUniforms(cameraTranslate);
+  {
+    GLint hl = glGetUniformLocation(program, "uHashScale");
+    if (hl >= 0) glUniform1f(hl, hashScale);
+  }
 
   if (realisticUniform != (unsigned int)-1)
     glUniform1i(realisticUniform, realisticShading ? 1 : 0);
@@ -2738,6 +2772,7 @@ void RenderedObject::LoadCloudFromFormation(const std::vector<CloudParticle>& pa
   }
   bufferSize = (int)cloudParticles.size();
   cloudGpuDirty = true;
+  hashDirty = true;          // a new particle SET: new identities
   meshType = MeshType::cloud;
   hasBeenRendered = false;
 }

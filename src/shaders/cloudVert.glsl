@@ -1,6 +1,10 @@
 #version 460 core
 layout (location = 0) in vec3 aPos;      // absolute (galaxy-local) position — used for dust field
 layout (location = 2) in float aRim;     // world-lit rim factor (3D-correct edge lighting)
+// Frozen copy of the position taken when the particle set was defined. The
+// star's identity hashes on THIS, so a physics step cannot re-roll it. Only the
+// particle path binds it (chunks hash on aLocal, which never moves for them).
+layout (location = 3) in vec3 aHashPos;
 
 // Camera-relative placement of this cloud. The CPU computes ONLY these (in
 // double, once per cloud per frame) and the GPU applies them per vertex — the
@@ -42,6 +46,7 @@ uniform float uDustCoverage;   // how much of the field is dusty (fills the lane
 uniform float uDustContrast;   // sharpens lanes / packs dust into dense cores
 uniform float uDustClumpScale; // dust lane scale (× influence)
 uniform float uDustInfluence;  // world-space dust scale (from cloud bounds)
+uniform float uHashScale;      // frozen dust scale for the hash + lane (particle path)
 
 out vec3  vColor;   // per-particle blackbody colour (stars)
 out float vMag;     // per-particle magnitude (0..1, log-ish)
@@ -98,8 +103,8 @@ vec3 blackbody(float T) {
 // lanes). It is only a TEXTURE — density comes from the star particles carrying
 // it, so where stars are dense the (soft, overlapping) dust sprites compound into
 // thick lanes, and the sparse halo stays clear. Dust follows star formation.
-float dustLane(vec3 p) {
-  float scale = max(uDustInfluence * uDustClumpScale, 1e-6);
+float dustLane(vec3 p, float baseScale) {
+  float scale = max(baseScale * uDustClumpScale, 1e-6);
   float n = fbm3(p / scale);
   float thr = 0.85 - clamp(uDustCoverage, 0.0, 1.0) * 0.7;   // coverage widens the lanes
   float d = smoothstep(thr, thr + 0.30, n);
@@ -126,10 +131,18 @@ void main() {
 
   vRim = aRim;
   float id = float(gl_VertexID);
-  // Star attributes hashed on the star's normalized galaxy-local POSITION (not the
-  // vertex index), with the SAME hash13 the raytracer uses → the same physical star
-  // gets the same colour/magnitude in both renderers (bright stars align pixel-wise).
-  vec3  hp = aLocal / uDustInfluence + 17.0;
+  // Star attributes hashed on a galaxy-local POSITION (not the vertex index): the
+  // chunk path uses aLocal, so a star keeps its colour across LOD rungs; the
+  // particle path uses the FROZEN aHashPos with the frozen scale, so a star keeps
+  // its colour while it MOVES. hash13 is a hash, not noise — hashing the live
+  // position re-rolled every moving star each physics step (the flicker).
+  // For a cloud that has not moved the two are identical, so the still image is
+  // unchanged. Dust is sampled at the same frozen position: it rides with the
+  // stars instead of standing still while they flow through it.
+  const bool frozen = (uChunkExtent <= 0.0);
+  vec3  idPos   = frozen ? aHashPos   : aLocal;
+  float idScale = frozen ? uHashScale : uDustInfluence;
+  vec3  hp = idPos / idScale + 17.0;
   float h1 = hash13(hp + vec3(0.3, 1.1, 5.5));    // temperature selector
   float h2 = hash13(hp + vec3(11.0, 2.0, 7.7));   // luminosity selector
 
@@ -185,7 +198,7 @@ void main() {
     // scale (structure), not the sprite pixels, so shape-following holds at any size
     // and the sprites stay small (fast). The frag carves each into a wisp and, drawn
     // last, they COVER the stars behind them in the dense cores.
-    float lane = dustLane(aLocal);
+    float lane = dustLane(idPos, idScale);
     if (uDustStrength > 0.0 && lane > 0.04 && gl_Position.w > 1e-4) {
       vDust = lane;
       vSeed = hash11(id * 9.1 + 4.0) * 20.0;

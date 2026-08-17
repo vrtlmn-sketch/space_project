@@ -104,7 +104,14 @@ private:
   float dustBakeLo[3]{0,0,0}, dustBakeExt[3]{1,1,1}, dustBakeCore[3]{0,0,0};
   float dustBakeInv{1.0f}, dustBakeCellW{1.0f}, dustBakeR0{1.0f}, dustBakeLightInv{1.0f};
   int  dustLightCounter{0};              // periodic refresh while the sim moves particles
-  int  rimUpdateCounter{0};              // throttle: recompute every N draws while simulating
+  // Rim factors re-bake when positions CHANGED (cloudGpuDirty), never on a
+  // clock: the old every-30-draws throttle held the dust edge lighting for 30
+  // frames then jumped it, twice a second, all through a physics run. A static
+  // cloud still bakes exactly once. Under motion each star's factor is blended
+  // toward the new bake over a few frames, so a star crossing a grid cell
+  // (nearest-cell lookup, hard f^3) fades instead of popping. Converges to the
+  // same value it used to hold, so the still look is unchanged.
+  static constexpr float kRimBlend = 1.0f / 6.0f;
   bool cloudGpuDirty{true};              // positions changed → re-upload (else the VBO is static)
   // True once setupRender has cached this object's uniform locations for the
   // current program. hasBeenRendered alone is NOT that: BuildGalaxyStarfield
@@ -118,6 +125,20 @@ private:
   float cloudBoundRadius{0.0f};
   // 2x RMS radius, same measure boundsEstimate uses, refreshed alongside it.
   float cloudRmsRadius{0.0f};
+
+  // A star's IDENTITY — colour, magnitude, resolved/haze, hot/gas, its dust
+  // lane sample — is hashed from a position. Hashing the LIVE position re-rolls
+  // every moving star each physics step (a hash is not noise: a 0.1%-of-radius
+  // move wraps it completely), which is the flicker. So the particle path
+  // hashes on a FROZEN copy of the position and a frozen scale, both captured
+  // when the particle SET is defined (load / generate / promote) and never
+  // touched by a physics step or a timeline restore. Static scenes are
+  // bit-identical: frozen == live whenever nothing has moved.
+  // Chunked starfields keep hashing on aLocal — their stars never move and a
+  // star must keep its colour across LOD rungs, which a position hash gives.
+  unsigned int hashVbo{0};
+  bool         hashDirty{true};      // particle set redefined → recapture
+  float        hashScale{0.0f};      // frozen ownDustInfluence for the hash + dust lane
 
   unsigned int ssboParticles{};
   unsigned int ssboObjects{};
