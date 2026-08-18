@@ -70,6 +70,7 @@ struct CloudData {
   std::string formationFile;   // empty = procedural, non-empty = load from templates/formations/
   int   computeMethod{1};      // 0=CPU, 1=Barnes-Hut GPU (default)
   float theta{1.5f};           // Barnes-Hut opening angle
+  bool  useDarkMatterHalo{true}; // materialise the halo as real DM particles
   float temperature{4500.f};   // Kelvin — blackbody colour for particles
   int   renderMode{0};         // 0=Points, 1=Nebula
   float nebulaScatterScale{0.4f};
@@ -213,6 +214,7 @@ struct SceneSettings {
   // Simulation
   float simSpeed{1.0f};
   float playbackSpeed{1.0f};
+  float haloMergeStrength{1.0f};   // boost on cross-galaxy halo attraction (1 = physical)
 
   // Visual size exaggeration
   bool  exaggeratedSizes{false};

@@ -137,7 +137,11 @@ double dist(const dvec3& a, const dvec3& b) {
 // frames — none of these change fast.
 void refreshCloudDynamics(CloudObject& c) {
   const auto& ps = c.renderedObject.particles();
-  const size_t n = ps.size();
+  // STARS only: dark-matter particles are the galaxy's mass for its own stars
+  // (via the octree), but for OTHER bodies (big bodies, the regime picker) the
+  // galaxy is still modelled as star-point-mass + the analytic halo, so counting
+  // DM here would double it. dynMass/COM/T therefore measure the visible stars.
+  const size_t n = (size_t)std::max(0, c.renderedObject.starCount());
   if (n == 0) { c.dynMass = 0.0; c.dynT = 0.0; return; }
   double R[9];
   EulerDegToMat3d(c.rotationDeg, R);

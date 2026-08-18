@@ -2598,9 +2598,13 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     cloudGpuDirty = false;
     // Refresh the local bounding radius on the same trigger the VBO refreshes
     // (load, physics step, snapshot restore) — one O(n) pass, no per-frame cost.
+    // Bounds/RMS measure the STARS only — dark-matter particles live in the
+    // tail and would otherwise inflate the galaxy's apparent size, softening and
+    // dust scale (they are a much larger sphere than the visible disc).
+    const size_t starFloats = std::min(UVObjectMeshBuffer.size(), (size_t)std::max(0, starCount()) * 3);
     float r2max = 0.0f;
     double cx = 0, cy = 0, cz = 0; size_t np = 0;
-    for (size_t i = 0; i + 2 < UVObjectMeshBuffer.size(); i += 3) {
+    for (size_t i = 0; i + 2 < starFloats; i += 3) {
       float x = UVObjectMeshBuffer[i], y = UVObjectMeshBuffer[i+1], z = UVObjectMeshBuffer[i+2];
       float r2 = x*x + y*y + z*z;
       if (r2 > r2max) r2max = r2;
@@ -2612,7 +2616,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (np) {
       cx /= (double)np; cy /= (double)np; cz /= (double)np;
       double r2sum = 0;
-      for (size_t i = 0; i + 2 < UVObjectMeshBuffer.size(); i += 3) {
+      for (size_t i = 0; i + 2 < starFloats; i += 3) {
         double dx = UVObjectMeshBuffer[i] - cx, dy = UVObjectMeshBuffer[i+1] - cy,
                dz = UVObjectMeshBuffer[i+2] - cz;
         r2sum += dx*dx + dy*dy + dz*dz;
@@ -2642,6 +2646,10 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
 
   if (realisticUniform != (unsigned int)-1)
     glUniform1i(realisticUniform, realisticShading ? 1 : 0);
+  // Dark-matter draw flag: default OFF; the debug branch flips it on for the
+  // gray DM points only. Set every frame so the shared program never leaks it.
+  const GLint dmDrawLoc = glGetUniformLocation(program, "uDMDraw");
+  if (dmDrawLoc >= 0) glUniform1i(dmDrawLoc, 0);
   {
     GLint psLoc = glGetUniformLocation(program, "uCinePixelScale");
     if (psLoc >= 0) glUniform1f(psLoc, cinePixelScale);
@@ -2705,6 +2713,12 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   // so the value is identical.
   const int curRenderMode = cachedRenderMode;
 
+  // Stars occupy [0, nStars); dark-matter particles (if any) fill the tail
+  // [nStars, bufferSize). The pretty/HDR passes draw only the stars; the debug
+  // view adds the DM as gray dots.
+  const int nStars = std::min(bufferSize, std::max(0, starCount()));
+  const int nDM    = bufferSize - nStars;
+
   if (realisticShading) {
     const bool drawLight = (cloudDrawPhase != CloudDrawPhase::Dust);
     const bool drawDust  = (cloudDrawPhase != CloudDrawPhase::Light);
@@ -2726,19 +2740,19 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       glBlendFunc(GL_ONE, GL_ONE);
       if (passLoc >= 0) glUniform1i(passLoc, 0);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArrays(GL_POINTS, 0, bufferSize);
+      else             glDrawArrays(GL_POINTS, 0, nStars);
 
       // 2. Glowing gas — emission nebulosity near hot young stars (additive).
       if (cineGasStrength > 0.0f) {
         if (passLoc >= 0) glUniform1i(passLoc, 4);
         if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-        else             glDrawArrays(GL_POINTS, 0, bufferSize);
+        else             glDrawArrays(GL_POINTS, 0, nStars);
       }
 
       // 3. Star cores — the resolved (bright) individual stars only.
       if (passLoc >= 0) glUniform1i(passLoc, 1);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArrays(GL_POINTS, 0, bufferSize);
+      else             glDrawArrays(GL_POINTS, 0, nStars);
     }
 
     // 4. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
@@ -2750,7 +2764,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       glBlendFunc(GL_ZERO, GL_SRC_COLOR);
       if (passLoc >= 0) glUniform1i(passLoc, 3);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArrays(GL_POINTS, 0, bufferSize);
+      else             glDrawArrays(GL_POINTS, 0, nStars);
     }
 
     glDisable(GL_BLEND);
@@ -2774,7 +2788,16 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   }
 
   if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-  else             glDrawArrays(GL_POINTS, 0, bufferSize);
+  else             glDrawArrays(GL_POINTS, 0, nStars);
+
+  // Dark matter: gray dots, debug view only. A separate draw of the tail with
+  // uDMDraw on so the shader ignores the star hash/colour and paints them gray.
+  if (!isStarfield && nDM > 0) {
+    if (dmDrawLoc >= 0) glUniform1i(dmDrawLoc, 1);
+    if (curRenderMode == 1) glPointSize(2);
+    glDrawArrays(GL_POINTS, nStars, nDM);
+    if (dmDrawLoc >= 0) glUniform1i(dmDrawLoc, 0);
+  }
 
   if (curRenderMode == 1) {
     glDisable(GL_BLEND);

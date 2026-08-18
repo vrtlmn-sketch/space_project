@@ -18,6 +18,13 @@ struct GPUBigBody {
   float px, py, pz, mass;   // posM
 };
 
+// One dark-matter halo per simulated cloud, in the shared sim frame. Matches
+// the `Halo` struct in barnesHutForce.glsl (two vec4, 32 bytes).
+struct GPUHalo {
+  float cx, cy, cz, vFlat;   // centre (sim frame) + flat rotation speed
+  float rCore, pad0, pad1, pad2;
+};
+
 // ── Helper: compile a compute shader from file ──
 static GLuint compileComputeShader(const std::string& path) {
   std::ifstream f(path);
@@ -116,6 +123,9 @@ void CloudObject::initGPU() {
   locSoftening2    = glGetUniformLocation(bhProgram, "uSoftening2");
   locHaloVFlat     = glGetUniformLocation(bhProgram, "uHaloVFlat");
   locHaloRCore     = glGetUniformLocation(bhProgram, "uHaloRCore");
+  locHaloCount     = glGetUniformLocation(bhProgram, "uHaloCount");
+  locSelfHaloOwner     = glGetUniformLocation(bhProgram, "uSelfHaloOwner");
+  locHaloMergeStrength = glGetUniformLocation(bhProgram, "uHaloMergeStrength");
   locTheta         = glGetUniformLocation(bhProgram, "uTheta");
   locFrameOffset   = glGetUniformLocation(bhProgram, "uFrameOffset");
 
@@ -267,14 +277,25 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
   glUniform1f(locSoftening2, renderedObject.softening2());
-  glUniform1f(locHaloVFlat, renderedObject.haloVFlat);
+  glUniform1f(locHaloVFlat, useDarkMatterHalo ? renderedObject.haloVFlat : 0.0f);
   glUniform1f(locHaloRCore, renderedObject.haloRCore);
+  if (locHaloCount >= 0) glUniform1i(locHaloCount, 0);   // single-cloud: use the uniform halo
+  if (locSelfHaloOwner >= 0) glUniform1i(locSelfHaloOwner, -1);
+  if (locHaloMergeStrength >= 0) glUniform1f(locHaloMergeStrength, 1.0f);
   glUniform1f(locTheta, barnesHutTheta);
   if (locFrameOffset >= 0) glUniform3f(locFrameOffset, 0.0f, 0.0f, 0.0f);  // sim frame = cloud frame
 
+  // A valid (possibly empty) buffer must be bound at 5 even when uHaloCount is 0.
+  if (s_sharedHaloSSBO == 0) {
+    glGenBuffers(1, &s_sharedHaloSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedHaloSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GPUHalo), nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+  }
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, treeSSBO);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, bigBodySSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, s_sharedHaloSSBO);
 
   int numGroups = (particleCount_ + 255) / 256;
   glDispatchCompute(numGroups, 1, 1);
@@ -291,13 +312,16 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
 // ── Shared Barnes-Hut across all clouds ─────────────────────────────────────
 unsigned int CloudObject::s_sharedTreeSSBO    = 0;
 unsigned int CloudObject::s_sharedBigBodySSBO = 0;
+unsigned int CloudObject::s_sharedHaloSSBO    = 0;
 Octree       CloudObject::s_sharedOctree;
 
 // Dispatch this cloud's particle buffer against a pre-built (shared) octree.
 // Same as dispatchBarnesHut steps 5-6, but the tree + big bodies come from
 // outside, so every cloud can be integrated against one combined tree.
 void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
-                                      unsigned int bbSSBO, int bbCount, float simSpeed,
+                                      unsigned int bbSSBO, int bbCount,
+                                      unsigned int haloSSBO, int haloCount,
+                                      int selfHaloOwner, float haloMergeStrength, float simSpeed,
                                       const dvec3& simOrigin) {
   // SIMULATABLE particles: cloudParticleCount() counts GPU stars for chunked
   // starfields with no CPU particles — dispatching on that ran the compute
@@ -312,8 +336,17 @@ void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
   glUniform1f(locG, (float)units::kG);
   glUniform1f(locDt, (float)units::kDtYears * simSpeed);
   glUniform1f(locSoftening2, renderedObject.softening2());
-  glUniform1f(locHaloVFlat, renderedObject.haloVFlat);
+  // haloCount > 0 → use the per-cloud halo LIST (every cloud's halo, centred on
+  // its own COM), so galaxies attract each other. 0 → the single-cloud uniform.
+  // The halo is analytic and gated by the "dark matter halo" toggle. (DM
+  // particles are disabled; the dmParticleCount guard stays as a safety belt.)
+  const float analyticVFlat = (useDarkMatterHalo && renderedObject.dmParticleCount == 0)
+                              ? renderedObject.haloVFlat : 0.0f;
+  glUniform1f(locHaloVFlat, analyticVFlat);
   glUniform1f(locHaloRCore, renderedObject.haloRCore);
+  if (locHaloCount >= 0) glUniform1i(locHaloCount, haloCount);
+  if (locSelfHaloOwner >= 0) glUniform1i(locSelfHaloOwner, selfHaloOwner);
+  if (locHaloMergeStrength >= 0) glUniform1f(locHaloMergeStrength, haloMergeStrength);
   glUniform1f(locTheta, barnesHutTheta);
   if (locFrameOffset >= 0)
     glUniform3f(locFrameOffset, (float)(position.x - simOrigin.x),
@@ -323,6 +356,7 @@ void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, particleSSBO);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sharedTree);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, bbSSBO);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, haloSSBO);
 
   int numGroups = (particleCount_ + 255) / 256;
   glDispatchCompute(numGroups, 1, 1);
@@ -349,6 +383,10 @@ void CloudObject::SimulateSharedForward(
     if (c->computeMethod != CloudComputeMethod::BarnesHutGPU) continue;
     if (!c->simulatePhysics) continue;
     if (c->dynRigid) continue;   // unresolved at this step: transported as one body instead
+    // Dark matter is the ANALYTIC halo (see dispatch + the halo list), not
+    // particles: a particle DM halo NaN'd at galaxy scale and poisoned the whole
+    // shared octree. Strip any stale DM from an older session.
+    if (c->renderedObject.dmParticleCount > 0) c->stripDarkMatter();
     if (!c->gpuInitialized) c->initGPU();
     if (!c->gpuInitialized) continue;   // init failed → Update() runs CPU fallback
     c->renderedObject.coordinates = c->position;
@@ -404,6 +442,7 @@ void CloudObject::SimulateSharedForward(
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
   }
   if (s_sharedTreeSSBO == 0) glGenBuffers(1, &s_sharedTreeSSBO);
+  if (s_sharedHaloSSBO == 0) glGenBuffers(1, &s_sharedHaloSSBO);
 
   // Sub-steps for THIS tick: the finest any still-simulating cloud needs (see
   // dynamics.h). A collapsing cloud shortens its own dynamical time under the
@@ -422,7 +461,12 @@ void CloudObject::SimulateSharedForward(
     for (int sub = 0; sub < Mframe; ++sub) {
       std::vector<vec3>  allPos;
       std::vector<float> allMass;
-      for (CloudObject* c : sim) {
+      // Per-cloud centre of mass in the SIM frame, accumulated as we assemble
+      // the particles, for the halo list below.
+      std::vector<dvec3>  comSum(sim.size(), dvec3{0,0,0});
+      std::vector<double> comMass(sim.size(), 0.0);
+      for (size_t ci = 0; ci < sim.size(); ++ci) {
+        CloudObject* c = sim[ci];
         const auto& ps = c->renderedObject.cloudParticles;
         allPos.reserve(allPos.size() + ps.size());
         allMass.reserve(allMass.size() + ps.size());
@@ -432,13 +476,53 @@ void CloudObject::SimulateSharedForward(
                        (float)(c->position.y - simOrigin.y),
                        (float)(c->position.z - simOrigin.z)};
         for (const auto& p : ps) {
-          allPos.push_back(vec3{p.position.x + off.x,
-                                p.position.y + off.y,
-                                p.position.z + off.z});
+          const vec3 wp{p.position.x + off.x, p.position.y + off.y, p.position.z + off.z};
+          allPos.push_back(wp);
           allMass.push_back(p.mass);
+          comSum[ci].x += (double)wp.x * (double)p.mass;
+          comSum[ci].y += (double)wp.y * (double)p.mass;
+          comSum[ci].z += (double)wp.z * (double)p.mass;
+          comMass[ci]  += (double)p.mass;
         }
       }
       if (allPos.empty()) break;
+
+      // Halo list: one per simulated cloud that has a halo, centred on its LIVE
+      // centre of mass (sim frame). Every particle feels every halo, so two
+      // galaxies attract each other by their dominant (halo) mass and collide,
+      // and each cloud's halo stays centred on itself as it moves. Only built
+      // for 2+ clouds — a single cloud keeps the uniform path (uFrameOffset 0,
+      // identical to before).
+      int haloCount = 0;
+      if (sim.size() >= 2) {
+        std::vector<GPUHalo> halos;
+        halos.reserve(sim.size());
+        for (size_t ci = 0; ci < sim.size(); ++ci) {
+          const float vf = sim[ci]->renderedObject.haloVFlat;
+          // Only clouds with the halo toggle on contribute (and never a stale
+          // DM-particle cloud). Its halo is centred on the cloud's LIVE COM, so
+          // as two galaxies fall together their halo centres converge — they
+          // merge over time, by distance, with no extra particles.
+          if (!sim[ci]->useDarkMatterHalo) continue;
+          if (sim[ci]->renderedObject.dmParticleCount > 0) continue;
+          if (!(vf > 0.0f) || comMass[ci] <= 0.0) continue;
+          GPUHalo h{};
+          h.cx = (float)(comSum[ci].x / comMass[ci]);
+          h.cy = (float)(comSum[ci].y / comMass[ci]);
+          h.cz = (float)(comSum[ci].z / comMass[ci]);
+          h.vFlat = vf;
+          h.rCore = sim[ci]->renderedObject.haloRCore;
+          h.pad0  = (float)ci;   // owner id: the cloud this halo belongs to
+          halos.push_back(h);
+        }
+        haloCount = (int)halos.size();
+        if (haloCount > 0) {
+          glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedHaloSSBO);
+          glBufferData(GL_SHADER_STORAGE_BUFFER, haloCount * (GLsizeiptr)sizeof(GPUHalo),
+                       halos.data(), GL_DYNAMIC_DRAW);
+          glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
+      }
 
       vec3 zeroOffset{0.0f, 0.0f, 0.0f};
       s_sharedOctree.build(allPos.data(), allMass.data(), (int)allPos.size(), zeroOffset);
@@ -453,7 +537,9 @@ void CloudObject::SimulateSharedForward(
       for (size_t k = 0; k < sim.size(); ++k) {
         if (s >= remaining[k]) continue;   // this cloud already finished its steps
         sim[k]->dispatchAgainstTree(s_sharedTreeSSBO, nodeCount,
-                                    s_sharedBigBodySSBO, bbCount, subSpeed,
+                                    s_sharedBigBodySSBO, bbCount,
+                                    s_sharedHaloSSBO, haloCount,
+                                    (int)k, renderer.haloMergeStrength, subSpeed,
                                     simOrigin);
       }
     }
@@ -470,6 +556,122 @@ void CloudObject::SimulateSharedForward(
       sim[k]->timeframe++;
     }
   }
+}
+
+// ── Dark-matter halo particles ──────────────────────────────────────────────
+// Represent the (otherwise analytic) halo as REAL heavy particles in a spherical
+// distribution that reproduces v_c(r) = vFlat·r/(r+rCore). They gravitate through
+// the shared octree exactly like stars, so galaxy-galaxy attraction and mergers
+// are one universal force law. Drawn only in the debug view (gray). See header.
+void CloudObject::ensureDarkMatter() {
+  RenderedObject& ro = renderedObject;
+  if (!useDarkMatterHalo) return;              // opted out (plain cloud, no halo)
+  if (ro.dmParticleCount > 0) return;          // already have DM
+  if (ro.isStarfield) return;                  // chunked LOD stand-in: not simulating
+  if (!(ro.haloVFlat > 0.0f)) return;          // no halo → nothing to represent
+  const int nStars = (int)ro.cloudParticles.size();
+  if (nStars <= 0) return;
+
+  // Halo radius: enclose the stars (the disc/spheroid), where the binding mass
+  // lives. Spherical, so the galaxy's orientation is irrelevant.
+  float R = 0.0f;
+  for (int i = 0; i < nStars; ++i) {
+    const vec3& p = ro.cloudParticles[i].position;
+    R = std::max(R, std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z));
+  }
+  if (!(R > 0.0f)) return;
+
+  const double vFlat = (double)ro.haloVFlat;
+  const double rCore = std::max((double)ro.haloRCore, 1e-6 * (double)R);
+  const double G = units::kG;
+  // Enclosed mass for a flat rotation curve: M(<r) = v_c(r)^2 · r / G.
+  auto Menc = [&](double r) {
+    const double vc = vFlat * r / (r + rCore);
+    return vc * vc * r / G;
+  };
+  const double Mtot = Menc((double)R);
+  if (!(Mtot > 0.0)) return;
+
+  const int nDM = std::min(nStars, 20000);     // ~one DM per star, capped for a potato
+  const double mDM = Mtot / (double)nDM;
+
+  // Deterministic RNG from the galaxy's own numbers (stable per identity).
+  uint64_t seed = 0x9E3779B97F4A7C15ull ^ ((uint64_t)nStars << 21)
+                ^ (uint64_t)(vFlat * 1000.0) ^ ((uint64_t)(rCore) << 7);
+  if (seed == 0) seed = 0x2545F4914F6CDD1Dull;
+  auto uni = [&]() {
+    seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+    return (double)(seed >> 11) * (1.0 / 9007199254740992.0);
+  };
+  auto gauss = [&]() {
+    const double u1 = std::max(uni(), 1e-12), u2 = uni();
+    return std::sqrt(-2.0 * std::log(u1)) * std::cos(6.28318530717958648 * u2);
+  };
+
+  ro.cloudParticles.reserve(nStars + nDM);
+  ro.UVObjectMeshBuffer.reserve((size_t)(nStars + nDM) * 3);
+  const double invSqrt2 = 0.70710678118654752;
+  for (int i = 0; i < nDM; ++i) {
+    // Radius from the mass profile: solve Menc(r) = u·Mtot by bisection.
+    const double target = std::max(uni(), 1e-9) * Mtot;
+    double lo = 0.0, hi = (double)R;
+    for (int it = 0; it < 40; ++it) {
+      const double mid = 0.5 * (lo + hi);
+      if (Menc(mid) < target) lo = mid; else hi = mid;
+    }
+    const double r = 0.5 * (lo + hi);
+    // Isotropic direction.
+    const double ct = 2.0 * uni() - 1.0;
+    const double st = std::sqrt(std::max(0.0, 1.0 - ct * ct));
+    const double ph = 6.28318530717958648 * uni();
+    const vec3 pos{ (float)(r * st * std::cos(ph)),
+                    (float)(r * st * std::sin(ph)),
+                    (float)(r * ct) };
+    // Isotropic dispersion σ_1d = v_c(r)/√2 (isothermal), keeps the halo roughly
+    // in equilibrium so it neither collapses nor puffs away.
+    const double vc  = vFlat * r / (r + rCore);
+    const double sig = vc * invSqrt2;
+    double vX = sig * gauss(), vY = sig * gauss(), vZ = sig * gauss();
+    // Clamp the Gaussian tail: a few particles drawn at >escape speed would fly
+    // out and read as the halo "exploding". Cap the speed at 2.5·v_c(r).
+    const double vmax = 2.5 * vc, vlen = std::sqrt(vX*vX + vY*vY + vZ*vZ);
+    if (vlen > vmax && vlen > 0.0) { const double s = vmax / vlen; vX *= s; vY *= s; vZ *= s; }
+    const vec3 vel{ (float)vX, (float)vY, (float)vZ };
+    CloudParticle p; p.position = pos; p.velocity = vel; p.acceleration = vec3{0,0,0};
+    p.mass = (float)mDM;
+    ro.cloudParticles.push_back(p);
+    ro.UVObjectMeshBuffer.push_back(pos.x);
+    ro.UVObjectMeshBuffer.push_back(pos.y);
+    ro.UVObjectMeshBuffer.push_back(pos.z);
+  }
+  ro.dmParticleCount = nDM;
+  // Softening for the heavy, sparse DM: half the 3D inter-particle spacing, so a
+  // close heavy-heavy pass is bounded (the star softening would be far too small).
+  const double spacing = (double)R / std::cbrt((double)nDM);
+  ro.dmSoftening2 = (float)((0.5 * spacing) * (0.5 * spacing));
+  ro.bufferSize = (int)ro.cloudParticles.size();
+  ro.cloudGpuDirty = true;
+  ro.hashDirty = true;
+  if (gpuInitialized) uploadParticlesToGPU();
+  std::cout << "[DM] " << (name.empty() ? "cloud" : name) << ": " << nDM
+            << " dark-matter particles, Mtot=" << Mtot << " Msun, R=" << R << " AU\n";
+}
+
+// Remove the dark-matter tail (physics turned off / rebuilding chunks). The DM
+// is regenerated from the halo params next time the cloud simulates.
+void CloudObject::stripDarkMatter() {
+  RenderedObject& ro = renderedObject;
+  if (ro.dmParticleCount <= 0) return;
+  const int nStars = std::max(0, ro.starCount());
+  ro.cloudParticles.resize(nStars);
+  if ((int)ro.UVObjectMeshBuffer.size() > nStars * 3)
+    ro.UVObjectMeshBuffer.resize((size_t)nStars * 3);
+  ro.dmParticleCount = 0;
+  ro.dmSoftening2 = 0.0f;
+  ro.bufferSize = nStars;
+  ro.cloudGpuDirty = true;
+  ro.hashDirty = true;
+  if (gpuInitialized) uploadParticlesToGPU();
 }
 
 // ── Promote a chunk-rendered galaxy to real particles ───────────────────────
@@ -528,6 +730,7 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     else
       nearPromoted = false;      // nothing to build it from
   } else if (!wantParticles && demoteToChunks && !renderedObject.isStarfield) {
+    stripDarkMatter();   // DM must never become chunk stars
     if (simDirty) {
       renderedObject.BuildStarfieldFromParticles();
     } else if (renderedObject.isGalaxy) {

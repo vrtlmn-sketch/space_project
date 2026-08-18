@@ -40,6 +40,12 @@ void Octree::build(const vec3* positions, const float* masses, int count,
   float cz = (minZ + maxZ) * 0.5f;
   float halfSize = std::max({maxX - minX, maxY - minY, maxZ - minZ}) * 0.5f;
   halfSize = std::max(halfSize, 0.001f); // avoid zero-size
+  // Bound the tree depth relative to the root: leaves stop at rootHalf/2^24, so
+  // the depth can never exceed 24 (well under the shader's 64-deep stack) no
+  // matter the scale. Clustered particles below that become one multi-particle
+  // leaf (the shader applies its COM), instead of a 50-level chain per pair.
+  const int kMaxDepth = 24;
+  minLeafHalf_ = halfSize * std::ldexp(1.0f, -kMaxDepth);
 
   // Build index list
   std::vector<int> indices(count);
@@ -126,10 +132,10 @@ int Octree::buildNode(const vec3* positions, const float* masses,
     childIndices[octant].push_back(idx);
   }
 
-  // Check if all particles ended up in one octant (degenerate case)
-  // This can happen with duplicate positions. Cap recursion by checking halfSize.
-  if (halfSize < 1e-6f) {
-    // Too small to subdivide further, leave as leaf with multiple particles
+  // Depth bound (see minLeafHalf_): duplicate/tightly-clustered particles would
+  // otherwise recurse ~50 levels at galaxy scale. Below the floor this stays a
+  // multi-particle leaf (the shader treats a childless node as one COM point).
+  if (halfSize < minLeafHalf_) {
     return nodeIdx;
   }
 

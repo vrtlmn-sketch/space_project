@@ -41,6 +41,8 @@ private:
   int locDt{-1};
   int locSoftening2{-1};
   int locHaloVFlat{-1}, locHaloRCore{-1};
+  int locHaloCount{-1};
+  int locSelfHaloOwner{-1}, locHaloMergeStrength{-1};
   int locTheta{-1};
   int locFrameOffset{-1};
 
@@ -55,7 +57,9 @@ private:
   // simOrigin is the shared sim frame's origin: the SSBO holds CLOUD-LOCAL
   // positions and the shader bridges frames via uFrameOffset.
   void dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
-                           unsigned int sharedBigBody, int bigBodyCount, float simSpeed,
+                           unsigned int sharedBigBody, int bigBodyCount,
+                           unsigned int sharedHalo, int haloCount,
+                           int selfHaloOwner, float haloMergeStrength, float simSpeed,
                            const dvec3& simOrigin);
 
   // Turn a chunk-rendered galaxy into a real particle cloud (positions +
@@ -64,11 +68,23 @@ private:
   // already exists (a demoted galaxy), it is reused — never regenerated.
   void materializeGalaxy();
 
+  // Append a spherical dark-matter halo of heavy, invisible particles that
+  // reproduce this cloud's rotation curve (haloVFlat/haloRCore), so the galaxy
+  // is bound by REAL mass in the shared octree instead of an analytic term —
+  // making galaxy-galaxy attraction and mergers emerge from one force law.
+  // No-op if there is no halo, no stars, or DM already exists. They live in the
+  // tail of cloudParticles and render only in the debug view (see renderCloud).
+  void ensureDarkMatter();
+  // Drop the dark-matter tail (physics off / rebuilding chunks); regenerated
+  // from the halo params next time the cloud simulates.
+  void stripDarkMatter();
+
   // Shared Barnes-Hut resources: one octree spanning every simulated cloud so
   // separate formations gravitate on each other. Built/stepped in lockstep by
   // SimulateSharedForward (below). App-lifetime GPU objects.
   static unsigned int s_sharedTreeSSBO;
   static unsigned int s_sharedBigBodySSBO;
+  static unsigned int s_sharedHaloSSBO;
   static Octree       s_sharedOctree;
 
 public:
@@ -127,6 +143,10 @@ public:
   std::string formationFile;  // empty = procedural generation
   CloudComputeMethod computeMethod{CloudComputeMethod::BarnesHutGPU};
   float barnesHutTheta{1.5f};
+  // Materialise the halo as real (invisible) dark-matter particles when this
+  // cloud simulates, so it stays bound and can collide/merge with others. On by
+  // default for galaxies; turn off for a plain cloud that needs no halo.
+  bool  useDarkMatterHalo{true};
   float temperature{4500.f};      // Kelvin — blackbody colour for particles
   int   renderMode{0};            // 0=Points, 1=Nebula
   float nebulaScatterScale{0.4f}; // Beer-Lambert dTau multiplier (nebula mode)

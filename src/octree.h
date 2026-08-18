@@ -39,6 +39,12 @@ public:
 
 private:
   std::vector<OctreeNodeGPU> nodes_;
+  // Deepest a node may subdivide, as a leaf half-size. Set per build to
+  // rootHalf / 2^kMaxDepth so the tree depth is bounded regardless of scale —
+  // an ABSOLUTE floor recursed ~50 levels at galaxy scale (1e9 AU), which
+  // exploded the node count and overflowed the GPU traversal stack. Below it a
+  // node stays a MULTI-particle leaf and the shader treats it as one COM point.
+  float minLeafHalf_{0.0f};
 
   // Internal recursive builder.  Returns index of created node.
   int buildNode(const vec3* positions, const float* masses,

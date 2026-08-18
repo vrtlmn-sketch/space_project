@@ -3115,6 +3115,19 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   }
   ImGui::SameLine();
 
+  // Galaxy merge boost: how hard galaxies pull on EACH OTHER (own halo unscaled).
+  ImGui::Text("Merge");
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(64);
+  ImGui::SliderFloat("##halomerge", &haloMergeStrength, 1.0f, 1000.0f, "%.0fx",
+                     ImGuiSliderFlags_Logarithmic);
+  if (ImGui::IsItemHovered())
+    ImGui::SetTooltip("Boost how hard galaxies pull on EACH OTHER (1 = physical).\n"
+                      "Higher = distant galaxies fall together and merge much faster.\n"
+                      "A galaxy's own halo is never scaled, so its shape is unchanged.\n"
+                      "Applies live; both galaxies must be simulating (non-LOD).");
+  ImGui::SameLine();
+
   // Separator
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
@@ -4845,6 +4858,13 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         ImGui::TextDisabled("Velocities adjusted for correct orbits");
       }
 
+      ImGui::Checkbox("Dark matter halo", &cloudForm.useDarkMatterHalo);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Invisible heavy particles that reproduce the rotation curve, so the\n"
+                          "cloud stays bound and two galaxies collide/merge realistically.\n"
+                          "Drawn as gray dots in the debug view only; hidden in the pretty view.\n"
+                          "On by default; turn off for a plain cloud that needs no halo. (GPU physics)");
+
       ImGui::Spacing();
 
       // ── Appearance ──
@@ -5754,6 +5774,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         cloudForm.temperature        = cloud->temperature;
         cloudForm.computeMethod      = static_cast<int>(cloud->computeMethod);
         cloudForm.theta              = cloud->barnesHutTheta;
+        cloudForm.useDarkMatterHalo  = cloud->useDarkMatterHalo;
         cloudForm.formationFile      = cloud->formationFile;
         cloudForm.scale              = cloud->scale;
         lastCloudIdx = cloudIdx;
@@ -5958,6 +5979,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         }
         ImGui::TextDisabled("Lower = more accurate, slower");
       }
+
+      if (ImGui::Checkbox("Dark matter halo##ci", &cloudForm.useDarkMatterHalo))
+        cloud->useDarkMatterHalo = cloudForm.useDarkMatterHalo;
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Invisible heavy particles that reproduce the rotation curve, so the\n"
+                          "galaxy stays bound and two galaxies collide/merge realistically.\n"
+                          "Drawn as gray dots in this debug view only; hidden in the pretty view.\n"
+                          "On by default; turn off for a plain cloud that needs no halo. (GPU physics)");
 
       // ── Appearance ──
       ImGui::SeparatorText("Appearance");

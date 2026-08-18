@@ -443,11 +443,24 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // inter-particle spacing, floored at the historic constant 0.001 AU^2 so a
   // small formation simulates exactly as it always did.
   float rmsRadius() const { return 0.5f * cloudRmsRadius; }   // cloudRmsRadius is 2x RMS
+  // Dark-matter halo particles (see cloudObject.cpp: generateDarkMatter). They
+  // live in the TAIL of cloudParticles [starCount, size); they gravitate through
+  // the shared octree like everything else, but are drawn only in the debug/nav
+  // view (gray) and never in the pretty/RT views. count 0 = analytic halo (old
+  // behaviour). Softening for the (heavy, sparse) DM is stored separately so a
+  // close DM pass cannot fling anything; 0 until DM is generated.
+  int   dmParticleCount{0};
+  float dmSoftening2{0.0f};
+  int   starCount() const { return (int)cloudParticles.size() - dmParticleCount; }
   float softening2() const {
-    const double n   = std::max(1.0, (double)cloudParticles.size());
+    // Star-based spacing (unchanged for a cloud with no DM: dmParticleCount 0 →
+    // nStars == size, so this is bit-identical to before).
+    const double nStars = std::max(1.0, (double)(cloudParticles.size() - dmParticleCount));
     const double rms = 0.5 * (double)cloudRmsRadius;         // cloudRmsRadius is 2x RMS
-    const double eps = 0.25 * rms / std::cbrt(n);
-    return (float)std::max(0.001, eps * eps);
+    const double eps = 0.25 * rms / std::cbrt(nStars);
+    double s2 = std::max(0.001, eps * eps);
+    if (dmParticleCount > 0 && (double)dmSoftening2 > s2) s2 = (double)dmSoftening2;
+    return (float)s2;
   }
   const std::vector<CloudParticle>& particles() const { return cloudParticles; }
   // Cloud particle positions (galaxy-local xyz triples) — read-only access for

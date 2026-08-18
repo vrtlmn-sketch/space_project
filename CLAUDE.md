@@ -402,6 +402,54 @@ placed at v_c(r) is then in equilibrium BY CONSTRUCTION — no mass fiddling.
   A star at rest 26 kly out was "moving consistently" because it was
   free-falling toward the black hole with no tangential speed.
 
+## Dark matter is an ANALYTIC halo — DM particles were tried and abandoned
+
+A galaxy's dark matter is a **static analytic potential** `v_c(r)=vFlat·r/(r+rc)`,
+applied as a force to the cloud's particles — invisible, cheap, stable. It is
+gated per cloud by **`useDarkMatterHalo`** (the "Dark matter halo" toggle;
+default true, UI on the spawn form and the cloud inspector, persisted in
+`CloudData`). Off → `uHaloVFlat` sent as 0 → no halo (a plain, unbound cloud).
+
+**Multi-cloud collisions/mergers** work through the **halo list**
+(barnesHutForce.glsl, binding 5): each simulating cloud's halo is centred on its
+**live centre of mass** (recomputed per sub-step in `SimulateSharedForward`) and
+**every particle feels every cloud's halo**. So galaxy A's stars feel galaxy B's
+halo and vice versa, both COMs fall together, and as they converge the halo
+centres coincide — the halos **merge over time, by distance, with no extra
+particles**. Single cloud → the list is skipped and the one uniform halo is
+centred on the sim origin (`uFrameOffset==0`, so it is that cloud's own centre).
+
+**Merge boost** (`haloMergeStrength`, scene setting + "Merge" slider by the time
+step, default 1 = physical): the flat halo already pulls at any distance (force
+~ vFlat²/d, 1/d falloff), so galaxies merge from anywhere given enough sim time
+(t ~ d/vFlat). The boost scales the force from ANOTHER galaxy's halo so distant
+ones fall together fast. It must NOT scale a galaxy's OWN halo (that would change
+its rotation curve / blow up its disc), so each halo carries an **owner id**
+(`GPUHalo.pad0` → shader `rc.y`) and the dispatch passes the cloud's own id
+(`uSelfHaloOwner`); the shader applies the multiplier only when they differ.
+
+**Why NOT real DM particles** (the rejected experiment; scaffolding still exists,
+`ensureDarkMatter`/`stripDarkMatter`, but is **not called**): a spherical
+population of heavy invisible particles in the tail of `cloudParticles` is the
+physically "universal" model, and it half-worked — but at galaxy scale a few DM
+particles integrated to **inf/NaN**, and because they live in the SHARED octree
+that NaN poisoned the tree bounds and took **every** cloud's stars with it (the
+"everything disappeared, only the nav view survived" bug — the HDR passes break
+on NaN). Heavy particles + a large dt + one bad apple is too fragile. The
+analytic halo cannot NaN. If revived, it needs: robust IC velocities, NaN
+clamping in the integrator, and its own softening — not worth it over the
+analytic halo, which already gives stable collisions.
+
+**Kept from that work (general wins):**
+- **Bounded octree depth** (`Octree::minLeafHalf_` = rootHalf/2^24). The old
+  ABSOLUTE `1e-6` leaf floor recursed ~50 levels at galaxy scale wherever
+  particles clustered — ballooning node count and overrunning the shader's
+  64-deep traversal stack. Now depth ≤ 24 at any scale. A depth-capped
+  MULTI-particle leaf has no children, so the shader applies a **childless node
+  as one COM point** (else its mass would vanish).
+- The DM plumbing (`dmParticleCount`, `starCount()`, the `[0,nStars)` draw split,
+  `uDMDraw`) is inert while `dmParticleCount==0` — identical to pre-DM behaviour.
+
 ## Spiral arms TRAIL — spin is OPPOSITE to the winding
 
 Every generator (`GenerateGalaxyStars` in universeGen.cpp, and both

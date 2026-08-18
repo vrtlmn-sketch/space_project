@@ -33,6 +33,27 @@ layout(std430, binding = 4) readonly buffer BigBodies {
   BigBody bigBodies[];
 };
 
+// ── Halo buffer (read-only) ──
+// One per simulated cloud: its dark-matter halo, centred on cVF.xyz (the
+// cloud's centre of mass in the SIM frame), cVF.w = vFlat, rc.x = rCore. Every
+// particle feels EVERY cloud's halo, so two galaxies attract each other by
+// their dominant (halo) mass and can actually collide. Empty (uHaloCount 0) on
+// the single-cloud path, which keeps the uHaloVFlat/uHaloRCore uniforms below.
+struct Halo {
+  vec4 cVF;   // xyz = centre (sim frame), w = vFlat
+  vec4 rc;    // x = rCore, y = owner id (which cloud this halo belongs to)
+};
+layout(std430, binding = 5) readonly buffer Halos {
+  Halo halos[];
+};
+uniform int   uHaloCount;
+// Cross-galaxy merge boost: the force from a DIFFERENT galaxy's halo is scaled
+// by this (1 = physical). A cloud's OWN halo (owner == uSelfHaloOwner) is never
+// scaled, so its rotation curve / internal structure is unchanged — only how
+// hard two galaxies pull on each other, so distant ones merge faster.
+uniform int   uSelfHaloOwner;
+uniform float uHaloMergeStrength;
+
 // ── Uniforms ──
 uniform int   uParticleCount;
 uniform int   uNodeCount;
@@ -107,12 +128,19 @@ void main() {
       float accel = uG * node.com.w / d2;
       acc += normalize(r) * accel;
     } else {
-      // Open the node: push non-empty children onto the stack
+      // Open the node: push non-empty children onto the stack.
+      int pushed = 0;
       for (int c = 0; c < 8; c++) {
         if (node.children[c] >= 0 && stackTop < 64) {
           stack[stackTop] = node.children[c];
           stackTop++;
+          pushed++;
         }
+      }
+      // A depth-capped MULTI-particle leaf has no children (see octree.cpp): it
+      // cannot be opened, so apply it as one COM point or its mass would vanish.
+      if (pushed == 0) {
+        acc += normalize(r) * (uG * node.com.w / d2);
       }
     }
   }
@@ -126,8 +154,24 @@ void main() {
     acc += normalize(r) * accel;
   }
 
-  // ── Halo (see uHaloVFlat) ──
-  if (uHaloVFlat > 0.0) {
+  // ── Halo(s) (see the Halos buffer) ──
+  // Multi-cloud: sum every cloud's halo, each centred on its own COM, so a
+  // particle is bound by its own galaxy AND pulled by the others. Single cloud:
+  // fall back to the one uHaloVFlat uniform centred on the sim origin (which is
+  // that cloud's own origin, so uFrameOffset is 0 and this is unchanged).
+  if (uHaloCount > 0) {
+    for (int h = 0; h < uHaloCount; h++) {
+      vec3 rel = pos - halos[h].cVF.xyz;      // particle relative to halo centre
+      float r  = length(rel);
+      if (r > 1e-9) {
+        float vf = halos[h].cVF.w, rc = halos[h].rc.x;
+        float vc = vf * r / (r + rc);
+        // Own halo (self) at physical strength; another galaxy's boosted.
+        float k = (int(halos[h].rc.y + 0.5) == uSelfHaloOwner) ? 1.0 : uHaloMergeStrength;
+        acc -= rel * (k * vc * vc / (r * r));  // centripetal toward that centre
+      }
+    }
+  } else if (uHaloVFlat > 0.0) {
     float r = length(pos);
     if (r > 1e-9) {
       float vc = uHaloVFlat * r / (r + uHaloRCore);

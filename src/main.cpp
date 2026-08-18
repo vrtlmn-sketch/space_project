@@ -54,6 +54,7 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
   cloud->formationFile      = cd.formationFile;   // keep bare filename, not full path
   cloud->computeMethod      = static_cast<CloudComputeMethod>(cd.computeMethod);
   cloud->barnesHutTheta     = cd.theta;
+  cloud->useDarkMatterHalo  = cd.useDarkMatterHalo;
   cloud->temperature        = cd.temperature;
   cloud->renderMode         = cd.renderMode;
   cloud->nebulaScatterScale = cd.nebulaScatterScale;
@@ -482,6 +483,7 @@ int main(int argc, char** argv) {
     cd.formationFile = cf.formationFile;
     cd.computeMethod = cf.computeMethod;
     cd.theta = cf.theta;
+    cd.useDarkMatterHalo = cf.useDarkMatterHalo;
     cd.temperature = cf.temperature;
     cd.renderMode = cf.renderMode;
     cd.nebulaScatterScale = cf.nebulaScatterScale;
@@ -771,6 +773,7 @@ int main(int argc, char** argv) {
     renderer.dustDetail         = s.dustDetail;
     renderer.simSpeed        = s.simSpeed;
     renderer.pendingSimSpeed = s.simSpeed;
+    renderer.haloMergeStrength = s.haloMergeStrength;
     renderer.playbackSpeed   = s.playbackSpeed;
     renderer.exaggeratedSizes = s.exaggeratedSizes;
     renderer.sizeExagFactor   = s.sizeExagFactor;
@@ -819,6 +822,7 @@ int main(int argc, char** argv) {
       cd.formationFile = c->formationFile;
       cd.computeMethod = static_cast<int>(c->computeMethod);
       cd.theta = c->barnesHutTheta;
+      cd.useDarkMatterHalo = c->useDarkMatterHalo;
       cd.temperature = c->temperature;
       cd.renderMode = c->renderMode;
       cd.nebulaScatterScale = c->nebulaScatterScale;
@@ -979,6 +983,7 @@ int main(int argc, char** argv) {
     s.rasterLiveWidth     = renderer.GetRasterLiveWidth();
     s.rasterLiveHeight    = renderer.GetRasterLiveHeight();
     s.simSpeed        = renderer.simSpeed;
+    s.haloMergeStrength = renderer.haloMergeStrength;
     s.playbackSpeed   = renderer.playbackSpeed;
     s.exaggeratedSizes = renderer.exaggeratedSizes;
     s.sizeExagFactor   = renderer.sizeExagFactor;

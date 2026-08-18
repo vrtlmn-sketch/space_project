@@ -136,6 +136,7 @@ struct CloudFormState {
   std::string formationFile = "milky_way_5k.json"; // empty = procedural
   int   computeMethod = 1; // 0=CPU, 1=Barnes-Hut GPU (default)
   float theta       = 1.5f; // Barnes-Hut opening angle
+  bool  useDarkMatterHalo = true; // materialise halo as real DM particles
   float temperature = 4500.f; // Kelvin — blackbody colour for particles
   int   renderMode  = 0; // 0=Points, 1=Nebula (soft glow)
   float nebulaScatterScale = 0.4f;
@@ -703,6 +704,10 @@ public:
   static constexpr float kSimSpeedMin = 0.01f, kSimSpeedMax = 1.0e11f;
   float simSpeed{1.0f};        // ACTIVE step (dt of recorded data)
   float pendingSimSpeed{1.0f}; // UI-edited value; applied via Save (clears data)
+  // Boost on the force one galaxy's halo exerts on ANOTHER galaxy's particles
+  // (1 = physical). Higher makes distant galaxies fall together and merge much
+  // faster; a galaxy's own halo is never scaled, so its structure is unchanged.
+  float haloMergeStrength{1.0f};
   float playbackSpeed{1.0f};   // 1 = 5 frames per tick
   int   framesThisTick{1};
   // Slowest useful playback: every recorded frame is displayed

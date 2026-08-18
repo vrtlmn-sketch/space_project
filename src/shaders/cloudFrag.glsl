@@ -4,6 +4,7 @@ out vec4 FragColor;
 uniform float uTemperature; // Kelvin (0 = default warm grey)
 uniform int   uRenderMode;  // 0 = Point, 1 = Nebula
 uniform int   uRealistic;   // 0 = nav look, 1 = Cinematic Performant (HDR, RT-like)
+uniform int   uDMDraw;      // 1 = drawing the dark-matter tail (flat gray dots, debug only)
 uniform int   uCloudPass;   // 0 = haze, 1 = core, 3 = dust (reddened extinction)
 uniform int   uStarfield;   // 1 = measured catalogue (wide brightness range)
 uniform int   uDensityOnly; // 1 = dust pass writes DENSITY (screen-space rim-light map)
@@ -65,6 +66,15 @@ vec3 blackbody(float T) {
 }
 
 void main() {
+    // ── Dark-matter debug dots ──
+    // Flat gray, round, faint. Only the debug view draws these (the pretty and
+    // RT paths never emit DM), so no HDR/hash logic applies.
+    if (uDMDraw != 0) {
+        vec2 pc = gl_PointCoord * 2.0 - 1.0;
+        if (dot(pc, pc) > 1.0) discard;
+        FragColor = vec4(0.32, 0.33, 0.40, 0.45);
+        return;
+    }
     // ── Realistic HDR path (Cinematic Performant) ──
     if (uRealistic != 0) {
         vec2  pc = gl_PointCoord * 2.0 - 1.0; // [-1,1]

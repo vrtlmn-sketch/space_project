@@ -183,6 +183,7 @@ bool ProjectSerializer::Save(const std::string& path,
       {"formationFile",     cloud.formationFile},
       {"computeMethod",     cloud.computeMethod},
       {"theta",             cloud.theta},
+      {"useDarkMatterHalo", cloud.useDarkMatterHalo},
       {"temperature",       cloud.temperature},
       {"renderMode",        cloud.renderMode},
       {"nebulaScatterScale",cloud.nebulaScatterScale},
@@ -321,6 +322,7 @@ bool ProjectSerializer::Save(const std::string& path,
     // Simulation
     s["simSpeed"]      = settings.simSpeed;
     s["playbackSpeed"] = settings.playbackSpeed;
+    s["haloMergeStrength"] = settings.haloMergeStrength;
     s["exaggeratedSizes"] = settings.exaggeratedSizes;
     s["sizeExagFactor"]   = settings.sizeExagFactor;
     s["ramBudgetGB"] = settings.ramBudgetGB;
@@ -513,6 +515,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.formationFile = c.value("formationFile", std::string{});
     cd.computeMethod = c.value("computeMethod", 1);
     cd.theta         = c.value("theta",         CloudData{}.theta);
+    cd.useDarkMatterHalo = c.value("useDarkMatterHalo", CloudData{}.useDarkMatterHalo);
     cd.temperature        = c.value("temperature",        4500.f);
     cd.renderMode         = c.value("renderMode",         0);
     cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
@@ -665,6 +668,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);
     st.playbackSpeed = s.value("playbackSpeed", 1.0f);
+    st.haloMergeStrength = s.value("haloMergeStrength", SceneSettings{}.haloMergeStrength);
     st.exaggeratedSizes = s.value("exaggeratedSizes", false);
     st.sizeExagFactor   = s.value("sizeExagFactor",   750.0f);
     st.ramBudgetGB = s.value("ramBudgetGB", 1.0f);
