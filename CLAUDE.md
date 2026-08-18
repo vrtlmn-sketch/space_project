@@ -670,7 +670,7 @@ against the mouse and the overlays, so a preset must never dictate the aspect.
 `Renderer::RasterRenderSize(w, h, outW, outH)` is the one place that rule lives
 for the raster side; the raytracer's two dispatch sites do the same inline.
 
-`Raster Resolution` defaults to **1080p** (`0,0` = Viewport = follow the window).
+`Raster Resolution` defaults to **Viewport** (`0,0` = follow the window).
 It drives the live Performant view, its Snap, and the Performant recording
 override in `StartRecording`, so the preview and the output cannot disagree.
 

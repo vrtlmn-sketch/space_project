@@ -126,7 +126,7 @@ public:
   int    dynTCounter{0};         // T/COM/mass are O(n): refreshed every few frames
   std::string formationFile;  // empty = procedural generation
   CloudComputeMethod computeMethod{CloudComputeMethod::BarnesHutGPU};
-  float barnesHutTheta{0.5f};
+  float barnesHutTheta{1.5f};
   float temperature{4500.f};      // Kelvin — blackbody colour for particles
   int   renderMode{0};            // 0=Points, 1=Nebula
   float nebulaScatterScale{0.4f}; // Beer-Lambert dTau multiplier (nebula mode)

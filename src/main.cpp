@@ -876,7 +876,7 @@ int main(int argc, char** argv) {
           c->temperature != 4500.f || c->renderMode != 0 ||
           c->nebulaScatterScale != 0.4f || c->particleSizeSpread != 0.0f ||
           c->computeMethod != CloudComputeMethod::BarnesHutGPU ||
-          c->barnesHutTheta != 0.5f ||
+          c->barnesHutTheta != 1.5f ||
           c->renderedObject.galaxyFullStars != rec.starsPerGalaxy ||
           c->simulatePhysics || !c->keyframes.empty() || dataIdentity ||
           !c->formationFile.empty();

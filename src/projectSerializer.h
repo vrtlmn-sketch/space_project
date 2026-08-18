@@ -69,7 +69,7 @@ struct CloudData {
   float sizeX{3.f}, sizeY{3.f}, sizeZ{3.f};
   std::string formationFile;   // empty = procedural, non-empty = load from templates/formations/
   int   computeMethod{1};      // 0=CPU, 1=Barnes-Hut GPU (default)
-  float theta{0.5f};           // Barnes-Hut opening angle
+  float theta{1.5f};           // Barnes-Hut opening angle
   float temperature{4500.f};   // Kelvin — blackbody colour for particles
   int   renderMode{0};         // 0=Points, 1=Nebula
   float nebulaScatterScale{0.4f};
@@ -105,7 +105,7 @@ struct UniverseOverride {
   float nebulaScatterScale{0.4f};
   float particleSizeSpread{0.0f};
   int   computeMethod{1};
-  float theta{0.5f};
+  float theta{1.5f};
   int   fullStars{0};
   bool  simulatePhysics{false};
   std::string dataFile;        // non-empty: identity is simulated DATA (sidecar)
@@ -169,9 +169,9 @@ struct SceneSettings {
   int   rtLiveResPreset{1};
   int   rtLiveWidth{142};
   int   rtLiveHeight{80};
-  int   rasterLiveResPreset{3};   // 1080p; 0 = Viewport (follow the window)
-  int   rasterLiveWidth{1920};
-  int   rasterLiveHeight{1080};
+  int   rasterLiveResPreset{0};   // 0 = Viewport (follow the window)
+  int   rasterLiveWidth{0};
+  int   rasterLiveHeight{0};
 
   // Photographic HDR (RT views)
   float rtExposure{0.92f};

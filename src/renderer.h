@@ -135,7 +135,7 @@ struct CloudFormState {
   int   distribution = 0; // 0=Sinusoidal
   std::string formationFile = "milky_way_5k.json"; // empty = procedural
   int   computeMethod = 1; // 0=CPU, 1=Barnes-Hut GPU (default)
-  float theta       = 0.5f; // Barnes-Hut opening angle
+  float theta       = 1.5f; // Barnes-Hut opening angle
   float temperature = 4500.f; // Kelvin — blackbody colour for particles
   int   renderMode  = 0; // 0=Points, 1=Nebula (soft glow)
   float nebulaScatterScale = 0.4f;
@@ -434,9 +434,9 @@ private:
   // Live rasterizer resolution for the Cinematic Performant view. The preset
   // HEIGHT is the quality knob and the WIDTH follows the target's aspect (same
   // rule the raytracer uses), so a fixed 16:9 buffer can never stretch the image.
-  int    rasterLiveResPreset{3};         // index into rasterPresets (default = 1080p)
-  int    rasterLiveWidth{1920};          // 0 = follow the target size (Viewport)
-  int    rasterLiveHeight{1080};
+  int    rasterLiveResPreset{0};         // index into rasterPresets (default = Viewport)
+  int    rasterLiveWidth{0};             // 0 = follow the target size (Viewport)
+  int    rasterLiveHeight{0};
 
   // Raytracer quality settings
   int    rtMaxBounces{1};                // reflection bounces (0 = no reflections)

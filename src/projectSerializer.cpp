@@ -512,7 +512,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.sizeZ         = c.value("sizeZ",         5.f);
     cd.formationFile = c.value("formationFile", std::string{});
     cd.computeMethod = c.value("computeMethod", 1);
-    cd.theta         = c.value("theta",         0.5f);
+    cd.theta         = c.value("theta",         CloudData{}.theta);
     cd.temperature        = c.value("temperature",        4500.f);
     cd.renderMode         = c.value("renderMode",         0);
     cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
@@ -564,7 +564,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
           ov.nebulaScatterScale = o.value("nebulaScatterScale", 0.4f);
           ov.particleSizeSpread = o.value("particleSizeSpread", 0.0f);
           ov.computeMethod      = o.value("computeMethod",      1);
-          ov.theta              = o.value("theta",              0.5f);
+          ov.theta              = o.value("theta",              UniverseOverride{}.theta);
           ov.fullStars          = o.value("fullStars",          0);
           ov.simulatePhysics = o.value("simulatePhysics", false);
           ov.dataFile        = o.value("dataFile",        std::string{});

@@ -123,7 +123,7 @@
           "sizeY": 3.0,
           "sizeZ": 3.0,
           "temperature": 1000.0,
-          "theta": 0.5
+          "theta": 1.5
         },
         {
           "computeMethod": 1,
@@ -154,7 +154,7 @@
           "sizeY": 3.0,
           "sizeZ": 3.0,
           "temperature": 4085.0,
-          "theta": 0.5
+          "theta": 1.5
         }
       ],
       "popElliptical": 0.27000001072883606,
