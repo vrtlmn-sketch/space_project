@@ -402,6 +402,27 @@ placed at v_c(r) is then in equilibrium BY CONSTRUCTION — no mass fiddling.
   A star at rest 26 kly out was "moving consistently" because it was
   free-falling toward the black hole with no tangential speed.
 
+## Spiral arms TRAIL — spin is OPPOSITE to the winding
+
+Every generator (`GenerateGalaxyStars` in universeGen.cpp, and both
+`templates/formations/generate_milky_way*.py`) had the galaxy rotating the SAME
+way its arms wind, which makes the arms LEAD — the winding grows the polar angle
+with radius (CCW) and the placed velocity `(-vc·y/r, vc·x/r)` is also CCW. Real
+galaxies trail, so the rotation must be OPPOSITE the winding: the velocity is now
+`(+vc·y/r, -vc·x/r)` (CW). The halo force is centripetal, so reversing the spin
+keeps every star in equilibrium — a pure look/motion fix, no mass retune.
+
+- **The runtime generator fix corrects every universe and procedural galaxy for
+  free** — they are generated from the recipe each run, nothing is baked.
+- **Baked formations (`milky_way_*.json`) store velocities**, so they were flipped
+  in place: negating the whole velocity vector reverses the spin (positions
+  untouched, scatter just re-signed — statistically identical). The non-spiral
+  formations (belts, clusters, nebula, disc) were left alone.
+- **`projects/milky_way.json`** carries Sol + planets with the disc drift added.
+  Only the DRIFT was reversed (`v -= 2·SolDrift`) so the solar system keeps
+  orbiting the Sun prograde while the galaxy-scale drift flips; Sagittarius A*
+  (at rest at the centre) is untouched. None of this changes a paused frame.
+
 ## A nebula is a VOLUME — its own object type, not a cloud
 
 `ObjectType::Nebula` (physicsObject.h). The first attempt was a cloud with a

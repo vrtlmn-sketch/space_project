@@ -109,8 +109,9 @@ def generate_particles(num_particles, seed=SEED):
 
         # Flat rotation curve that rises through the core: v = V_FLAT * r/(r+R_CORE)
         v_circ = V_FLAT * (r / (r + R_CORE))
-        vx = -v_circ * math.sin(theta)
-        vz =  v_circ * math.cos(theta)
+        # Spin OPPOSITE to the arm winding so the arms TRAIL (the physical case).
+        vx =  v_circ * math.sin(theta)
+        vz = -v_circ * math.cos(theta)
         vy = 0.0
 
         vx += random.gauss(0, VEL_SCATTER)

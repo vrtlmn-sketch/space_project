@@ -111,8 +111,9 @@ def generate_particles(num_particles, seed=42):
         # Tangential velocity for approximately circular orbit
         # v = sqrt(G * M / r)  (standard Newtonian circular orbit)
         v_circ = math.sqrt(G_SIM * M_CENTRAL / max(r, 0.01))
-        vx = -v_circ * math.sin(theta)
-        vz =  v_circ * math.cos(theta)
+        # Spin OPPOSITE to the arm winding so the arms TRAIL (the physical case).
+        vx =  v_circ * math.sin(theta)
+        vz = -v_circ * math.cos(theta)
         vy = 0.0
 
         # Add scatter

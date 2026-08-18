@@ -206,8 +206,10 @@ void GenerateGalaxyStars(const GalaxyDesc& d, int starCount, std::vector<vec3>& 
       // tangential in the disc plane, plus isotropic-ish scatter.
       float rr = std::sqrt(x * x + y * y);
       float vc = s.vFlat * rr / (rr + s.rCoreFrac * R);
-      float vx = (rr > 1e-9f) ? -vc * (y / rr) : 0.0f;
-      float vy = (rr > 1e-9f) ?  vc * (x / rr) : 0.0f;
+      // Spin OPPOSITE to the arm winding so the arms TRAIL (the physical case);
+      // winding grows the angle with radius (CCW), so rotation is CW.
+      float vx = (rr > 1e-9f) ?  vc * (y / rr) : 0.0f;
+      float vy = (rr > 1e-9f) ? -vc * (x / rr) : 0.0f;
       float vz = 0.0f;
       vx += vrng.gauss() * s.velScatter;
       vy += vrng.gauss() * s.velScatter;
