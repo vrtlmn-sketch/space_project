@@ -69,7 +69,7 @@ struct CloudData {
   float sizeX{3.f}, sizeY{3.f}, sizeZ{3.f};
   std::string formationFile;   // empty = procedural, non-empty = load from templates/formations/
   int   computeMethod{1};      // 0=CPU, 1=Barnes-Hut GPU (default)
-  float theta{1.5f};           // Barnes-Hut opening angle
+  float theta{0.5f};           // Barnes-Hut opening angle (>1 grids: see clamp)
   bool  useDarkMatterHalo{true}; // materialise the halo as real DM particles
   float temperature{4500.f};   // Kelvin — blackbody colour for particles
   int   renderMode{0};         // 0=Points, 1=Nebula
@@ -106,7 +106,7 @@ struct UniverseOverride {
   float nebulaScatterScale{0.4f};
   float particleSizeSpread{0.0f};
   int   computeMethod{1};
-  float theta{1.5f};
+  float theta{0.5f};
   int   fullStars{0};
   bool  simulatePhysics{false};
   std::string dataFile;        // non-empty: identity is simulated DATA (sidecar)

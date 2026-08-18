@@ -142,7 +142,7 @@ public:
   int    dynTCounter{0};         // T/COM/mass are O(n): refreshed every few frames
   std::string formationFile;  // empty = procedural generation
   CloudComputeMethod computeMethod{CloudComputeMethod::BarnesHutGPU};
-  float barnesHutTheta{1.5f};
+  float barnesHutTheta{0.5f};
   // Materialise the halo as real (invisible) dark-matter particles when this
   // cloud simulates, so it stays bound and can collide/merge with others. On by
   // default for galaxies; turn off for a plain cloud that needs no halo.

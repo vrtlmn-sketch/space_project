@@ -135,7 +135,7 @@ struct CloudFormState {
   int   distribution = 0; // 0=Sinusoidal
   std::string formationFile = "milky_way_5k.json"; // empty = procedural
   int   computeMethod = 1; // 0=CPU, 1=Barnes-Hut GPU (default)
-  float theta       = 1.5f; // Barnes-Hut opening angle
+  float theta       = 0.5f; // Barnes-Hut opening angle
   bool  useDarkMatterHalo = true; // materialise halo as real DM particles
   float temperature = 4500.f; // Kelvin — blackbody colour for particles
   int   renderMode  = 0; // 0=Points, 1=Nebula (soft glow)

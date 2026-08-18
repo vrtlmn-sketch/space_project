@@ -282,7 +282,10 @@ void CloudObject::dispatchBarnesHut(const std::vector<PhysicsObjectStructure>& b
   if (locHaloCount >= 0) glUniform1i(locHaloCount, 0);   // single-cloud: use the uniform halo
   if (locSelfHaloOwner >= 0) glUniform1i(locSelfHaloOwner, -1);
   if (locHaloMergeStrength >= 0) glUniform1f(locHaloMergeStrength, 1.0f);
-  glUniform1f(locTheta, barnesHutTheta);
+  // Clamp the opening angle: above ~1.0 Barnes-Hut clusters stars onto the
+  // octree's cubic cell grid (the "galaxy snaps to a grid" bug). Belt-and-braces
+  // for any older project that still stores a large theta.
+  glUniform1f(locTheta, barnesHutTheta < 1.0f ? barnesHutTheta : 1.0f);
   if (locFrameOffset >= 0) glUniform3f(locFrameOffset, 0.0f, 0.0f, 0.0f);  // sim frame = cloud frame
 
   // A valid (possibly empty) buffer must be bound at 5 even when uHaloCount is 0.
@@ -347,7 +350,10 @@ void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
   if (locHaloCount >= 0) glUniform1i(locHaloCount, haloCount);
   if (locSelfHaloOwner >= 0) glUniform1i(locSelfHaloOwner, selfHaloOwner);
   if (locHaloMergeStrength >= 0) glUniform1f(locHaloMergeStrength, haloMergeStrength);
-  glUniform1f(locTheta, barnesHutTheta);
+  // Clamp the opening angle: above ~1.0 Barnes-Hut clusters stars onto the
+  // octree's cubic cell grid (the "galaxy snaps to a grid" bug). Belt-and-braces
+  // for any older project that still stores a large theta.
+  glUniform1f(locTheta, barnesHutTheta < 1.0f ? barnesHutTheta : 1.0f);
   if (locFrameOffset >= 0)
     glUniform3f(locFrameOffset, (float)(position.x - simOrigin.x),
                                 (float)(position.y - simOrigin.y),

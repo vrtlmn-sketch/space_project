@@ -428,6 +428,17 @@ its rotation curve / blow up its disc), so each halo carries an **owner id**
 (`GPUHalo.pad0` → shader `rc.y`) and the dispatch passes the cloud's own id
 (`uSelfHaloOwner`); the shader applies the multiplier only when they differ.
 
+**Barnes-Hut theta > ~1.0 makes a galaxy snap to a GRID on play.** A large
+opening angle accepts even adjacent octree cells as single point masses, so
+stars get pulled toward the cells' COMs and clump onto the tree's **cubic cell
+lattice** — the "galaxy goes into a grid when you start simulating" bug. It is a
+force artifact, not a render one, and it is worst for concentrated galaxies
+(ellipticals). A single galaxy is `sim[0]` (frame offset 0), so it CANNOT be
+float-precision quantisation — the only cubic-lattice source is theta. Default
+is back to **0.5** (was briefly 1.5 for speed — that is what caused it), the
+inspector slider caps at 1.0, and the dispatch **clamps uTheta to 1.0** so an
+older project storing a large theta still can't grid.
+
 **Why NOT real DM particles** (the rejected experiment; scaffolding still exists,
 `ensureDarkMatter`/`stripDarkMatter`, but is **not called**): a spherical
 population of heavy invisible particles in the tail of `cloudParticles` is the

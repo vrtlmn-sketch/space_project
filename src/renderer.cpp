@@ -5974,10 +5974,10 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
       if (cloudForm.computeMethod == 1) {
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat("Theta##ci", &cloudForm.theta, 0.1f, 1.5f, "%.2f")) {
+        if (ImGui::SliderFloat("Theta##ci", &cloudForm.theta, 0.1f, 1.0f, "%.2f")) {
           cloud->barnesHutTheta = cloudForm.theta;
         }
-        ImGui::TextDisabled("Lower = more accurate, slower");
+        ImGui::TextDisabled("Lower = more accurate, slower. >1 clusters stars on a grid.");
       }
 
       if (ImGui::Checkbox("Dark matter halo##ci", &cloudForm.useDarkMatterHalo))
