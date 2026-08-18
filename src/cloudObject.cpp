@@ -405,44 +405,62 @@ void CloudObject::SimulateSharedForward(
   }
   if (s_sharedTreeSSBO == 0) glGenBuffers(1, &s_sharedTreeSSBO);
 
-  // Lockstep: each sub-step rebuilds one octree over every simulated cloud's
-  // current particles, so cross-cloud gravity stays in sync as they move.
+  // Sub-steps for THIS tick: the finest any still-simulating cloud needs (see
+  // dynamics.h). A collapsing cloud shortens its own dynamical time under the
+  // fixed step, so it integrates its internal orbits at dt/Mframe to stay
+  // resolved rather than freezing. With every cloud resolved Mframe is 1 and
+  // this is bit-identical to the plain one-step-per-frame path.
+  int Mframe = 1;
+  for (size_t k = 0; k < sim.size(); ++k)
+    if (remaining[k] > 0) Mframe = std::max(Mframe, std::max(1, sim[k]->dynSubsteps));
+  const float subSpeed = renderer.simSpeed / (float)Mframe;
+
+  // One recorded frame per s; within it, Mframe sub-steps each rebuild the
+  // shared octree over every cloud's current particles so cross-cloud gravity
+  // stays in sync as they move.
   for (int s = 0; s < maxRem; ++s) {
-    std::vector<vec3>  allPos;
-    std::vector<float> allMass;
-    for (CloudObject* c : sim) {
-      const auto& ps = c->renderedObject.cloudParticles;
-      allPos.reserve(allPos.size() + ps.size());
-      allMass.reserve(allMass.size() + ps.size());
-      // Cloud origin relative to the sim frame, differenced in DOUBLE once —
-      // the per-particle add then stays small-float + small-float.
-      const vec3 off{(float)(c->position.x - simOrigin.x),
-                     (float)(c->position.y - simOrigin.y),
-                     (float)(c->position.z - simOrigin.z)};
-      for (const auto& p : ps) {
-        allPos.push_back(vec3{p.position.x + off.x,
-                              p.position.y + off.y,
-                              p.position.z + off.z});
-        allMass.push_back(p.mass);
+    for (int sub = 0; sub < Mframe; ++sub) {
+      std::vector<vec3>  allPos;
+      std::vector<float> allMass;
+      for (CloudObject* c : sim) {
+        const auto& ps = c->renderedObject.cloudParticles;
+        allPos.reserve(allPos.size() + ps.size());
+        allMass.reserve(allMass.size() + ps.size());
+        // Cloud origin relative to the sim frame, differenced in DOUBLE once —
+        // the per-particle add then stays small-float + small-float.
+        const vec3 off{(float)(c->position.x - simOrigin.x),
+                       (float)(c->position.y - simOrigin.y),
+                       (float)(c->position.z - simOrigin.z)};
+        for (const auto& p : ps) {
+          allPos.push_back(vec3{p.position.x + off.x,
+                                p.position.y + off.y,
+                                p.position.z + off.z});
+          allMass.push_back(p.mass);
+        }
+      }
+      if (allPos.empty()) break;
+
+      vec3 zeroOffset{0.0f, 0.0f, 0.0f};
+      s_sharedOctree.build(allPos.data(), allMass.data(), (int)allPos.size(), zeroOffset);
+
+      const auto& nodes = s_sharedOctree.nodes();
+      int nodeCount = (int)nodes.size();
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedTreeSSBO);
+      glBufferData(GL_SHADER_STORAGE_BUFFER, nodeCount * (GLsizeiptr)sizeof(OctreeNodeGPU),
+                   nodes.data(), GL_DYNAMIC_DRAW);
+      glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+      for (size_t k = 0; k < sim.size(); ++k) {
+        if (s >= remaining[k]) continue;   // this cloud already finished its steps
+        sim[k]->dispatchAgainstTree(s_sharedTreeSSBO, nodeCount,
+                                    s_sharedBigBodySSBO, bbCount, subSpeed,
+                                    simOrigin);
       }
     }
-    if (allPos.empty()) break;
 
-    vec3 zeroOffset{0.0f, 0.0f, 0.0f};
-    s_sharedOctree.build(allPos.data(), allMass.data(), (int)allPos.size(), zeroOffset);
-
-    const auto& nodes = s_sharedOctree.nodes();
-    int nodeCount = (int)nodes.size();
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedTreeSSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, nodeCount * (GLsizeiptr)sizeof(OctreeNodeGPU),
-                 nodes.data(), GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
+    // Record ONE frame per s, after its sub-steps have advanced a full step.
     for (size_t k = 0; k < sim.size(); ++k) {
-      if (s >= remaining[k]) continue;   // this cloud already finished its steps
-      sim[k]->dispatchAgainstTree(s_sharedTreeSSBO, nodeCount,
-                                  s_sharedBigBodySSBO, bbCount, renderer.simSpeed,
-                                  simOrigin);
+      if (s >= remaining[k]) continue;
       if (sim[k]->frameStore) {
         auto snaps = sim[k]->renderedObject.getParticleSnapshots();
         // Guard: pushing an empty snapshot vector memcpy'd from nullptr.
@@ -591,22 +609,29 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
         steps -= (int)jump;
       }
 
-      // Simulate remaining steps at the head
+      // Simulate remaining steps at the head. A cloud whose own step is too
+      // coarse (a collapse shortening its dynamical time) integrates its
+      // internal orbits at dt/M to stay resolved instead of freezing; M is 1
+      // for a resolved cloud, so that case is unchanged (see dynamics.h).
+      const int   M        = std::max(1, dynSubsteps);
+      const float subSpeed = renderer.simSpeed / (float)M;
       for (int s = 0; s < steps; ++s)
       {
         if (frameStore && frameStore->totalFrames() == 0)
           initialSnaps = renderedObject.getParticleSnapshots();
 
-        if (computeMethod == CloudComputeMethod::BarnesHutGPU) {
-          if (!gpuInitialized) initGPU();
-          if (gpuInitialized) {
-            dispatchBarnesHut(physicsObjects, renderer.simSpeed);
+        for (int sub = 0; sub < M; ++sub) {
+          if (computeMethod == CloudComputeMethod::BarnesHutGPU) {
+            if (!gpuInitialized) initGPU();
+            if (gpuInitialized) {
+              dispatchBarnesHut(physicsObjects, subSpeed);
+            } else {
+              // Fallback to CPU if init failed
+              renderedObject.UpdateCloudPhysics(physicsObjects, subSpeed);
+            }
           } else {
-            // Fallback to CPU if init failed
-            renderedObject.UpdateCloudPhysics(physicsObjects, renderer.simSpeed);
+            renderedObject.UpdateCloudPhysics(physicsObjects, subSpeed);
           }
-        } else {
-          renderedObject.UpdateCloudPhysics(physicsObjects, renderer.simSpeed);
         }
         // Record the frame
         if (frameStore) {
@@ -668,6 +693,7 @@ void CloudObject::clearRecording()
   if (frameStore) frameStore->clear();
   timeframe = 0;
   dynRigid   = false;   // same as PhysicsObject::clearRecording: re-enter from the current state
+  dynSubsteps = 1;
   dynElapsed = 0.0;
   dynMass    = 0.0;     // and re-measure
 }

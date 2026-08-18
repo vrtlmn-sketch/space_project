@@ -277,21 +277,41 @@ void UpdateSceneDynamics(std::vector<PhysicsObject>& objects,
                                   (double)c.renderedObject.rmsRadius());
     const bool parentChanged = (parent != c.dynParent);
     c.dynParent = parent;
-    const double steps = (c.dynT > 0.0 && dt > 0.0) ? c.dynT / dt : 1e300;
-    if (!c.dynRigid) {
-      if (steps < kResolvedSteps) {
+    const int  prevSubsteps = c.dynSubsteps;
+    // steps/orbit at the current step, and the best it can reach by sub-stepping
+    // up to the cap. Rigid is decided from the capped figure, so a cloud only
+    // freezes when even kMaxSubsteps cannot resolve it.
+    const double steps    = (c.dynT > 0.0 && dt > 0.0) ? c.dynT / dt : 1e300;
+    const double capSteps = steps * (double)kMaxSubsteps;
+    if (!kFreezeUnresolvedClouds) {
+      // EXPERIMENT: freezing off — clouds never go rigid. An unresolved cloud
+      // sub-steps up to the cap and then runs best-effort at that resolution.
+      c.dynRigid = false;
+    } else if (!c.dynRigid) {
+      if (capSteps < kResolvedSteps) {
         c.dynRigid = true;
         c.dynMu = mu; c.dynRelPos0 = c.dynComWorld - ppos; c.dynRelVel0 = c.dynComVel - pvel; c.dynElapsed = 0.0;
-        if (debug) std::cerr << "[dyn] cloud " << k << " -> rigid (" << steps << " steps/orbit), parent " << parent << "\n";
+        if (debug) std::cerr << "[dyn] cloud " << k << " -> rigid (" << capSteps
+                             << " steps/orbit even at " << kMaxSubsteps << "x), parent " << parent << "\n";
       }
     } else {
-      if (steps > kUnresolvedSteps) {
+      if (capSteps > kUnresolvedSteps) {
         c.dynRigid = false;
-        if (debug) std::cerr << "[dyn] cloud " << k << " -> numeric (" << steps << " steps/orbit)\n";
+        if (debug) std::cerr << "[dyn] cloud " << k << " -> numeric (" << capSteps
+                             << " steps/orbit at " << kMaxSubsteps << "x)\n";
       } else if (parentChanged) {
         c.dynMu = mu; c.dynRelPos0 = c.dynComWorld - ppos; c.dynRelVel0 = c.dynComVel - pvel; c.dynElapsed = 0.0;
       }
     }
+    // Sub-steps to hold >= kResolvedSteps steps/orbit while numeric (1 when the
+    // step already resolves the cloud, so a resolved cloud is bit-identical).
+    if (c.dynRigid) c.dynSubsteps = 1;
+    else if (steps >= kResolvedSteps) c.dynSubsteps = 1;
+    else c.dynSubsteps = std::min((int)kMaxSubsteps,
+                                  std::max(1, (int)std::ceil(kResolvedSteps / steps)));
+    if (debug && c.dynSubsteps != prevSubsteps && !c.dynRigid)
+      std::cerr << "[dyn] cloud " << k << " sub-steps " << prevSubsteps << " -> "
+                << c.dynSubsteps << " (" << steps << " steps/orbit)\n";
   }
 
   // Parents first. Depth = length of the object-parent chain (cloud parents

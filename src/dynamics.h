@@ -28,6 +28,22 @@ namespace dyn {
 constexpr double kResolvedSteps   = 200.0;   // below this: analytic
 constexpr double kUnresolvedSteps = 400.0;   // above this: back to numeric
 
+// A cloud whose own step is too coarse SUB-STEPS its internal integration (up
+// to this many sub-steps per recorded frame) to hold >= kResolvedSteps steps
+// per orbit, instead of freezing. So a cloud collapsing under its own gravity
+// keeps being simulated as it compacts — Auto picks a step for the cloud's
+// initial dynamical time, and the collapse shortens that time under it. The
+// cloud only goes RIGID when even the cap cannot resolve it (genuinely extreme
+// dt, e.g. a small cloud deep inside a far larger galaxy).
+constexpr int    kMaxSubsteps     = 32;
+
+// EXPERIMENT: when false, clouds NEVER freeze — an unresolved cloud sub-steps
+// up to kMaxSubsteps and then runs best-effort at that resolution instead of
+// going rigid. This trades the freeze (particles held, cloud moves as one
+// body) for possible ejection at genuinely extreme dt. Flip back to true to
+// restore freezing at the cap boundary.
+constexpr bool   kFreezeUnresolvedClouds = false;
+
 // Circular-orbit period at radius r around mass parameter mu (= G·M).
 double DynamicalTime(double mu, double r);
 

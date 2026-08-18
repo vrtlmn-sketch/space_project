@@ -115,6 +115,7 @@ public:
   // around its parent (a heavier object or cloud), or coasting if it has none.
   int    dynParent{-1};          // -1 none; >=0 object index; <0 (-2-k) cloud k
   bool   dynRigid{false};
+  int    dynSubsteps{1};         // internal integration sub-steps per frame (>=1)
   double dynT{0.0};              // internal dynamical time 2π·median r / median v (yr)
   double dynMu{0.0};
   dvec3  dynRelPos0{}, dynRelVel0{};
