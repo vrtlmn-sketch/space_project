@@ -12,7 +12,10 @@
 // The kind of body. Drives shader selection, the RT object-type code, and which
 // inspector/spawn settings apply. FreeModel renders a user OBJ mesh (lit, like a
 // planet surface) — it has no atmosphere, texture, or event horizon.
-enum class ObjectType { Planet, Star, BlackHole, FreeModel };
+// Nebula = a VOLUME, not a mesh and not particles: its sphere is only the
+// bounds a ray-march runs inside (nebulaFrag.glsl). It never enters the RT
+// object list (RT would hit its bounding sphere as a solid).
+enum class ObjectType { Planet, Star, BlackHole, FreeModel, Nebula };
 
 // RT object-type code handed to the compute shaders (0=planet, 1=star,
 // 3=black hole, 5=free mesh). Single source of truth for the mapping.
@@ -21,6 +24,7 @@ inline float RtObjectType(ObjectType t) {
     case ObjectType::Star:      return 1.0f;
     case ObjectType::BlackHole: return 3.0f;
     case ObjectType::FreeModel: return 5.0f;
+    case ObjectType::Nebula:    return 6.0f;   // never pushed to RT; the code exists so nothing maps it to a planet
     default:                    return 0.0f; // Planet
   }
 }
@@ -31,6 +35,7 @@ inline const char* TypeLabel(ObjectType t) {
     case ObjectType::Star:      return "Star";
     case ObjectType::BlackHole: return "Black Hole";
     case ObjectType::FreeModel: return "Free Model";
+    case ObjectType::Nebula:    return "Nebula";
     default:                    return "Planet";
   }
 }
@@ -165,6 +170,27 @@ public:
   // from its own uniforms in ringVert, so adding a ring costs a draw call and
   // no memory.
   std::vector<PlanetRing> rings;
+
+  // ---- Nebula (ObjectType::Nebula) ----
+  // A recipe: everything below is deterministic from the seed and the knobs;
+  // visualRadius is the volume's radius (AU). See nebulaFrag.glsl.
+  struct NebulaParams {
+    unsigned seed{7};
+    int      palette{1};        // 0 natural (H-alpha pink, OIII teal), 1 Hubble (SII red, H-alpha green, OIII blue)
+    float    emission{1.0f};    // overall brightness
+    float    excitation{0.25f}; // reach of the ionising light, x radius
+    float    dust{0.6f};        // dark-lane strength
+    float    detail{1.0f};      // fine turbulence scale
+    float    density{1.0f};     // how much gas
+    int      lights{3};         // embedded hot stars (1..4)
+    int      steps{40};         // march steps in the realistic view
+    float    extent[3]{1.0f, 1.0f, 1.0f};   // box half-size, x radius (each <= 1)
+    int      volumeRes{96};     // baked volume N^3
+    int      sourceCloud{-1};   // -1 = recipe; else the cloud whose particles define the shape
+    bool     sourceDirty{true}; // re-splat the source cloud (runtime)
+  } nebula;
+  void SyncNebulaToRender();    // push params + seeded lights into renderedObject; marks a rebake when the SHAPE changed
+  unsigned long long nebulaShapeKey{0};
   RenderedObject ringMesh;
   void EnsureRingMesh();
   bool hasVisibleRings() const {

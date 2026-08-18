@@ -39,6 +39,13 @@ struct PhysicsObjectData {
   float cloudWhiteness{1.0f};
   float cloudDrift{0.0f};
   std::vector<PlanetRing> rings;   // absent in the file = no rings
+  // Nebula (shaderType 4): the recipe (see PhysicsObject::NebulaParams)
+  unsigned nebulaSeed{7};
+  int      nebulaPalette{1};
+  float    nebulaEmission{1.0f}, nebulaExcitation{0.25f}, nebulaDust{0.6f}, nebulaDetail{1.0f}, nebulaDensity{1.0f};
+  int      nebulaLights{3}, nebulaSteps{40};
+  float    nebulaExtent[3]{1.0f, 1.0f, 1.0f};
+  int      nebulaVolumeRes{96}, nebulaSourceCloud{-1};
   bool  simulatePhysics{true};
   std::vector<CameraKeyframe> keyframes;
   std::string meshPath{};  // free object: OBJ mesh path (empty = sphere object)

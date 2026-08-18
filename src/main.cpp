@@ -77,9 +77,28 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
   return cloud;
 }
 
+// Nebulae draw far-to-near: the volume pass writes depth (one march per pixel),
+// so a nearer volume must come after the one behind it to composite over it.
+static std::vector<int> NebulaDrawOrder(const std::vector<PhysicsObject>& objs, const Renderer& renderer) {
+  std::vector<std::pair<double,int>> d;
+  for (int i = 0; i < (int)objs.size(); i++) {
+    if (objs[i].shaderType != ObjectType::Nebula) continue;
+    const dvec3& p = objs[i].data.position;
+    const double x = (p.x - gCamAnchor[0]) + renderer.cameraTranslate[0];
+    const double y = (p.y - gCamAnchor[1]) + renderer.cameraTranslate[1];
+    const double z = (p.z - gCamAnchor[2]) + renderer.cameraTranslate[2];
+    d.push_back({ x*x + y*y + z*z, i });
+  }
+  std::sort(d.begin(), d.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+  std::vector<int> out; out.reserve(d.size());
+  for (auto& e : d) out.push_back(e.second);
+  return out;
+}
+
 // Map a serialized/spawn-form type code to an ObjectType. A non-empty meshPath
 // always means FreeModel (also upgrades legacy free objects saved as planets).
 static ObjectType typeFromCode(int code, const std::string& meshPath) {
+  if (code == 4) return ObjectType::Nebula;
   if (code == 3 || !meshPath.empty()) return ObjectType::FreeModel;
   if (code == 1) return ObjectType::Star;
   if (code == 2) return ObjectType::BlackHole;
@@ -109,6 +128,16 @@ static void buildScene(
     physicsObjects.back().rotationDeg = pod.rotation;
     physicsObjects.back().simulatePhysics = pod.simulatePhysics;
     physicsObjects.back().keyframes       = pod.keyframes;
+    if (st == ObjectType::Nebula) {
+      auto& po = physicsObjects.back();
+      po.nebula.seed = pod.nebulaSeed; po.nebula.palette = pod.nebulaPalette;
+      po.nebula.emission = pod.nebulaEmission; po.nebula.excitation = pod.nebulaExcitation;
+      po.nebula.dust = pod.nebulaDust; po.nebula.detail = pod.nebulaDetail;
+      po.nebula.density = pod.nebulaDensity; po.nebula.lights = pod.nebulaLights; po.nebula.steps = pod.nebulaSteps;
+      for (int k = 0; k < 3; k++) po.nebula.extent[k] = pod.nebulaExtent[k];
+      po.nebula.volumeRes = pod.nebulaVolumeRes; po.nebula.sourceCloud = pod.nebulaSourceCloud;
+      po.SyncNebulaToRender();
+    }
     if (!pod.texturePath.empty()) {
       physicsObjects.back().texturePath = pod.texturePath;
       physicsObjects.back().renderedObject.loadTexture(pod.texturePath);
@@ -405,6 +434,15 @@ int main(int argc, char** argv) {
       vec3{form.posX, form.posY, form.posZ},
       form.mass, std::string(form.name), st, form.temperature);
     auto& po = physicsObjects.back();
+    if (st == ObjectType::Nebula) {
+      // A volume: its sphere is the bounds. Radius in ly from the form.
+      po.visualRadius = form.nebulaRadiusLy * 63241.077f;
+      po.nebula.seed  = (unsigned)std::max(form.nebulaSeed, 0);
+      po.nebula.palette = form.nebulaPalette;
+      po.renderedObject.GenerateMeshSphere(po.visualRadius * renderer.activeSizeExag(), 32, 32);
+      po.simulatePhysics = false;
+      po.SyncNebulaToRender();
+    }
     if (st == ObjectType::FreeModel) {
       po.visualRadius = form.visualRadius;
       po.meshPath     = form.meshPath;
@@ -1313,6 +1351,15 @@ int main(int argc, char** argv) {
       renderer.DrawAtmosphere(obj);
       renderer.DrawRings(obj);
     }
+    renderer.BeginNebulaPass();
+    for (int ni : NebulaDrawOrder(physicsObjects, renderer)) {
+      PhysicsObject& obj = physicsObjects[ni];
+      const int sc = obj.nebula.sourceCloud;
+      const bool ok = sc >= 0 && sc < (int)clouds.size() && clouds[sc];
+      renderer.DrawNebula(obj, ok ? &clouds[sc]->renderedObject.particles() : nullptr,
+                          ok ? &clouds[sc]->rotationDeg : nullptr);
+    }
+    renderer.EndNebulaPass();
 
     if (recOverridePause) renderer.paused = savedPaused;
 
@@ -1406,6 +1453,15 @@ int main(int argc, char** argv) {
           renderer.DrawAtmosphere(obj);
           renderer.DrawRings(obj);
         }
+        renderer.BeginNebulaPass();
+        for (int ni : NebulaDrawOrder(physicsObjects, renderer)) {
+          PhysicsObject& obj = physicsObjects[ni];
+          const int sc = obj.nebula.sourceCloud;
+          const bool ok = sc >= 0 && sc < (int)clouds.size() && clouds[sc];
+          renderer.DrawNebula(obj, ok ? &clouds[sc]->renderedObject.particles() : nullptr,
+                              ok ? &clouds[sc]->rotationDeg : nullptr);
+        }
+        renderer.EndNebulaPass();
         renderer.CaptureRecordRasterVideo(rw, rh);
         renderer.EndRecordRaster();
       } else {
@@ -1467,6 +1523,15 @@ int main(int argc, char** argv) {
         renderer.DrawAtmosphere(obj);
         renderer.DrawRings(obj);
       }
+      renderer.BeginNebulaPass();
+      for (int ni : NebulaDrawOrder(physicsObjects, renderer)) {
+        PhysicsObject& obj = physicsObjects[ni];
+        const int sc = obj.nebula.sourceCloud;
+        const bool ok = sc >= 0 && sc < (int)clouds.size() && clouds[sc];
+        renderer.DrawNebula(obj, ok ? &clouds[sc]->renderedObject.particles() : nullptr,
+                            ok ? &clouds[sc]->rotationDeg : nullptr);
+      }
+      renderer.EndNebulaPass();
       renderer.CaptureRecordRasterImage(rw, rh);
       renderer.EndRecordRaster();
       renderer.rayTracerView = sRt; renderer.realisticRasterView = sRR;
@@ -1575,6 +1640,15 @@ int main(int argc, char** argv) {
           renderer.DrawAtmosphere(obj);
           renderer.DrawRings(obj);
         }
+        renderer.BeginNebulaPass();
+        for (int ni : NebulaDrawOrder(physicsObjects, renderer)) {
+          PhysicsObject& obj = physicsObjects[ni];
+          const int sc = obj.nebula.sourceCloud;
+          const bool ok = sc >= 0 && sc < (int)clouds.size() && clouds[sc];
+          renderer.DrawNebula(obj, ok ? &clouds[sc]->renderedObject.particles() : nullptr,
+                              ok ? &clouds[sc]->rotationDeg : nullptr);
+        }
+        renderer.EndNebulaPass();
         renderer.SetImagePath("/tmp/cmp_raster.png");
         renderer.CaptureRecordRasterImage(W, H);
         renderer.EndRecordRaster();
@@ -1663,6 +1737,15 @@ int main(int argc, char** argv) {
       renderer.DrawAtmosphere(obj);
       renderer.DrawRings(obj);
     }
+    renderer.BeginNebulaPass();
+    for (int ni : NebulaDrawOrder(physicsObjects, renderer)) {
+      PhysicsObject& obj = physicsObjects[ni];
+      const int sc = obj.nebula.sourceCloud;
+      const bool ok = sc >= 0 && sc < (int)clouds.size() && clouds[sc];
+      renderer.DrawNebula(obj, ok ? &clouds[sc]->renderedObject.particles() : nullptr,
+                          ok ? &clouds[sc]->rotationDeg : nullptr);
+    }
+    renderer.EndNebulaPass();
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO

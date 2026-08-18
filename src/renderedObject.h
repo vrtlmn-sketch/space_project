@@ -404,6 +404,29 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
     if (scale <= 0.0f) return fallback;
     return std::max(scale * 0.04f, 1e-6f);
   }
+  // ── Nebula volume (ObjectType::Nebula, nebulaFrag.glsl): set by
+  //    PhysicsObject::SyncNebulaToRender. renderMesh ray-marches when set. ──
+  bool  isNebulaVolume{false};
+  float nebEmission{1.0f}, nebExcitation{0.25f}, nebDust{0.6f}, nebDetail{1.0f}, nebDensity{1.0f};
+  int   nebPalette{1}, nebSteps{40};
+  float nebSeed{7.0f};
+  vec3  nebFront{0.0f, 0.0f, 1.0f};   // the open side of the bubble (local, unit)
+  int   nebLightCount{0};
+  vec4  nebLights[4]{};                // local, in units of the radius; w = luminosity
+  vec3  nebLightCol[4]{};
+  // The baked field (nebulaBake.glsl): RGBA16F N^3, rebaked only when the SHAPE
+  // changes (nebBakeDirty). Extent = box half-size in radius units (<= 1 so the
+  // sphere mesh still encloses it). Source = an optional particle-density
+  // texture splatted from a cloud, in the same box mapping.
+  unsigned int nebVolumeTex{0};
+  int          nebVolumeN{0};
+  int          nebVolumeWant{96};
+  bool         nebBakeDirty{true};
+  vec3         nebExtent{1.0f, 1.0f, 1.0f};
+  unsigned int nebSourceTex{0};
+  bool         nebHasSource{false};
+  void         releaseNebulaGlObjects();
+
   // ── Dark-matter halo (see docs/CLAUDE.md "halo") ──
   // A declared field, not sampled mass: the centripetal acceleration that
   // keeps a circular orbit at v_c(r) = haloVFlat · r / (r + haloRCore), toward

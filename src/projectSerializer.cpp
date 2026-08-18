@@ -138,6 +138,15 @@ bool ProjectSerializer::Save(const std::string& path,
       }
       o["rings"] = ringsArr;
     }
+    if (obj.shaderType == ObjectType::Nebula) {
+      o["nebula"] = {
+        {"seed", obj.nebula.seed}, {"palette", obj.nebula.palette}, {"emission", obj.nebula.emission},
+        {"excitation", obj.nebula.excitation}, {"dust", obj.nebula.dust}, {"detail", obj.nebula.detail},
+        {"density", obj.nebula.density}, {"lights", obj.nebula.lights}, {"steps", obj.nebula.steps},
+        {"extent", json::array({obj.nebula.extent[0], obj.nebula.extent[1], obj.nebula.extent[2]})},
+        {"volumeRes", obj.nebula.volumeRes}, {"sourceCloud", obj.nebula.sourceCloud}
+      };
+    }
     o["simulatePhysics"]     = obj.simulatePhysics;
     o["keyframes"]           = keyframesToJson(obj.keyframes);
     o["meshPath"]            = obj.meshPath;
@@ -419,6 +428,22 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.cloudAltitude       = o.value("cloudAltitude",       0.02f);
       pod.cloudWhiteness      = o.value("cloudWhiteness",      1.0f);
       pod.cloudDrift          = o.value("cloudDrift",          0.0f);
+      if (o.contains("nebula") && o["nebula"].is_object()) {
+        const json& nb = o["nebula"];
+        pod.nebulaSeed       = nb.value("seed", 7u);
+        pod.nebulaPalette    = nb.value("palette", 1);
+        pod.nebulaEmission   = nb.value("emission", 1.0f);
+        pod.nebulaExcitation = nb.value("excitation", 0.25f);
+        pod.nebulaDust       = nb.value("dust", 0.6f);
+        pod.nebulaDetail     = nb.value("detail", 1.0f);
+        pod.nebulaDensity    = nb.value("density", 1.0f);
+        pod.nebulaLights     = nb.value("lights", 3);
+        pod.nebulaSteps      = nb.value("steps", 40);
+      if (nb.contains("extent") && nb["extent"].is_array() && nb["extent"].size() >= 3)
+        for (int k = 0; k < 3; k++) pod.nebulaExtent[k] = nb["extent"][k].get<float>();
+      pod.nebulaVolumeRes  = nb.value("volumeRes", 96);
+      pod.nebulaSourceCloud= nb.value("sourceCloud", -1);
+      }
       if (o.contains("rings") && o["rings"].is_array()) {
         const PlanetRing def{};   // one source of ring defaults (physicsObject.h)
         for (const auto& r : o["rings"]) {

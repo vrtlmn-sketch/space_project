@@ -1294,6 +1294,46 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
   }
 
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+  if (isNebulaVolume) {
+    // The sphere is only the bounds of a ray-march (nebulaFrag.glsl). The
+    // shader keeps just the far face, so culling is irrelevant; the result is
+    // premultiplied emission over transmittance: dst = col + T * dst.
+    GLint l;
+    if (!nebVolumeTex) return;                          // not baked yet (Renderer::BakeNebulaVolume)
+    if ((l = glGetUniformLocation(program, "uNebRadius"))     >= 0) glUniform1f(l, radius);
+    if ((l = glGetUniformLocation(program, "uNebExtent"))     >= 0) glUniform3f(l, nebExtent.x, nebExtent.y, nebExtent.z);
+    if ((l = glGetUniformLocation(program, "uNebSeed"))       >= 0) glUniform1f(l, nebSeed);
+    if ((l = glGetUniformLocation(program, "uNebPalette"))    >= 0) glUniform1i(l, nebPalette);
+    if ((l = glGetUniformLocation(program, "uNebEmission"))   >= 0) glUniform1f(l, nebEmission);
+    if ((l = glGetUniformLocation(program, "uNebDust"))       >= 0) glUniform1f(l, nebDust);
+    if ((l = glGetUniformLocation(program, "uNebSteps"))      >= 0) glUniform1i(l, realisticShading ? nebSteps : std::max(nebSteps / 2, 12));
+    glActiveTexture(GL_TEXTURE5);
+    glBindTexture(GL_TEXTURE_3D, nebVolumeTex);
+    if ((l = glGetUniformLocation(program, "uVolume"))        >= 0) glUniform1i(l, 5);
+    glActiveTexture(GL_TEXTURE0);
+    // ONE fragment per pixel, chosen WITHOUT the proxy's depth or winding — both
+    // failed under this project's extreme near/far ratio (depth ties in facet
+    // patterns close up) and the sphere's inconsistent winding (culling punched
+    // polygon holes far away). Cull nothing, DISABLE depth entirely, and let the
+    // shader keep a fragment only if it is the FRONT (nearest) box intersection
+    // (uNebPickFront): exactly the near face survives, and it marches the whole
+    // analytic [t0,t1]. Occlusion by solids in front is done in the shader
+    // against the blitted scene depth, sampled as a texture (uSceneDepth).
+    // No depth: the shader's near/far pick dedupes. (A solid in front is not
+    // occluded here — follow-up.)
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    // Into the ACCUMULATION buffer (cleared to col 0, T 1): colour composites
+    // over what is there, transmittance MULTIPLIES. (ONE, SRC_ALPHA) for the
+    // alpha too would give T + T·1 = 2T — the background came out twice as
+    // bright. The scene composite (EndNebulaPass) then applies dst = col + T·scene.
+    glBlendFuncSeparate(GL_ONE, GL_SRC_ALPHA, GL_ZERO, GL_SRC_ALPHA);
+    glDrawArrays(GL_TRIANGLES, 0, bufferSize);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_BLEND);
+    glEnable(GL_DEPTH_TEST);
+    return;
+  }
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
 }
 
@@ -1946,6 +1986,13 @@ void RenderedObject::BuildGalaxyStarfield(const GalaxyDesc& d, int starCount)
   glVertexAttribPointer(0, 3, GL_SHORT, GL_TRUE, 3*sizeof(short), (void*)0);
   glEnableVertexAttribArray(0);
   glBindVertexArray(0);
+}
+
+void RenderedObject::releaseNebulaGlObjects()
+{
+  if (nebVolumeTex) { glDeleteTextures(1, &nebVolumeTex); nebVolumeTex = 0; }
+  if (nebSourceTex) { glDeleteTextures(1, &nebSourceTex); nebSourceTex = 0; }
+  nebVolumeN = 0; nebBakeDirty = true;
 }
 
 void RenderedObject::releaseCloudGlObjects()

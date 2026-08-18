@@ -68,6 +68,10 @@ struct SpawnFormState {
   // coordinate is invisible, and after visiting a universe the camera is ~1e15
   // AU from the origin. Ghost-drag placement clears this (it IS a placement).
   bool   placeInFront  = true;
+  // Nebula (shaderType 4)
+  float  nebulaRadiusLy = 6.0f;
+  int    nebulaSeed     = 7;
+  int    nebulaPalette  = 1;
 };
 
 // ---- Universe spawner (see docs/universe.md) --------------------------------
@@ -374,6 +378,18 @@ private:
   GLint tmLocTexelD{-1};
   GLint  spkLocTex{-1}, spkLocTexel{-1}, spkLocDir{-1}, spkLocStride{-1}, spkLocTaps{-1};
   GLint  spkLocDecayPerTexel{-1}, spkLocLength{-1}, spkLocChroma{-1};
+  // ── Nebula volumes: bake compute + reduced-resolution march pass ──
+  GLuint nebulaBakeProgram{0};      // nebulaBake.glsl (compute)
+  GLuint nebulaCompositeProgram{0}; // nebulaCompositeFrag.glsl (blitVert)
+  GLint  nebCompLocTex{-1};
+  GLuint nebFBO{0}, nebColorTex{0}, nebDepthRBO{0};
+  int    nebFboW{0}, nebFboH{0};
+  bool   nebPassActive{false};
+  GLint  nebSavedFBO{0}, nebSavedVp[4]{0,0,0,0};
+  int    nebulaQuality{2};          // resolution divisor of the nebula pass (1..4)
+  void   EnsureNebulaTarget(int w, int h);
+  void   BakeNebulaVolume(RenderedObject& ro);
+  void   SplatNebulaSource(RenderedObject& ro, const std::vector<CloudParticle>& pts, const vec3& cloudRotDeg);
   GLuint spikeAccumProgram{0};   // adds one finished streak into the accumulator
   GLint  spkAccLocStreak{-1}, spkAccLocSource{-1}, spkAccLocScale{-1};
   GLuint spikeTmp[2]{0, 0};      // ping-pong for the per-direction ladder
@@ -990,6 +1006,14 @@ public:
   // Draw a planet's atmosphere shell (rasterized view only, no-op otherwise)
   void DrawAtmosphere(PhysicsObject& obj);
   void DrawRings(PhysicsObject& obj);
+  // Nebulae: a reduced-resolution pass after the clouds. Begin blits the scene
+  // depth down so occlusion holds, DrawNebula marches each volume into it, End
+  // composites it back with the premultiplied blend. Skips itself when nothing
+  // was drawn.
+  void BeginNebulaPass();
+  void DrawNebula(PhysicsObject& obj, const std::vector<CloudParticle>* sourceParticles = nullptr,
+                  const vec3* sourceRotDeg = nullptr);
+  void EndNebulaPass();
 
   // ---- Planet texture array for the RT compute shaders ----
   // Packs each textured planet's equirect map into one GL_TEXTURE_2D_ARRAY

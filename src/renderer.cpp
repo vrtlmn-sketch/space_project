@@ -562,7 +562,7 @@ static void AppendRtRings(const RenderedObject& ro, const double camT[3],
 // of legitimate rim light around a ship.
 void Renderer::AddRimOccluder(const RenderedObject& ro) {
   if (!realisticRasterView) return;              // rim light only exists in the raster path
-  if (ro.isFreeMesh() || ro.sphereRadius() <= 0.0f) return;
+  if (ro.isFreeMesh() || ro.isNebulaVolume || ro.sphereRadius() <= 0.0f) return;
   rimOccluders.push_back(RimOccluder{ CameraRelative(ro.coordinates), ro.sphereRadius() });
 }
 
@@ -675,6 +675,197 @@ static void AppendRtRings(const RenderedObject& ro, const double camT[3],
 // far half of each ring is hidden correctly. Rasterizer only for now; the ring
 // math lives in rings_common.glsl so the RT path can be added without a second
 // definition of the look.
+static GLuint compileShaderFromFile(const std::string& path, GLenum type);   // defined with the RT setup below
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Nebulae — baked volume + reduced-resolution march (see nebulaBake.glsl,
+// nebulaFrag.glsl). Cost is steps x covered pixels / quality^2, one texture
+// fetch per step; the field itself is evaluated once per voxel at bake time.
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::EnsureNebulaTarget(int w, int h) {
+  w = std::max(1, w); h = std::max(1, h);
+  if (nebFBO && w == nebFboW && h == nebFboH) return;
+  if (!nebFBO) glGenFramebuffers(1, &nebFBO);
+  if (!nebColorTex) glGenTextures(1, &nebColorTex);
+  glBindTexture(GL_TEXTURE_2D, nebColorTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  if (!nebDepthRBO) glGenRenderbuffers(1, &nebDepthRBO);
+  glBindRenderbuffer(GL_RENDERBUFFER, nebDepthRBO);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glBindFramebuffer(GL_FRAMEBUFFER, nebFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, nebColorTex, 0);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, nebDepthRBO);
+  nebFboW = w; nebFboH = h;
+}
+
+void Renderer::BakeNebulaVolume(RenderedObject& ro) {
+  if (!nebulaBakeProgram) {
+    GLuint cs = compileShaderFromFile("src/shaders/nebulaBake.glsl", GL_COMPUTE_SHADER);
+    if (!cs) return;
+    nebulaBakeProgram = glCreateProgram();
+    glAttachShader(nebulaBakeProgram, cs); glLinkProgram(nebulaBakeProgram);
+    GLint ok = 0; glGetProgramiv(nebulaBakeProgram, GL_LINK_STATUS, &ok);
+    glDeleteShader(cs);
+    if (!ok) { std::cerr << "[nebula] bake program failed to link\n"; glDeleteProgram(nebulaBakeProgram); nebulaBakeProgram = 0; return; }
+  }
+  const int N = std::clamp(ro.nebVolumeWant, 32, 160);
+  if (!ro.nebVolumeTex || ro.nebVolumeN != N) {
+    if (!ro.nebVolumeTex) glGenTextures(1, &ro.nebVolumeTex);
+    glBindTexture(GL_TEXTURE_3D, ro.nebVolumeTex);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, N, N, N, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    ro.nebVolumeN = N;
+  }
+  glUseProgram(nebulaBakeProgram);
+  glBindImageTexture(0, ro.nebVolumeTex, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+  GLint l;
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uN"))             >= 0) glUniform1i(l, N);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uExtent"))        >= 0) glUniform3f(l, ro.nebExtent.x, ro.nebExtent.y, ro.nebExtent.z);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uHasSource"))     >= 0) glUniform1i(l, (ro.nebHasSource && ro.nebSourceTex) ? 1 : 0);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uNebSeed"))       >= 0) glUniform1f(l, ro.nebSeed);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uNebFront"))      >= 0) glUniform3f(l, ro.nebFront.x, ro.nebFront.y, ro.nebFront.z);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uNebLightCount")) >= 0) glUniform1i(l, ro.nebLightCount);
+  if (ro.nebLightCount > 0 && (l = glGetUniformLocation(nebulaBakeProgram, "uNebLights")) >= 0)
+    glUniform4fv(l, ro.nebLightCount, &ro.nebLights[0].x);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uNebExcitation")) >= 0) glUniform1f(l, ro.nebExcitation);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uNebDetail"))     >= 0) glUniform1f(l, ro.nebDetail);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uNebDensity"))    >= 0) glUniform1f(l, ro.nebDensity);
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_3D, ro.nebSourceTex ? ro.nebSourceTex : ro.nebVolumeTex);
+  if ((l = glGetUniformLocation(nebulaBakeProgram, "uSource"))        >= 0) glUniform1i(l, 1);
+  glActiveTexture(GL_TEXTURE0);
+  const int groups = (N + 7) / 8;
+  glDispatchCompute(groups, groups, groups);
+  glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+  ro.nebBakeDirty = false;
+}
+
+// Splat a cloud's particles into the source volume: trilinear, normalised so
+// the densest cell is ~1, in the nebula's box mapping (the two are aligned by
+// "Attach": same position, rotation and extent).
+void Renderer::SplatNebulaSource(RenderedObject& ro, const std::vector<CloudParticle>& pts, const vec3& cloudRotDeg) {
+  const int N = std::clamp(ro.nebVolumeWant, 32, 160);
+  std::vector<float> grid((size_t)N * N * N, 0.0f);
+  const float R = ro.sphereRadius();
+  if (R <= 0.0f || pts.empty()) { ro.nebHasSource = false; return; }
+  (void)cloudRotDeg;   // aligned frames: particle local == box local
+  const vec3 ext = ro.nebExtent;
+  float mx = 0.0f;
+  for (const auto& p : pts) {
+    const float ux = (p.position.x / (R * ext.x)) * 0.5f + 0.5f;
+    const float uy = (p.position.y / (R * ext.y)) * 0.5f + 0.5f;
+    const float uz = (p.position.z / (R * ext.z)) * 0.5f + 0.5f;
+    if (ux < 0.0f || ux >= 1.0f || uy < 0.0f || uy >= 1.0f || uz < 0.0f || uz >= 1.0f) continue;
+    const float fx = ux * N - 0.5f, fy = uy * N - 0.5f, fz = uz * N - 0.5f;
+    const int ix = (int)std::floor(fx), iy = (int)std::floor(fy), iz = (int)std::floor(fz);
+    const float tx = fx - ix, ty = fy - iy, tz = fz - iz;
+    for (int dz = 0; dz < 2; dz++) for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+      const int x = ix + dx, y = iy + dy, z = iz + dz;
+      if (x < 0 || y < 0 || z < 0 || x >= N || y >= N || z >= N) continue;
+      const float w = (dx ? tx : 1 - tx) * (dy ? ty : 1 - ty) * (dz ? tz : 1 - tz) * p.mass;
+      float& g = grid[((size_t)z * N + y) * N + x];
+      g += w; mx = std::max(mx, g);
+    }
+  }
+  if (mx <= 0.0f) { ro.nebHasSource = false; return; }
+  // Soft normalisation: sqrt so a few dense knots do not black out the rest.
+  const float inv = 1.0f / mx;
+  for (float& g : grid) g = std::sqrt(std::min(g * inv, 1.0f));
+  if (!ro.nebSourceTex) glGenTextures(1, &ro.nebSourceTex);
+  glBindTexture(GL_TEXTURE_3D, ro.nebSourceTex);
+  glTexImage3D(GL_TEXTURE_3D, 0, GL_R16F, N, N, N, 0, GL_RED, GL_FLOAT, grid.data());
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  ro.nebHasSource = true;
+  ro.nebBakeDirty = true;
+}
+
+void Renderer::BeginNebulaPass() {
+  nebPassActive = false;
+  if (rayTracerView) return;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &nebSavedFBO);
+  glGetIntegerv(GL_VIEWPORT, nebSavedVp);
+  const int q = std::clamp(nebulaQuality, 1, 4);
+  const int w = std::max(1, nebSavedVp[2] / q), h = std::max(1, nebSavedVp[3] / q);
+  EnsureNebulaTarget(w, h);
+  // The target is re-allocated whenever a differently sized pass runs
+  // (viewport, PiP, capture), and a fresh depth buffer holds GARBAGE — which
+  // depth-rejected the far face in jagged patches ("part of the mesh
+  // missing"). Clear depth to far FIRST, then bring the scene depth in
+  // (nearest is what GL allows for depth) so a planet in front still hides a
+  // nebula; if the blit is refused (format mismatch, e.g. the default
+  // framebuffer) we lose that occlusion but never draw holes.
+  glBindFramebuffer(GL_FRAMEBUFFER, nebFBO);
+  glViewport(0, 0, w, h);
+  glDepthMask(GL_TRUE);
+  glClearColor(0.f, 0.f, 0.f, 1.f);            // no emission, full transmittance
+  glClearDepth(1.0);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  while (glGetError() != GL_NO_ERROR) {}        // drop stale errors so the check below is ours
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)nebSavedFBO);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, nebFBO);
+  glBlitFramebuffer(nebSavedVp[0], nebSavedVp[1], nebSavedVp[0] + nebSavedVp[2], nebSavedVp[1] + nebSavedVp[3],
+                    0, 0, w, h, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+  if (glGetError() != GL_NO_ERROR) {
+    static bool said = false;
+    if (!said) { said = true; std::cerr << "[nebula] scene depth blit refused for this target; nebulae will not be occluded by solids here\n"; }
+    glBindFramebuffer(GL_FRAMEBUFFER, nebFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);               // back to far: no holes
+  }
+  glBindFramebuffer(GL_FRAMEBUFFER, nebFBO);
+  glViewport(0, 0, w, h);
+  nebPassActive = true;
+}
+
+void Renderer::DrawNebula(PhysicsObject& obj, const std::vector<CloudParticle>* sourceParticles,
+                          const vec3* sourceRotDeg) {
+  if (!nebPassActive || obj.shaderType != ObjectType::Nebula) return;
+  RenderedObject& ro = obj.renderedObject;
+  if (obj.nebula.sourceCloud >= 0 && sourceParticles && obj.nebula.sourceDirty) {
+    SplatNebulaSource(ro, *sourceParticles, sourceRotDeg ? *sourceRotDeg : vec3{0,0,0});
+    obj.nebula.sourceDirty = false;
+  }
+  if (obj.nebula.sourceCloud < 0 && ro.nebHasSource) { ro.nebHasSource = false; ro.nebBakeDirty = true; }
+  if (ro.nebBakeDirty || !ro.nebVolumeTex) {
+    BakeNebulaVolume(ro);
+    // The bake changed the bound program/textures; the pass FBO is untouched.
+    glBindFramebuffer(GL_FRAMEBUFFER, nebFBO);
+    glViewport(0, 0, nebFboW, nebFboH);
+  }
+  ro.realisticShading = realisticRasterView;
+  ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+}
+
+void Renderer::EndNebulaPass() {
+  if (!nebPassActive) return;
+  nebPassActive = false;
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)nebSavedFBO);
+  glViewport(nebSavedVp[0], nebSavedVp[1], nebSavedVp[2], nebSavedVp[3]);
+  if (!nebulaCompositeProgram || !blitVAO) return;
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_ONE, GL_SRC_ALPHA);              // dst = col + T * dst
+  glUseProgram(nebulaCompositeProgram);
+  glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, nebColorTex);
+  glUniform1i(nebCompLocTex, 0);
+  glBindVertexArray(blitVAO);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+  glBindVertexArray(0);
+  glDisable(GL_BLEND);
+  glEnable(GL_DEPTH_TEST);
+}
+
 void Renderer::DrawRings(PhysicsObject& obj) {
   if (rayTracerView) return;
   if (obj.shaderType != ObjectType::Planet || !obj.hasVisibleRings()) return;
@@ -808,6 +999,7 @@ void Renderer::DrawCloudDust(RenderedObject& ro) {
 
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                                   vec3 velocity, vec3 color) {
+  if (ro.isNebulaVolume) return;   // drawn by DrawNebula after the clouds; never an RT solid
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere) {
       ro.uploadPlanetColor(color);
@@ -3523,6 +3715,17 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "takes its width from the view's aspect.");
 
     ImGui::Spacing();
+    ImGui::Text("Nebula Pass");
+    ImGui::SetNextItemWidth(-1);
+    {
+      const char* nq[] = { "Full resolution", "1/2 resolution", "1/3 resolution", "1/4 resolution" };
+      int qi = std::clamp(nebulaQuality, 1, 4) - 1;
+      if (ImGui::Combo("##nebq", &qi, nq, 4)) nebulaQuality = qi + 1;
+    }
+    ImGui::TextDisabled("Nebulae march at this fraction of the view and composite up.\n"
+                        "Soft gas hides it; a planet in front gets a slightly soft edge.");
+
+    ImGui::Spacing();
     ImGui::Text("Max Bounces");
     ImGui::SetNextItemWidth(-1);
     ImGui::SliderInt("##bounce2", &rtMaxBounces, 0, 4, "%d");
@@ -4507,13 +4710,29 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       }
 
       ImGui::Spacing();
-      const char* shaderItems[] = { "Planet", "Star", "Black Hole", "Free Model" };
+      const char* shaderItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula" };
       ImGui::SetNextItemWidth(-1);
-      if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 4)) {
+      if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 5)) {
         if (spawnForm.shaderType == 0)      spawnForm.mass = 3.0e-6;  // Earth
         else if (spawnForm.shaderType == 1) spawnForm.mass = 1.0;     // Sun
         else if (spawnForm.shaderType == 2) spawnForm.mass = 4.15e6;  // Sgr A*
+        else if (spawnForm.shaderType == 4) spawnForm.mass = 1.0e-9;  // Nebula: a volume, no pull to speak of
         else                                spawnForm.mass = 3.0e-6;  // Free Model
+      }
+      if (spawnForm.shaderType == 4) {
+        ImGui::TextWrapped("A ray-marched emission volume: gas lit by its own embedded stars, "
+                           "coloured by species, dust lanes carved by absorption. Everything "
+                           "comes from the seed; tune it in the inspector after spawning.");
+        ImGui::Text("Radius (ly)");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::DragFloat("##snebr", &spawnForm.nebulaRadiusLy, 0.1f, 0.2f, 300.0f, "%.1f ly", ImGuiSliderFlags_Logarithmic);
+        ImGui::Text("Palette");
+        ImGui::SetNextItemWidth(-1);
+        const char* pals[] = { "Natural (H-alpha pink, OIII teal)", "Hubble (SII red, H-alpha green, OIII blue)" };
+        ImGui::Combo("##snebp", &spawnForm.nebulaPalette, pals, 2);
+        ImGui::Text("Seed");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputInt("##snebs", &spawnForm.nebulaSeed);
       }
       if (spawnForm.shaderType == 1) {
         ImGui::SetNextItemWidth(-30);
@@ -4909,18 +5128,19 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
     ImGui::Spacing();
 
-    // Type — Planet / Star / Black Hole / Free Model
-    const ObjectType typeOrder[4] =
-      { ObjectType::Planet, ObjectType::Star, ObjectType::BlackHole, ObjectType::FreeModel };
+    // Type — Planet / Star / Black Hole / Free Model / Nebula
+    const ObjectType typeOrder[5] =
+      { ObjectType::Planet, ObjectType::Star, ObjectType::BlackHole, ObjectType::FreeModel, ObjectType::Nebula };
     int typeIdx = 0;
-    for (int k = 0; k < 4; ++k) if (obj.shaderType == typeOrder[k]) typeIdx = k;
-    const char* typeItems[] = { "Planet", "Star", "Black Hole", "Free Model" };
+    for (int k = 0; k < 5; ++k) if (obj.shaderType == typeOrder[k]) typeIdx = k;
+    const char* typeItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula" };
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##itype", &typeIdx, typeItems, 4)) {
+    if (ImGui::Combo("##itype", &typeIdx, typeItems, 5)) {
       ObjectType newType = typeOrder[typeIdx];
       bool wasFree = (obj.shaderType == ObjectType::FreeModel);
       obj.shaderType = newType;
       ApplyShaderForType(obj.renderedObject, newType);
+      obj.SyncNebulaToRender();
       if (newType != ObjectType::FreeModel && wasFree) {
         // Leaving Free Model → drop the mesh and go back to a sphere.
         obj.meshPath.clear();
@@ -5079,6 +5299,98 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::SetNextItemWidth(-1);
       ImGui::DragFloat("Rs##irs", &obj.schwarzschildRadius, 0.001f, 0.001f, 10.0f, "%.4f");
       ImGui::TextDisabled("Photon sphere: %.4f", 1.5f * obj.schwarzschildRadius);
+    }
+    else if (obj.shaderType == ObjectType::Nebula) {
+      // ── Nebula: a ray-marched volume driven by one seed and a few knobs ──
+      auto& nb = obj.nebula;
+      bool changed = false;
+      ImGui::SeparatorText("Nebula");
+      ImGui::Text("Radius (ly)");
+      ImGui::SetNextItemWidth(-1);
+      float rly = obj.visualRadius / 63241.077f;
+      if (ImGui::DragFloat("##nb_r", &rly, 0.1f, 0.2f, 300.0f, "%.1f ly", ImGuiSliderFlags_Logarithmic)) {
+        obj.visualRadius = rly * 63241.077f;
+        obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
+        sizesDirty = true;
+      }
+      ImGui::Text("Palette");
+      ImGui::SetNextItemWidth(-1);
+      const char* pals[] = { "Natural", "Hubble" };
+      changed |= ImGui::Combo("##nb_pal", &nb.palette, pals, 2);
+      ImGui::Text("Emission");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderFloat("##nb_em", &nb.emission, 0.05f, 6.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+      ImGui::Text("Ionisation reach");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderFloat("##nb_exc", &nb.excitation, 0.03f, 1.5f, "%.2f R", ImGuiSliderFlags_Logarithmic);
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the embedded stars' light reaches (x radius).\nSmall: high-excitation colours only at the core, low at the rim. Large: teal throughout.");
+      ImGui::Text("Gas density");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderFloat("##nb_den", &nb.density, 0.1f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+      ImGui::Text("Dust");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderFloat("##nb_dust", &nb.dust, 0.0f, 3.0f, "%.2f");
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Absorption in the dense, unlit gas: dark lanes and bays.");
+      ImGui::Text("Detail");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderFloat("##nb_det", &nb.detail, 0.2f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+      ImGui::Text("Illuminating stars");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderInt("##nb_l", &nb.lights, 1, 4);
+      ImGui::Text("Shape extent (x, y, z)");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderFloat3("##nb_ext", nb.extent, 0.1f, 1.0f, "%.2f");
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Box half-size along each local axis, as a fraction of the radius.\nRotate the object to orient it. Squash one axis for a disc, two for a bar.");
+      ImGui::Text("Shape source");
+      ImGui::SetNextItemWidth(-1);
+      {
+        std::string cur = (nb.sourceCloud < 0) ? "Recipe (bubble + filaments)"
+                        : (nb.sourceCloud < (int)clouds.size() && clouds[nb.sourceCloud])
+                          ? (clouds[nb.sourceCloud]->name.empty() ? "Cloud " + std::to_string(nb.sourceCloud) : clouds[nb.sourceCloud]->name)
+                          : "(missing cloud)";
+        if (ImGui::BeginCombo("##nb_src", cur.c_str())) {
+          if (ImGui::Selectable("Recipe (bubble + filaments)", nb.sourceCloud < 0)) { nb.sourceCloud = -1; changed = true; }
+          for (int ci = 0; ci < (int)clouds.size(); ci++) {
+            if (!clouds[ci]) continue;
+            std::string lbl = clouds[ci]->name.empty() ? "Cloud " + std::to_string(ci) : clouds[ci]->name;
+            if (ImGui::Selectable(lbl.c_str(), nb.sourceCloud == ci)) { nb.sourceCloud = ci; changed = true; }
+          }
+          ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Recipe: the built-in HII bubble. A cloud: its particles become the gas — any\nformation or procedural shape, with the fine turbulence multiplied on top.");
+        if (nb.sourceCloud >= 0 && nb.sourceCloud < (int)clouds.size() && clouds[nb.sourceCloud]) {
+          if (ImGui::Button("Attach to cloud##nb_att", ImVec2(-1, 0))) {
+            CloudObject& c = *clouds[nb.sourceCloud];
+            dvec3 cen; double rad = 1.0; c.boundsEstimate(cen, rad);
+            obj.data.position = c.position;
+            obj.renderedObject.coordinates = obj.data.position;
+            obj.rotationDeg = c.rotationDeg;
+            obj.visualRadius = (float)std::max(rad * 1.6, 1e-3);   // enclose the cloud
+            obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
+            nb.sourceDirty = true; changed = true; sizesDirty = true;
+          }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Move and size this nebula onto the cloud (same position, rotation, bounds).");
+          if (ImGui::Button("Re-splat particles##nb_re", ImVec2(-1, 0))) { nb.sourceDirty = true; changed = true; obj.renderedObject.nebBakeDirty = true; }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo the shape from the cloud's CURRENT particles (after simulating or editing it).");
+        }
+      }
+      ImGui::Text("Volume resolution");
+      ImGui::SetNextItemWidth(-1);
+      {
+        const int resOpts[4] = { 48, 64, 96, 128 };
+        int ri = 2; for (int k = 0; k < 4; k++) if (nb.volumeRes == resOpts[k]) ri = k;
+        const char* resItems[] = { "48 (1 MB)", "64 (2 MB)", "96 (7 MB)", "128 (16 MB)" };
+        if (ImGui::Combo("##nb_res", &ri, resItems, 4)) { nb.volumeRes = resOpts[ri]; changed = true; }
+      }
+      ImGui::Text("Quality (steps)");
+      ImGui::SetNextItemWidth(-1);
+      changed |= ImGui::SliderInt("##nb_st", &nb.steps, 12, 128);
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ray-march steps per pixel in the Cinematic view (the nav view uses half).\nOne texture fetch each. Cost = steps x covered pixels / pass quality^2.");
+      ImGui::Text("Seed");
+      ImGui::SetNextItemWidth(-1);
+      int sd = (int)nb.seed;
+      if (ImGui::InputInt("##nb_seed", &sd)) { nb.seed = (unsigned)std::max(sd, 0); changed = true; }
+      if (changed) obj.SyncNebulaToRender();
     }
     else if (obj.shaderType == ObjectType::FreeModel) {
       colorEditor();
@@ -7270,6 +7582,7 @@ void Renderer::InitPostProcess() {
     {"src/shaders/spikeStreakFrag.glsl",    &spikeProgram},
     {"src/shaders/spikeSourceFrag.glsl",    &spikeSourceProgram},
     {"src/shaders/spikeAccumFrag.glsl",     &spikeAccumProgram},
+    {"src/shaders/nebulaCompositeFrag.glsl", &nebulaCompositeProgram},
   };
   for (auto& ps : passes) {
     GLuint fs = compileShaderFromFile(ps.frag, GL_FRAGMENT_SHADER);
@@ -7314,6 +7627,7 @@ void Renderer::InitPostProcess() {
     spkLocLength        = glGetUniformLocation(spikeProgram, "uLength");
     spkLocChroma        = glGetUniformLocation(spikeProgram, "uChroma");
   }
+  if (nebulaCompositeProgram) nebCompLocTex = glGetUniformLocation(nebulaCompositeProgram, "uTexture");
   if (spikeAccumProgram) {
     spkAccLocStreak = glGetUniformLocation(spikeAccumProgram, "uStreak");
     spkAccLocSource = glGetUniformLocation(spikeAccumProgram, "uSource");

@@ -3,6 +3,7 @@
 #include "units.h"
 #include "mathStructs.h"
 #include "physicsObject.h"
+#include <cstring>
 #include "dynamics.h"
 
 void PhysicsObject::SetVelocity(const vec3& velocity)
@@ -41,6 +42,9 @@ void ApplyShaderForType(RenderedObject& ro, ObjectType t)
       break;
     case ObjectType::BlackHole:
       ro.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/blackHoleFrag.glsl");
+      break;
+    case ObjectType::Nebula:
+      ro.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/nebulaFrag.glsl");
       break;
     default: // Planet and FreeModel are both lit by the default surface shader
       ro.setupShaders("src/shaders/defaultVert.glsl", "src/shaders/defaultFrag.glsl");
@@ -289,6 +293,8 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
     }
   }
 
+  SyncNebulaToRender();
+
   // Forward atmosphere params so the RT object structs carry them
   if (shaderType == ObjectType::Planet && atmosphereEnabled) {
     renderedObject.rtAtmoRadius    = renderRadius() * renderer.activeSizeExag() * (1.0f + atmosphereHeight);
@@ -315,4 +321,51 @@ bool PhysicsObject::dynIsSatelliteOf(int objIdx, const std::vector<PhysicsObject
     p = cur->dynParent;
   }
   return false;
+}
+
+
+// ── Nebula ───────────────────────────────────────────────────────────────────
+// The recipe's only CPU-side product: where the embedded stars are and what
+// colour, plus the bubble's open side. Everything else is evaluated in the
+// shader from the same seed.
+void PhysicsObject::SyncNebulaToRender() {
+  RenderedObject& ro = renderedObject;
+  ro.isNebulaVolume = (shaderType == ObjectType::Nebula);
+  if (!ro.isNebulaVolume) return;
+  ro.nebEmission = nebula.emission; ro.nebExcitation = nebula.excitation; ro.nebDust = nebula.dust;
+  ro.nebDetail = nebula.detail; ro.nebDensity = nebula.density; ro.nebPalette = nebula.palette;
+  ro.nebSteps = nebula.steps; ro.nebSeed = (float)(nebula.seed % 4096u);
+  ro.nebExtent = vec3{ std::clamp(nebula.extent[0], 0.05f, 1.0f), std::clamp(nebula.extent[1], 0.05f, 1.0f), std::clamp(nebula.extent[2], 0.05f, 1.0f) };
+  ro.nebVolumeWant = nebula.volumeRes;
+  // Anything the BAKE depends on goes into the key; palette/emission/dust/steps
+  // are read at march time and do not need a rebake.
+  auto mix = [](unsigned long long k, double v) { unsigned long long b; std::memcpy(&b, &v, 8); return k * 1000003ull + b; };
+  unsigned long long key = nebula.seed;
+  key = mix(key, nebula.excitation); key = mix(key, nebula.detail); key = mix(key, nebula.density);
+  key = mix(key, nebula.lights); key = mix(key, nebula.extent[0]); key = mix(key, nebula.extent[1]);
+  key = mix(key, nebula.extent[2]); key = mix(key, nebula.volumeRes); key = mix(key, nebula.sourceCloud);
+  if (key != nebulaShapeKey) { nebulaShapeKey = key; ro.nebBakeDirty = true; nebula.sourceDirty = true; }
+  // xorshift from the seed: deterministic star placement.
+  uint64_t s = (uint64_t)nebula.seed * 6364136223846793005ull + 1442695040888963407ull;
+  auto uni = [&]() { s ^= s >> 12; s ^= s << 25; s ^= s >> 27; return (float)(((s * 2685821657736338717ull) >> 32) & 0xFFFFFF) / 16777216.0f; };
+  auto gauss = [&]() { float u1 = std::max(uni(), 1e-7f), u2 = uni(); return std::sqrt(-2.0f*std::log(u1)) * std::cos(6.2831853f*u2); };
+  vec3 front{ uni()*2-1, uni()*2-1, uni()*2-1 };
+  float fl = std::sqrt(front.x*front.x + front.y*front.y + front.z*front.z);
+  if (fl < 1e-6f) front = vec3{0,0,1}; else front = front * (1.0f/fl);
+  ro.nebFront = front;
+  const vec3 at = front * 0.18f;             // the cluster sits toward the open side
+  ro.nebLightCount = std::clamp(nebula.lights, 1, 4);
+  for (int i = 0; i < ro.nebLightCount; i++) {
+    const float spread = (i == 0) ? 0.0f : 0.07f;
+    ro.nebLights[i] = vec4{ at.x + gauss()*spread, at.y + gauss()*spread, at.z + gauss()*spread,
+                            (i == 0) ? 1.0f : 0.25f + 0.4f*uni() };
+    const float T = (i == 0) ? 35000.0f : 18000.0f + 14000.0f*uni();
+    // blackbody (same fit the shaders use)
+    float tt = T / 100.0f, r, g, b;
+    r = 1.0f;   // > 6600 K: cool end never happens here
+    r = std::clamp(1.2929362f * std::pow(tt - 60.0f, -0.1332047592f), 0.0f, 1.0f);
+    g = std::clamp(1.1298908609f * std::pow(tt - 60.0f, -0.0755148492f), 0.0f, 1.0f);
+    b = 1.0f;
+    ro.nebLightCol[i] = vec3{r, g, b};
+  }
 }

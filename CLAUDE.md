@@ -402,6 +402,78 @@ placed at v_c(r) is then in equilibrium BY CONSTRUCTION — no mass fiddling.
   A star at rest 26 kly out was "moving consistently" because it was
   free-falling toward the black hole with no tangential speed.
 
+## A nebula is a VOLUME — its own object type, not a cloud
+
+`ObjectType::Nebula` (physicsObject.h). The first attempt was a cloud with a
+flag that changed what the passes drew: it inherited the sprite look and the
+particle cost and still read as puffs. Points cannot reach the Orion look —
+overlapping discs are the ceiling of "points + Nebula render mode" — so a
+nebula is a RAY-MARCHED density field drawn on the object's sphere mesh, which
+only bounds it. Clouds are untouched. Reuses the object machinery: name,
+position, gizmo, keyframes, persistence (`"nebula"` recipe block on the
+object; `visualRadius` is the volume radius). Mass 1e-9.
+
+**Cost model — this is what makes it run on a potato.** The field is NOT
+evaluated per pixel per step. `nebulaBake.glsl` (compute) evaluates it ONCE
+per voxel into an RGBA16F N^3 texture (R emit, G absorb, B baked excitation
+from the embedded stars, A a cell hash), rebaked only when the SHAPE key
+changes (`SyncNebulaToRender`: seed, reach, detail, density, lights, extent,
+resolution, source); palette/emission/dust/steps are read at march time. The
+march (`nebulaFrag.glsl`) is one trilinear fetch per step, ~40 steps, and runs
+in a REDUCED-RESOLUTION PASS (`Begin/DrawNebula/EndNebulaPass`, Quality &
+Speed → Nebula Pass, default 1/2): the scene depth is blitted down (nearest,
+what GL allows) so a planet in front still hides it, the volumes march into an
+accumulation buffer, and one composite blends it back. The first version was
+~130 hashes x 64 steps x every full-res pixel; this is ~1 fetch x 40 x 1/4.
+
+- **Two different blends, and they must not be swapped.** Into the
+  accumulation buffer: `glBlendFuncSeparate(ONE, SRC_ALPHA, ZERO, SRC_ALPHA)`
+  — colour composites, transmittance MULTIPLIES. Onto the scene:
+  `(ONE, SRC_ALPHA)` — dst = col + T·scene. Using the scene blend for the
+  buffer gave alpha = 2T: the background came out TWICE as bright inside every
+  nebula with zero emission. Found by forcing emission 0 and reading pixels;
+  neither the march nor T was at fault.
+- **ONE fragment per pixel, by DISTANCE — not culling, not depth.** The proxy
+  sphere is double-sided, so both faces rasterise per pixel; the shader keeps
+  one by classifying THIS fragment's own perspective-correct distance
+  (`length(fragRel)/R`, radius units — a unit mismatch here silently discarded
+  EVERYTHING) as the near or far box hit, and dropping the far one while a near
+  one exists (`traw0 > 0`; inside the box the lone far fragment stays). The
+  march runs on the analytic `[t0,t1]` box segment, so which face survives does
+  not matter. This replaced two things that both broke: depth-write dedup
+  (proxy-vs-proxy depths TIE in facet-shaped patches under this project's
+  1e-7..1e10 z-range — the "flat wedges and a seam" close up) and winding culls
+  (the sphere generator's winding punched triangle holes in the far hemisphere
+  from a distance — the "part of the mesh missing" the user first saw). Depth
+  test is therefore OFF in the nebula draw: a solid IN FRONT is not occluded yet
+  (follow-up). On the sphere path `uWorld` = rotation + camera-relative
+  translation and `uCamera` is zero, so the centre is `uWorld[3].xyz` (the first
+  build solved for a sphere at the camera and drew nothing).
+- **GLSL `pow(x, 2.0)` is NaN for x < 0** — the shell/fill used
+  `pow((r-rs)/th, 2.0)`; square by hand. (Was not the wedge cause but is a real
+  trap.)
+- **Shape source**: the recipe (`nebula_common.glsl`: lumpy bubble shell open
+  toward the cluster, ridged filaments in bundles, clumps with a radial
+  falloff — dropping that falloff put dust at the envelope with nothing
+  emitting there, a dark rind — mottled fill, fine turbulence, all inside a
+  lumpy envelope that fades OUTSIDE the shell), or **a cloud**: its particles
+  are splatted into a source R16F volume (`SplatNebulaSource`, trilinear, sqrt
+  normalised) and the fine turbulence is multiplied on top. That is the
+  customisation path — any formation or procedural shape becomes a nebula;
+  "Attach to cloud" copies position/rotation/bounds; "Re-splat" after editing
+  or simulating the cloud (it does NOT track physics per frame). Verified: the
+  5k spiral renders as gas with species colouring.
+- Bounds are an oriented BOX (`extent` per axis, x radius, each <= 1 so the
+  sphere still encloses it) with a slab test in the shader — squash for discs
+  and bars; rotate the object to orient. Species from baked excitation (OIII
+  inside, H-alpha body, SII rim) in a palette (Natural / Hubble); dense UNLIT
+  gas absorbs. Not in RT (`DrawPhysicsObject` returns early — RT would hit the
+  bounding sphere as a solid); not an occluder for rim light.
+- Not done: reflection term, other recipes (planetary, SNR, dark), universe
+  placement, RT integration, per-frame tracking of a simulating source cloud,
+  and depth against solids INSIDE the volume (the low-res edge of a planet in
+  front is slightly soft).
+
 ## Clouds draw in TWO phases: every cloud's light, then every cloud's dust
 
 Haze, gas and cores are additive (`GL_ONE, GL_ONE`); dust is multiplicative
