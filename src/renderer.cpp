@@ -2112,8 +2112,14 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
       }
     }
     if (nearestSurface > 1e29) nearestSurface = 3.0;   // empty scene
-    RenderedObject::sZNear = (float)std::clamp(nearestSurface * 0.1, 1e-7, 0.05);
-    RenderedObject::sZFar  = 1.0e10f;
+    // Adaptive planes. The FAR plane used to be a fixed 1e10, so with a near of
+    // ~0.05 the ratio was 2e11 → only ~15 depth buckets across a planet, and its
+    // back hemisphere z-fought through the front at the limb when deeply zoomed
+    // (streaks/holes). Scaling far to the scene keeps the ratio small → hundreds
+    // of depth levels, no z-fight, no back-face culling needed. Galaxies/clouds
+    // draw with GL_DEPTH_CLAMP so a smaller far never clips them.
+    RenderedObject::sZNear = (float)std::clamp(nearestSurface * 0.1, 1e-7, 0.5);
+    RenderedObject::sZFar  = (float)std::clamp(nearestSurface * 1.0e5, 1.0e3, 1.0e10);
     forwardTargetDist = (fwdDist > 0.0) ? (float)fwdDist : -1.0f;
     forwardTargetRad  = (float)fwdRad;
   }

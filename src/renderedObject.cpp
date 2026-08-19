@@ -1334,13 +1334,15 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     glEnable(GL_DEPTH_TEST);
     return;
   }
-  // Cull back faces on a solid sphere (planet/star): with only ~10-20 depth
-  // buckets across the body at a huge far/near ratio, the far hemisphere z-fights
-  // through the near one at the limb when deeply zoomed (streaks). Back faces are
-  // occluded anyway, so culling them is invisible at normal zoom and removes the
-  // z-fight. (Atmosphere/nebula manage their own cull state and return earlier.)
+  // Cull the inside (back) faces of a solid sphere. Without this the far
+  // hemisphere's triangles z-fight through the near one at high zoom (the
+  // night-side horizontal stripes). The sphere is wound CCW-outside and the app
+  // never changes glFrontFace (default GL_CCW — this is the ONLY glFrontFace/
+  // glCullFace user besides the atmosphere, which sets its own each draw), so
+  // GL_BACK is correct and leaves no state the atmosphere/rings depend on:
+  // we do NOT touch glFrontFace, and disable culling again right after.
   const bool cullSolid = (meshType == MeshType::sphere);
-  if (cullSolid) { glEnable(GL_CULL_FACE); glFrontFace(GL_CCW); glCullFace(GL_BACK); }
+  if (cullSolid) { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
   if (cullSolid) glDisable(GL_CULL_FACE);
 }
