@@ -324,8 +324,14 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
   // was the playback lag: each is a ~5 ms rebuild + a full particle cloud drawn
   // every frame, and a sweeping camera/FOV touches many. Pass 1 finds the
   // dominant; pass 2 promotes it and demotes the rest.
+  // EAGER: promote the looked-at galaxy as soon as it is a small fraction of the
+  // view, not only at 10%. A fast zoom / keyframe playback narrows the FOV
+  // quickly; promoting late left it a chunk stand-in for a beat before the real
+  // particles built ("an LOD, then the galaxy a moment later"). It is still only
+  // the ONE dominant galaxy, so the cost stays bounded.
+  constexpr float kPromoteEager = 0.02f;
   CloudObject* promoteTarget = nullptr;
-  float bestPromoteFrac = kUseRealPipeline;
+  float bestPromoteFrac = std::min(kUseRealPipeline, kPromoteEager);
   for (auto& c : clouds) {
     if (!c) continue;
     RenderedObject& ro = c->renderedObject;
