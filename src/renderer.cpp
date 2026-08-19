@@ -1112,7 +1112,7 @@ bool Renderer::UpdateInputs() {
     // 0.0005 rad floor was ~15× the whole view per step, so panning was
     // uncontrollable. Now it stays proportional to the FOV at any magnification.
     float rotStep = std::clamp(cameraRotationSpeed * (zoom / 45.0f),
-                               cameraRotationSpeed * (0.002f / 45.0f),
+                               cameraRotationSpeed * (0.00001f / 45.0f),
                                cameraRotationSpeed * 2.0f);
 
     // WASD = position movement (yaw-aware, horizontal plane)
@@ -1155,7 +1155,7 @@ bool Renderer::UpdateInputs() {
         if (d.x != 0.0f || d.y != 0.0f) {
           // Proportional to FOV all the way down (floor = minFov/45), so
           // mouse-look stays fine and controllable however deep the zoom is.
-          float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.002f / 45.0f, 1.5f);
+          float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.00001f / 45.0f, 1.5f);
           rotateCamera(-d.x * sens, -d.y * sens, 0.0f);
         }
       }
@@ -9005,7 +9005,12 @@ namespace {
 struct KfChannels { double v[7]; };   // pos xyz, rotation, pitch, roll, zoom
 
 KfChannels kfChannels(const CameraKeyframe& k) {
-  return { { k.pos[0], k.pos[1], k.pos[2], k.rotation, k.pitch, k.roll, k.zoom } };
+  // Zoom (FOV) is carried in LOG space so it interpolates GEOMETRICALLY between
+  // keys — a captured zoom replays at a constant magnification rate (like manual
+  // zooming) instead of hugging the wide FOV then rushing through the deep end
+  // (which read as a teleport). Unpacked with exp() in writePose.
+  return { { k.pos[0], k.pos[1], k.pos[2], k.rotation, k.pitch, k.roll,
+             std::log((double)std::max(k.zoom, 1e-9f)) } };
 }
 
 // Tangent at key i for the segment [i0, i0+1] of duration `segDur`, in units of
@@ -9052,7 +9057,7 @@ bool Renderer::EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
     out.rotation = (float)c.v[3];
     out.pitch    = (float)c.v[4];
     out.roll     = (float)c.v[5];
-    out.zoom     = (float)c.v[6];
+    out.zoom     = (float)std::exp(c.v[6]);   // carried in log space (see kfChannels)
   };
 
   if (frame <= (double)kfs[0].frame)     { writePose(kfChannels(kfs[0]));     return true; }

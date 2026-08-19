@@ -319,13 +319,18 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     const char* e = std::getenv("NEAR_PIPE");
     return e ? (float)std::atof(e) : 0.10f;
   }();
-  const float kBackToStandIn = kUseRealPipeline * 0.5f;
+  // Promote at most ONE galaxy — the single one you are actually looking at
+  // (largest in-cone view share). Promoting EVERY galaxy the view cone touches
+  // was the playback lag: each is a ~5 ms rebuild + a full particle cloud drawn
+  // every frame, and a sweeping camera/FOV touches many. Pass 1 finds the
+  // dominant; pass 2 promotes it and demotes the rest.
+  CloudObject* promoteTarget = nullptr;
+  float bestPromoteFrac = kUseRealPipeline;
   for (auto& c : clouds) {
     if (!c) continue;
     RenderedObject& ro = c->renderedObject;
-    if (!ro.isGalaxy || ro.galaxyFullStars <= 0) continue;
+    if (!ro.isGalaxy || ro.galaxyFullStars <= 0 || ro.galaxyFullStars > 2000000) continue;
     if (c->simulatePhysics || c->simDirty) continue;   // physics owns it already
-    // Its screen share, measured the same way the ladder measures it.
     const RenderedObject::StarChunk* sc =
         ro.starChunks.empty() ? nullptr : &ro.starChunks[0];
     double extent = sc ? (double)sc->extent : (double)ro.galaxyDesc.radius;
@@ -336,18 +341,17 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     double dz = (c->position.z - gCamAnchor[2]) + camT[2];
     double d   = std::sqrt(dx*dx + dy*dy + dz*dz);
     double ang = 2.0 * std::atan2(extent, std::max(d, 1.0)) * 57.2957795;
-    float  frac = (float)(ang / (double)std::max(fovDeg, 1e-6f));   // deep-zoom safe (see above)
-    if (offScreen(dx, dy, dz, d, ang)) {                            // not in the view cone
-      // Demote if it drifted off-screen while promoted; never promote off-screen.
-      if (c->nearPromoted && frac < kBackToStandIn) c->nearPromoted = false;
-      continue;
-    }
-    // Building every star of a huge galaxy is a real cost, so only take the
-    // step when the object is genuinely the thing you are looking at.
-    if (!c->nearPromoted && frac > kUseRealPipeline && ro.galaxyFullStars <= 2000000)
-      c->nearPromoted = true;
-    else if (c->nearPromoted && frac < kBackToStandIn)
-      c->nearPromoted = false;
+    float  frac = (float)(ang / (double)std::max(fovDeg, 1e-6f));
+    if (offScreen(dx, dy, dz, d, ang)) continue;                    // not in the view cone
+    if (frac > bestPromoteFrac) { bestPromoteFrac = frac; promoteTarget = c.get(); }
+  }
+  for (auto& c : clouds) {
+    if (!c) continue;
+    RenderedObject& ro = c->renderedObject;
+    if (!ro.isGalaxy || ro.galaxyFullStars <= 0) continue;
+    if (c->simulatePhysics || c->simDirty) continue;
+    if (c.get() == promoteTarget)      c->nearPromoted = true;
+    else if (c->nearPromoted)          c->nearPromoted = false;   // only the dominant stays real
   }
 
   // One rebuild per frame. A full 50k-star galaxy costs ~4.9 ms to generate,
