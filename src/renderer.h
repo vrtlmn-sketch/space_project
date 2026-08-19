@@ -632,6 +632,28 @@ public:
   float zoom{45.0f}; // FOV in degrees (lower = zoomed in)
   float cameraSpeedFactor{1.0f}; // user multiplier for camera move speed
 
+  // ── Deep zoom (scroll) ──────────────────────────────────────────────────
+  // Scroll first narrows FOV (`zoom`) exactly as before; once FOV bottoms out
+  // it SEAMLESSLY continues as a forward dolly toward the screen centre — one
+  // continuous, infinite zoom-in that reveals LOD detail as it approaches.
+  //
+  // REVERSIBLE: the whole zoom is a pure function of a single scalar `zoomLevel`
+  // measured from a fixed anchor (the camera pose + forward-target point at the
+  // moment a zoom gesture begins). So zoom in then out returns EXACTLY to where
+  // you started — it is a zoom, not accumulated movement. The anchor is
+  // recaptured whenever the camera moves by any OTHER means (fly, rotate,
+  // keyframe playback, Locate) via invalidateZoomAnchor().
+  double zoomScrollAccum{0.0};    // pending scroll ticks, eased in over frames
+  float  forwardTargetDist{-1.0f};// distance to what the camera looks at (screen centre); <0 = nothing ahead
+  float  forwardTargetRad{0.0f};  // radius of that target
+  bool   zoomAnchorValid{false};
+  dvec3  zoomAnchorCamPos{};       // camera world position when the gesture began (absolute double)
+  dvec3  zoomTargetWorld{};        // the point being zoomed toward (absolute double)
+  float  zoomAnchorFov{45.0f};     // FOV when the gesture began
+  double zoomLevel{0.0};           // notches from the anchor: 0 = start, + = zoomed in
+  void   applyZoom(float ticks);   // +in / -out; seamless FOV→dolly, reversible
+  void   invalidateZoomAnchor() { zoomAnchorValid = false; }  // call on any non-zoom camera move
+
   // ── Visual size exaggeration ──
   // Objects store their REAL radius (AU); this factor only scales rendering.
   bool  exaggeratedSizes{false};
@@ -1028,6 +1050,9 @@ public:
 
   // Draw ALL UI for one frame — call after all scene rendering
   void DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
+  // Near/far planes + focus distance + deep-zoom forward target. Call once per
+  // frame BEFORE objects draw so the clip planes never lag the camera.
+  void UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds);
 
   // Draw startup modal — returns true while modal is still open
   bool DrawStartupModal();

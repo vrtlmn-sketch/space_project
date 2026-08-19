@@ -721,6 +721,7 @@ int main(int argc, char** argv) {
     renderer.roll     = s.camRoll;
     renderer.zoom     = s.camZoom;
     renderer.syncMatrixFromEuler();
+    renderer.invalidateZoomAnchor();   // fresh scene → no stale zoom gesture
     renderer.raytracerMethod  = s.raytracerMethod;
     renderer.cinematicFullscreen  = s.cinematicFullscreen;
     renderer.cinematicViewEnabled = s.cinematicViewEnabled;
@@ -1174,6 +1175,7 @@ int main(int argc, char** argv) {
         renderer.roll     = p.roll;
         renderer.zoom     = p.zoom;
         renderer.syncMatrixFromEuler();
+        renderer.invalidateZoomAnchor();   // playback moved the camera → next scroll re-anchors
       }
     }
     if (!renderer.paused || renderer.playheadMoved)
@@ -1268,6 +1270,12 @@ int main(int argc, char** argv) {
     // can resolve, and the parents-first update order the analytic bodies need.
     static std::vector<int> objectOrder;
     dyn::UpdateSceneDynamics(physicsObjects, clouds, renderer, objectOrder);
+
+    // Scene scale (near/far clip planes, focus distance, deep-zoom target) with
+    // the camera already finalized for THIS frame — so the objects below never
+    // draw against last frame's planes (which clipped a zoomed-in surface for a
+    // frame: "clouds, then the planet", and teleports during playback).
+    renderer.UpdateSceneScale(physicsObjects, clouds);
 
     // Physics objects + trail lines, parents first
     for (int i : objectOrder) {

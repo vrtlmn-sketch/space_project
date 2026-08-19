@@ -28,11 +28,9 @@ static void scrollCallback(GLFWwindow* /*window*/, double /*xoffset*/, double yo
   if (io.WantCaptureMouse) return;
 
   if (g_scrollReceiver) {
-    // Proportional step so deep zoom stays controllable (2° ticks would
-    // overshoot the whole 0.5–5° range in one scroll)
-    g_scrollReceiver->zoom -= (float)yoffset * g_scrollReceiver->zoom * 0.06f;
-    if (g_scrollReceiver->zoom < 0.5f)   g_scrollReceiver->zoom = 0.5f;
-    if (g_scrollReceiver->zoom > 120.0f) g_scrollReceiver->zoom = 120.0f;
+    // Accumulate; UpdateInputs eases it in (smooth, with momentum) and decides
+    // FOV-narrow vs forward-dolly. +yoffset = scroll up = zoom in.
+    g_scrollReceiver->zoomScrollAccum += yoffset;
   }
 }
 
@@ -1110,8 +1108,12 @@ bool Renderer::UpdateInputs() {
     // ── Zoom-adaptive pan speed ──
     // Rotation scales with FOV: zoomed in = slower panning, so one keypress
     // never throws the target out of a narrow view.
+    // Scale straight down to the deep-zoom floor: at a 0.002° FOV the old
+    // 0.0005 rad floor was ~15× the whole view per step, so panning was
+    // uncontrollable. Now it stays proportional to the FOV at any magnification.
     float rotStep = std::clamp(cameraRotationSpeed * (zoom / 45.0f),
-                               0.0005f, cameraRotationSpeed * 2.0f);
+                               cameraRotationSpeed * (0.002f / 45.0f),
+                               cameraRotationSpeed * 2.0f);
 
     // WASD = position movement (yaw-aware, horizontal plane)
     if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  moveStep});
@@ -1151,17 +1153,26 @@ bool Renderer::UpdateInputs() {
       if (rightLookActive && rmb) {
         ImVec2 d = ImGui::GetIO().MouseDelta;
         if (d.x != 0.0f || d.y != 0.0f) {
-          float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.15f, 1.5f);
+          // Proportional to FOV all the way down (floor = minFov/45), so
+          // mouse-look stays fine and controllable however deep the zoom is.
+          float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.002f / 45.0f, 1.5f);
           rotateCamera(-d.x * sens, -d.y * sens, 0.0f);
         }
       }
     }
 
-    // Zoom: +/- keys (FOV-based, proportional so deep zoom stays controllable)
-    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  zoom -= zoom * 0.015f; // + (or =) = zoom in
-    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  zoom += zoom * 0.015f; // - = zoom out
-    // Clamp zoom/FOV
-    if (zoom < 0.5f)   zoom = 0.5f;
+    // Zoom: scroll (accumulated, eased in for momentum) + the =/- keys, all via
+    // applyZoom — narrows FOV, then seamlessly continues as a forward dolly.
+    if (std::abs(zoomScrollAccum) > 1e-4) {
+      double eased = zoomScrollAccum * 0.30;   // ease a fraction per call (smooth)
+      zoomScrollAccum -= eased;
+      if (std::abs(zoomScrollAccum) < 5e-3) { eased += zoomScrollAccum; zoomScrollAccum = 0.0; }
+      applyZoom((float)eased);
+    }
+    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  applyZoom( 0.25f); // + / = : zoom in
+    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  applyZoom(-0.25f); // -     : zoom out
+    // Safety clamp only at the top — applyZoom owns the deep-zoom floor.
+    if (zoom < 0.002f) zoom = 0.002f;
     if (zoom > 120.0f) zoom = 120.0f;
 
     // Toggle keys (fire on release)
@@ -1371,6 +1382,9 @@ void Renderer::syncEulerFromMatrix() {
 //   camMatrix = D * camMatrix
 // Then extracts Euler angles for the shaders.
 void Renderer::rotateCamera(float dyaw, float dpitch, float droll) {
+  // NOTE: rotation does NOT invalidate the zoom anchor — the zoom line is fixed
+  // in world space, so you can look around mid-zoom and still zoom back out to
+  // exactly where you started. Only a POSITION change (fly/keyframe/Locate) does.
   // Build small rotation matrix D = Rx(dpitch) * Ry(dyaw) * Rz(droll)
   float dcy = std::cos(dyaw),   dsy = std::sin(dyaw);
   float dcp = std::cos(dpitch), dsp = std::sin(dpitch);
@@ -1401,6 +1415,7 @@ void Renderer::rotateCamera(float dyaw, float dpitch, float droll) {
 // move (camera — uses camMatrix inverse for view→world transform)
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::move(vec3&& mv) {
+  invalidateZoomAnchor();   // camera flew → re-anchor the reversible zoom
   float x = mv.x, y = mv.y, z = mv.z;
 
   // camMatrix is the view rotation (world→camera).
@@ -1416,6 +1431,32 @@ void Renderer::move(vec3&& mv) {
 
 void Renderer::movePublic(float dx, float dy, float dz) {
   move(vec3{dx, dy, dz});
+}
+
+// ── Deep zoom: reversible seamless FOV-narrow → forward-dolly (see renderer.h) ─
+// The camera pose is a PURE FUNCTION of `zoomLevel` from a fixed anchor captured
+// at the start of a gesture, so any level round-trips exactly (a zoom, not
+// accumulated movement). Notch layout, in magnification-per-notch units:
+//   level < 0            : FOV widens from anchorFov toward kMaxFov (camera at anchor)
+//   0 .. fovNotches      : FOV narrows anchorFov → kMinFov          (camera at anchor)
+//   > fovNotches         : FOV pinned at kMinFov, camera dollies anchor → target
+// Clamped below at the level where FOV hits kMaxFov (no infinite zoom-out, and
+// the camera never dollies out PAST the anchor).
+void Renderer::applyZoom(float ticks) {
+  if (ticks == 0.0f) return;
+  // PURE FOV magnification — the camera never moves, so there is no parallax and
+  // no "travel" feel: it is a real optical zoom. It just isn't capped at 0.5°
+  // any more, so you keep magnifying far past the old limit. Detail loads itself
+  // because the LOD ladder is driven by on-screen size (view share = angular
+  // size / FOV, UpdateUniverseDetail): as the FOV narrows a galaxy fills more of
+  // the view, so it climbs star rungs and promotes to real particles — exactly
+  // as if you had flown closer, but you didn't. Reversible by construction (FOV
+  // is a single scalar; the camera stays put). Widen back out to kMaxFov.
+  //   Floor: below ~0.002° a star's ~1e-7 rad float position error grows past a
+  //   pixel and the far field starts to shimmer — that is the honest optical
+  //   limit of magnifying fixed float positions, not a hard stop.
+  constexpr float kMinFov = 0.002f, kMaxFov = 120.0f, kRate = 0.08f;
+  zoom = std::clamp(zoom * std::pow(1.0f - kRate, ticks), kMinFov, kMaxFov);
 }
 
 void Renderer::ComputeFrameAdvance() {
@@ -1992,7 +2033,13 @@ static std::string PrettyTexLabel(const std::string& filename) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawUI  — master call: fullscreen dockspace + programmatic layout + all panels
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
+// Scene scale: near/far clip planes, focus distance and the deep-zoom forward
+// target, over EVERYTHING in the scene. MUST run before objects draw each frame
+// (see the early call in the main loop) — computing it after they drew made the
+// clip planes lag one frame behind a fast camera, so a zoomed-in surface was
+// clipped for a frame while its atmosphere shell still showed ("clouds, then the
+// planet") and objects appeared to teleport during animation playback.
+void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds) {
   // ── Adaptive near plane: 10% of the nearest object's surface distance ──
   // ── Scene scale: the nearest SURFACE, over EVERYTHING in the scene ────────
   // One rule for every project. This used to consider only physics objects,
@@ -2005,14 +2052,34 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
   double nearestSurface = 1e30;
   bool   nearestIsField  = false;   // nearest thing is a diffuse cloud/galaxy
   double largestFieldRad = 0.0;
+  // Forward (screen-centre) target for the deep zoom: the nearest object the
+  // camera's forward ray actually passes through. Solids give the surface
+  // distance (asymptote at the surface); diffuse clouds/galaxies give the
+  // CENTRE depth (so a zoom flies INTO them). See applyZoom/dollyForward.
+  const double fwd[3] = { -(double)camMatrix[6], -(double)camMatrix[7], -(double)camMatrix[8] };
+  double fwdBestEntry = 1e30, fwdDist = -1.0, fwdRad = 0.0;
+  auto considerForward = [&](double rx, double ry, double rz, double radius, bool diffuse) {
+    if (!(radius > 0.0)) return;
+    const double tc = rx*fwd[0] + ry*fwd[1] + rz*fwd[2];
+    if (tc <= 0.0) return;                                  // behind the camera
+    const double perp2 = (rx*rx + ry*ry + rz*rz) - tc*tc;
+    if (perp2 >= radius*radius) return;                     // ray misses this object
+    const double entry = tc - std::sqrt(radius*radius - perp2);
+    if (entry < fwdBestEntry) {
+      fwdBestEntry = entry;
+      fwdDist = diffuse ? tc : entry;                       // diffuse: centre; solid: surface
+      fwdRad  = radius;
+    }
+  };
   {
     for (auto& o : physicsObjects) {
       double dx = (o.data.position.x - gCamAnchor[0]) + cameraTranslate[0];
       double dy = (o.data.position.y - gCamAnchor[1]) + cameraTranslate[1];
       double dz = (o.data.position.z - gCamAnchor[2]) + cameraTranslate[2];
-      double d  = std::sqrt(dx*dx + dy*dy + dz*dz)
-                - (double)(o.renderRadius() * activeSizeExag());
+      const double orad = (double)(o.renderRadius() * activeSizeExag());
+      double d  = std::sqrt(dx*dx + dy*dy + dz*dz) - orad;
       if (d < nearestSurface) { nearestSurface = d; nearestIsField = false; }
+      considerForward(dx, dy, dz, orad, false);
     }
     for (const auto& cl : clouds) {
       if (!cl) continue;
@@ -2029,6 +2096,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
           if (d < sc.extent * 0.25) d = sc.extent * 0.25;   // inside: use its own size
           if (d < nearestSurface) { nearestSurface = d; nearestIsField = true; }
           largestFieldRad = std::max(largestFieldRad, (double)sc.extent);
+          considerForward(dx, dy, dz, (double)sc.extent, true);
         }
       } else {
         dvec3 cen; double rad = 1.0;
@@ -2040,11 +2108,14 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
         if (d < rad * 0.25) d = rad * 0.25;
         if (d < nearestSurface) { nearestSurface = d; nearestIsField = true; }
         largestFieldRad = std::max(largestFieldRad, rad);
+        considerForward(dx, dy, dz, rad, true);
       }
     }
     if (nearestSurface > 1e29) nearestSurface = 3.0;   // empty scene
     RenderedObject::sZNear = (float)std::clamp(nearestSurface * 0.1, 1e-7, 0.05);
     RenderedObject::sZFar  = 1.0e10f;
+    forwardTargetDist = (fwdDist > 0.0) ? (float)fwdDist : -1.0f;
+    forwardTargetRad  = (float)fwdRad;
   }
 
   // ── Focus distance (drives distance-adaptive camera speed) ──
@@ -2088,6 +2159,13 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
                 << "  nearest is " << (nearestIsField ? "field" : "planet")
                 << "  zNear " << RenderedObject::sZNear << "\n";
   }
+}
+
+void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
+  // Scene scale (near/far, focusDistance, forward zoom target) was already
+  // computed before the objects drew this frame (main loop) — the UI panels
+  // below read those members. Not recomputed here: in a universe this scan is
+  // over thousands of chunks, so running it once per frame matters.
 
   // ── Fullscreen DockSpace ──
   ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -3008,7 +3086,7 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     syncMatrixFromEuler();
   ImGui::SameLine();
   ImGui::SetNextItemWidth(45);
-  ImGui::DragFloat("##fov", &zoom, 0.5f, 0.5f, 120.f, "%.1f");
+  ImGui::DragFloat("##fov", &zoom, 0.5f, 0.002f, 120.f, "%.3f");
   ImGui::SameLine();
   if (ImGui::Button("Reset##cam", ImVec2(45, 0))) resetCamera();
   ImGui::SameLine();
@@ -4335,6 +4413,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
         cameraTranslate[2] = ck.pos[2] + gCamAnchor[2];
         rotation = ck.rotation; pitch = ck.pitch; roll = ck.roll; zoom = ck.zoom;
         syncMatrixFromEuler();
+        invalidateZoomAnchor();   // jumped the camera → next scroll re-anchors
         selectedIdx = -1;
       });
     if (d >= 0) cameraKeyframes.erase(cameraKeyframes.begin() + d);
@@ -6342,6 +6421,7 @@ void Renderer::ClampNearPlaneFor(double radius) {
 }
 
 void Renderer::LocateCamera(dvec3 target, float effRadius) {
+  invalidateZoomAnchor();   // camera teleported → re-anchor the reversible zoom
   double dist = std::max((double)effRadius * 5.7, 1e-4);
 
   dvec3 camPos{gCamAnchor[0] - cameraTranslate[0],
