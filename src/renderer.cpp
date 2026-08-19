@@ -4422,7 +4422,8 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
         cameraTranslate[1] = ck.pos[1] + gCamAnchor[1];
         cameraTranslate[2] = ck.pos[2] + gCamAnchor[2];
         rotation = ck.rotation; pitch = ck.pitch; roll = ck.roll; zoom = ck.zoom;
-        syncMatrixFromEuler();
+        if (ck.mValid) SetCameraMatrix(ck.m);   // exact aim, no Euler round-trip
+        else           syncMatrixFromEuler();
         invalidateZoomAnchor();   // jumped the camera → next scroll re-anchors
         selectedIdx = -1;
       });
@@ -8906,6 +8907,8 @@ void Renderer::InsertCameraKeyframe(unsigned int frame) {
       kf.pitch    = pitch;
       kf.roll     = roll;
       kf.zoom     = zoom;
+      for (int i = 0; i < 9; ++i) kf.m[i] = camMatrix[i];
+      kf.mValid = true;
       return;
     }
   }
@@ -8919,6 +8922,8 @@ void Renderer::InsertCameraKeyframe(unsigned int frame) {
   kf.pitch    = pitch;
   kf.roll     = roll;
   kf.zoom     = zoom;
+  for (int i = 0; i < 9; ++i) kf.m[i] = camMatrix[i];   // exact aim, no Euler round-trip
+  kf.mValid = true;
   auto it = cameraKeyframes.begin();
   while (it != cameraKeyframes.end() && it->frame < frame) ++it;
   cameraKeyframes.insert(it, kf);
@@ -9040,6 +9045,31 @@ KfChannels kfTangent(const std::vector<CameraKeyframe>& kfs, int i, int i0, doub
   return t;
 }
 
+// Orientation matrix (row-major 3x3) ⇄ quaternion, and shortest-path nlerp, so a
+// keyframe's EXACT aim matrix can be interpolated without the lossy Euler
+// round-trip that made deep-zoom playback miss the target.
+void kfMatToQuat(const float m[9], double q[4]) {
+  const double tr = (double)m[0] + m[4] + m[8];
+  if (tr > 0.0) { double s = std::sqrt(tr + 1.0) * 2.0; q[3] = 0.25*s; q[0] = (m[7]-m[5])/s; q[1] = (m[2]-m[6])/s; q[2] = (m[3]-m[1])/s; }
+  else if (m[0] > m[4] && m[0] > m[8]) { double s = std::sqrt(1.0 + m[0]-m[4]-m[8]) * 2.0; q[3] = (m[7]-m[5])/s; q[0] = 0.25*s; q[1] = (m[1]+m[3])/s; q[2] = (m[2]+m[6])/s; }
+  else if (m[4] > m[8]) { double s = std::sqrt(1.0 + m[4]-m[0]-m[8]) * 2.0; q[3] = (m[2]-m[6])/s; q[0] = (m[1]+m[3])/s; q[1] = 0.25*s; q[2] = (m[5]+m[7])/s; }
+  else { double s = std::sqrt(1.0 + m[8]-m[0]-m[4]) * 2.0; q[3] = (m[3]-m[1])/s; q[0] = (m[2]+m[6])/s; q[1] = (m[5]+m[7])/s; q[2] = 0.25*s; }
+}
+void kfQuatToMat(const double q[4], float m[9]) {
+  double x=q[0], y=q[1], z=q[2], w=q[3];
+  const double n = std::sqrt(x*x+y*y+z*z+w*w); if (n > 0) { x/=n; y/=n; z/=n; w/=n; }
+  m[0]=(float)(1-2*(y*y+z*z)); m[1]=(float)(2*(x*y-w*z));   m[2]=(float)(2*(x*z+w*y));
+  m[3]=(float)(2*(x*y+w*z));   m[4]=(float)(1-2*(x*x+z*z)); m[5]=(float)(2*(y*z-w*x));
+  m[6]=(float)(2*(x*z-w*y));   m[7]=(float)(2*(y*z+w*x));   m[8]=(float)(1-2*(x*x+y*y));
+}
+void kfNlerpMat(const float a[9], const float b[9], double t, float out[9]) {
+  double qa[4], qb[4]; kfMatToQuat(a, qa); kfMatToQuat(b, qb);
+  double d = qa[0]*qb[0]+qa[1]*qb[1]+qa[2]*qb[2]+qa[3]*qb[3];
+  const double s = (d < 0.0) ? -1.0 : 1.0;   // shortest arc
+  double q[4]; for (int i = 0; i < 4; ++i) q[i] = qa[i]*(1.0-t) + qb[i]*s*t;
+  kfQuatToMat(q, out);
+}
+
 }  // namespace
 
 bool Renderer::EvalKeyframes(const std::vector<CameraKeyframe>& kfs,
@@ -9060,14 +9090,18 @@ bool Renderer::EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
     out.zoom     = (float)std::exp(c.v[6]);   // carried in log space (see kfChannels)
   };
 
-  if (frame <= (double)kfs[0].frame)     { writePose(kfChannels(kfs[0]));     return true; }
-  if (frame >= (double)kfs[n - 1].frame) { writePose(kfChannels(kfs[n - 1])); return true; }
+  auto copyMat = [&](const CameraKeyframe& k) {
+    out.mValid = k.mValid;
+    for (int j = 0; j < 9; ++j) out.m[j] = k.m[j];
+  };
+  if (frame <= (double)kfs[0].frame)     { writePose(kfChannels(kfs[0]));     copyMat(kfs[0]);     return true; }
+  if (frame >= (double)kfs[n - 1].frame) { writePose(kfChannels(kfs[n - 1])); copyMat(kfs[n - 1]); return true; }
 
   int i = 0;
   while (i + 1 < n && (double)kfs[i + 1].frame <= frame) ++i;
   const CameraKeyframe& k0 = kfs[i];
   const CameraKeyframe& k1 = kfs[i + 1];
-  if (k1.frame == k0.frame) { writePose(kfChannels(k0)); return true; }   // duplicate frames
+  if (k1.frame == k0.frame) { writePose(kfChannels(k0)); copyMat(k0); return true; }   // duplicate frames
 
   const double dur = (double)k1.frame - (double)k0.frame;
   const double t   = (frame - (double)k0.frame) / dur;
@@ -9083,6 +9117,10 @@ bool Renderer::EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
   for (int c = 0; c < 7; c++)
     r.v[c] = h00*p0.v[c] + h10*m0.v[c] + h01*p1.v[c] + h11*m1.v[c];
   writePose(r);
+  // Orientation via the exact matrices (shortest-arc nlerp), not the Euler
+  // channels — so the aim stays precise enough to hit a target at extreme zoom.
+  if (k0.mValid && k1.mValid) { kfNlerpMat(k0.m, k1.m, t, out.m); out.mValid = true; }
+  else out.mValid = false;
   return true;
 }
 

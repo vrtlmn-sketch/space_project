@@ -40,6 +40,13 @@ struct CameraKeyframe {
   float pitch{};
   float roll{};
   float zoom{45.0f};
+  // The camera orientation as a MATRIX (row-major 3x3), stored directly so
+  // playback restores the exact aim. The Euler mirror above round-trips through
+  // matrix→angles→matrix, which loses enough precision that at extreme zoom the
+  // aim drifts to a different spot in the galaxy and misses. mValid=false on old
+  // keyframes/projects → fall back to the Euler angles.
+  float m[9]{1,0,0,0,1,0,0,0,1};
+  bool  mValid{false};
   // How the path passes THROUGH this key. 0 = come to rest and turn (the
   // original linear playback), 1 = full Catmull-Rom tangent, so the camera flies
   // through with continuous velocity. Scales this key's spline tangent only, so
@@ -51,6 +58,8 @@ struct CameraKeyframe {
 struct KeyframePose {
   double pos[3]{};
   float rotation{}, pitch{}, roll{}, zoom{};
+  float m[9]{1,0,0,0,1,0,0,0,1};   // orientation matrix (row-major); used when mValid
+  bool  mValid{false};
 };
 
 // ---- Spawn form state ----
@@ -661,6 +670,9 @@ public:
   bool  sizesDirty{false};  // set on toggle; main loop regenerates meshes
   float activeSizeExag() const { return exaggeratedSizes ? sizeExagFactor : 1.0f; }
   void syncMatrixFromEuler();   // rebuild camMatrix from rotation/pitch/roll
+  // Set the view orientation from an exact matrix (row-major 3x3) and refresh the
+  // Euler mirror — used by keyframe playback to restore the precise aim.
+  void SetCameraMatrix(const float m[9]) { for (int i = 0; i < 9; ++i) camMatrix[i] = m[i]; syncEulerFromMatrix(); }
 
   // ---- Simulation state ----
   std::vector<RayTracerObject>        rayTracedObjects{};

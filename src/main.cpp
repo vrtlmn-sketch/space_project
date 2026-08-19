@@ -1201,7 +1201,8 @@ int main(int argc, char** argv) {
         renderer.pitch    = p.pitch;
         renderer.roll     = p.roll;
         renderer.zoom     = p.zoom;
-        renderer.syncMatrixFromEuler();
+        if (p.mValid) renderer.SetCameraMatrix(p.m);   // exact aim, no Euler round-trip
+        else          renderer.syncMatrixFromEuler();   // old keyframes without a matrix
         renderer.invalidateZoomAnchor();   // playback moved the camera → next scroll re-anchors
       }
     }

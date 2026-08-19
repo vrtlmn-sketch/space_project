@@ -30,7 +30,10 @@ static json keyframeToJson(const CameraKeyframe& kf) {
     {"frame",    kf.frame},
     {"pos",      json::array({kf.pos[0], kf.pos[1], kf.pos[2]})},
     {"rotation", kf.rotation}, {"pitch", kf.pitch}, {"roll", kf.roll}, {"zoom", kf.zoom},
-    {"smooth",   kf.smooth}
+    {"smooth",   kf.smooth},
+    // Exact aim matrix (row-major 3x3) — restored directly on playback so deep
+    // zoom doesn't drift off target via the Euler round-trip.
+    {"m", json::array({kf.m[0],kf.m[1],kf.m[2],kf.m[3],kf.m[4],kf.m[5],kf.m[6],kf.m[7],kf.m[8]})}
   };
 }
 // `zoomDefault`: cameras fall back to 45 (FOV), object lanes to 0 (unused).
@@ -48,6 +51,10 @@ static CameraKeyframe jsonToKeyframe(const json& kf, float zoomDefault) {
     cf.pos[0] = kf["pos"][0].get<double>();
     cf.pos[1] = kf["pos"][1].get<double>();
     cf.pos[2] = kf["pos"][2].get<double>();
+  }
+  if (kf.contains("m") && kf["m"].is_array() && kf["m"].size() >= 9) {
+    for (int i = 0; i < 9; ++i) cf.m[i] = kf["m"][i].get<float>();
+    cf.mValid = true;   // exact aim available (see keyframeToJson)
   }
   return cf;
 }
