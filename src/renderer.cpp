@@ -4286,7 +4286,13 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
       }
       double axis[3] = {0.577, 0.577, 0.577};
       const double tr = cov[0][0] + cov[1][1] + cov[2][2];
-      const bool usePos = tr > 0.0;
+      // Position variance must be SIGNIFICANT relative to the position magnitude.
+      // At universe scale (2.6e15 AU) a "held" position differs between keys only
+      // by the double ULP (~0.5 AU) — pure noise — and projecting the graph onto
+      // that noisy axis made the curve jagged. Treat it as a shared position and
+      // graph the angle/zoom that is actually changing instead.
+      const double meanMagSq = mean[0]*mean[0] + mean[1]*mean[1] + mean[2]*mean[2];
+      const bool usePos = tr > 1e-18 * std::max(1.0, meanMagSq);
       if (usePos) {
         for (int it = 0; it < 12; it++) {          // power iteration → principal axis
           double nx[3] = {0, 0, 0};
@@ -9117,6 +9123,17 @@ bool Renderer::EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
   for (int c = 0; c < 7; c++)
     r.v[c] = h00*p0.v[c] + h10*m0.v[c] + h01*p1.v[c] + h11*m1.v[c];
   writePose(r);
+  // Hold the position EXACTLY constant across a segment whose two keys share it
+  // to within the double ULP. At 2.6e15 AU that ULP is ~0.5 AU; interpolating it
+  // micro-shifts the camera every frame, which is invisible normally but jitters
+  // the whole view at extreme zoom. (A real move stays interpolated.)
+  {
+    const double dx = k1.pos[0]-k0.pos[0], dy = k1.pos[1]-k0.pos[1], dz = k1.pos[2]-k0.pos[2];
+    const double m2 = k0.pos[0]*k0.pos[0] + k0.pos[1]*k0.pos[1] + k0.pos[2]*k0.pos[2];
+    if (dx*dx + dy*dy + dz*dz <= 1e-18 * std::max(1.0, m2)) {
+      out.pos[0] = k0.pos[0]; out.pos[1] = k0.pos[1]; out.pos[2] = k0.pos[2];
+    }
+  }
   // Orientation via the exact matrices (shortest-arc nlerp), not the Euler
   // channels — so the aim stays precise enough to hit a target at extreme zoom.
   if (k0.mValid && k1.mValid) { kfNlerpMat(k0.m, k1.m, t, out.m); out.mValid = true; }
