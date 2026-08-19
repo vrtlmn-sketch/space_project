@@ -1172,8 +1172,8 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  applyZoom( 0.25f); // + / = : zoom in
     if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  applyZoom(-0.25f); // -     : zoom out
     // Safety clamp only at the top — applyZoom owns the deep-zoom floor.
-    if (zoom < 0.002f) zoom = 0.002f;
-    if (zoom > 120.0f) zoom = 120.0f;
+    if (zoom < 0.00001f) zoom = 0.00001f;
+    if (zoom > 120.0f)   zoom = 120.0f;
 
     // Toggle keys (fire on release)
     // F = flip main/PiP views
@@ -1455,7 +1455,11 @@ void Renderer::applyZoom(float ticks) {
   //   Floor: below ~0.002° a star's ~1e-7 rad float position error grows past a
   //   pixel and the far field starts to shimmer — that is the honest optical
   //   limit of magnifying fixed float positions, not a hard stop.
-  constexpr float kMinFov = 0.002f, kMaxFov = 120.0f, kRate = 0.08f;
+  // Pure FOV magnification (camera never moves): the feel you signed off on.
+  // Floor is very small — with the cloud/planet clip-space splits the stars stay
+  // precise, so you can keep magnifying to reach and resolve distant galaxies
+  // while standing still. (f = 1/tan(fov/2) ≈ 1e6 at the floor, still fine.)
+  constexpr float kMinFov = 0.00001f, kMaxFov = 120.0f, kRate = 0.08f;
   zoom = std::clamp(zoom * std::pow(1.0f - kRate, ticks), kMinFov, kMaxFov);
 }
 

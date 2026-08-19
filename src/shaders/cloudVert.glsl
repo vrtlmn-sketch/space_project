@@ -115,19 +115,30 @@ void main() {
   // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
   // Starfield chunks arrive ALREADY camera-relative (the big subtraction was
   // done in double on the CPU), so they must not be offset again.
-  vec3 aLocal, aRelPos;
+  vec3 aLocal, center;
   if (uChunkExtent > 0.0) {
     // uCloudRot places the chunk's stars like the ordinary path places a
     // cloud's particles; the hashes below stay on the UNROTATED aLocal so a
     // star keeps its colour, magnitude and dust when the cloud is rotated.
     // uChunkCenter itself is rotated about the cloud origin on the CPU.
-    aLocal  = aPos * uChunkExtent;
-    aRelPos = uChunkCenter + uCloudRot * aLocal;
+    aLocal = aPos * uChunkExtent;
+    center = uChunkCenter;
   } else {
-    aLocal  = aPos;
-    aRelPos = uCloudOrigin + uCloudRot * aLocal;
+    aLocal = aPos;
+    center = uCloudOrigin;
   }
-  gl_Position = uProj * vec4(uViewRot * aRelPos, 1.0);
+  // Precision split: project the cloud/chunk CENTRE (camera-relative, up to
+  // ~1e12 AU for a far galaxy) and the small per-star offset SEPARATELY, then
+  // sum in CLIP space. Combining them in world space (`centre + offset`) added a
+  // star's offset onto a huge centre in float32, quantising the stars to a coarse
+  // grid — which is why a distant galaxy could not be zoomed into while standing
+  // still. Each operand here stays well-scaled, so the stars stay precise at any
+  // magnification, no camera movement. Mathematically identical when the centre
+  // is small (near clouds), so the normal look is unchanged.
+  vec3 offset     = uCloudRot * aLocal;
+  vec4 centreClip = uProj * vec4(uViewRot * center, 1.0);
+  vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
+  gl_Position     = centreClip + offsetClip;
 
   vRim = aRim;
   float id = float(gl_VertexID);

@@ -207,8 +207,22 @@ static void buildScene(
 // control over it: how many stars an LOD has is an implementation detail, and
 // the only number anyone should have to think about is the galaxy's real size.
 static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clouds,
-                                 const double camT[3], float fovDeg, int fbHeight)
+                                 const double camT[3], float fovDeg, int fbHeight,
+                                 const float fwd[3])
 {
+  // A galaxy is only worth detailing if it is actually IN the view cone. frac
+  // below is angular SIZE / FOV — it says nothing about WHERE the galaxy is, so
+  // at a deep zoom every galaxy in the sky has a huge frac and they ALL promote
+  // (thousands of them). Gate on the angle between the galaxy direction and the
+  // camera forward: skip anything whose nearest edge is more than ~a FOV
+  // off-axis. Generous margin (1.5×) so nothing visible near a screen edge is culled.
+  auto offScreen = [&](double dx, double dy, double dz, double d, double angDeg) -> bool {
+    if (!(d > 0.0)) return false;
+    const double cosA = (dx * fwd[0] + dy * fwd[1] + dz * fwd[2]) / d;
+    if (cosA <= 0.0) return true;                                   // behind the camera
+    const double angleToAxis = std::acos(std::min(1.0, cosA)) * 57.2957795;
+    return (angleToAxis - angDeg * 0.5) > (double)fovDeg * 1.5;
+  };
   // Harness gate: UNIVERSE_DETAIL=0 freezes every galaxy at its spawn rung so an
   // A/B can be measured headlessly.
   static const char* envDetail = std::getenv("UNIVERSE_DETAIL");
@@ -240,7 +254,11 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     double dz = (ro.coordinates.z + sc.center.z - gCamAnchor[2]) + camT[2];
     double d  = std::sqrt(dx*dx + dy*dy + dz*dz);
     double ang  = 2.0 * std::atan2((double)sc.extent, std::max(d, 1.0)) * 57.2957795;
-    float  frac = (float)(ang / (double)std::max(fovDeg, 1.0f));   // share of the view
+    // NB: fovDeg floored only against divide-by-zero, NOT at 1° — a 1° floor made
+    // the LOD blind to deep zoom, so a far galaxy's view share stayed tiny past 1°
+    // FOV and it never climbed its star count or promoted ("only LODs load").
+    float  frac = (float)(ang / (double)std::max(fovDeg, 1e-6f));   // share of the view
+    if (offScreen(dx, dy, dz, d, ang)) continue;                    // not in the view cone
 
     // How many stars are worth building: the disc it covers, at a few per pixel.
     double rpx  = 0.5 * (double)frac * (double)std::max(fbHeight, 1);
@@ -318,7 +336,12 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     double dz = (c->position.z - gCamAnchor[2]) + camT[2];
     double d   = std::sqrt(dx*dx + dy*dy + dz*dz);
     double ang = 2.0 * std::atan2(extent, std::max(d, 1.0)) * 57.2957795;
-    float  frac = (float)(ang / (double)std::max(fovDeg, 1.0f));
+    float  frac = (float)(ang / (double)std::max(fovDeg, 1e-6f));   // deep-zoom safe (see above)
+    if (offScreen(dx, dy, dz, d, ang)) {                            // not in the view cone
+      // Demote if it drifted off-screen while promoted; never promote off-screen.
+      if (c->nearPromoted && frac < kBackToStandIn) c->nearPromoted = false;
+      continue;
+    }
     // Building every star of a huge galaxy is a real cost, so only take the
     // step when the object is genuinely the thing you are looking at.
     if (!c->nearPromoted && frac > kUseRealPipeline && ro.galaxyFullStars <= 2000000)
@@ -1302,8 +1325,11 @@ int main(int argc, char** argv) {
 
     // Regenerate nearby galaxies at higher star density before they are drawn,
     // so the change lands this frame rather than the next.
-    UpdateUniverseDetail(clouds, renderer.cameraTranslate, renderer.zoom,
-                         renderer.viewportHeight() > 0 ? renderer.viewportHeight() : 1080);
+    { vec3 cf = renderer.CameraForward();
+      float fwd[3] = { cf.x, cf.y, cf.z };
+      UpdateUniverseDetail(clouds, renderer.cameraTranslate, renderer.zoom,
+                           renderer.viewportHeight() > 0 ? renderer.viewportHeight() : 1080,
+                           fwd); }
 
     // Step all GPU Barnes-Hut clouds together against one shared octree so
     // separate formations gravitate on each other, then draw each cloud.
