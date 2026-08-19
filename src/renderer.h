@@ -870,6 +870,14 @@ public:
   // capture, so cameras can be keyframed before any simulation has run.
   unsigned int timelineFrames{300};
   unsigned int timelinePlayhead{0};
+  // Continuous (sub-frame) playhead for CAMERA/keyframe playback only. The
+  // integer timelinePlayhead drives the discrete recorded sim frames; sampling
+  // the camera there makes it hop ~framesThisTick frames per render frame, which
+  // at extreme zoom is a large visual step ("random offset per frame"). This
+  // advances by the exact (un-floored) frame rate so the Hermite camera path is
+  // sampled smoothly. Resynced to timelinePlayhead on scrub / click / physics.
+  double continuousPlayhead{0.0};
+  float  framesPerTickExact{0.0f};   // set in ComputeFrameAdvance (before flooring)
   // True when the playhead moved this frame (scrub or play). Non-simulated
   // objects/clouds and keyframed cameras interpolate only when it moved, so a
   // still playhead leaves them free for manual posing.

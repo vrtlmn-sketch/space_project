@@ -1193,13 +1193,16 @@ int main(int argc, char** argv) {
     // Only when the playhead moved: a still playhead leaves the freecam free to
     // fly, so a key can be re-posed and captured over.
     if ((!renderer.paused || renderer.playheadMoved) && !renderer.cameraKeyframes.empty()) {
-      const unsigned int kfFrame = renderer.timelinePlayhead;
+      // Sample the camera at the CONTINUOUS (sub-frame) playhead so a fast
+      // playback interpolates the Hermite path smoothly instead of hopping whole
+      // frames — the hop is a large visual step at extreme zoom.
+      const double kfFrame = renderer.continuousPlayhead;
       const auto& kfs = renderer.cameraKeyframes;
       // Only drive the camera inside the keyframed range: outside it the
       // freecam stays free, so you can fly to the next shot before capturing.
-      if (kfFrame >= kfs.front().frame && kfFrame <= kfs.back().frame) {
+      if (kfFrame >= (double)kfs.front().frame && kfFrame <= (double)kfs.back().frame) {
         KeyframePose p;
-        Renderer::EvalKeyframes(kfs, kfFrame, p);
+        Renderer::EvalKeyframesAt(kfs, kfFrame, p);
         renderer.cameraTranslate[0] = p.pos[0] + gCamAnchor[0];
         renderer.cameraTranslate[1] = p.pos[1] + gCamAnchor[1];
         renderer.cameraTranslate[2] = p.pos[2] + gCamAnchor[2];

@@ -1473,6 +1473,7 @@ void Renderer::ComputeFrameAdvance() {
   playbackSpeed = std::max(playbackSpeed, minPlaybackSpeed());
 
   float framesPerTick = kBaseFramesPerTick * playbackSpeed;
+  framesPerTickExact = framesPerTick;   // exact rate for the continuous camera playhead
   accum += framesPerTick;
   framesThisTick = (int)accum;
 
@@ -4106,18 +4107,26 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   // with no physics it advances on its own so keyframed cameras still animate.
   // While paused it is owned here and edited by the slider / lane clicks.
   unsigned int playheadAtEntry = timelinePlayhead;
+  const double maxFrame = (double)(domain > 0 ? domain - 1 : 0);
   if (!paused) {
     if (anySimulated) {
       timelinePlayhead = curFrame;
+      continuousPlayhead = (double)curFrame;                 // sim owns it → resync
     } else if (playingForward) {
-      unsigned int adv = timelinePlayhead + (unsigned int)framesThisTick;
-      timelinePlayhead = (adv > domain - 1) ? domain - 1 : adv;
+      // Advance the CONTINUOUS playhead by the exact (un-floored) rate; the
+      // integer playhead follows it. The camera samples the continuous one, so
+      // it moves smoothly instead of hopping whole frames.
+      continuousPlayhead += (double)framesPerTickExact;
+      if (continuousPlayhead > maxFrame) continuousPlayhead = maxFrame;
+      timelinePlayhead = (unsigned int)(continuousPlayhead + 1e-9);
     } else {
-      unsigned int back = (unsigned int)framesThisTick;
-      timelinePlayhead = (timelinePlayhead > back) ? timelinePlayhead - back : 0;
+      continuousPlayhead -= (double)framesPerTickExact;
+      if (continuousPlayhead < 0.0) continuousPlayhead = 0.0;
+      timelinePlayhead = (unsigned int)(continuousPlayhead + 1e-9);
     }
   }
   if (timelinePlayhead > domain - 1) timelinePlayhead = domain - 1;
+  if (continuousPlayhead > maxFrame) continuousPlayhead = maxFrame;
 
   // Keypoint markers
   ImVec2 sliderPos = ImGui::GetCursorScreenPos();
@@ -4139,6 +4148,8 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
       ImGui::EndTooltip();
       if (ImGui::IsMouseClicked(0)) {
         paused = true;
+        timelinePlayhead = kp.frame;
+        continuousPlayhead = (double)kp.frame;              // keypoint jump → resync
         for (auto& obj : physicsObjects) obj.setTimeframeAndRestore(kp.frame);
         for (auto& c : clouds) if (c) c->setTimeframeAndRestore(kp.frame);
       }
@@ -4151,6 +4162,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   if (ImGui::SliderInt("##tl", &frameInt, 0, (int)(domain - 1))) {
     paused = true;
     timelinePlayhead = (unsigned int)frameInt;
+    continuousPlayhead = (double)frameInt;                  // scrub → resync camera playhead
     for (auto& obj : physicsObjects) obj.setTimeframeAndRestore((unsigned int)frameInt);
     for (auto& c : clouds) if (c) c->setTimeframeAndRestore((unsigned int)frameInt);
   }
