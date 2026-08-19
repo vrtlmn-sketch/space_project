@@ -19,6 +19,10 @@
 
 float RenderedObject::sZNear = 0.001f;
 double gCamAnchor[3] = {0.0, 0.0, 0.0};
+double gViewRotD[9]  = {1,0,0, 0,1,0, 0,0,1};   // row-major double view rotation
+// FOV (degrees) below which the double view-space centre engages. Above it the
+// float shader path is used unchanged, so the regression baseline is untouched.
+static constexpr float kViewCentreFovDeg = 2.0f;
 float RenderedObject::sZFar  = 1.0e10f;
 
 
@@ -1821,6 +1825,9 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     if (lc >= 0) glUniform3f(lc, (float)vis[k].cx,
                                  (float)vis[k].cy,
                                  (float)vis[k].cz);
+    // Per-chunk double view-space centre (overrides the cloud-wide one set in
+    // transformPerspectiveMesh) so a deeply-zoomed chunk galaxy doesn't jitter.
+    uploadViewCentre(program, vis[k].cx, vis[k].cy, vis[k].cz, fovDeg);
     if (le >= 0) glUniform1f(le, sc.extent);
     if (lp >= 0) glUniform1f(lp, vis[k].screenPx);
     if (ld >= 0) glUniform1f(ld, FarFieldDim(vis[k].want, n, cineFarFalloff));
@@ -2462,6 +2469,24 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
   uniformsCached  = false;
 }
 
+void RenderedObject::uploadViewCentre(GLuint program, double cx, double cy, double cz, float fovDeg)
+{
+  GLint lh = glGetUniformLocation(program, "uHasViewCentre");
+  if (lh < 0) return;                       // shader doesn't use it (lines, RT, …)
+  if (fovDeg >= kViewCentreFovDeg) { glUniform1i(lh, 0); return; }   // normal FOV: float path
+  // View-space centre in DOUBLE (row-major gViewRotD · centre). The transverse
+  // components (x,y) are small near the view axis, so they survive the cast to
+  // float precisely — which is exactly the precision the shader's float rotation
+  // of the huge centre threw away. Depth (z) stays large but only feeds 1/w.
+  const double* R = gViewRotD;
+  double vx = R[0]*cx + R[1]*cy + R[2]*cz;
+  double vy = R[3]*cx + R[4]*cy + R[5]*cz;
+  double vz = R[6]*cx + R[7]*cy + R[8]*cz;
+  GLint lv = glGetUniformLocation(program, "uViewCentre");
+  if (lv >= 0) glUniform3f(lv, (float)vx, (float)vy, (float)vz);
+  glUniform1i(lh, 1);
+}
+
 void RenderedObject::transformPerspectiveMesh(GLuint program, const double cameraTranslate[3], const float viewRot[9],
                                                 float fovDeg,
                                                 int fbWidth, int fbHeight)
@@ -2486,11 +2511,12 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
   bool relative = (meshType == MeshType::sphere || meshType == MeshType::grid ||
                    meshType == MeshType::plane  || meshType == MeshType::cloud);
 
-  float relPos[3] = {
-    (float)((coordinates.x - gCamAnchor[0]) + cameraTranslate[0]),
-    (float)((coordinates.y - gCamAnchor[1]) + cameraTranslate[1]),
-    (float)((coordinates.z - gCamAnchor[2]) + cameraTranslate[2])
+  double relPosD[3] = {
+    (coordinates.x - gCamAnchor[0]) + cameraTranslate[0],
+    (coordinates.y - gCamAnchor[1]) + cameraTranslate[1],
+    (coordinates.z - gCamAnchor[2]) + cameraTranslate[2]
   };
+  float relPos[3] = { (float)relPosD[0], (float)relPosD[1], (float)relPosD[2] };
   float absPos[3] = { (float)coordinates.x, (float)coordinates.y, (float)coordinates.z };
   // Legacy absolute path (lines): vertex buffers are world-space floats, so
   // they need the ABSOLUTE camera translate — recombine anchor + local.
@@ -2537,6 +2563,13 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
   if (resolutionUniform != (unsigned int)-1) {
     glUniform2f(resolutionUniform, (float)fbWidth, (float)fbHeight);
   }
+
+  // Deep-zoom precision: the shader's centre is worldPos (= relPos for the
+  // relative path). Hand it the double-computed view-space centre so the float
+  // rotation of the huge relative centre cannot jitter the frame on playback.
+  // The chunk path overrides this per chunk below. No-op above kViewCentreFovDeg.
+  if (relative)
+    uploadViewCentre(program, relPosD[0], relPosD[1], relPosD[2], fovDeg);
 }
 
 void RenderedObject::perspective(float fovyRadians, float aspect, float zNear, float zFar, float out[16]) {

@@ -60,6 +60,10 @@ struct KeyframePose {
   float rotation{}, pitch{}, roll{}, zoom{};
   float m[9]{1,0,0,0,1,0,0,0,1};   // orientation matrix (row-major); used when mValid
   bool  mValid{false};
+  // DOUBLE interpolated orientation — the nlerp kept in double so the deep-zoom
+  // CPU view transform stays smooth on playback (the float m jitters at 2.7e-5°).
+  double md[9]{1,0,0,0,1,0,0,0,1};
+  bool   mdValid{false};
 };
 
 // ---- Spawn form state ----
@@ -672,7 +676,11 @@ public:
   void syncMatrixFromEuler();   // rebuild camMatrix from rotation/pitch/roll
   // Set the view orientation from an exact matrix (row-major 3x3) and refresh the
   // Euler mirror — used by keyframe playback to restore the precise aim.
-  void SetCameraMatrix(const float m[9]) { for (int i = 0; i < 9; ++i) camMatrix[i] = m[i]; syncEulerFromMatrix(); }
+  void SetCameraMatrix(const float m[9]) { for (int i = 0; i < 9; ++i) { camMatrix[i] = m[i]; gViewRotD[i] = (double)m[i]; } syncEulerFromMatrix(); }
+  // Deep-zoom precise variant: keeps the interpolated view rotation in DOUBLE
+  // (gViewRotD), so the CPU-side view-space centre stays smooth as the
+  // orientation plays back instead of jittering on the float camMatrix.
+  void SetCameraMatrixD(const double m[9]) { for (int i = 0; i < 9; ++i) { gViewRotD[i] = m[i]; camMatrix[i] = (float)m[i]; } syncEulerFromMatrix(); }
 
   // ---- Simulation state ----
   std::vector<RayTracerObject>        rayTracedObjects{};

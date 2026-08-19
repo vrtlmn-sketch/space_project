@@ -24,6 +24,8 @@ uniform mat4 uProj;
 uniform mat4 uWorld;
 uniform vec3 uCamera;
 uniform mat3 uViewRot;
+uniform vec3 uViewCentre;     // view-space centre computed in DOUBLE on the CPU
+uniform int  uHasViewCentre;  // 1 = use it (deep zoom); 0 = float rotate here
 
 uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
@@ -136,7 +138,12 @@ void main() {
   // magnification, no camera movement. Mathematically identical when the centre
   // is small (near clouds), so the normal look is unchanged.
   vec3 offset     = uCloudRot * aLocal;
-  vec4 centreClip = uProj * vec4(uViewRot * center, 1.0);
+  // Deep zoom: use the CPU's double-computed view-space centre (uViewCentre)
+  // instead of the float `uViewRot * center`, which loses ~10 AU to cancellation
+  // on a ~1e8..1e12 AU centre and jitters as the view interpolates. Normal FOV
+  // takes the else branch, bit-for-bit the old path.
+  vec3 viewCentre = (uHasViewCentre != 0) ? uViewCentre : (uViewRot * center);
+  vec4 centreClip = uProj * vec4(viewCentre, 1.0);
   vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
   gl_Position     = centreClip + offsetClip;
 

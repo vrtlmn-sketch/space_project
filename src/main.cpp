@@ -1210,8 +1210,9 @@ int main(int argc, char** argv) {
         renderer.pitch    = p.pitch;
         renderer.roll     = p.roll;
         renderer.zoom     = p.zoom;
-        if (p.mValid) renderer.SetCameraMatrix(p.m);   // exact aim, no Euler round-trip
-        else          renderer.syncMatrixFromEuler();   // old keyframes without a matrix
+        if (p.mdValid)     renderer.SetCameraMatrixD(p.md);  // exact aim in DOUBLE → deep-zoom smooth
+        else if (p.mValid) renderer.SetCameraMatrix(p.m);    // float aim (older path)
+        else               renderer.syncMatrixFromEuler();   // old keyframes without a matrix
         renderer.invalidateZoomAnchor();   // playback moved the camera → next scroll re-anchors
       }
     }

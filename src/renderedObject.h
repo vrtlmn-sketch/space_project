@@ -31,6 +31,15 @@ void EulerDegToMat3d(const vec3& deg, double R[9]);
 // is exact for anything near the camera. The Renderer owns the value; it is
 // mirrored here so RenderedObject code can reach it without signature churn.
 extern double gCamAnchor[3];
+// Row-major view rotation in DOUBLE, mirroring the Renderer's float camMatrix.
+// At extreme zoom the float view rotation applied to a huge camera-relative
+// centre (~1e8..1e12 AU) loses ~10 AU to cancellation, and as the orientation
+// interpolates on playback that error wanders — the deep-zoom "random offset
+// per frame". Objects use this to compute the view-space centre in double on
+// the CPU (see RenderedObject::uploadViewCentre), passing only the small,
+// precise transverse part to the shader. Set by the Renderer each time the
+// camera matrix is finalised.
+extern double gViewRotD[9];
 
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback
@@ -290,6 +299,11 @@ public:
   void transformPerspectiveMesh(GLuint program, const double cameraTranslate[3], const float viewRot[9],
                                 float fovDeg = 45.f,
                                 int fbWidth = 800, int fbHeight = 600);
+  // Compute the view-space centre (gViewRotD × camera-relative centre) in DOUBLE
+  // and upload it as uViewCentre/uHasViewCentre. ONLY engaged below a small FOV:
+  // at a normal FOV the shader's float path is byte-identical to the baseline, so
+  // this changes nothing there and only kicks in for the deep-zoom case it fixes.
+  void uploadViewCentre(GLuint program, double cx, double cy, double cz, float fovDeg);
   void uploadStarLighting(const std::vector<vec3>& positions,
                           const std::vector<vec3>& colors);
   void uploadPlanetColor(const vec3& color);

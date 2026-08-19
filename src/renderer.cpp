@@ -1263,6 +1263,15 @@ void Renderer::syncMatrixFromEuler() {
   camMatrix[0] = cy*cr + sy*sp*sr;   camMatrix[1] = -cy*sr + sy*sp*cr;  camMatrix[2] = sy*cp;
   camMatrix[3] = cp*sr;               camMatrix[4] = cp*cr;               camMatrix[5] = -sp;
   camMatrix[6] = -sy*cr + cy*sp*sr;   camMatrix[7] = sy*sr + cy*sp*cr;   camMatrix[8] = cy*cp;
+  // Mirror the view rotation into gViewRotD (double) for the deep-zoom CPU view
+  // transform. Built in double from the angles so it stays consistent with the
+  // float camMatrix above.
+  const double dcy=std::cos((double)rotation), dsy=std::sin((double)rotation);
+  const double dcp=std::cos((double)pitch),    dsp=std::sin((double)pitch);
+  const double dcr=std::cos((double)roll),     dsr=std::sin((double)roll);
+  gViewRotD[0]=dcy*dcr+dsy*dsp*dsr; gViewRotD[1]=-dcy*dsr+dsy*dsp*dcr; gViewRotD[2]=dsy*dcp;
+  gViewRotD[3]=dcp*dsr;             gViewRotD[4]=dcp*dcr;              gViewRotD[5]=-dsp;
+  gViewRotD[6]=-dsy*dcr+dcy*dsp*dsr;gViewRotD[7]=dsy*dsr+dcy*dsp*dcr;  gViewRotD[8]=dcy*dcp;
 }
 
 // Build a view-rotation matrix from a camera object's Euler angles, using the
@@ -1407,6 +1416,7 @@ void Renderer::rotateCamera(float dyaw, float dpitch, float droll) {
   n[8] = d6*camMatrix[2] + d7*camMatrix[5] + d8*camMatrix[8];
 
   for (int i = 0; i < 9; ++i) camMatrix[i] = n[i];
+  for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];   // keep the double mirror in sync
 
   syncEulerFromMatrix();
 }
@@ -1497,6 +1507,7 @@ void Renderer::resetCamera() {
   camMatrix[0]=1; camMatrix[1]=0; camMatrix[2]=0;
   camMatrix[3]=0; camMatrix[4]=1; camMatrix[5]=0;
   camMatrix[6]=0; camMatrix[7]=0; camMatrix[8]=1;
+  for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];   // double mirror
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9080,6 +9091,23 @@ void kfQuatToMat(const double q[4], float m[9]) {
   m[3]=(float)(2*(x*y+w*z));   m[4]=(float)(1-2*(x*x+z*z)); m[5]=(float)(2*(y*z-w*x));
   m[6]=(float)(2*(x*z-w*y));   m[7]=(float)(2*(y*z+w*x));   m[8]=(float)(1-2*(x*x+y*y));
 }
+void kfQuatToMatD(const double q[4], double m[9]) {
+  double x=q[0], y=q[1], z=q[2], w=q[3];
+  const double n = std::sqrt(x*x+y*y+z*z+w*w); if (n > 0) { x/=n; y/=n; z/=n; w/=n; }
+  m[0]=1-2*(y*y+z*z); m[1]=2*(x*y-w*z);   m[2]=2*(x*z+w*y);
+  m[3]=2*(x*y+w*z);   m[4]=1-2*(x*x+z*z); m[5]=2*(y*z-w*x);
+  m[6]=2*(x*z-w*y);   m[7]=2*(y*z+w*x);   m[8]=1-2*(x*x+y*y);
+}
+// Same nlerp, DOUBLE output — the endpoints are float keyframe matrices, but the
+// interpolation runs and STAYS in double, so its per-frame change is smooth
+// (no float quantisation) and the deep-zoom CPU view transform doesn't jitter.
+void kfNlerpMatD(const float a[9], const float b[9], double t, double out[9]) {
+  double qa[4], qb[4]; kfMatToQuat(a, qa); kfMatToQuat(b, qb);
+  double d = qa[0]*qb[0]+qa[1]*qb[1]+qa[2]*qb[2]+qa[3]*qb[3];
+  const double s = (d < 0.0) ? -1.0 : 1.0;   // shortest arc
+  double q[4]; for (int i = 0; i < 4; ++i) q[i] = qa[i]*(1.0-t) + qb[i]*s*t;
+  kfQuatToMatD(q, out);
+}
 void kfNlerpMat(const float a[9], const float b[9], double t, float out[9]) {
   double qa[4], qb[4]; kfMatToQuat(a, qa); kfMatToQuat(b, qb);
   double d = qa[0]*qb[0]+qa[1]*qb[1]+qa[2]*qb[2]+qa[3]*qb[3];
@@ -9111,6 +9139,8 @@ bool Renderer::EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
   auto copyMat = [&](const CameraKeyframe& k) {
     out.mValid = k.mValid;
     for (int j = 0; j < 9; ++j) out.m[j] = k.m[j];
+    out.mdValid = k.mValid;
+    for (int j = 0; j < 9; ++j) out.md[j] = (double)k.m[j];   // held end: float-precise, but constant → no jitter
   };
   if (frame <= (double)kfs[0].frame)     { writePose(kfChannels(kfs[0]));     copyMat(kfs[0]);     return true; }
   if (frame >= (double)kfs[n - 1].frame) { writePose(kfChannels(kfs[n - 1])); copyMat(kfs[n - 1]); return true; }
@@ -9148,8 +9178,10 @@ bool Renderer::EvalKeyframesAt(const std::vector<CameraKeyframe>& kfs,
   }
   // Orientation via the exact matrices (shortest-arc nlerp), not the Euler
   // channels — so the aim stays precise enough to hit a target at extreme zoom.
-  if (k0.mValid && k1.mValid) { kfNlerpMat(k0.m, k1.m, t, out.m); out.mValid = true; }
-  else out.mValid = false;
+  if (k0.mValid && k1.mValid) {
+    kfNlerpMat(k0.m, k1.m, t, out.m);   out.mValid  = true;
+    kfNlerpMatD(k0.m, k1.m, t, out.md); out.mdValid = true;   // double copy for the deep-zoom view transform
+  } else { out.mValid = false; out.mdValid = false; }
   return true;
 }
 

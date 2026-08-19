@@ -12,6 +12,8 @@ uniform mat4 uProj;
 uniform mat4 uWorld;
 uniform vec3 uCamera;
 uniform mat3 uViewRot;
+uniform vec3 uViewCentre;     // view-space centre computed in DOUBLE on the CPU
+uniform int  uHasViewCentre;  // 1 = use it (deep zoom); 0 = float rotate here
 
 void main(){
   // Precision split: the object CENTRE (uWorld's translation, ~AU scale) and the
@@ -23,7 +25,12 @@ void main(){
   // identical to the old combined transform for every normal (un-zoomed) case.
   vec3 meshLocal  = mat3(uWorld) * (aPos + uCamera);   // small: rotated mesh vertex
   vec3 centre     = uWorld[3].xyz;                      // large: camera-relative centre
-  vec4 centreClip = uProj * vec4(uViewRot * centre, 1.0);
+  // Deep zoom: the CPU rotates the huge centre into view space in DOUBLE and
+  // hands it over, because a float `uViewRot * centre` loses ~10 AU to
+  // cancellation and jitters the frame as the view interpolates. Otherwise
+  // (normal FOV) rotate here as before — bit-for-bit the old path.
+  vec3 viewCentre = (uHasViewCentre != 0) ? uViewCentre : (uViewRot * centre);
+  vec4 centreClip = uProj * vec4(viewCentre, 1.0);
   vec4 offsetClip = uProj * vec4(uViewRot * meshLocal, 0.0);
   gl_Position     = centreClip + offsetClip;
 
