@@ -1334,7 +1334,15 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     glEnable(GL_DEPTH_TEST);
     return;
   }
+  // Cull back faces on a solid sphere (planet/star): with only ~10-20 depth
+  // buckets across the body at a huge far/near ratio, the far hemisphere z-fights
+  // through the near one at the limb when deeply zoomed (streaks). Back faces are
+  // occluded anyway, so culling them is invisible at normal zoom and removes the
+  // z-fight. (Atmosphere/nebula manage their own cull state and return earlier.)
+  const bool cullSolid = (meshType == MeshType::sphere);
+  if (cullSolid) { glEnable(GL_CULL_FACE); glFrontFace(GL_CCW); glCullFace(GL_BACK); }
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);
+  if (cullSolid) glDisable(GL_CULL_FACE);
 }
 
 //Plane is also a raytracer screen
