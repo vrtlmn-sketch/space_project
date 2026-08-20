@@ -20,6 +20,10 @@
 float RenderedObject::sZNear = 0.001f;
 double gCamAnchor[3] = {0.0, 0.0, 0.0};
 double gViewRotD[9]  = {1,0,0, 0,1,0, 0,0,1};   // row-major double view rotation
+int    gLensCull = 0;
+float  gLensBHDirCam[3] = {0,0,1};
+float  gLensBHDist = 1e30f;
+float  gLensCullCos = 2.0f;   // cos > 1 → never culls when disabled
 // FOV (degrees) below which the double view-space centre engages. Above it the
 // float shader path is used unchanged, so the regression baseline is untouched.
 static constexpr float kViewCentreFovDeg = 2.0f;
@@ -986,6 +990,13 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
   if (lo >= 0) glUniform3f(lo, (float)ox, (float)oy, (float)oz);
   GLint lr = glGetUniformLocation(program, "uCloudRot");
   if (lr >= 0) glUniformMatrix3fv(lr, 1, GL_TRUE, rm);   // rm is row-major
+
+  // Black-hole occlusion cull (particles behind the hole, inside its silhouette).
+  GLint lc;
+  if ((lc = glGetUniformLocation(program, "uBHCull"))    >= 0) glUniform1i(lc, gLensCull);
+  if ((lc = glGetUniformLocation(program, "uBHDirCam"))  >= 0) glUniform3f(lc, gLensBHDirCam[0], gLensBHDirCam[1], gLensBHDirCam[2]);
+  if ((lc = glGetUniformLocation(program, "uBHDist"))    >= 0) glUniform1f(lc, gLensBHDist);
+  if ((lc = glGetUniformLocation(program, "uBHCullCos")) >= 0) glUniform1f(lc, gLensCullCos);
 }
 
 void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],

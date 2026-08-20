@@ -6777,7 +6777,7 @@ void Renderer::CineResolveIfActive() {
   if (!cineActive) return;
   glBindFramebuffer(GL_FRAMEBUFFER, cineResolveTarget);
   glViewport(0, 0, cineResolveW, cineResolveH);
-  GLuint hdr = ApplyLiveLens();                        // black-hole lensing; no-op unless a hole is on screen
+  GLuint hdr = ApplyLiveLens();                        // black-hole lensing post-pass (no-op unless a hole is on screen)
   RunPostProcess(hdr, cinePostW, cinePostH);           // samples the larger HDR buffer → downsample
   cineActive = false;
   currentPixelScale = 1.0f;
@@ -8398,6 +8398,8 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
   if ((l = glGetUniformLocation(lensRasterProgram, "uBHDir"))      >= 0) glUniform3f(l, bhDir.x, bhDir.y, bhDir.z);
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosOuter"))   >= 0) glUniform1f(l, cosOuter);
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosInner"))   >= 0) glUniform1f(l, cosInner);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uDeflLo"))     >= 0) glUniform1f(l, 0.02f);   // scene↔box blend by bend strength
+  if ((l = glGetUniformLocation(lensRasterProgram, "uDeflHi"))     >= 0) glUniform1f(l, 0.20f);
   if ((l = glGetUniformLocation(lensRasterProgram, "uBHDist"))     >= 0) glUniform1f(l, bhDist);
   if ((l = glGetUniformLocation(lensRasterProgram, "uNear"))       >= 0) glUniform1f(l, nearZ);
   if ((l = glGetUniformLocation(lensRasterProgram, "uFar"))        >= 0) glUniform1f(l, farZ);

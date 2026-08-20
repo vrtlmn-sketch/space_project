@@ -1227,6 +1227,7 @@ int main(int argc, char** argv) {
     // tiny/far hole (e.g. Sgr A* across the galaxy) costs nothing and the frame is
     // byte-identical to lensing off.
     renderer.lensBHActive = false;
+    gLensCull = 0;                        // clouds are not culled unless a hole is lensing
     if (renderer.lensingEnabled && renderer.realisticRasterView) {
       constexpr double kPI = 3.14159265358979323846;
       const dvec3 camPos{ gCamAnchor[0] - renderer.cameraTranslate[0],
@@ -1260,8 +1261,8 @@ int main(int argc, char** argv) {
                            + std::abs(hole.y - renderer.lensBuiltForBH.y)
                            + std::abs(hole.z - renderer.lensBuiltForBH.z);
         const bool   resized = std::abs(renderer.lensBHRs - renderer.lensBuiltRs) > 0.02f * renderer.lensBHRs;
-        if (!renderer.lensCubeValid || moved > rsAU || resized) {   // (re)build cube + disk for this hole
-          const int FS = 1024;
+        if (!renderer.lensCubeValid || moved > rsAU || resized) {   // (re)build the low-res ring-core cube for this hole
+          const int FS = 512;   // low-res: the box only feeds the strong-field ring core now
           for (int f = 0; f < 6; ++f) {
             renderer.LensBeginFace(f, hole, FS);
             renderer.DrawSkybox(skybox);

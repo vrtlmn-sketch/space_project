@@ -41,6 +41,14 @@ extern double gCamAnchor[3];
 // camera matrix is finalised.
 extern double gViewRotD[9];
 
+// Black-hole occlusion cull for the cloud pass (set by the renderer when a hole is
+// lensing): particles behind the hole and inside its silhouette are discarded, so
+// the galaxy sorts around the hole instead of drawing over it.
+extern int    gLensCull;        // 1 = enable
+extern float  gLensBHDirCam[3]; // normalized camera->hole (camera-relative, world axes)
+extern float  gLensBHDist;      // camera->hole distance
+extern float  gLensCullCos;     // cos of the cull cone half-angle
+
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback
 public:

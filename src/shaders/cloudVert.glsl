@@ -27,6 +27,15 @@ uniform mat3 uViewRot;
 uniform vec3 uViewCentre;     // view-space centre computed in DOUBLE on the CPU
 uniform int  uHasViewCentre;  // 1 = use it (deep zoom); 0 = float rotate here
 
+// Black-hole occlusion cull: a particle BEHIND the hole and inside its silhouette
+// is hidden by it. Done with real camera-relative positions (the depth buffer
+// cannot sort a galaxy across ~1 AU..1e10 AU), so front stars show and back stars
+// vanish behind the shadow — the hole sits IN the galaxy, not on top of it.
+uniform int   uBHCull;      // 1 = enable
+uniform vec3  uBHDirCam;    // normalized camera->hole (camera-relative, world axes)
+uniform float uBHDist;      // camera->hole distance
+uniform float uBHCullCos;   // cos of the cull cone half-angle
+
 uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
 uniform float uTemperature;  // Kelvin (whole-cloud base)
@@ -146,6 +155,17 @@ void main() {
   vec4 centreClip = uProj * vec4(viewCentre, 1.0);
   vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
   gl_Position     = centreClip + offsetClip;
+
+  // Occluded by the black hole? (behind it AND inside its silhouette cone.)
+  if (uBHCull == 1) {
+    vec3  P  = center + offset;              // this particle, camera-relative (world axes)
+    float pd = length(P);
+    if (pd > uBHDist && dot(P, uBHDirCam) > uBHCullCos * pd) {
+      gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → discarded
+      gl_PointSize = 0.0;
+      return;
+    }
+  }
 
   vRim = aRim;
   float id = float(gl_VertexID);

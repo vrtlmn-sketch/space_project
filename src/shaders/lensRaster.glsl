@@ -23,16 +23,19 @@ uniform vec3  uCamRelBH;     // camera position relative to the black hole
 uniform float uBH_RS;        // Schwarzschild radius
 uniform int   uMaxSteps;
 
-// Composite mode (live): 0 = replace every pixel with the lensed cube (headless
-// test); 1 = only touch pixels near the hole, blend over the live scene, and keep
-// the scene where something solid is in front of the hole.
+// Composite mode: 0 = replace every pixel with the lensed cube (headless test);
+// 1 = live BACKDROP — output the lensed far field over the skybox in the cone, and
+// 1 = live post-pass HYBRID: bend the camera ray, then sample the ALREADY-RENDERED
+// scene at the bent direction (the camera's own view → correct FOV/scale, subtle
+// bend) for the bulk, and the low-res box for the strong-field core / off-screen
+// directions (behind-the-hole content, where the rings live). Blended by bend
+// strength. Shadow = captured rays.
 uniform int   uComposite;
 uniform vec3  uBHDir;        // normalized camera->hole direction (world)
 uniform float uCosOuter;     // early-out beyond this angle from the hole
 uniform float uCosInner;     // full lensing inside this angle
-uniform float uBHDist;       // camera->hole distance (same units as near/far)
-uniform float uNear;
-uniform float uFar;
+uniform float uDeflLo;       // bend below this → scene (weak); above uDeflHi → box (strong)
+uniform float uDeflHi;
 
 #include "lensing_common.glsl"
 
@@ -40,12 +43,6 @@ uniform float uFar;
 vec3 geodesicAccel(vec3 pos, vec3 vel) { return holeAccel(pos, vel, 1.0); }
 
 const float BH_ESCAPE_ACCEL_RS = 5e-7;   // matches the geodesic shaders
-
-// Window depth [0,1] → positive eye-space distance (standard perspective).
-float linearDist(float d) {
-    float z = d * 2.0 - 1.0;
-    return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear));
-}
 
 void main()
 {
@@ -58,14 +55,12 @@ void main()
     vec3 rayView = normalize(vec3(ndc.x / uProjFxFy.x, ndc.y / uProjFxFy.y, -1.0));
     vec3 rd      = transpose(uViewRot) * rayView;
 
+    // Cheap cone gate: rays pointing away from the hole are not lensed. In live
+    // mode they are transparent (alpha 0) so the skybox shows and no depth is stamped.
     float cGate = dot(rd, uBHDir);
-    if (uComposite == 1) {
-        // Cheap cone gate: rays pointing away from the hole keep the scene, no march.
-        if (cGate < uCosOuter) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
-        // Depth gate: something solid in FRONT of the hole keeps the scene (so a
-        // planet — or any depth-writing geometry — is never overwritten by the lens).
-        float sd = linearDist(textureLod(uSceneDepth, uv, 0.0).r);
-        if (sd < uBHDist * 0.98) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
+    if (uComposite == 1 && cGate < uCosOuter) {
+        imageStore(outImage, pix, textureLod(uScene, uv, 0.0));   // outside the cone: scene unchanged
+        return;
     }
 
     vec3  pos = uCamRelBH / max(uBH_RS, 1e-30);   // ray origin in units of Rs
@@ -86,11 +81,29 @@ void main()
         vel = normalize(s.vel);
     }
 
-    vec3 lensed = captured ? vec3(0.0) : textureLod(uLensCube, normalize(vel), 0.0).rgb;
+    vec3 vn   = normalize(vel);
+    vec3 boxS = captured ? vec3(0.0) : textureLod(uLensCube, vn, 0.0).rgb;
 
-    if (uComposite == 0) { imageStore(outImage, pix, vec4(lensed, 1.0)); return; }
+    if (uComposite == 0) { imageStore(outImage, pix, vec4(boxS, 1.0)); return; }   // headless test: box only
+
+    // Live hybrid: scene for the correctly-scaled bulk, box for the strong core.
+    vec3 lensed;
+    if (captured) {
+        lensed = vec3(0.0);                              // shadow
+    } else {
+        vec3 cd = uViewRot * vn;                         // bent direction, world → camera
+        vec2 suv; bool onScreen = false;
+        if (cd.z < -1e-4) {                              // in front of the camera
+            suv = vec2(cd.x / (-cd.z) * uProjFxFy.x, cd.y / (-cd.z) * uProjFxFy.y) * 0.5 + 0.5;
+            onScreen = all(greaterThanEqual(suv, vec2(0.0))) && all(lessThanEqual(suv, vec2(1.0)));
+        }
+        vec3  sceneS = onScreen ? textureLod(uScene, suv, 0.0).rgb : boxS;
+        float defl   = 1.0 - dot(vn, rd);                // 0 = no bend
+        float useBox = onScreen ? smoothstep(uDeflLo, uDeflHi, defl) : 1.0;   // strong/off-screen → box
+        lensed = mix(sceneS, boxS, useBox);
+    }
 
     float g        = smoothstep(uCosOuter, uCosInner, cGate);
-    vec3  sceneCol = textureLod(uScene, uv, 0.0).rgb;
+    vec3  sceneCol = textureLod(uScene, uv, 0.0).rgb;    // this pixel's own scene
     imageStore(outImage, pix, vec4(mix(sceneCol, lensed, g), 1.0));
 }
