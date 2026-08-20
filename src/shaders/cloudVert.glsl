@@ -27,11 +27,11 @@ uniform mat3 uViewRot;
 uniform vec3 uViewCentre;     // view-space centre computed in DOUBLE on the CPU
 uniform int  uHasViewCentre;  // 1 = use it (deep zoom); 0 = float rotate here
 
-// Black-hole occlusion cull: a particle BEHIND the hole and inside its silhouette
-// is hidden by it. Done with real camera-relative positions (the depth buffer
-// cannot sort a galaxy across ~1 AU..1e10 AU), so front stars show and back stars
-// vanish behind the shadow — the hole sits IN the galaxy, not on top of it.
-uniform int   uBHCull;      // 1 = enable
+// Black-hole front/back split, by REAL camera-relative position (the depth buffer
+// cannot sort a galaxy across ~1 AU..1e10 AU). Two-pass lensing uses this: pass 1
+// holds the front particles back (draw the back field, then lens it); pass 2 draws
+// only the front particles on top, covering the lens.
+uniform int   uBHCull;      // 0 = off, 1 = keep FRONT (cull behind), 2 = keep BACK (cull in front)
 uniform vec3  uBHDirCam;    // normalized camera->hole (camera-relative, world axes)
 uniform float uBHDist;      // camera->hole distance
 uniform float uBHCullCos;   // cos of the cull cone half-angle
@@ -156,11 +156,14 @@ void main() {
   vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
   gl_Position     = centreClip + offsetClip;
 
-  // Occluded by the black hole? (behind it AND inside its silhouette cone.)
-  if (uBHCull == 1) {
-    vec3  P  = center + offset;              // this particle, camera-relative (world axes)
-    float pd = length(P);
-    if (pd > uBHDist && dot(P, uBHDirCam) > uBHCullCos * pd) {
+  // Front/back split about the hole (inside its silhouette cone).
+  if (uBHCull != 0) {
+    vec3  P      = center + offset;          // this particle, camera-relative (world axes)
+    float pd     = length(P);
+    bool  inCone = dot(P, uBHDirCam) > uBHCullCos * pd;
+    bool  behind = pd > uBHDist;
+    bool  cull   = inCone && ((uBHCull == 1) ? behind : !behind);
+    if (cull) {
       gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → discarded
       gl_PointSize = 0.0;
       return;

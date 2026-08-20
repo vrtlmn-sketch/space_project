@@ -6777,7 +6777,12 @@ void Renderer::CineResolveIfActive() {
   if (!cineActive) return;
   glBindFramebuffer(GL_FRAMEBUFFER, cineResolveTarget);
   glViewport(0, 0, cineResolveW, cineResolveH);
-  GLuint hdr = ApplyLiveLens();                        // black-hole lensing post-pass (no-op unless a hole is on screen)
+  // The viewport runs the two-pass lens itself (so front particles cover the hole)
+  // and sets lensViewportDone; here we just tonemap. Other paths (fullscreen/PiP)
+  // fall back to the single-pass lens overlay.
+  GLuint hdr = cineColorTex;
+  if (lensViewportDone) lensViewportDone = false;
+  else                  hdr = ApplyLiveLens();
   RunPostProcess(hdr, cinePostW, cinePostH);           // samples the larger HDR buffer → downsample
   cineActive = false;
   currentPixelScale = 1.0f;
@@ -8461,6 +8466,30 @@ GLuint Renderer::ApplyLiveLens() {
                cosOuter, cosInner, (float)rl, RenderedObject::sZNear, RenderedObject::sZFar,
                lensSteps, 1);
   return cineLensTex;
+}
+
+bool Renderer::LensBackFieldAndPrepareFront() {
+  if (!lensingEnabled || !lensBHActive || !lensCubeValid || !lensCubeTex || !cineColorTex) return false;
+  GLuint lensed = ApplyLiveLens();          // cineColorTex (back field) → cineLensTex
+  if (lensed != cineLensTex) return false;  // did not run
+  BlitToCine(lensed);                        // lensed back field → cineColorTex
+  lensViewportDone = true;
+  return true;
+}
+
+void Renderer::BlitToCine(GLuint srcTex) {
+  if (!blitProgram || !blitVAO || !cineFBO || !srcTex) return;
+  glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
+  glViewport(0, 0, cineFboW, cineFboH);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_BLEND);
+  glUseProgram(blitProgram);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, srcTex);
+  if (blitLocTexture >= 0) glUniform1i(blitLocTexture, 0);
+  glBindVertexArray(blitVAO);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+  glBindVertexArray(0);
 }
 
 // Shared: post-process recRasterColorTex to LDR and read it back (flipped) into dst.

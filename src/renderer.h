@@ -1017,6 +1017,13 @@ public:
   // Run the live lens over cineColorTex → cineLensTex; returns the texture the
   // post chain should tonemap (cineLensTex when it ran, else cineColorTex).
   GLuint ApplyLiveLens();
+  // Copy a texture into the cine HDR buffer (used to write the lensed back-field
+  // back before the front-particle pass draws on top). Upscales if smaller.
+  void   BlitToCine(GLuint srcTex);
+  bool   lensViewportDone = false;   // viewport ran the two-pass lens → CineResolve skips its post-lens
+  // Lens the back field now in the cine buffer and write it back; returns true if
+  // it ran (then the caller draws the FRONT-of-hole particles on top).
+  bool   LensBackFieldAndPrepareFront();
 
   // A/B compare harness (--compare): capture the RT view at WxH to an image file.
   void CaptureRTImageTo(int w, int h, const char* path) {

@@ -1257,6 +1257,17 @@ int main(int argc, char** argv) {
         renderer.lensBHRs     = physicsObjects[bestBH].schwarzschildRadius;
         const dvec3  hole = renderer.lensBHWorld;
         const double rsAU = (double)renderer.lensBHRs;
+        // Front/back cull frame for the two-pass lens (camera-relative, world axes).
+        {
+          const double rx = hole.x - camPos.x, ry = hole.y - camPos.y, rz = hole.z - camPos.z;
+          const double rl = std::sqrt(rx*rx + ry*ry + rz*rz);
+          if (rl > 1e-9) {
+            gLensBHDirCam[0] = (float)(rx/rl); gLensBHDirCam[1] = (float)(ry/rl); gLensBHDirCam[2] = (float)(rz/rl);
+            gLensBHDist  = (float)rl;
+            const double th = std::asin(std::min(1.0, 2.6 * rsAU / std::max(rl, rsAU*1.001)));
+            gLensCullCos = (float)std::cos(std::min(1.55, 6.0 * th));   // split within the lensed region
+          }
+        }
         const double moved = std::abs(hole.x - renderer.lensBuiltForBH.x)
                            + std::abs(hole.y - renderer.lensBuiltForBH.y)
                            + std::abs(hole.z - renderer.lensBuiltForBH.z);
@@ -1422,6 +1433,9 @@ int main(int argc, char** argv) {
     dyn::TransportRigidClouds(physicsObjects, clouds, renderer);
     static std::vector<int> cloudDrawOrder;
     BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cloudDrawOrder);
+    // Pass 1 of the two-pass lens: hold FRONT-of-hole particles back (they draw in
+    // pass 2, on top of the lensed result); draw the back field now.
+    gLensCull = renderer.lensBHActive ? 2 : 0;
     for (int ci : cloudDrawOrder)
       clouds[ci]->Update(renderer, physData);
     // Phase 2: every cloud's dust over every cloud's light. Order-independent
@@ -1484,6 +1498,25 @@ int main(int argc, char** argv) {
                           ok ? &clouds[sc]->rotationDeg : nullptr);
     }
     renderer.EndNebulaPass();
+
+    // ── Two-pass black-hole lensing (viewport): the back field is now in the cine
+    // buffer; lens it, then draw ONLY the front-of-hole particles on top so the
+    // galaxy covers the hole (our clouds, additively, no new pipeline).
+    if (renderer.LensBackFieldAndPrepareFront()) {
+      gLensCull = 1;                                 // keep only FRONT-of-hole particles
+      for (int ci : cloudDrawOrder) {
+        auto& c = clouds[ci];
+        c->renderedObject.uploadTemperature(c->temperature);
+        c->renderedObject.uploadRenderMode(c->renderMode);
+        c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                           renderer.dustCoverage, renderer.dustClumpScale,
+                                           c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                           renderer.dustContrast);
+        renderer.Draw(c->renderedObject);
+      }
+      for (int ci : cloudDrawOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
+    }
+    gLensCull = 0;
 
     if (recOverridePause) renderer.paused = savedPaused;
 

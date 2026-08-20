@@ -14,7 +14,10 @@ layout(local_size_x = 16, local_size_y = 4) in;
 layout(rgba16f, binding = 0) uniform writeonly image2D outImage;
 layout(binding = 1) uniform samplerCube uLensCube;    // baked far field
 layout(binding = 2) uniform sampler2D   uScene;       // live HDR scene (composite mode)
-layout(binding = 4) uniform sampler2D   uSceneDepth;  // scene depth (composite mode)
+layout(binding = 4) uniform sampler2D   uSceneDepth;  // scene depth — keeps foreground solids unlensed
+uniform float uBHDist;       // camera->hole distance (same units as near/far)
+uniform float uNear;
+uniform float uFar;
 
 uniform vec2  uResolution;
 uniform vec2  uProjFxFy;     // (uProj[0][0], uProj[1][1]) — same ray build as the RT shaders
@@ -44,6 +47,12 @@ vec3 geodesicAccel(vec3 pos, vec3 vel) { return holeAccel(pos, vel, 1.0); }
 
 const float BH_ESCAPE_ACCEL_RS = 5e-7;   // matches the geodesic shaders
 
+// Window depth [0,1] → positive eye-space distance (standard perspective).
+float linearDist(float d) {
+    float z = d * 2.0 - 1.0;
+    return (2.0 * uNear * uFar) / (uFar + uNear - z * (uFar - uNear));
+}
+
 void main()
 {
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
@@ -58,9 +67,14 @@ void main()
     // Cheap cone gate: rays pointing away from the hole are not lensed. In live
     // mode they are transparent (alpha 0) so the skybox shows and no depth is stamped.
     float cGate = dot(rd, uBHDir);
-    if (uComposite == 1 && cGate < uCosOuter) {
-        imageStore(outImage, pix, textureLod(uScene, uv, 0.0));   // outside the cone: scene unchanged
-        return;
+    if (uComposite == 1) {
+        // Outside the cone: scene unchanged.
+        if (cGate < uCosOuter) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
+        // Something solid in FRONT of the hole (planet/mesh): keep it, don't lens it.
+        // Only depth-writing geometry qualifies; additive stars/clouds sit at the far
+        // plane, so the galaxy is still lensed.
+        float sd = linearDist(textureLod(uSceneDepth, uv, 0.0).r);
+        if (sd < uBHDist * 0.98) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
     }
 
     vec3  pos = uCamRelBH / max(uBH_RS, 1e-30);   // ray origin in units of Rs
@@ -97,6 +111,10 @@ void main()
             suv = vec2(cd.x / (-cd.z) * uProjFxFy.x, cd.y / (-cd.z) * uProjFxFy.y) * 0.5 + 0.5;
             onScreen = all(greaterThanEqual(suv, vec2(0.0))) && all(lessThanEqual(suv, vec2(1.0)));
         }
+        // If the bent ray lands on a FOREGROUND solid, that isn't a lensable
+        // source (its light never passed the hole) — don't paint a ghost of it.
+        if (onScreen && linearDist(textureLod(uSceneDepth, suv, 0.0).r) < uBHDist * 0.98)
+            onScreen = false;
         vec3  sceneS = onScreen ? textureLod(uScene, suv, 0.0).rgb : boxS;
         float defl   = 1.0 - dot(vn, rd);                // 0 = no bend
         float useBox = onScreen ? smoothstep(uDeflLo, uDeflHi, defl) : 1.0;   // strong/off-screen → box
