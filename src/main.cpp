@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <random>
 
 #include "mathStructs.h"
 #include "renderedObject.h"
@@ -1253,10 +1254,16 @@ int main(int argc, char** argv) {
         renderer.lensBHActive = true;
         renderer.lensBHWorld  = physicsObjects[bestBH].data.position;
         renderer.lensBHRs     = physicsObjects[bestBH].schwarzschildRadius;
-        if (!renderer.lensCubeValid) {          // bake the far field from the hole (one-time)
+        const dvec3  hole = renderer.lensBHWorld;
+        const double rsAU = (double)renderer.lensBHRs;
+        const double moved = std::abs(hole.x - renderer.lensBuiltForBH.x)
+                           + std::abs(hole.y - renderer.lensBuiltForBH.y)
+                           + std::abs(hole.z - renderer.lensBuiltForBH.z);
+        const bool   resized = std::abs(renderer.lensBHRs - renderer.lensBuiltRs) > 0.02f * renderer.lensBHRs;
+        if (!renderer.lensCubeValid || moved > rsAU || resized) {   // (re)build cube + disk for this hole
           const int FS = 1024;
           for (int f = 0; f < 6; ++f) {
-            renderer.LensBeginFace(f, renderer.lensBHWorld, FS);
+            renderer.LensBeginFace(f, hole, FS);
             renderer.DrawSkybox(skybox);
             std::vector<int> order;
             BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
@@ -1274,6 +1281,9 @@ int main(int argc, char** argv) {
             renderer.LensEndFace(f);
           }
           renderer.lensCubeValid = true;
+
+          renderer.lensBuiltForBH = hole;
+          renderer.lensBuiltRs    = renderer.lensBHRs;
         }
       }
     }
@@ -1751,8 +1761,9 @@ int main(int argc, char** argv) {
               bh = o.data.position; rs = (double)o.schwarzschildRadius; hasBH = true; break;
             }
           if (!hasBH) { std::cout << "[lens] no black hole in scene\n"; std::exit(0); }
-          const int LW = std::getenv("LENS_W") ? std::atoi(std::getenv("LENS_W")) : 1920;
-          const int LH = std::getenv("LENS_H") ? std::atoi(std::getenv("LENS_H")) : 1080;
+          if (std::getenv("LENS_RS_MULT")) rs *= std::atof(std::getenv("LENS_RS_MULT"));  // inflate the hole to test far/huge scaling
+          const int LW = std::getenv("LENS_W") ? std::atoi(std::getenv("LENS_W")) : 1280;
+          const int LH = std::getenv("LENS_H") ? std::atoi(std::getenv("LENS_H")) : 720;
           const double distRs = std::getenv("LENS_DIST") ? std::atof(std::getenv("LENS_DIST")) : 20.0;
           const double D  = distRs * rs;
           const int    FS = std::getenv("LENS_FACE") ? std::atoi(std::getenv("LENS_FACE")) : 1024;
@@ -1769,22 +1780,25 @@ int main(int argc, char** argv) {
           // 1) Bake the far-field cube (LensBegin/EndFace save + restore our camera).
           glFinish();
           auto _tBake = std::chrono::high_resolution_clock::now();
+          const bool darkBg = std::getenv("LENS_DARK") != nullptr;   // dark cube to isolate the disk
           for (int f = 0; f < 6; ++f) {
             renderer.LensBeginFace(f, bh, FS);
             renderer.DrawSkybox(skybox);
-            std::vector<int> order;
-            BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
-            for (int ci : order) {
-              auto& c = clouds[ci];
-              c->renderedObject.uploadTemperature(c->temperature);
-              c->renderedObject.uploadRenderMode(c->renderMode);
-              c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
-                                                 renderer.dustCoverage, renderer.dustClumpScale,
-                                                 c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                                 renderer.dustContrast);
-              renderer.Draw(c->renderedObject);
+            if (!darkBg) {
+              std::vector<int> order;
+              BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
+              for (int ci : order) {
+                auto& c = clouds[ci];
+                c->renderedObject.uploadTemperature(c->temperature);
+                c->renderedObject.uploadRenderMode(c->renderMode);
+                c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                                   renderer.dustCoverage, renderer.dustClumpScale,
+                                                   c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                                   renderer.dustContrast);
+                renderer.Draw(c->renderedObject);
+              }
+              for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
             }
-            for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
             renderer.LensEndFace(f);
           }
           glFinish();
@@ -1795,8 +1809,8 @@ int main(int argc, char** argv) {
           vec3 camRelBH{ (float)((gCamAnchor[0] - renderer.cameraTranslate[0]) - bh.x),
                          (float)((gCamAnchor[1] - renderer.cameraTranslate[1]) - bh.y),
                          (float)((gCamAnchor[2] - renderer.cameraTranslate[2]) - bh.z) };
-          const int steps = std::getenv("LENS_STEPS") ? std::atoi(std::getenv("LENS_STEPS")) : 1500;
-          const int bench = std::getenv("LENS_BENCH") ? std::atoi(std::getenv("LENS_BENCH")) : 30;
+          const int steps = std::getenv("LENS_STEPS") ? std::atoi(std::getenv("LENS_STEPS")) : 1000;
+          const int bench = std::getenv("LENS_BENCH") ? std::atoi(std::getenv("LENS_BENCH")) : 1;
           renderer.BeginRecordRaster(LW, LH);
           renderer.DispatchRasterLens(LW, LH, camRelBH, (float)rs, steps);   // warm up
           glFinish();

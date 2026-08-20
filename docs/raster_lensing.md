@@ -1,9 +1,28 @@
 # Raster gravitational lensing — design notes
 
-Status: Phases 0–2 implemented and verified; Phases 3–4 still design. Raster
-only. (Doppler is intentionally out of scope — it does not apply to the baked
-far field.) A rasterized, gravitationally-lensed black hole (shadow + Einstein
-rings of the lensed starfield) now renders headlessly via `LENS_TEST=1`.
+Status: Phases 0–2 done and live; Phase 3 (accretion disk) is being done the
+RIGHT way — see the note below. Raster only. (Doppler is intentionally out of
+scope.) A rasterized, lensed black hole (shadow + Einstein rings) renders live in
+the raster view, and headlessly via `LENS_TEST=1`.
+
+### Disk direction (CORRECTED)
+A volumetric "accretion disk" — splatting cloud particles into a hole-centred
+volume and marching it — was built and **removed**. It duplicated the cloud
+pipeline (splat + march for a blurry gray copy), tanked performance, and threw
+away the real particle look that IS the software. The correct approach: **the
+black hole is a normal depth-writing scene object; clouds are drawn by the
+existing pipeline and cover it by depth.** The far-field lens is a post-pass that
+only replaces the BACKGROUND behind the hole and is **depth-gated** so anything
+solid in front is preserved. The "disk" is just a cloud placed near the hole,
+rendered normally (front shows, back occluded by the sphere). Strong-field
+foreground bending (a per-vertex deflection in the cloud vertex shader) is a
+later, cheap add — never a second cloud renderer.
+
+Current live state: scale-invariant integration (big holes bend correctly, no
+float overflow), a GPU-watchdog safety cap (~720p/800 steps while lensing), and
+the depth-gate for foreground solids. Remaining: draw near-field (proximity)
+clouds AFTER the lens so an additive cloud (which does not write depth) becomes
+the disk.
 
 Progress:
 - **Phase 0 DONE** — `src/shaders/lensing_common.glsl` holds `holeAccel` + the
@@ -280,6 +299,24 @@ renders exactly as today until the user turns lensing on, so the raster baseline
 - **Lens pass:** most of the screen early-outs (ray far from the hole). LUT path
   ≈ 2 fetches/pixel over the disk → hundreds of FPS. Integration path ≈ 50–100
   cheap steps/pixel over the disk only → comfortably real-time at 1080p.
+
+## Scale invariance — integrate in units of Rs (fixed)
+
+A galaxy-scale hole seen from far outside the galaxy first rendered as a black
+disk with **no Einstein rings** — the lensing had silently died. Cause: the
+photon acceleration `a = -1.5·rs·h²/r⁵·p` computes `r⁵`, and at world scale
+`r ~ 1e10 AU` gives `r⁵ ~ 1e50`, **past float32's ~3.4e38 limit → r⁵ = ∞ → a = 0**.
+Only the horizon comparison still fired, so the shadow showed but nothing bent;
+the parallax-shifted background inside the shadow read as a "mirror".
+
+Fix: the raster lens pass integrates in **units of Rs** (`lensRaster.glsl`
+divides the start position by Rs and uses `holeAccel(pos,vel,1.0)`, step and
+capture in Rs units). GR is scale-free, so this is exact at any absolute scale
+and keeps `r ~ O(20)` so `r⁵` never overflows. Verified: a close 0.05-AU hole
+and a 1.6e9-AU hole at the same D/Rs render **identically** — true scale
+invariance. NOTE: the RT geodesic compute shaders still integrate in world units
+and have the same latent overflow for a huge hole viewed from far — apply the
+same Rs-unit treatment there when doing the "all scenarios" pass.
 
 ## Risks / open questions
 

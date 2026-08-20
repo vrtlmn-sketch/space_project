@@ -535,6 +535,7 @@ private:
   GLuint cineFBO{0};
   GLuint cineColorTex{0};
   GLuint cineDepthRBO{0};
+  GLuint cineDepthTex{0};   // sampleable scene depth for the lens pass
   int    cineFboW{0}, cineFboH{0};
   float  currentPixelScale{1.0f};    // transient: point-size scale for the pass being drawn (= SSAA factor)
   bool   cineActive{false};          // transient: HDR redirect live for the current pass
@@ -992,22 +993,25 @@ public:
   // the lensed result over sceneTex only within the [outer,inner] cones about the
   // hole. camRelBH = camera position relative to the hole; bhDir = normalized
   // camera->hole direction (world).
-  void   LensDispatch(GLuint outTex, GLuint sceneTex, int w, int h,
+  void   LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex, int w, int h,
                       const vec3& camRelBH, const vec3& bhDir, float rs,
-                      float cosOuter, float cosInner, int maxSteps, int composite);
+                      float cosOuter, float cosInner, float bhDist, float nearZ, float farZ,
+                      int maxSteps, int composite);
   // Headless test entry: full-replace lensing into recRasterColorTex.
   void   DispatchRasterLens(int w, int h, const vec3& camRelBH, float rs, int maxSteps);
 
   // ── Live raster lensing (gated) ──────────────────────────────────────────
   // main.cpp sets these each frame: the dominant black hole that is big enough
-  // on screen to be worth lensing (else lensBHActive stays false and the whole
-  // pass — and the byte-identical baseline — is preserved). The far-field cube is
-  // baked from the hole once (lensCubeValid) and reused; it is view-independent.
-  bool   lensingEnabled = true;      // master toggle (Quality & Speed)
+  // on screen to be worth lensing (else lensBHActive stays false and the frame is
+  // byte-identical to lensing off). The far-field cube is baked from the hole and
+  // reused (view-independent); rebuilt when the hole moves or is resized.
+  bool   lensingEnabled = true;      // master toggle
   bool   lensBHActive   = false;     // a hole is resolvable on screen this frame
   dvec3  lensBHWorld{0,0,0};         // its world position
   float  lensBHRs       = 0.05f;     // its Schwarzschild radius
   bool   lensCubeValid  = false;     // cube baked and usable
+  dvec3  lensBuiltForBH { 1e300, 0, 0 };  // hole position the cube was built for
+  float  lensBuiltRs    = -1.0f;     // hole Rs the cube was built for (rebuild when resized)
   GLuint cineLensTex = 0; int cineLensW = 0, cineLensH = 0;
   void   EnsureCineLensTex(int w, int h);
   // Run the live lens over cineColorTex → cineLensTex; returns the texture the

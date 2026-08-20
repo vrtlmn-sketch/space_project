@@ -6672,6 +6672,7 @@ void Renderer::EnsureCineFBO(int w, int h) {
   if (cineFBO)      { glDeleteFramebuffers(1, &cineFBO);     cineFBO = 0; }
   if (cineColorTex) { glDeleteTextures(1, &cineColorTex);    cineColorTex = 0; }
   if (cineDepthRBO) { glDeleteRenderbuffers(1, &cineDepthRBO); cineDepthRBO = 0; }
+  if (cineDepthTex) { glDeleteTextures(1, &cineDepthTex);    cineDepthTex = 0; }
 
   cineFboW = w; cineFboH = h;
 
@@ -6687,10 +6688,17 @@ void Renderer::EnsureCineFBO(int w, int h) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cineColorTex, 0);
 
-  glGenRenderbuffers(1, &cineDepthRBO);
-  glBindRenderbuffer(GL_RENDERBUFFER, cineDepthRBO);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
-  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, cineDepthRBO);
+  // Depth as a TEXTURE (not an RBO) so the lens pass can sample it to keep the
+  // scene where something solid is in front of the hole. Sampling-transparent to
+  // the scene render and the nebula depth blit.
+  glGenTextures(1, &cineDepthTex);
+  glBindTexture(GL_TEXTURE_2D, cineDepthTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cineDepthTex, 0);
 
   GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   if (status != GL_FRAMEBUFFER_COMPLETE)
@@ -8340,9 +8348,10 @@ void Renderer::LensEndFace(int face) {
   zoom = lensSavedZoom;
 }
 
-void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, int w, int h,
+void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex, int w, int h,
                             const vec3& camRelBH, const vec3& bhDir, float rs,
-                            float cosOuter, float cosInner, int maxSteps, int composite) {
+                            float cosOuter, float cosInner, float bhDist, float nearZ, float farZ,
+                            int maxSteps, int composite) {
   if (!lensRasterProgram) {
     GLuint cs = compileShaderFromFile("src/shaders/lensRaster.glsl", GL_COMPUTE_SHADER);
     if (!cs) { std::cerr << "[lens] lensRaster.glsl failed to compile\n"; return; }
@@ -8369,6 +8378,11 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, int w, int h,
     glBindTexture(GL_TEXTURE_2D, sceneTex);
     glUniform1i(glGetUniformLocation(lensRasterProgram, "uScene"), 2);
   }
+  if (sceneDepthTex) {
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, sceneDepthTex);
+    glUniform1i(glGetUniformLocation(lensRasterProgram, "uSceneDepth"), 4);
+  }
 
   float fovy   = zoom * (float)M_PI / 180.0f;
   float f      = 1.0f / std::tan(fovy * 0.5f);
@@ -8384,6 +8398,9 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, int w, int h,
   if ((l = glGetUniformLocation(lensRasterProgram, "uBHDir"))      >= 0) glUniform3f(l, bhDir.x, bhDir.y, bhDir.z);
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosOuter"))   >= 0) glUniform1f(l, cosOuter);
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosInner"))   >= 0) glUniform1f(l, cosInner);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uBHDist"))     >= 0) glUniform1f(l, bhDist);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uNear"))       >= 0) glUniform1f(l, nearZ);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uFar"))        >= 0) glUniform1f(l, farZ);
 
   glDispatchCompute((GLuint)((w + 15) / 16), (GLuint)((h + 3) / 4), 1);
   glMemoryBarrier(GL_ALL_BARRIER_BITS);
@@ -8391,8 +8408,8 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, int w, int h,
 }
 
 void Renderer::DispatchRasterLens(int w, int h, const vec3& camRelBH, float rs, int maxSteps) {
-  LensDispatch(recRasterColorTex, 0, w, h, camRelBH, vec3{0.0f, 0.0f, 1.0f}, rs,
-               -1.0f, -1.0f, maxSteps, 0);   // composite 0 = full replace (headless test)
+  LensDispatch(recRasterColorTex, 0, 0, w, h, camRelBH, vec3{0.0f, 0.0f, 1.0f}, rs,
+               -1.0f, -1.0f, 0.0f, 1.0f, 1.0f, maxSteps, 0);   // composite 0 = full replace (headless test)
 }
 
 void Renderer::EnsureCineLensTex(int w, int h) {
@@ -8412,7 +8429,14 @@ void Renderer::EnsureCineLensTex(int w, int h) {
 GLuint Renderer::ApplyLiveLens() {
   if (!lensingEnabled || !lensBHActive || !lensCubeValid || !lensCubeTex || !cineColorTex)
     return cineColorTex;
-  const int w = cineFboW, h = cineFboH;
+  // SAFETY: cap the lens resolution and step budget so a big on-screen hole (which
+  // now really bends light) can never exceed the GPU watchdog and reset the driver.
+  // When lensing is active the frame is bounded to ~720p and upscaled by the post
+  // chain — a soft frame while staring into a black hole, never a crash.
+  const int maxH = 720;
+  const int h = std::min(cineFboH, maxH);
+  const int w = (cineFboH > 0) ? std::max(1, (int)std::lround((double)cineFboW * h / cineFboH)) : cineFboW;
+  const int lensSteps = 800;
   EnsureCineLensTex(w, h);
   if (!cineLensTex) return cineColorTex;
 
@@ -8431,8 +8455,9 @@ GLuint Renderer::ApplyLiveLens() {
   float cosInner = (float)std::cos(std::min(1.30,  4.0 * th));   // full lensing within ~4 shadow radii
   float cosOuter = (float)std::cos(std::min(1.55, 12.0 * th));   // fade to scene by ~12
 
-  LensDispatch(cineLensTex, cineColorTex, w, h, camRelBH, bhDir, lensBHRs,
-               cosOuter, cosInner, 1500, 1);
+  LensDispatch(cineLensTex, cineColorTex, cineDepthTex, w, h, camRelBH, bhDir, lensBHRs,
+               cosOuter, cosInner, (float)rl, RenderedObject::sZNear, RenderedObject::sZFar,
+               lensSteps, 1);
   return cineLensTex;
 }
 
