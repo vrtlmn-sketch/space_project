@@ -8403,8 +8403,15 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
   if ((l = glGetUniformLocation(lensRasterProgram, "uBHDir"))      >= 0) glUniform3f(l, bhDir.x, bhDir.y, bhDir.z);
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosOuter"))   >= 0) glUniform1f(l, cosOuter);
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosInner"))   >= 0) glUniform1f(l, cosInner);
-  if ((l = glGetUniformLocation(lensRasterProgram, "uDeflLo"))     >= 0) glUniform1f(l, 0.02f);   // scene↔box blend by bend strength
-  if ((l = glGetUniformLocation(lensRasterProgram, "uDeflHi"))     >= 0) glUniform1f(l, 0.20f);
+  {
+    // Box (behind-hole ring) confined to a thin cone about the hole direction, so
+    // the magnified box only fills the ring and the true-scale scene does the rest.
+    const float th = (float)std::asin(std::min(1.0f, 2.6f * rs / std::max(bhDist, rs * 1.001f)));
+    const float boxInner = std::cos(std::min(0.15f, th));
+    const float boxOuter = std::cos(std::min(0.50f, 3.0f * th));
+    if ((l = glGetUniformLocation(lensRasterProgram, "uBoxCosInner")) >= 0) glUniform1f(l, boxInner);
+    if ((l = glGetUniformLocation(lensRasterProgram, "uBoxCosOuter")) >= 0) glUniform1f(l, boxOuter);
+  }
   if ((l = glGetUniformLocation(lensRasterProgram, "uBHDist"))     >= 0) glUniform1f(l, bhDist);
   if ((l = glGetUniformLocation(lensRasterProgram, "uNear"))       >= 0) glUniform1f(l, nearZ);
   if ((l = glGetUniformLocation(lensRasterProgram, "uFar"))        >= 0) glUniform1f(l, farZ);

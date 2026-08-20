@@ -35,6 +35,11 @@ uniform int   uBHCull;      // 0 = off, 1 = keep FRONT (cull behind), 2 = keep B
 uniform vec3  uBHDirCam;    // normalized camera->hole (camera-relative, world axes)
 uniform float uBHDist;      // camera->hole distance
 uniform float uBHCullCos;   // cos of the cull cone half-angle
+// Cosmetic single-image thin-lens bend of the FRONT particles (front pass only).
+uniform vec2  uBHScreen;    // hole position in aspect-corrected NDC
+uniform float uBHEinsteinR; // Einstein radius in aspect-corrected NDC (0 = no bend)
+uniform float uBHBendStr;   // 0 = none, 1 = full
+uniform float uBHBendReach; // 3D distance (AU) over which the bend fades out — far matter covers, not bends
 
 uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
@@ -167,6 +172,29 @@ void main() {
       gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → discarded
       gl_PointSize = 0.0;
       return;
+    }
+  }
+
+  // Cosmetic single-image thin-lens bend of the surviving FRONT particles, so the
+  // foreground agrees with the lensed background (the realism is carried by the
+  // baked cube; this is just a radial point-mass displacement — a few mults).
+  if (uBHCull == 1 && uBHEinsteinR > 0.0 && gl_Position.w > 1e-6) {
+    // Only matter physically CLOSE to the hole bends; a cloud far in front is not
+    // lensed (its light never passed the hole) and simply covers it.
+    vec3  bhRel = uBHDirCam * uBHDist;                                      // hole, camera-relative
+    float d3d   = length((center + offset) - bhRel);                       // this particle → hole, 3D
+    // Fade the bend out fast: only matter within ~one Einstein impact parameter of
+    // the hole bends (into the ring); everything farther covers the hole.
+    float str   = uBHBendStr * (1.0 - smoothstep(uBHBendReach * 0.4, uBHBendReach, d3d));
+    if (str > 0.001) {
+      float aspect = uProj[1][1] / uProj[0][0];
+      vec2  pn = gl_Position.xy / gl_Position.w;                              // NDC
+      vec2  u  = vec2(pn.x * aspect, pn.y) - uBHScreen;                       // aspect-corrected offset
+      float r  = length(u);
+      float rl = 0.5 * (r + sqrt(r*r + 4.0 * uBHEinsteinR * uBHEinsteinR));   // primary-image radius
+      rl = mix(r, rl, str);
+      vec2  q2 = uBHScreen + u * (rl / max(r, 1e-6));
+      gl_Position.xy = vec2(q2.x / aspect, q2.y) * gl_Position.w;
     }
   }
 

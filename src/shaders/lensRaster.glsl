@@ -37,8 +37,8 @@ uniform int   uComposite;
 uniform vec3  uBHDir;        // normalized camera->hole direction (world)
 uniform float uCosOuter;     // early-out beyond this angle from the hole
 uniform float uCosInner;     // full lensing inside this angle
-uniform float uDeflLo;       // bend below this → scene (weak); above uDeflHi → box (strong)
-uniform float uDeflHi;
+uniform float uBoxCosOuter;  // box (behind-hole ring) appears only where the bent ray
+uniform float uBoxCosInner;  // wraps toward the hole: dot(vel, holeDir) in [outer,inner]
 
 #include "lensing_common.glsl"
 
@@ -116,8 +116,11 @@ void main()
         if (onScreen && linearDist(textureLod(uSceneDepth, suv, 0.0).r) < uBHDist * 0.98)
             onScreen = false;
         vec3  sceneS = onScreen ? textureLod(uScene, suv, 0.0).rgb : boxS;
-        float defl   = 1.0 - dot(vn, rd);                // 0 = no bend
-        float useBox = onScreen ? smoothstep(uDeflLo, uDeflHi, defl) : 1.0;   // strong/off-screen → box
+        // The box supplies BEHIND-the-hole light, which only appears in a thin ring
+        // where the bent ray wraps toward the hole (dot(vel, holeDir) → 1). Elsewhere
+        // the correctly-scaled scene is used, so the effect stays its true size.
+        float toward = dot(vn, uBHDir);
+        float useBox = onScreen ? smoothstep(uBoxCosOuter, uBoxCosInner, toward) : 1.0;
         lensed = mix(sceneS, boxS, useBox);
     }
 

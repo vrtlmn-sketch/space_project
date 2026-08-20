@@ -24,6 +24,10 @@ int    gLensCull = 0;
 float  gLensBHDirCam[3] = {0,0,1};
 float  gLensBHDist = 1e30f;
 float  gLensCullCos = 2.0f;   // cos > 1 → never culls when disabled
+float  gLensBHScreen[2] = {0,0};
+float  gLensEinsteinR = 0.0f;
+float  gLensBendStrength = 1.0f;
+float  gLensBendReach = 1e30f;
 // FOV (degrees) below which the double view-space centre engages. Above it the
 // float shader path is used unchanged, so the regression baseline is untouched.
 static constexpr float kViewCentreFovDeg = 2.0f;
@@ -991,12 +995,16 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
   GLint lr = glGetUniformLocation(program, "uCloudRot");
   if (lr >= 0) glUniformMatrix3fv(lr, 1, GL_TRUE, rm);   // rm is row-major
 
-  // Black-hole occlusion cull (particles behind the hole, inside its silhouette).
+  // Black-hole front/back cull + cosmetic front-particle bend.
   GLint lc;
-  if ((lc = glGetUniformLocation(program, "uBHCull"))    >= 0) glUniform1i(lc, gLensCull);
-  if ((lc = glGetUniformLocation(program, "uBHDirCam"))  >= 0) glUniform3f(lc, gLensBHDirCam[0], gLensBHDirCam[1], gLensBHDirCam[2]);
-  if ((lc = glGetUniformLocation(program, "uBHDist"))    >= 0) glUniform1f(lc, gLensBHDist);
-  if ((lc = glGetUniformLocation(program, "uBHCullCos")) >= 0) glUniform1f(lc, gLensCullCos);
+  if ((lc = glGetUniformLocation(program, "uBHCull"))      >= 0) glUniform1i(lc, gLensCull);
+  if ((lc = glGetUniformLocation(program, "uBHDirCam"))    >= 0) glUniform3f(lc, gLensBHDirCam[0], gLensBHDirCam[1], gLensBHDirCam[2]);
+  if ((lc = glGetUniformLocation(program, "uBHDist"))      >= 0) glUniform1f(lc, gLensBHDist);
+  if ((lc = glGetUniformLocation(program, "uBHCullCos"))   >= 0) glUniform1f(lc, gLensCullCos);
+  if ((lc = glGetUniformLocation(program, "uBHScreen"))    >= 0) glUniform2f(lc, gLensBHScreen[0], gLensBHScreen[1]);
+  if ((lc = glGetUniformLocation(program, "uBHEinsteinR")) >= 0) glUniform1f(lc, gLensEinsteinR);
+  if ((lc = glGetUniformLocation(program, "uBHBendStr"))   >= 0) glUniform1f(lc, gLensBendStrength);
+  if ((lc = glGetUniformLocation(program, "uBHBendReach")) >= 0) glUniform1f(lc, gLensBendReach);
 }
 
 void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],

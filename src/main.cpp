@@ -1262,10 +1262,27 @@ int main(int argc, char** argv) {
           const double rx = hole.x - camPos.x, ry = hole.y - camPos.y, rz = hole.z - camPos.z;
           const double rl = std::sqrt(rx*rx + ry*ry + rz*rz);
           if (rl > 1e-9) {
-            gLensBHDirCam[0] = (float)(rx/rl); gLensBHDirCam[1] = (float)(ry/rl); gLensBHDirCam[2] = (float)(rz/rl);
+            const double dxd = rx/rl, dyd = ry/rl, dzd = rz/rl;   // unit dir camera→hole (world)
+            gLensBHDirCam[0] = (float)dxd; gLensBHDirCam[1] = (float)dyd; gLensBHDirCam[2] = (float)dzd;
             gLensBHDist  = (float)rl;
             const double th = std::asin(std::min(1.0, 2.6 * rsAU / std::max(rl, rsAU*1.001)));
             gLensCullCos = (float)std::cos(std::min(1.55, 6.0 * th));   // split within the lensed region
+            // Front-bend framing: hole screen position (aspect-corrected NDC) + Einstein radius.
+            const double vzz = gViewRotD[6]*dxd + gViewRotD[7]*dyd + gViewRotD[8]*dzd;   // view-space z
+            const double f   = 1.0 / std::tan((double)renderer.zoom * 0.5 * kPI/180.0);
+            if (vzz < -1e-9) {
+              const double vxx = gViewRotD[0]*dxd + gViewRotD[1]*dyd + gViewRotD[2]*dzd;
+              const double vyy = gViewRotD[3]*dxd + gViewRotD[4]*dyd + gViewRotD[5]*dzd;
+              gLensBHScreen[0] = (float)(vxx/(-vzz)*f);
+              gLensBHScreen[1] = (float)(vyy/(-vzz)*f);
+            } else { gLensBHScreen[0] = 1e9f; gLensBHScreen[1] = 1e9f; }
+            const double thE = std::sqrt(2.0 * rsAU / std::max(rl, rsAU*1.001));   // Einstein angle
+            gLensEinsteinR    = (float)(std::tan(std::min(thE, 1.4)) * f);
+            gLensBendStrength = 1.0f;
+            // A foreground source is not lensed by a hole behind it: the bend must
+            // die within ~one Einstein impact parameter of the hole (3D), so matter
+            // farther out covers it instead of wrapping. Shader fades 0.4x..1x of this.
+            gLensBendReach    = (float)(std::sqrt(2.0 * rsAU * std::max(rl, rsAU)));
           }
         }
         const double moved = std::abs(hole.x - renderer.lensBuiltForBH.x)

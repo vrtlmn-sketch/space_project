@@ -44,10 +44,16 @@ extern double gViewRotD[9];
 // Black-hole occlusion cull for the cloud pass (set by the renderer when a hole is
 // lensing): particles behind the hole and inside its silhouette are discarded, so
 // the galaxy sorts around the hole instead of drawing over it.
-extern int    gLensCull;        // 1 = enable
+extern int    gLensCull;        // 0 off, 1 = keep FRONT (+bend), 2 = keep BACK
 extern float  gLensBHDirCam[3]; // normalized camera->hole (camera-relative, world axes)
 extern float  gLensBHDist;      // camera->hole distance
 extern float  gLensCullCos;     // cos of the cull cone half-angle
+// Cosmetic single-image thin-lens bend of the FRONT particles (front pass only),
+// so they agree with the lensed background. The realism comes from the baked cube.
+extern float  gLensBHScreen[2]; // hole position in aspect-corrected NDC
+extern float  gLensEinsteinR;   // Einstein radius in aspect-corrected NDC (0 = no bend)
+extern float  gLensBendStrength;// 0 = none, 1 = full thin-lens
+extern float  gLensBendReach;   // 3D distance (AU) over which the bend fades — far matter covers
 
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback
