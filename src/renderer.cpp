@@ -8371,13 +8371,16 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
       glDeleteProgram(lensRasterProgram); lensRasterProgram = 0; return;
     }
   }
-  if (!lensCubeTex || !outTex) return;
+  if (!outTex) return;
+  if (composite == 0 && !lensCubeTex) return;   // headless test still reads the baked cube
 
   glUseProgram(lensRasterProgram);
   glBindImageTexture(0, outTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
-  glActiveTexture(GL_TEXTURE1);
-  glBindTexture(GL_TEXTURE_CUBE_MAP, lensCubeTex);
-  glUniform1i(glGetUniformLocation(lensRasterProgram, "uLensCube"), 1);
+  if (lensCubeTex) {
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, lensCubeTex);
+    glUniform1i(glGetUniformLocation(lensRasterProgram, "uLensCube"), 1);
+  }
   if (sceneTex) {
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, sceneTex);
@@ -8396,13 +8399,34 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
   if ((l = glGetUniformLocation(lensRasterProgram, "uResolution")) >= 0) glUniform2f(l, (float)w, (float)h);
   if ((l = glGetUniformLocation(lensRasterProgram, "uProjFxFy"))   >= 0) glUniform2f(l, f / aspect, f);
   if ((l = glGetUniformLocation(lensRasterProgram, "uViewRot"))    >= 0) glUniformMatrix3fv(l, 1, GL_TRUE, camMatrix);
-  if ((l = glGetUniformLocation(lensRasterProgram, "uCamRelBH"))   >= 0) glUniform3f(l, camRelBH.x, camRelBH.y, camRelBH.z);
-  if ((l = glGetUniformLocation(lensRasterProgram, "uBH_RS"))      >= 0) glUniform1f(l, rs);
   if ((l = glGetUniformLocation(lensRasterProgram, "uMaxSteps"))   >= 0) glUniform1i(l, maxSteps);
   if ((l = glGetUniformLocation(lensRasterProgram, "uComposite"))  >= 0) glUniform1i(l, composite);
-  if ((l = glGetUniformLocation(lensRasterProgram, "uBHDir"))      >= 0) glUniform3f(l, bhDir.x, bhDir.y, bhDir.z);
-  if ((l = glGetUniformLocation(lensRasterProgram, "uCosOuter"))   >= 0) glUniform1f(l, cosOuter);
-  if ((l = glGetUniformLocation(lensRasterProgram, "uCosInner"))   >= 0) glUniform1f(l, cosInner);
+  {
+    // Multi-hole uniform arrays. The live path fills the member arrays (from every
+    // resolvable hole); the headless path leaves them empty, so synthesize a single
+    // hole from the scalar params: pos = (hole-camera)/L = -camRelBH/rs, radius 1.
+    const int MAXH = kLensMaxHoles;
+    int   hc = (lensUHoleCount > 0) ? std::min(lensUHoleCount, MAXH) : 1;
+    float hpF[MAXH * 3], hdF[MAXH * 3], hr[MAXH], hci[MAXH], hco[MAXH];
+    if (lensUHoleCount > 0) {
+      for (int i = 0; i < hc; i++) {
+        hpF[3*i+0] = lensUHolePos[i].x; hpF[3*i+1] = lensUHolePos[i].y; hpF[3*i+2] = lensUHolePos[i].z;
+        hdF[3*i+0] = lensUHoleDir[i].x; hdF[3*i+1] = lensUHoleDir[i].y; hdF[3*i+2] = lensUHoleDir[i].z;
+        hr[i] = lensUHoleRs[i]; hci[i] = lensUHoleCosInner[i]; hco[i] = lensUHoleCosOuter[i];
+      }
+    } else {
+      const float L = std::max(rs, 1e-30f);
+      hpF[0] = -camRelBH.x / L; hpF[1] = -camRelBH.y / L; hpF[2] = -camRelBH.z / L;
+      hdF[0] = bhDir.x; hdF[1] = bhDir.y; hdF[2] = bhDir.z;
+      hr[0] = 1.0f; hci[0] = cosInner; hco[0] = cosOuter;
+    }
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHoleCount"))    >= 0) glUniform1i(l, hc);
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHolePos"))      >= 0) glUniform3fv(l, hc, hpF);
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHoleRs"))       >= 0) glUniform1fv(l, hc, hr);
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHoleDir"))      >= 0) glUniform3fv(l, hc, hdF);
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHoleCosInner")) >= 0) glUniform1fv(l, hc, hci);
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHoleCosOuter")) >= 0) glUniform1fv(l, hc, hco);
+  }
   {
     // The genuine gap (bent ray off-screen or behind a foreground solid) fades to
     // the live empty-sky colour instead of a frozen cube snapshot.
@@ -8419,6 +8443,7 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
 }
 
 void Renderer::DispatchRasterLens(int w, int h, const vec3& camRelBH, float rs, int maxSteps) {
+  lensUHoleCount = 0;   // headless test: let LensDispatch synthesize the single hole from params
   LensDispatch(recRasterColorTex, 0, 0, w, h, camRelBH, vec3{0.0f, 0.0f, 1.0f}, rs,
                -1.0f, -1.0f, 0.0f, 1.0f, 1.0f, maxSteps, 0);   // composite 0 = full replace (headless test)
 }
@@ -8438,7 +8463,7 @@ void Renderer::EnsureCineLensTex(int w, int h) {
 }
 
 GLuint Renderer::ApplyLiveLens() {
-  if (!lensingEnabled || !lensBHActive || !lensCubeValid || !lensCubeTex || !cineColorTex)
+  if (!lensingEnabled || !lensBHActive || !cineColorTex)   // no cube needed: samples the live frame
     return cineColorTex;
   // SAFETY: cap the lens resolution and step budget so a big on-screen hole (which
   // now really bends light) can never exceed the GPU watchdog and reset the driver.
@@ -8466,6 +8491,30 @@ GLuint Renderer::ApplyLiveLens() {
   float cosInner = (float)std::cos(std::min(1.20, 2.2 * th));    // full lensing within ~2 shadow radii
   float cosOuter = (float)std::cos(std::min(1.45, 5.5 * th));    // fade to scene by ~5.5 (was 12 — a wide fuzzy halo)
 
+  // Build the multi-hole uniform arrays (dominant first). ONE reference length
+  // L = the dominant hole's Rs keeps every hole's r^5 term O(1) at any scale.
+  const double L = std::max((double)lensBHRs, 1e-30);
+  lensUHoleCount = std::min((int)lensHoles.size(), kLensMaxHoles);
+  for (int i = 0; i < lensUHoleCount; i++) {
+    dvec3 rr = CameraRelative(lensHoles[i].world);            // camera → hole i (world)
+    double Di = std::max(std::sqrt(rr.x*rr.x + rr.y*rr.y + rr.z*rr.z), 1e-12);
+    const double rsi = (double)lensHoles[i].rs;
+    lensUHolePos[i] = vec3{ (float)(rr.x / L), (float)(rr.y / L), (float)(rr.z / L) };
+    lensUHoleRs[i]  = (float)(rsi / L);
+    lensUHoleDir[i] = vec3{ (float)(rr.x / Di), (float)(rr.y / Di), (float)(rr.z / Di) };
+    double thi = std::asin(std::min(1.0, 2.6 * rsi / std::max(Di, rsi * 1.001)));
+    lensUHoleCosInner[i] = (float)std::cos(std::min(1.20, 2.2 * thi));
+    lensUHoleCosOuter[i] = (float)std::cos(std::min(1.45, 5.5 * thi));
+  }
+  if (lensUHoleCount == 0) {                                  // fallback: the dominant hole alone
+    lensUHoleCount = 1;
+    lensUHolePos[0] = vec3{ (float)(rel.x / L), (float)(rel.y / L), (float)(rel.z / L) };
+    lensUHoleRs[0]  = 1.0f;
+    lensUHoleDir[0] = bhDir;
+    lensUHoleCosInner[0] = cosInner;
+    lensUHoleCosOuter[0] = cosOuter;
+  }
+
   LensDispatch(cineLensTex, cineColorTex, cineDepthTex, w, h, camRelBH, bhDir, lensBHRs,
                cosOuter, cosInner, (float)rl, RenderedObject::sZNear, RenderedObject::sZFar,
                lensSteps, 1);
@@ -8473,7 +8522,7 @@ GLuint Renderer::ApplyLiveLens() {
 }
 
 bool Renderer::LensBackFieldAndPrepareFront() {
-  if (!lensingEnabled || !lensBHActive || !lensCubeValid || !lensCubeTex || !cineColorTex) return false;
+  if (!lensingEnabled || !lensBHActive || !cineColorTex) return false;   // no cube needed
   GLuint lensed = ApplyLiveLens();          // cineColorTex (back field) → cineLensTex
   if (lensed != cineLensTex) return false;  // did not run
   BlitToCine(lensed);                        // lensed back field → cineColorTex

@@ -1228,6 +1228,7 @@ int main(int argc, char** argv) {
     // byte-identical to lensing off.
     renderer.lensBHActive = false;
     renderer.lensBHIndex  = -1;
+    renderer.lensHoles.clear();
     gLensCull = 0;                        // clouds are not culled unless a hole is lensing
     if (renderer.lensingEnabled && renderer.realisticRasterView) {
       constexpr double kPI = 3.14159265358979323846;
@@ -1237,7 +1238,9 @@ int main(int argc, char** argv) {
       const vec3 fwd = renderer.CameraForward();
       const double pxPerRad = (double)renderer.GetFbHeight() /
                               std::max(1e-3, (double)renderer.zoom * kPI / 180.0);
-      double bestTh = 0.0; int bestBH = -1;
+      // Every resolvable, on-screen hole bends the light together. Collect them all,
+      // then order by apparent size so the biggest is the dominant (reference scale).
+      std::vector<std::pair<double,int>> holes;   // (shadow angle, physicsObjects index)
       for (int i = 0; i < (int)physicsObjects.size(); ++i) {
         if (physicsObjects[i].shaderType != ObjectType::BlackHole) continue;
         const dvec3 bh = physicsObjects[i].data.position;
@@ -1250,9 +1253,16 @@ int main(int argc, char** argv) {
         const double cosang = (dx*fwd.x + dy*fwd.y + dz*fwd.z) / D;      // is it on/near screen?
         const double halfCone = std::min(3.0, (double)renderer.zoom * 0.5 * 1.9 * kPI/180.0 + 12.0*th);
         if (cosang < std::cos(halfCone)) continue;
-        if (th > bestTh) { bestTh = th; bestBH = i; }
+        holes.emplace_back(th, i);
       }
-      if (bestBH >= 0) {
+      std::sort(holes.begin(), holes.end(),
+                [](const auto& a, const auto& b){ return a.first > b.first; });   // biggest first
+      if ((int)holes.size() > Renderer::kLensMaxHoles) holes.resize(Renderer::kLensMaxHoles);
+      if (!holes.empty()) {
+        const int bestBH = holes.front().second;
+        for (const auto& hp : holes)
+          renderer.lensHoles.push_back({ physicsObjects[hp.second].data.position,
+                                         physicsObjects[hp.second].schwarzschildRadius });
         renderer.lensBHActive = true;
         renderer.lensBHIndex  = bestBH;
         renderer.lensBHWorld  = physicsObjects[bestBH].data.position;
@@ -1287,35 +1297,10 @@ int main(int argc, char** argv) {
             gLensBendReach    = (float)(std::sqrt(2.0 * rsAU * std::max(rl, rsAU)));
           }
         }
-        const double moved = std::abs(hole.x - renderer.lensBuiltForBH.x)
-                           + std::abs(hole.y - renderer.lensBuiltForBH.y)
-                           + std::abs(hole.z - renderer.lensBuiltForBH.z);
-        const bool   resized = std::abs(renderer.lensBHRs - renderer.lensBuiltRs) > 0.02f * renderer.lensBHRs;
-        if (!renderer.lensCubeValid || moved > rsAU || resized) {   // (re)build the low-res ring-core cube for this hole
-          const int FS = 512;   // low-res: the box only feeds the strong-field ring core now
-          for (int f = 0; f < 6; ++f) {
-            renderer.LensBeginFace(f, hole, FS);
-            renderer.DrawSkybox(skybox);
-            std::vector<int> order;
-            BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
-            for (int ci : order) {
-              auto& c = clouds[ci];
-              c->renderedObject.uploadTemperature(c->temperature);
-              c->renderedObject.uploadRenderMode(c->renderMode);
-              c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
-                                                 renderer.dustCoverage, renderer.dustClumpScale,
-                                                 c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                                 renderer.dustContrast);
-              renderer.Draw(c->renderedObject);
-            }
-            for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-            renderer.LensEndFace(f);
-          }
-          renderer.lensCubeValid = true;
-
-          renderer.lensBuiltForBH = hole;
-          renderer.lensBuiltRs    = renderer.lensBHRs;
-        }
+        // No cube bake: the live lens samples the real rendered frame (below), so the
+        // hole's interior tracks look/playback every frame. (The far-field cube is now
+        // only the LENS_TEST harness's business.)
+        (void)hole;
       }
     }
 

@@ -1007,9 +1007,22 @@ public:
   // reused (view-independent); rebuilt when the hole moves or is resized.
   bool   lensingEnabled = true;      // master toggle
   bool   lensBHActive   = false;     // a hole is resolvable on screen this frame
-  int    lensBHIndex    = -1;        // physicsObjects index of that hole (skip its horizon mesh)
-  dvec3  lensBHWorld{0,0,0};         // its world position
-  float  lensBHRs       = 0.05f;     // its Schwarzschild radius
+  int    lensBHIndex    = -1;        // physicsObjects index of the DOMINANT hole (skip its horizon mesh)
+  dvec3  lensBHWorld{0,0,0};         // dominant hole world position (reference length L = its Rs)
+  float  lensBHRs       = 0.05f;     // dominant hole Schwarzschild radius
+  // Every resolvable hole this frame (dominant first), filled by main.cpp. All of
+  // them bend the light together; the shared geodesic integrates in units of the
+  // dominant hole's Rs so multiple holes at any scale never overflow float.
+  static constexpr int kLensMaxHoles = 4;
+  struct LensHoleWorld { dvec3 world; float rs; };
+  std::vector<LensHoleWorld> lensHoles;
+  // Per-dispatch uniform arrays (ApplyLiveLens fills from lensHoles; LensDispatch uploads).
+  int    lensUHoleCount = 0;
+  vec3   lensUHolePos[kLensMaxHoles];
+  float  lensUHoleRs[kLensMaxHoles];
+  vec3   lensUHoleDir[kLensMaxHoles];
+  float  lensUHoleCosInner[kLensMaxHoles];
+  float  lensUHoleCosOuter[kLensMaxHoles];
   bool   lensCubeValid  = false;     // cube baked and usable
   dvec3  lensBuiltForBH { 1e300, 0, 0 };  // hole position the cube was built for
   float  lensBuiltRs    = -1.0f;     // hole Rs the cube was built for (rebuild when resized)
