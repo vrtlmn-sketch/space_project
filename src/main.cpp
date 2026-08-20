@@ -1286,7 +1286,10 @@ int main(int argc, char** argv) {
       gLensBHDirCam[0] = (float)dxd; gLensBHDirCam[1] = (float)dyd; gLensBHDirCam[2] = (float)dzd;
       gLensBHDist  = (float)rl;
       const double th2 = std::asin(std::min(1.0, 2.6 * rsAU / std::max(rl, rsAU*1.001)));
-      gLensCullCos = (float)std::cos(std::min(1.55, 6.0 * th2));
+      // The cull cone is the SHADOW's silhouette (slightly padded): it only decides
+      // which near-behind shell matter must stay in the lensed field so it cannot
+      // paint over the black disc. The front/back split itself is a half-space.
+      gLensCullCos = (float)std::cos(std::min(1.0, 1.6 * th2));
       const double vzz = gViewRotD[6]*dxd + gViewRotD[7]*dyd + gViewRotD[8]*dzd;   // view-space z
       const double f   = 1.0 / std::tan((double)renderer.zoom * 0.5 * kPI/180.0);
       if (vzz < -1e-9) {

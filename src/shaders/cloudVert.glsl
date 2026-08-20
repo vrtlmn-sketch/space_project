@@ -166,17 +166,18 @@ void main() {
   vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
   gl_Position     = centreClip + offsetClip;
 
-  // Front/back split about the hole (inside its silhouette cone).
+  // Front/back split about the hole: a pure HALF-SPACE at the hole's distance, no
+  // cone. Light from matter nearer than the hole never passes near it and bends
+  // ZERO, so ALL of it belongs to the flat front pass — the old cone put out-of-cone
+  // front matter into the lensed back field, and the lens visibly displaced it (the
+  // arc-shaped void carved through the foreground). Each particle still draws
+  // exactly once: pass 1 = behind the hole (lensed), pass 2 = in front (flat cover).
   vSlabW = 1.0;
   if (uBHCull != 0) {
     vec3  P      = center + offset;          // this particle, camera-relative (world axes)
     float pd     = length(P);
-    bool  inCone = dot(P, uBHDirCam) > uBHCullCos * pd;
     bool  behind = pd > uBHDist;
-    // Pass 1 (keep BACK) draws everything except in-cone-front; pass 2 (keep FRONT)
-    // draws ONLY in-cone-front. Out-of-cone matter is therefore drawn exactly once,
-    // not once per pass — otherwise it doubles in brightness where the hole is big.
-    bool  cull   = (uBHCull == 2) ? (inCone && !behind) : (!inCone || behind);
+    bool  cull   = (uBHCull == 2) ? !behind : behind;
     // Depth SLAB split (front pass only): the foreground is drawn one slab at a time,
     // each remapped at its own strength (near hole full → far flat) and composited
     // back-to-front. The weight ramps in/out over uBHSlabFade at each edge and adjacent

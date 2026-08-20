@@ -1013,7 +1013,8 @@ public:
   // byte-identical to lensing off). The far-field cube is baked from the hole and
   // reused (view-independent); rebuilt when the hole moves or is resized.
   bool   lensingEnabled = true;      // master toggle
-  int    lensDustWarp   = 1;         // 1 = image-warp the foreground dust extinction (reddening bends, stars cover)
+  int    lensDustWarp   = 0;         // foreground remap OFF by default: flat cover + the sweep-integral ring
+                                     // is the RT-like pair (the remap evacuated the plane and dug gaps at the feet)
   bool   lensBHActive   = false;     // a hole is resolvable on screen this frame
   int    lensBHIndex    = -1;        // physicsObjects index of the DOMINANT hole (skip its horizon mesh)
   dvec3  lensBHWorld{0,0,0};         // dominant hole world position (reference length L = its Rs)

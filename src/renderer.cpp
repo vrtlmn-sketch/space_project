@@ -857,9 +857,11 @@ void Renderer::EndNebulaPass() {
   glUseProgram(nebulaCompositeProgram);
   glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, nebColorTex);
   glUniform1i(nebCompLocTex, 0);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);   // scene alpha carries the lens depth map
   glBindVertexArray(blitVAO);
   glDrawArrays(GL_TRIANGLES, 0, 6);
   glBindVertexArray(0);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
   glDisable(GL_BLEND);
   glEnable(GL_DEPTH_TEST);
 }

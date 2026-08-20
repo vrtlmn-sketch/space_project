@@ -81,17 +81,18 @@ void main()
     vec3 rayView = normalize(vec3(ndc.x / uProjFxFy.x, ndc.y / uProjFxFy.y, -1.0));
     vec3 rd      = transpose(uViewRot) * rayView;
 
-    // Per-hole cones: this ray's lensing weight is the strongest hole's, and it is
-    // skipped only if it points outside EVERY hole's cone (the perf/watchdog guard).
-    float g = 0.0;
-    bool  anyCone = false;
-    for (int i = 0; i < uHoleCount; i++) {
-        float c = dot(rd, uHoleDir[i]);
-        if (c >= uHoleCosOuter[i]) anyCone = true;
-        g = max(g, smoothstep(uHoleCosOuter[i], uHoleCosInner[i], c));
-    }
+    // PHYSICAL gate, not a cosmetic cone: the analytic deflection of this ray is
+    // a ~ 2*Rs/b (impact parameter b). Where that is sub-pixel the ray is untouched
+    // by construction — so the lensed region needs NO fade to blend with the scene;
+    // the map itself converges to identity. (A hand-tuned angular fade here is what
+    // made the arch translucent and cut it off before it reached the plane.)
     if (uComposite == 1) {
-        if (!anyCone) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
+        float aTot = 0.0;
+        for (int i = 0; i < uHoleCount; i++) {
+            float b = length(cross(uHolePos[i], rd));    // ray from the camera (origin)
+            aTot += 2.0 * uHoleRs[i] / max(b, 1e-6);
+        }
+        if (aTot < 2e-4) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
         // A real drawn solid in front of the holes (planet/mesh) stays unlensed; a
         // far-plane pixel is never a foreground occluder (else a nearby planet that
         // pulls the far plane in front of a hole would switch lensing off entirely).
@@ -111,6 +112,15 @@ void main()
         vec3 d = pos - uHolePos[i];
         if (dot(d, vel) < 0.0 && length(cross(d, vel)) < 2.598 * uHoleRs[i]) { captured = true; break; }
     }
+    // Sweep integral: what RT's ring actually is. As the ray wraps, its direction
+    // sweeps across the sky; the pixel gathers the scene along that WHOLE sweep,
+    // weighted by the angle turned each step. Straight rays sweep ~0 (pixel stays
+    // identical to the plain sample); near-critical rays sweep multiple turns, so
+    // the galaxy band is crossed repeatedly and the rim brightens naturally. The
+    // winding spacing errors of a step-limited integrator stop mattering because
+    // the windings are INTEGRATED, not drawn as separate arcs.
+    vec3  sweepCol = vec3(0.0);
+    float sweepAng = 0.0;
     float stepFracRs = 0.5;
     for (int step = 0; step < uMaxSteps && !captured; step++)
     {
@@ -132,7 +142,16 @@ void main()
         float dt        = stepFracRs * stepScale;
         RayState s = rk4Step(pos, vel, dt);
         pos = s.pos;
-        vel = normalize(s.vel);
+        vec3 nv = normalize(s.vel);
+        if (uComposite == 1) {
+            float dTh = acos(clamp(dot(nv, vel), -1.0, 1.0));   // direction turned this step
+            if (dTh > 1e-5) {
+                vec3 c;
+                sweepCol += (sampleScene(nv, c) ? c : uBackground) * dTh;
+                sweepAng += dTh;
+            }
+        }
+        vel = nv;
     }
 
     vec3 vn = normalize(vel);
@@ -145,21 +164,22 @@ void main()
     if (captured) {
         lensed = vec3(0.0);                              // shadow
     } else {
-        // Sample the real rendered frame in the bent direction (full live pipeline,
-        // any shape, any number of galaxies). If the camera never saw that direction
-        // (off-screen, or behind a foreground solid), try the MIRROR direction across
-        // the dominant hole — for a roughly symmetric disc the unseen far side matches
-        // the visible near side at the same azimuth — and only then fall to the sky.
+        // Weak bend: plain sample of the real frame in the (barely) bent direction —
+        // pixel-identical to no lensing as the sweep goes to zero. Strong bend: the
+        // sweep integral takes over, normalised by PI so a half-turn sweep matches
+        // the band's direct brightness and a multi-turn sweep brightens the rim —
+        // one brushed ring made of the scene's own light, no drawn arcs, no ghosts.
         vec3 col;
-        if (sampleScene(vn, col)) {
-            lensed = col;
-        } else if (uHoleCount > 0 && sampleScene(reflect(vn, uHoleDir[0]), col)) {
-            lensed = col;
-        } else {
-            lensed = uBackground;
-        }
+        vec3 primary = sampleScene(vn, col) ? col : uBackground;
+        float w = smoothstep(0.05, 0.8, sweepAng);       // radians swept: 0 → primary, strong → integral
+        lensed = mix(primary, sweepCol / 3.14159265, w);
     }
 
-    vec3 sceneCol = textureLod(uScene, uv, 0.0).rgb;    // this pixel's own scene
-    imageStore(outImage, pix, vec4(mix(sceneCol, lensed, g), 1.0));
+    // No blend with the unbent pixel: the deflection goes to zero continuously, so
+    // the lensed result IS the scene at the edges. (A receiving-pixel depth factor
+    // was tried here and CANNOT work: one pixel holds near-behind haze AND far-field
+    // band at once — suppressing the lens for the first un-captures the second. The
+    // near-behind matter is handled geometrically instead: the front/back split sits
+    // slightly BEHIND the hole, so ~zero-displacement matter draws flat.)
+    imageStore(outImage, pix, vec4(lensed, 1.0));
 }
