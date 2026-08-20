@@ -422,6 +422,13 @@ int main(int argc, char** argv) {
   Renderer renderer;
   renderer.InitWindow("BlackholeSim", 1200, 800);
 
+  // A/B the foreground-dust image warp (reddening bends through the lens while stars
+  // cover): LENS_DUST_WARP=0 for the old flat dust, LENS_DUST_ATTEN tunes wrap strength.
+  if (const char* dw = std::getenv("LENS_DUST_WARP")) renderer.lensDustWarp = std::atoi(dw);
+  if (const char* sl = std::getenv("LENS_SLABS"))     renderer.lensSlabs   = std::max(1, std::atoi(sl));
+  if (const char* at = std::getenv("LENS_DUST_ATTEN"))renderer.lensFgAtten = (float)std::atof(at);
+  if (const char* bd = std::getenv("LENS_DEPTH_BAND"))renderer.lensFgBand  = (float)std::atof(bd);
+
   // --template flag: skip startup modal and load solar system template directly
   // --compare flag: load the template, render BOTH the Performant (raster) and
   //   Realistic (RT) galaxy to PNGs at the template camera, then exit. A headless
@@ -1291,10 +1298,13 @@ int main(int argc, char** argv) {
             const double thE = std::sqrt(2.0 * rsAU / std::max(rl, rsAU*1.001));   // Einstein angle
             gLensEinsteinR    = (float)(std::tan(std::min(thE, 1.4)) * f);
             gLensBendStrength = 1.0f;
-            // A foreground source is not lensed by a hole behind it: the bend must
-            // die within ~one Einstein impact parameter of the hole (3D), so matter
-            // farther out covers it instead of wrapping. Shader fades 0.4x..1x of this.
-            gLensBendReach    = (float)(std::sqrt(2.0 * rsAU * std::max(rl, rsAU)));
+            // How far out the foreground bends (dust rides the bent stars). Wider =
+            // more dust wraps coherently; narrower = the innermost band wraps into the
+            // ring and the bulk covers. The sweet spot is a look call, so it's a dial:
+            // LENS_BEND_REACH multiplies the Einstein impact parameter (default 3).
+            static const double reachMul = [](){ const char* e = std::getenv("LENS_BEND_REACH");
+                                                 return e ? std::atof(e) : 1.0; }();
+            gLensBendReach    = (float)(reachMul * std::sqrt(2.0 * rsAU * std::max(rl, rsAU)));
           }
         }
         // No cube bake: the live lens samples the real rendered frame (below), so the
@@ -1508,7 +1518,7 @@ int main(int argc, char** argv) {
     // galaxy covers the hole (our clouds, additively, no new pipeline).
     if (renderer.LensBackFieldAndPrepareFront()) {
       gLensCull = 1;                                 // keep only FRONT-of-hole particles
-      for (int ci : cloudDrawOrder) {
+      auto uploadCloud = [&](int ci){
         auto& c = clouds[ci];
         c->renderedObject.uploadTemperature(c->temperature);
         c->renderedObject.uploadRenderMode(c->renderMode);
@@ -1516,9 +1526,38 @@ int main(int argc, char** argv) {
                                            renderer.dustCoverage, renderer.dustClumpScale,
                                            c->renderedObject.ownDustInfluence(renderer.dustInfluence),
                                            renderer.dustContrast);
-        renderer.Draw(c->renderedObject);
+      };
+      // The foreground is a semi-transparent VOLUME, so it is drawn in DEPTH SLABS by
+      // distance to the hole and composited back-to-front: the near-hole slab is remapped
+      // at full strength (round wrap into the ring), each farther slab weaker until the
+      // near-camera slab is flat and covers — and through its gaps the bent slabs behind
+      // show. Each slab is one smooth remap, so there are no waves; the depth response
+      // comes from the slabs. No vertex bend (points can't stretch).
+      if (renderer.BeginForeground()) {
+        const float savedBend = gLensBendStrength;
+        gLensBendStrength = 0.0f;
+        const int   N         = std::max(1, renderer.lensSlabs);
+        const float attenFull = renderer.lensFgAtten;             // near-hole slab strength (Foreground Bend slider)
+        const float band      = renderer.lensFgBand * std::max(gLensBendReach, 1e-6f);   // where the bend starts (Bend Depth slider)
+        for (int s = 0; s < N; s++) {                              // s=0 near hole (behind) → s=N-1 near camera (front)
+          gLensSlabMin = (float)s / N * band;
+          gLensSlabMax = (s == N - 1) ? 1e30f : (float)(s + 1) / N * band;
+          const float strength = attenFull * (N > 1 ? 1.0f - (float)s / (N - 1) : 1.0f);
+          renderer.FgBindLight();                                  // stars (additive) → fgLight
+          for (int ci : cloudDrawOrder) { uploadCloud(ci); renderer.Draw(clouds[ci]->renderedObject); }
+          for (int ci : cloudDrawOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);   // dust darkens the stars in front
+          renderer.FgBindExt();                                    // dust extinction → fgExt (for the background)
+          for (int ci : cloudDrawOrder) { clouds[ci]->renderedObject.cloudLightDrawn = true;
+                                          renderer.DrawCloudDust(clouds[ci]->renderedObject); }
+          renderer.CompositeForegroundSlab(strength);
+        }
+        gLensSlabMin = 0.0f; gLensSlabMax = 0.0f;
+        renderer.EndForeground();
+        gLensBendStrength = savedBend;
+      } else {
+        for (int ci : cloudDrawOrder) { uploadCloud(ci); renderer.Draw(clouds[ci]->renderedObject); }
+        for (int ci : cloudDrawOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
       }
-      for (int ci : cloudDrawOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
     }
     gLensCull = 0;
 

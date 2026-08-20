@@ -40,6 +40,9 @@ uniform vec2  uBHScreen;    // hole position in aspect-corrected NDC
 uniform float uBHEinsteinR; // Einstein radius in aspect-corrected NDC (0 = no bend)
 uniform float uBHBendStr;   // 0 = none, 1 = full
 uniform float uBHBendReach; // 3D distance (AU) over which the bend fades out — far matter covers, not bends
+uniform int   uBHDustLayer; // dust pass split: 0 = all, 1 = near-hole (warp buffer), 2 = far (flat, covers)
+uniform float uBHSlabMin;   // depth-slab split: keep this front particle only if its 3D distance
+uniform float uBHSlabMax;   // to the hole is in [min, max). 0/0 = no slab split (draw all).
 
 uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
@@ -171,6 +174,14 @@ void main() {
     // draws ONLY in-cone-front. Out-of-cone matter is therefore drawn exactly once,
     // not once per pass — otherwise it doubles in brightness where the hole is big.
     bool  cull   = (uBHCull == 2) ? (inCone && !behind) : (!inCone || behind);
+    // Depth SLAB split (front pass only): keep only particles whose 3D distance to the
+    // hole is in [uBHSlabMin, uBHSlabMax). The foreground is drawn one slab at a time,
+    // each remapped at its own strength (near hole full → far flat) and composited
+    // back-to-front, so gaps in the flat near-camera slabs reveal the bent far ones.
+    if (!cull && uBHCull == 1 && uBHSlabMax > 0.0) {
+      float d3dS = length(P - uBHDirCam * uBHDist);
+      if (d3dS < uBHSlabMin || d3dS >= uBHSlabMax) cull = true;
+    }
     if (cull) {
       gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → discarded
       gl_PointSize = 0.0;

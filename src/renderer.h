@@ -1006,6 +1006,7 @@ public:
   // byte-identical to lensing off). The far-field cube is baked from the hole and
   // reused (view-independent); rebuilt when the hole moves or is resized.
   bool   lensingEnabled = true;      // master toggle
+  int    lensDustWarp   = 1;         // 1 = image-warp the foreground dust extinction (reddening bends, stars cover)
   bool   lensBHActive   = false;     // a hole is resolvable on screen this frame
   int    lensBHIndex    = -1;        // physicsObjects index of the DOMINANT hole (skip its horizon mesh)
   dvec3  lensBHWorld{0,0,0};         // dominant hole world position (reference length L = its Rs)
@@ -1038,6 +1039,29 @@ public:
   // Lens the back field now in the cine buffer and write it back; returns true if
   // it ran (then the caller draws the FRONT-of-hole particles on top).
   bool   LensBackFieldAndPrepareFront();
+
+  // Whole foreground image-remapped by the analytic thin lens (a SMOOTH theta_E^2/r
+  // map, weaker than the background). Because it is an image remap, sources STRETCH
+  // into arcs near the ring instead of just being displaced. Stars are additive light
+  // and dust is multiplicative extinction, so they need two buffers: fgLight (stars
+  // already darkened by the dust in front of them) and fgExt (dust extinction for the
+  // background). Composite: cine = cine * remap(fgExt) + remap(fgLight).
+  GLuint fgLightFBO = 0, fgLightTex = 0;
+  GLuint fgExtFBO   = 0, fgExtTex   = 0;
+  int    fgBufW = 0, fgBufH = 0;
+  GLint  fgSavedFBO = 0; int fgSavedVp[4] = {0, 0, 0, 0};
+  bool   fgActive = false;
+  GLuint fgDustWarpProgram = 0;
+  int    fgDustLocTex = -1, fgDustLocHole = -1, fgDustLocRE = -1, fgDustLocAspect = -1, fgDustLocAtten = -1;
+  int    lensSlabs   = 3;        // foreground depth slabs (near-hole full bend → far flat), composited back-to-front
+  float  lensFgAtten = 0.9f;     // near-hole foreground remap strength (the wrap roundness)
+  float  lensFgBand  = 1.5f;     // depth (× reach) over which the bend fades to flat — where the bend starts
+  void   EnsureFgBuffers(int w, int h);
+  bool   BeginForeground();      // save target + ensure buffers. true → draw the slabs.
+  void   FgBindLight();          // bind fgLight (cleared black) for the additive star + dust draw
+  void   FgBindExt();            // bind fgExt (cleared white) for the multiplicative dust draw
+  void   CompositeForegroundSlab(float strength);  // remap this slab at `strength` and composite over cineColorTex
+  void   EndForeground();        // restore the saved target + GL state after the last slab
 
   // A/B compare harness (--compare): capture the RT view at WxH to an image file.
   void CaptureRTImageTo(int w, int h, const char* path) {

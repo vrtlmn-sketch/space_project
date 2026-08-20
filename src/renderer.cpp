@@ -864,6 +864,124 @@ void Renderer::EndNebulaPass() {
   glEnable(GL_DEPTH_TEST);
 }
 
+static GLuint makeFgBuf(int w, int h) {
+  GLuint t = 0;
+  glGenTextures(1, &t);
+  glBindTexture(GL_TEXTURE_2D, t);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);   // border: light 0 / extinction 1
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  return t;
+}
+
+void Renderer::EnsureFgBuffers(int w, int h) {
+  if (fgLightFBO && fgBufW == w && fgBufH == h) return;
+  if (fgLightFBO) { glDeleteFramebuffers(1, &fgLightFBO); fgLightFBO = 0; }
+  if (fgExtFBO)   { glDeleteFramebuffers(1, &fgExtFBO);   fgExtFBO = 0; }
+  if (fgLightTex) { glDeleteTextures(1, &fgLightTex);     fgLightTex = 0; }
+  if (fgExtTex)   { glDeleteTextures(1, &fgExtTex);       fgExtTex = 0; }
+  fgBufW = w; fgBufH = h;
+  fgLightTex = makeFgBuf(w, h);
+  fgExtTex   = makeFgBuf(w, h);
+  glGenFramebuffers(1, &fgLightFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, fgLightFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fgLightTex, 0);
+  glGenFramebuffers(1, &fgExtFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, fgExtFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fgExtTex, 0);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+bool Renderer::BeginForeground() {
+  fgActive = false;
+  if (rayTracerView || lensDustWarp == 0 || !lensBHActive || !cineColorTex) return false;
+  if (gLensEinsteinR <= 0.0f || cineFboW <= 0 || cineFboH <= 0) return false;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fgSavedFBO);
+  glGetIntegerv(GL_VIEWPORT, fgSavedVp);
+  EnsureFgBuffers(cineFboW, cineFboH);
+  if (!fgLightFBO || !fgExtFBO) return false;
+  fgActive = true;
+  return true;
+}
+
+void Renderer::FgBindLight() {
+  glBindFramebuffer(GL_FRAMEBUFFER, fgLightFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cineDepthTex, 0);   // shared scene depth (test only)
+  glViewport(0, 0, cineFboW, cineFboH);
+  glDepthMask(GL_FALSE);
+  glClearColor(0.f, 0.f, 0.f, 0.f);      // additive light over black
+  glClear(GL_COLOR_BUFFER_BIT);
+}
+
+void Renderer::FgBindExt() {
+  glBindFramebuffer(GL_FRAMEBUFFER, fgExtFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cineDepthTex, 0);
+  glViewport(0, 0, cineFboW, cineFboH);
+  glDepthMask(GL_FALSE);
+  glClearColor(1.f, 1.f, 1.f, 1.f);      // multiplicative extinction, identity = white
+  glClear(GL_COLOR_BUFFER_BIT);
+}
+
+void Renderer::CompositeForegroundSlab(float strength) {
+  if (!fgActive) return;
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fgSavedFBO);
+  glViewport(fgSavedVp[0], fgSavedVp[1], fgSavedVp[2], fgSavedVp[3]);
+  if (!fgDustWarpProgram) {
+    GLuint vs = compileShaderFromFile("src/shaders/blitVert.glsl", GL_VERTEX_SHADER);
+    GLuint fs = compileShaderFromFile("src/shaders/fgDustWarpFrag.glsl", GL_FRAGMENT_SHADER);
+    if (vs && fs) {
+      fgDustWarpProgram = glCreateProgram();
+      glAttachShader(fgDustWarpProgram, vs); glAttachShader(fgDustWarpProgram, fs);
+      glLinkProgram(fgDustWarpProgram);
+      GLint ok = 0; glGetProgramiv(fgDustWarpProgram, GL_LINK_STATUS, &ok);
+      if (!ok) { char b[512]; glGetProgramInfoLog(fgDustWarpProgram, 512, nullptr, b);
+                 std::cerr << "[fgwarp] link: " << b << "\n";
+                 glDeleteProgram(fgDustWarpProgram); fgDustWarpProgram = 0; }
+      else {
+        fgDustLocTex    = glGetUniformLocation(fgDustWarpProgram, "uFgTex");
+        fgDustLocHole   = glGetUniformLocation(fgDustWarpProgram, "uHoleScreen");
+        fgDustLocRE     = glGetUniformLocation(fgDustWarpProgram, "uEinsteinR");
+        fgDustLocAspect = glGetUniformLocation(fgDustWarpProgram, "uAspect");
+        fgDustLocAtten  = glGetUniformLocation(fgDustWarpProgram, "uAtten");
+      }
+    }
+    if (vs) glDeleteShader(vs);
+    if (fs) glDeleteShader(fs);
+  }
+  if (!fgDustWarpProgram || !blitVAO) return;
+  const float aspect = (cineFboH > 0) ? (float)cineFboW / (float)cineFboH : 1.0f;
+  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_BLEND);
+  glUseProgram(fgDustWarpProgram);
+  if (fgDustLocHole   >= 0) glUniform2f(fgDustLocHole, gLensBHScreen[0], gLensBHScreen[1]);
+  if (fgDustLocRE     >= 0) glUniform1f(fgDustLocRE, gLensEinsteinR);
+  if (fgDustLocAspect >= 0) glUniform1f(fgDustLocAspect, aspect);
+  if (fgDustLocAtten  >= 0) glUniform1f(fgDustLocAtten, strength);   // this slab's remap strength
+  if (fgDustLocTex    >= 0) glUniform1i(fgDustLocTex, 0);
+  glBindVertexArray(blitVAO);
+  glActiveTexture(GL_TEXTURE0);
+  // 1) MULTIPLY the scene by the remapped extinction; 2) ADD the remapped light.
+  glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+  glBindTexture(GL_TEXTURE_2D, fgExtTex);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+  glBlendFunc(GL_ONE, GL_ONE);
+  glBindTexture(GL_TEXTURE_2D, fgLightTex);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+  glBindVertexArray(0);
+  glDisable(GL_BLEND);
+  glEnable(GL_DEPTH_TEST);
+}
+
+void Renderer::EndForeground() {
+  if (!fgActive) return;
+  fgActive = false;
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)fgSavedFBO);
+  glViewport(fgSavedVp[0], fgSavedVp[1], fgSavedVp[2], fgSavedVp[3]);
+  glDepthMask(GL_TRUE);
+}
+
 void Renderer::DrawRings(PhysicsObject& obj) {
   if (rayTracerView) return;
   if (obj.shaderType != ObjectType::Planet || !obj.hasVisibleRings()) return;
@@ -3707,6 +3825,32 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Faint cross-spike pair (JWST strut spikes).");
     norm01("Chroma",     "##spkchroma", &spikeChroma, 0.0f, 1.0f, false);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rainbow tint toward the spike tips.");
+  }
+
+  // ── Black Hole Lensing ─────────────────────────────────────────────────────
+  if (ImGui::CollapsingHeader("Black Hole Lensing")) {
+    ImGui::Checkbox("Enable lensing", &lensingEnabled);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Real-time gravitational lensing in the raster view.\n"
+                        "Off = the black hole is an ordinary object.");
+    bool warp = lensDustWarp != 0;
+    if (ImGui::Checkbox("Bend the foreground", &warp)) lensDustWarp = warp ? 1 : 0;
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Remap the matter IN FRONT of the hole in depth slabs so it\n"
+                        "curves around the rim while distant matter stays flat and covers.");
+    ImGui::BeginDisabled(!lensingEnabled || lensDustWarp == 0);
+    ImGui::SeparatorText("Foreground Bend");
+    ImGui::SliderFloat("Bend",  &lensFgAtten, 0.0f, 1.5f, "%.2f");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard the near-hole matter wraps around the rim.");
+    ImGui::SliderFloat("Depth", &lensFgBand, 0.3f, 5.0f, "%.2f");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How close to the hole the bend begins (x Einstein impact parameter).\n"
+                        "Lower = only matter hugging the hole bends; the rest stays flat and covers.");
+    ImGui::SliderInt("Slabs", &lensSlabs, 1, 8);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Depth layers for the foreground remap. More = smoother depth ramp,\n"
+                        "a little more cost. Raise if the ramp looks stepped.");
+    ImGui::EndDisabled();
   }
 
   // ── Dust & Gas Clouds ──────────────────────────────────────────────────────

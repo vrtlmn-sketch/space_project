@@ -28,6 +28,10 @@ float  gLensBHScreen[2] = {0,0};
 float  gLensEinsteinR = 0.0f;
 float  gLensBendStrength = 1.0f;
 float  gLensBendReach = 1e30f;
+int    gLensDustLayer = 0;
+int    gLensDustToBuffer = 0;
+float  gLensSlabMin = 0.0f;
+float  gLensSlabMax = 0.0f;
 // FOV (degrees) below which the double view-space centre engages. Above it the
 // float shader path is used unchanged, so the regression baseline is untouched.
 static constexpr float kViewCentreFovDeg = 2.0f;
@@ -1005,6 +1009,9 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
   if ((lc = glGetUniformLocation(program, "uBHEinsteinR")) >= 0) glUniform1f(lc, gLensEinsteinR);
   if ((lc = glGetUniformLocation(program, "uBHBendStr"))   >= 0) glUniform1f(lc, gLensBendStrength);
   if ((lc = glGetUniformLocation(program, "uBHBendReach")) >= 0) glUniform1f(lc, gLensBendReach);
+  if ((lc = glGetUniformLocation(program, "uBHDustLayer")) >= 0) glUniform1i(lc, gLensDustLayer);
+  if ((lc = glGetUniformLocation(program, "uBHSlabMin"))   >= 0) glUniform1f(lc, gLensSlabMin);
+  if ((lc = glGetUniformLocation(program, "uBHSlabMax"))   >= 0) glUniform1f(lc, gLensSlabMax);
 }
 
 void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],
