@@ -896,11 +896,11 @@ void Renderer::EnsureFgBuffers(int w, int h) {
 
 bool Renderer::BeginForeground() {
   fgActive = false;
-  if (rayTracerView || lensDustWarp == 0 || !lensBHActive || !cineColorTex) return false;
-  if (gLensEinsteinR <= 0.0f || cineFboW <= 0 || cineFboH <= 0) return false;
+  if (rayTracerView || lensDustWarp == 0 || !lensBHActive || !lensColorTex) return false;
+  if (gLensEinsteinR <= 0.0f || lensW <= 0 || lensH <= 0) return false;
   glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fgSavedFBO);
   glGetIntegerv(GL_VIEWPORT, fgSavedVp);
-  EnsureFgBuffers(cineFboW, cineFboH);
+  EnsureFgBuffers(lensW, lensH);
   if (!fgLightFBO || !fgExtFBO) return false;
   fgActive = true;
   return true;
@@ -908,8 +908,8 @@ bool Renderer::BeginForeground() {
 
 void Renderer::FgBindLight() {
   glBindFramebuffer(GL_FRAMEBUFFER, fgLightFBO);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cineDepthTex, 0);   // shared scene depth (test only)
-  glViewport(0, 0, cineFboW, cineFboH);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, lensDepthTex, 0);   // shared scene depth (test only)
+  glViewport(0, 0, lensW, lensH);
   glDepthMask(GL_FALSE);
   glClearColor(0.f, 0.f, 0.f, 0.f);      // additive light over black
   glClear(GL_COLOR_BUFFER_BIT);
@@ -917,8 +917,8 @@ void Renderer::FgBindLight() {
 
 void Renderer::FgBindExt() {
   glBindFramebuffer(GL_FRAMEBUFFER, fgExtFBO);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cineDepthTex, 0);
-  glViewport(0, 0, cineFboW, cineFboH);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, lensDepthTex, 0);
+  glViewport(0, 0, lensW, lensH);
   glDepthMask(GL_FALSE);
   glClearColor(1.f, 1.f, 1.f, 1.f);      // multiplicative extinction, identity = white
   glClear(GL_COLOR_BUFFER_BIT);
@@ -951,7 +951,7 @@ void Renderer::CompositeForegroundSlab(float strength) {
     if (fs) glDeleteShader(fs);
   }
   if (!fgDustWarpProgram || !blitVAO) return;
-  const float aspect = (cineFboH > 0) ? (float)cineFboW / (float)cineFboH : 1.0f;
+  const float aspect = (lensH > 0) ? (float)lensW / (float)lensH : 1.0f;
   glDisable(GL_DEPTH_TEST);
   glEnable(GL_BLEND);
   glUseProgram(fgDustWarpProgram);
@@ -6905,6 +6905,7 @@ void Renderer::CineBeginIfActive(GLuint realTargetFBO, int w, int h) {
   EnsureCineFBO(ssW, ssH);
   if (!cineFBO) return;
   cineActive         = true;
+  SetLensTarget(cineFBO, cineColorTex, cineDepthTex, ssW, ssH);   // live view lenses the cine buffer
   cineResolveTarget  = realTargetFBO;
   cineResolveW       = w;              // real (resolved) target size
   cineResolveH       = h;
@@ -6926,7 +6927,10 @@ void Renderer::CineResolveIfActive() {
   // fall back to the single-pass lens overlay.
   GLuint hdr = cineColorTex;
   if (lensViewportDone) lensViewportDone = false;
-  else                  hdr = ApplyLiveLens();
+  else {
+    SetLensTarget(cineFBO, cineColorTex, cineDepthTex, cineFboW, cineFboH);   // a capture pass may have retargeted it
+    hdr = ApplyLiveLens();
+  }
   RunPostProcess(hdr, cinePostW, cinePostH);           // samples the larger HDR buffer → downsample
   cineActive = false;
   currentPixelScale = 1.0f;
@@ -7013,6 +7017,7 @@ void Renderer::BeginRecordCamera() {
     CameraViewMatrix(c.rotationDeg, camMatrix);
     zoom = c.fov;
   }
+  for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];   // sync the double mirror the lens framing reads
 }
 
 void Renderer::EndRecordCamera() {
@@ -7026,6 +7031,7 @@ void Renderer::EndRecordCamera() {
     zoom = recSavedZoom;
     recCamActive = false;
   }
+  for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];   // restore the mirror the lens framing reads
 }
 
 void Renderer::BeginSecondaryPass() {
@@ -7059,6 +7065,7 @@ void Renderer::BeginSecondaryPass() {
     CameraViewMatrix(c.rotationDeg, camMatrix);
     zoom = c.fov;
   }
+  for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];   // sync mirror for the lens framing
 
   // Clear accumulated raytracer objects from the primary pass
   // (they belong to the primary view; the secondary pass will re-accumulate)
@@ -7110,6 +7117,7 @@ void Renderer::EndSecondaryPass() {
     zoom = savedZoom;
     secondaryOverride = false;
   }
+  for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];   // restore the mirror the lens framing reads
 
   // Clear secondary raytracer objects (EndFrame will clear primary ones)
   rayTracedObjects.clear();
@@ -8378,6 +8386,7 @@ void Renderer::EnsureRecRasterFBO(int w, int h) {
   if (recRasterFBO)      { glDeleteFramebuffers(1, &recRasterFBO);      recRasterFBO = 0; }
   if (recRasterColorTex) { glDeleteTextures(1, &recRasterColorTex);     recRasterColorTex = 0; }
   if (recRasterDepthRBO) { glDeleteRenderbuffers(1, &recRasterDepthRBO); recRasterDepthRBO = 0; }
+  if (recRasterDepthTex) { glDeleteTextures(1, &recRasterDepthTex);     recRasterDepthTex = 0; }
   recRasterW = w; recRasterH = h;
   glGenFramebuffers(1, &recRasterFBO);
   glBindFramebuffer(GL_FRAMEBUFFER, recRasterFBO);
@@ -8389,10 +8398,15 @@ void Renderer::EnsureRecRasterFBO(int w, int h) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, recRasterColorTex, 0);
-  glGenRenderbuffers(1, &recRasterDepthRBO);
-  glBindRenderbuffer(GL_RENDERBUFFER, recRasterDepthRBO);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
-  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, recRasterDepthRBO);
+  // Depth as a TEXTURE (not an RBO) so the lens foreground gate can sample it.
+  glGenTextures(1, &recRasterDepthTex);
+  glBindTexture(GL_TEXTURE_2D, recRasterDepthTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, recRasterDepthTex, 0);
   GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
   if (st != GL_FRAMEBUFFER_COMPLETE)
     std::cerr << "[recRaster] FBO incomplete: 0x" << std::hex << st << std::dec << "\n";
@@ -8417,6 +8431,7 @@ void Renderer::BeginRecordRaster(int w, int h) {
   glViewport(0, 0, w, h);
   fbWidth = w; fbHeight = h;                 // projection aspect for the record draw
   currentPixelScale = 1.0f;                  // record FBO is not supersampled
+  SetLensTarget(recRasterFBO, recRasterColorTex, recRasterDepthTex, w, h);   // capture lenses this buffer
   ClearSceneTarget();
 }
 
@@ -8607,18 +8622,18 @@ void Renderer::EnsureCineLensTex(int w, int h) {
 }
 
 GLuint Renderer::ApplyLiveLens() {
-  if (!lensingEnabled || !lensBHActive || !cineColorTex)   // no cube needed: samples the live frame
-    return cineColorTex;
+  if (!lensingEnabled || !lensBHActive || !lensColorTex)   // no cube needed: samples the live frame
+    return lensColorTex;
   // SAFETY: cap the lens resolution and step budget so a big on-screen hole (which
   // now really bends light) can never exceed the GPU watchdog and reset the driver.
   // When lensing is active the frame is bounded to ~720p and upscaled by the post
   // chain — a soft frame while staring into a black hole, never a crash.
   const int maxH = 720;
-  const int h = std::min(cineFboH, maxH);
-  const int w = (cineFboH > 0) ? std::max(1, (int)std::lround((double)cineFboW * h / cineFboH)) : cineFboW;
+  const int h = std::min(lensH, maxH);
+  const int w = (lensH > 0) ? std::max(1, (int)std::lround((double)lensW * h / lensH)) : lensW;
   const int lensSteps = 800;
   EnsureCineLensTex(w, h);
-  if (!cineLensTex) return cineColorTex;
+  if (!cineLensTex) return lensColorTex;
 
   // Camera position relative to the hole (double → float), and world direction to it.
   vec3 camRelBH{ (float)((gCamAnchor[0] - cameraTranslate[0]) - lensBHWorld.x),
@@ -8626,7 +8641,7 @@ GLuint Renderer::ApplyLiveLens() {
                  (float)((gCamAnchor[2] - cameraTranslate[2]) - lensBHWorld.z) };
   dvec3 rel = CameraRelative(lensBHWorld);                  // world vector camera → hole
   double rl = std::sqrt(rel.x*rel.x + rel.y*rel.y + rel.z*rel.z);
-  if (rl < 1e-9) return cineColorTex;
+  if (rl < 1e-9) return lensColorTex;
   vec3 bhDir{ (float)(rel.x/rl), (float)(rel.y/rl), (float)(rel.z/rl) };
 
   // Influence cones from the shadow angular radius (~2.6·Rs/D at the photon sphere).
@@ -8659,25 +8674,25 @@ GLuint Renderer::ApplyLiveLens() {
     lensUHoleCosOuter[0] = cosOuter;
   }
 
-  LensDispatch(cineLensTex, cineColorTex, cineDepthTex, w, h, camRelBH, bhDir, lensBHRs,
+  LensDispatch(cineLensTex, lensColorTex, lensDepthTex, w, h, camRelBH, bhDir, lensBHRs,
                cosOuter, cosInner, (float)rl, RenderedObject::sZNear, RenderedObject::sZFar,
                lensSteps, 1);
   return cineLensTex;
 }
 
 bool Renderer::LensBackFieldAndPrepareFront() {
-  if (!lensingEnabled || !lensBHActive || !cineColorTex) return false;   // no cube needed
-  GLuint lensed = ApplyLiveLens();          // cineColorTex (back field) → cineLensTex
+  if (!lensingEnabled || !lensBHActive || !lensColorTex) return false;   // no cube needed
+  GLuint lensed = ApplyLiveLens();          // lensColorTex (back field) → cineLensTex
   if (lensed != cineLensTex) return false;  // did not run
-  BlitToCine(lensed);                        // lensed back field → cineColorTex
+  BlitToCine(lensed);                        // lensed back field → lensColorTex (via lensFBO)
   lensViewportDone = true;
   return true;
 }
 
 void Renderer::BlitToCine(GLuint srcTex) {
-  if (!blitProgram || !blitVAO || !cineFBO || !srcTex) return;
-  glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
-  glViewport(0, 0, cineFboW, cineFboH);
+  if (!blitProgram || !blitVAO || !lensFBO || !srcTex) return;
+  glBindFramebuffer(GL_FRAMEBUFFER, lensFBO);
+  glViewport(0, 0, lensW, lensH);
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_BLEND);
   glUseProgram(blitProgram);

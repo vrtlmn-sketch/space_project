@@ -551,8 +551,15 @@ private:
   // ── Performant-cinematic capture (screenshots + video of the raster view) ──
   // A viewport-sized HDR FBO the raster scene is drawn into off-screen, then
   // post-processed and read back (mirrors the RT recOutputTex path).
-  GLuint recRasterFBO{0}, recRasterColorTex{0}, recRasterDepthRBO{0};
+  GLuint recRasterFBO{0}, recRasterColorTex{0}, recRasterDepthRBO{0}, recRasterDepthTex{0};
   int    recRasterW{0}, recRasterH{0};
+  // The HDR target the lens two-pass operates on: the live cine buffer for the
+  // viewport, or the record buffer for a Snap/recording. Set it before running the
+  // lens so captures get the lensed black hole too, not just the live view.
+  GLuint lensFBO{0}, lensColorTex{0}, lensDepthTex{0};
+  int    lensW{0}, lensH{0};
+  void   SetLensTarget(GLuint fbo, GLuint colorTex, GLuint depthTex, int w, int h) {
+           lensFBO = fbo; lensColorTex = colorTex; lensDepthTex = depthTex; lensW = w; lensH = h; }
   GLint  recSavedDrawFBO{0};
   int    recSavedVp[4]{0, 0, 0, 0};
   void   EnsureRecRasterFBO(int w, int h);
