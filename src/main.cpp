@@ -1530,8 +1530,9 @@ int main(int argc, char** argv) {
         const float attenFull = renderer.lensFgAtten;             // near-hole slab strength (Foreground Bend slider)
         const float band      = renderer.lensFgBand * std::max(gLensBendReach, 1e-6f);   // where the bend starts (Bend Depth slider)
         for (int s = 0; s < N; s++) {                              // s=0 near hole (behind) → s=N-1 near camera (front)
-          gLensSlabMin = (float)s / N * band;
-          gLensSlabMax = (s == N - 1) ? 1e30f : (float)(s + 1) / N * band;
+          gLensSlabMin  = (s == 0)     ? -1e30f : (float)s / N * band;   // slab 0: no low fade (innermost full)
+          gLensSlabMax  = (s == N - 1) ?  1e30f : (float)(s + 1) / N * band;
+          gLensSlabFade = (band / (float)N) * 0.4f;   // cross-fade with neighbours → no slab popping
           const float strength = attenFull * (N > 1 ? 1.0f - (float)s / (N - 1) : 1.0f);
           renderer.FgBindLight();                                  // stars (additive) → fgLight
           for (int ci : cloudDrawOrder) { uploadCloud(ci); renderer.Draw(clouds[ci]->renderedObject); }
@@ -1541,7 +1542,7 @@ int main(int argc, char** argv) {
                                           renderer.DrawCloudDust(clouds[ci]->renderedObject); }
           renderer.CompositeForegroundSlab(strength);
         }
-        gLensSlabMin = 0.0f; gLensSlabMax = 0.0f;
+        gLensSlabMin = 0.0f; gLensSlabMax = 0.0f; gLensSlabFade = 0.0f;
         renderer.EndForeground();
         gLensBendStrength = savedBend;
       } else {
@@ -1625,8 +1626,9 @@ int main(int argc, char** argv) {
         const float attenFull = renderer.lensFgAtten;
         const float band      = renderer.lensFgBand * std::max(gLensBendReach, 1e-6f);
         for (int s = 0; s < N; s++) {
-          gLensSlabMin = (float)s / N * band;
-          gLensSlabMax = (s == N - 1) ? 1e30f : (float)(s + 1) / N * band;
+          gLensSlabMin  = (s == 0)     ? -1e30f : (float)s / N * band;   // slab 0: no low fade (innermost full)
+          gLensSlabMax  = (s == N - 1) ?  1e30f : (float)(s + 1) / N * band;
+          gLensSlabFade = (band / (float)N) * 0.4f;   // cross-fade with neighbours → no slab popping
           const float strength = attenFull * (N > 1 ? 1.0f - (float)s / (N - 1) : 1.0f);
           renderer.FgBindLight();
           for (int ci : order) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
@@ -1636,7 +1638,7 @@ int main(int argc, char** argv) {
                                  renderer.DrawCloudDust(clouds[ci]->renderedObject); }
           renderer.CompositeForegroundSlab(strength);
         }
-        gLensSlabMin = 0.0f; gLensSlabMax = 0.0f;
+        gLensSlabMin = 0.0f; gLensSlabMax = 0.0f; gLensSlabFade = 0.0f;
         renderer.EndForeground();
       }
       gLensBendStrength = savedBend;

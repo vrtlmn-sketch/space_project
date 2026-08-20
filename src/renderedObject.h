@@ -56,8 +56,9 @@ extern float  gLensBendStrength;// 0 = none, 1 = full thin-lens
 extern float  gLensBendReach;   // 3D distance (AU) over which the bend fades — far matter covers
 extern int    gLensDustLayer;   // foreground dust pass split: 0 = all, 1 = near-hole, 2 = far (covers)
 extern int    gLensDustToBuffer;// 1 = dust drawn into the fg extinction buffer: alpha carries the bend weight (MAX-blended)
-extern float  gLensSlabMin;     // foreground depth-slab cull: keep front particles with hole-distance in [min,max)
+extern float  gLensSlabMin;     // foreground depth-slab cross-fade band [min,max] in hole-distance
 extern float  gLensSlabMax;     // 0/0 = no slab split
+extern float  gLensSlabFade;    // half-width of the cross-fade at each slab edge
 
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback

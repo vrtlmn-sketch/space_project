@@ -27,6 +27,7 @@ in float vDust;             // dust density at this particle (0 = not dusty)
 in float vSeed;             // per-cloud seed → unique billowing FBM shape
 in float vHot;
 in float vRim;              // 1 = hot blue star
+in float vSlabW;            // depth-slab cross-fade weight (1 = full)
 
 // 2D value-noise FBM — carves each dust sprite into a wispy cloud (soft edges),
 // so a big dust sprite is a sculpted cloud form, not a smooth disc.
@@ -112,7 +113,7 @@ void main() {
             // deep red-brown lane (reddened light blocked by dust) rather than a
             // pure-black "hole"/burn-mark. Red passes most, blue least.
             vec3 trans = max(exp(-t * dExt), vec3(0.10, 0.035, 0.02));
-            FragColor = vec4(trans, 1.0);
+            FragColor = vec4(mix(vec3(1.0), trans, vSlabW), 1.0);   // slab weight fades the extinction
             return;
         }
 
@@ -125,7 +126,7 @@ void main() {
             float dens = smoothstep(0.30, 0.90, env * (0.22 + 0.9 * n));
             if (dens <= 0.001) discard;
             vec3 gasCol = mix(vec3(1.0, 0.30, 0.45), vec3(0.45, 0.6, 1.0), 0.25 * vHot);
-            FragColor = vec4(gasCol * dens * uGasStrength * 0.02 * uPointDim, 1.0);
+            FragColor = vec4(gasCol * dens * uGasStrength * 0.02 * uPointDim * vSlabW, 1.0);
             return;
         }
 
@@ -148,7 +149,7 @@ void main() {
             float halo = exp(-r2 * 1.4);
             c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim;
         }
-        FragColor = vec4(c, 1.0);
+        FragColor = vec4(c * vSlabW, 1.0);       // slab weight fades the star/haze light
         return;
     }
 

@@ -41,8 +41,9 @@ uniform float uBHEinsteinR; // Einstein radius in aspect-corrected NDC (0 = no b
 uniform float uBHBendStr;   // 0 = none, 1 = full
 uniform float uBHBendReach; // 3D distance (AU) over which the bend fades out — far matter covers, not bends
 uniform int   uBHDustLayer; // dust pass split: 0 = all, 1 = near-hole (warp buffer), 2 = far (flat, covers)
-uniform float uBHSlabMin;   // depth-slab split: keep this front particle only if its 3D distance
-uniform float uBHSlabMax;   // to the hole is in [min, max). 0/0 = no slab split (draw all).
+uniform float uBHSlabMin;   // depth-slab split: this front particle's weight ramps in over
+uniform float uBHSlabMax;   // [min,max] of its 3D distance to the hole. 0/0 = no slab split.
+uniform float uBHSlabFade;  // half-width of the cross-fade at each slab edge (soft, no popping)
 
 uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
@@ -73,6 +74,7 @@ out float vDust;    // dust density at this particle (0 = not dusty)
 out float vSeed;    // per-dust-cloud seed → unique billowing FBM shape in the frag
 out float vHot;     // 1 = hot blue star (seeds glowing gas)
 out float vRim;     // world-lit rim factor forwarded to the density map
+out float vSlabW;   // depth-slab cross-fade weight (1 = full; <1 near a slab edge)
 
 float hash11(float p) {
   p = fract(p * 0.1031);
@@ -165,6 +167,7 @@ void main() {
   gl_Position     = centreClip + offsetClip;
 
   // Front/back split about the hole (inside its silhouette cone).
+  vSlabW = 1.0;
   if (uBHCull != 0) {
     vec3  P      = center + offset;          // this particle, camera-relative (world axes)
     float pd     = length(P);
@@ -174,13 +177,17 @@ void main() {
     // draws ONLY in-cone-front. Out-of-cone matter is therefore drawn exactly once,
     // not once per pass — otherwise it doubles in brightness where the hole is big.
     bool  cull   = (uBHCull == 2) ? (inCone && !behind) : (!inCone || behind);
-    // Depth SLAB split (front pass only): keep only particles whose 3D distance to the
-    // hole is in [uBHSlabMin, uBHSlabMax). The foreground is drawn one slab at a time,
+    // Depth SLAB split (front pass only): the foreground is drawn one slab at a time,
     // each remapped at its own strength (near hole full → far flat) and composited
-    // back-to-front, so gaps in the flat near-camera slabs reveal the bent far ones.
+    // back-to-front. The weight ramps in/out over uBHSlabFade at each edge and adjacent
+    // slabs OVERLAP, so a particle crossing a boundary cross-fades between slabs instead
+    // of popping. The frag scales the sprite by this weight.
     if (!cull && uBHCull == 1 && uBHSlabMax > 0.0) {
       float d3dS = length(P - uBHDirCam * uBHDist);
-      if (d3dS < uBHSlabMin || d3dS >= uBHSlabMax) cull = true;
+      float wl = smoothstep(uBHSlabMin - uBHSlabFade, uBHSlabMin + uBHSlabFade, d3dS);
+      float wh = 1.0 - smoothstep(uBHSlabMax - uBHSlabFade, uBHSlabMax + uBHSlabFade, d3dS);
+      vSlabW = wl * wh;
+      if (vSlabW < 0.01) cull = true;
     }
     if (cull) {
       gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → discarded
