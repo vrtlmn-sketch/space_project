@@ -11,6 +11,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <chrono>
 
 #include "mathStructs.h"
 #include "renderedObject.h"
@@ -1219,6 +1220,64 @@ int main(int argc, char** argv) {
     if (!renderer.paused || renderer.playheadMoved)
       renderer.UpdateSceneCameraKeyframes(renderer.timelinePlayhead);
 
+    // ── Live raster black-hole lensing: pick the dominant on-screen hole, bake
+    // its far-field cube once, and hand the framing to the renderer (which lenses
+    // in CineResolveIfActive). Gated on the hole being big enough to resolve, so a
+    // tiny/far hole (e.g. Sgr A* across the galaxy) costs nothing and the frame is
+    // byte-identical to lensing off.
+    renderer.lensBHActive = false;
+    if (renderer.lensingEnabled && renderer.realisticRasterView) {
+      constexpr double kPI = 3.14159265358979323846;
+      const dvec3 camPos{ gCamAnchor[0] - renderer.cameraTranslate[0],
+                          gCamAnchor[1] - renderer.cameraTranslate[1],
+                          gCamAnchor[2] - renderer.cameraTranslate[2] };
+      const vec3 fwd = renderer.CameraForward();
+      const double pxPerRad = (double)renderer.GetFbHeight() /
+                              std::max(1e-3, (double)renderer.zoom * kPI / 180.0);
+      double bestTh = 0.0; int bestBH = -1;
+      for (int i = 0; i < (int)physicsObjects.size(); ++i) {
+        if (physicsObjects[i].shaderType != ObjectType::BlackHole) continue;
+        const dvec3 bh = physicsObjects[i].data.position;
+        const double dx = bh.x - camPos.x, dy = bh.y - camPos.y, dz = bh.z - camPos.z;
+        const double D  = std::sqrt(dx*dx + dy*dy + dz*dz);
+        if (D < 1e-9) continue;
+        const double th = std::asin(std::min(1.0,
+            2.6 * (double)physicsObjects[i].schwarzschildRadius / D));   // shadow angular radius
+        if (2.0 * th * pxPerRad < 2.0) continue;                         // sub-pixel: skip (baseline safe)
+        const double cosang = (dx*fwd.x + dy*fwd.y + dz*fwd.z) / D;      // is it on/near screen?
+        const double halfCone = std::min(3.0, (double)renderer.zoom * 0.5 * 1.9 * kPI/180.0 + 12.0*th);
+        if (cosang < std::cos(halfCone)) continue;
+        if (th > bestTh) { bestTh = th; bestBH = i; }
+      }
+      if (bestBH >= 0) {
+        renderer.lensBHActive = true;
+        renderer.lensBHWorld  = physicsObjects[bestBH].data.position;
+        renderer.lensBHRs     = physicsObjects[bestBH].schwarzschildRadius;
+        if (!renderer.lensCubeValid) {          // bake the far field from the hole (one-time)
+          const int FS = 1024;
+          for (int f = 0; f < 6; ++f) {
+            renderer.LensBeginFace(f, renderer.lensBHWorld, FS);
+            renderer.DrawSkybox(skybox);
+            std::vector<int> order;
+            BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
+            for (int ci : order) {
+              auto& c = clouds[ci];
+              c->renderedObject.uploadTemperature(c->temperature);
+              c->renderedObject.uploadRenderMode(c->renderMode);
+              c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                                 renderer.dustCoverage, renderer.dustClumpScale,
+                                                 c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                                 renderer.dustContrast);
+              renderer.Draw(c->renderedObject);
+            }
+            for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
+            renderer.LensEndFace(f);
+          }
+          renderer.lensCubeValid = true;
+        }
+      }
+    }
+
     renderer.BindViewportFBO();
 
     // Spheremap background — drawn first, depth writes off (rasterized view only)
@@ -1640,6 +1699,123 @@ int main(int argc, char** argv) {
           renderer.cameraTranslate[0] += std::atof(argv[2]);
           renderer.cameraTranslate[1] += std::atof(argv[3]);
           renderer.cameraTranslate[2] += std::atof(argv[4]);
+        }
+        // ── Raster lensing Phase 1: bake the far field into a cube map from the
+        // black hole's viewpoint and dump the 6 faces. Far field ONLY (empty sky +
+        // clouds/galaxies); no planets, rings, atmospheres or nebulae. No visible
+        // change to any normal render — this path only runs under LENS_DEBUG.
+        if (std::getenv("LENS_DEBUG")) {
+          dvec3 bh{0,0,0}; bool hasBH = false;
+          for (auto& o : physicsObjects)
+            if (o.shaderType == ObjectType::BlackHole) { bh = o.data.position; hasBH = true; break; }
+          if (!hasBH) { std::cout << "[lens] no black hole in scene; nothing to bake\n"; std::exit(0); }
+          const int FS = std::getenv("LENS_FACE") ? std::atoi(std::getenv("LENS_FACE")) : 512;
+          renderer.rayTracerView = false; renderer.realisticRasterView = true;
+          const char* faceName[6] = { "posx", "negx", "posy", "negy", "posz", "negz" };
+          for (int f = 0; f < 6; ++f) {
+            renderer.LensBeginFace(f, bh, FS);
+            renderer.DrawSkybox(skybox);
+            std::vector<int> order;
+            BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
+            for (int ci : order) {
+              auto& c = clouds[ci];
+              c->renderedObject.uploadTemperature(c->temperature);
+              c->renderedObject.uploadRenderMode(c->renderMode);
+              c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                                 renderer.dustCoverage, renderer.dustClumpScale,
+                                                 c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                                 renderer.dustContrast);
+              renderer.Draw(c->renderedObject);
+            }
+            for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
+            char path[128];
+            std::snprintf(path, sizeof(path), "/tmp/lens_%s.png", faceName[f]);
+            renderer.SetImagePath(path);
+            renderer.CaptureRecordRasterImage(FS, FS);
+            renderer.LensEndFace(f);
+          }
+          std::cout << "[lens] baked 6 far-field faces ("<< FS <<"px) to "
+                       "/tmp/lens_{posx,negx,posy,negy,posz,negz}.png from BH at "
+                    << bh.x << ", " << bh.y << ", " << bh.z << "\n";
+          std::exit(0);
+        }
+        // ── Raster lensing Phase 2: park the camera near the black hole, bake the
+        // far field, then bend every camera ray around the hole and sample the
+        // cube — a rasterized black hole (shadow + lensed starfield). Headless
+        // test (LENS_TEST). LENS_DIST (Rs, default 20), LENS_FOV (deg, default 50),
+        // LENS_STEPS (default 1500), LENS_FACE (bake px, default 1024) tune it.
+        if (std::getenv("LENS_TEST")) {
+          dvec3 bh{0,0,0}; double rs = 0.05; bool hasBH = false;
+          for (auto& o : physicsObjects)
+            if (o.shaderType == ObjectType::BlackHole) {
+              bh = o.data.position; rs = (double)o.schwarzschildRadius; hasBH = true; break;
+            }
+          if (!hasBH) { std::cout << "[lens] no black hole in scene\n"; std::exit(0); }
+          const int LW = std::getenv("LENS_W") ? std::atoi(std::getenv("LENS_W")) : 1920;
+          const int LH = std::getenv("LENS_H") ? std::atoi(std::getenv("LENS_H")) : 1080;
+          const double distRs = std::getenv("LENS_DIST") ? std::atof(std::getenv("LENS_DIST")) : 20.0;
+          const double D  = distRs * rs;
+          const int    FS = std::getenv("LENS_FACE") ? std::atoi(std::getenv("LENS_FACE")) : 1024;
+
+          // Park the camera at bh + (0,0,D) looking toward -Z (straight at the hole).
+          float idm[9] = { 1,0,0, 0,1,0, 0,0,1 };
+          renderer.SetCameraMatrix(idm);
+          renderer.cameraTranslate[0] = gCamAnchor[0] - bh.x;
+          renderer.cameraTranslate[1] = gCamAnchor[1] - bh.y;
+          renderer.cameraTranslate[2] = gCamAnchor[2] - (bh.z + D);
+          renderer.zoom = std::getenv("LENS_FOV") ? (float)std::atof(std::getenv("LENS_FOV")) : 50.0f;
+          renderer.rayTracerView = false; renderer.realisticRasterView = true;
+
+          // 1) Bake the far-field cube (LensBegin/EndFace save + restore our camera).
+          glFinish();
+          auto _tBake = std::chrono::high_resolution_clock::now();
+          for (int f = 0; f < 6; ++f) {
+            renderer.LensBeginFace(f, bh, FS);
+            renderer.DrawSkybox(skybox);
+            std::vector<int> order;
+            BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
+            for (int ci : order) {
+              auto& c = clouds[ci];
+              c->renderedObject.uploadTemperature(c->temperature);
+              c->renderedObject.uploadRenderMode(c->renderMode);
+              c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                                 renderer.dustCoverage, renderer.dustClumpScale,
+                                                 c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                                 renderer.dustContrast);
+              renderer.Draw(c->renderedObject);
+            }
+            for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
+            renderer.LensEndFace(f);
+          }
+          glFinish();
+          double bakeMs = std::chrono::duration<double, std::milli>(
+              std::chrono::high_resolution_clock::now() - _tBake).count();
+
+          // 2) Bend the rays and sample the cube into the record FBO, then post + save.
+          vec3 camRelBH{ (float)((gCamAnchor[0] - renderer.cameraTranslate[0]) - bh.x),
+                         (float)((gCamAnchor[1] - renderer.cameraTranslate[1]) - bh.y),
+                         (float)((gCamAnchor[2] - renderer.cameraTranslate[2]) - bh.z) };
+          const int steps = std::getenv("LENS_STEPS") ? std::atoi(std::getenv("LENS_STEPS")) : 1500;
+          const int bench = std::getenv("LENS_BENCH") ? std::atoi(std::getenv("LENS_BENCH")) : 30;
+          renderer.BeginRecordRaster(LW, LH);
+          renderer.DispatchRasterLens(LW, LH, camRelBH, (float)rs, steps);   // warm up
+          glFinish();
+          auto _tLens = std::chrono::high_resolution_clock::now();
+          for (int i = 0; i < bench; ++i)
+            renderer.DispatchRasterLens(LW, LH, camRelBH, (float)rs, steps);
+          glFinish();
+          double lensMs = std::chrono::duration<double, std::milli>(
+              std::chrono::high_resolution_clock::now() - _tLens).count() / std::max(bench, 1);
+          renderer.SetImagePath("/tmp/lens_bh.png");
+          renderer.CaptureRecordRasterImage(LW, LH);
+          renderer.EndRecordRaster();
+          std::cout << "[lens] wrote /tmp/lens_bh.png (rs=" << rs << " AU, camera "
+                    << distRs << " Rs = " << D << " AU out)\n";
+          std::cout << "[lens] " << LW << "x" << LH << ": bake(6x" << FS << "px)=" << bakeMs
+                    << "ms ; lens pass=" << lensMs << " ms/frame ("
+                    << (lensMs > 0 ? 1000.0 / lensMs : 0.0) << " fps if lens-bound), "
+                    << steps << " max steps\n";
+          std::exit(0);
         }
         // 1) Realistic (RT): accumulate RT objects, dispatch to snapshot, capture.
         renderer.rayTracerView = true;

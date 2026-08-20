@@ -967,6 +967,53 @@ public:
   void EndRecordRaster();                    // restore the saved draw FBO + viewport
   void CaptureRecordRasterVideo(int w, int h); // post + readback → ffmpeg (one video frame)
   void CaptureRecordRasterImage(int w, int h); // post + readback → image file (screenshot)
+
+  // ── Raster lensing, Phase 1: far-field environment cube map baked from a BH ──
+  // Six 90° raster renders of ONLY the far field (empty sky + clouds/galaxies),
+  // taken from the black hole's position, into a GL_TEXTURE_CUBE_MAP. Phase 2 will
+  // bend camera rays and sample this instead of re-testing every star per step.
+  GLuint lensCubeTex  = 0;        // GL_TEXTURE_CUBE_MAP, RGBA16F HDR (0 = not built)
+  int    lensCubeFace = 0;        // face size in px (0 = not built)
+  float  lensSavedCam[9]   = {1,0,0,0,1,0,0,0,1};   // camera state parked during a bake
+  double lensSavedTrans[3] = {0,0,0};
+  float  lensSavedZoom     = 45.0f;
+  void   EnsureLensCubemap(int faceSize);
+  // Point the camera at cube face `face` (0..5 = +X,-X,+Y,-Y,+Z,-Z) from bhPos at
+  // 90° FOV and begin an offscreen far-field pass into the record FBO. Draw the
+  // skybox + clouds between this and LensEndFace; draw NOTHING near-field.
+  void   LensBeginFace(int face, const dvec3& bhPos, int faceSize);
+  // Copy the rendered face into lensCubeTex, end the pass, and restore the camera.
+  void   LensEndFace(int face);
+
+  // Phase 2: bend every camera ray around the black hole and sample lensCubeTex.
+  GLuint lensRasterProgram = 0;
+  // Core dispatch: bend rays and write into outTex (RGBA16F image). composite=0
+  // replaces every pixel with the lensed cube (headless test); composite=1 blends
+  // the lensed result over sceneTex only within the [outer,inner] cones about the
+  // hole. camRelBH = camera position relative to the hole; bhDir = normalized
+  // camera->hole direction (world).
+  void   LensDispatch(GLuint outTex, GLuint sceneTex, int w, int h,
+                      const vec3& camRelBH, const vec3& bhDir, float rs,
+                      float cosOuter, float cosInner, int maxSteps, int composite);
+  // Headless test entry: full-replace lensing into recRasterColorTex.
+  void   DispatchRasterLens(int w, int h, const vec3& camRelBH, float rs, int maxSteps);
+
+  // ── Live raster lensing (gated) ──────────────────────────────────────────
+  // main.cpp sets these each frame: the dominant black hole that is big enough
+  // on screen to be worth lensing (else lensBHActive stays false and the whole
+  // pass — and the byte-identical baseline — is preserved). The far-field cube is
+  // baked from the hole once (lensCubeValid) and reused; it is view-independent.
+  bool   lensingEnabled = true;      // master toggle (Quality & Speed)
+  bool   lensBHActive   = false;     // a hole is resolvable on screen this frame
+  dvec3  lensBHWorld{0,0,0};         // its world position
+  float  lensBHRs       = 0.05f;     // its Schwarzschild radius
+  bool   lensCubeValid  = false;     // cube baked and usable
+  GLuint cineLensTex = 0; int cineLensW = 0, cineLensH = 0;
+  void   EnsureCineLensTex(int w, int h);
+  // Run the live lens over cineColorTex → cineLensTex; returns the texture the
+  // post chain should tonemap (cineLensTex when it ran, else cineColorTex).
+  GLuint ApplyLiveLens();
+
   // A/B compare harness (--compare): capture the RT view at WxH to an image file.
   void CaptureRTImageTo(int w, int h, const char* path) {
     recordWidth = w; recordHeight = h;

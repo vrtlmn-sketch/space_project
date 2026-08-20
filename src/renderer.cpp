@@ -6769,7 +6769,8 @@ void Renderer::CineResolveIfActive() {
   if (!cineActive) return;
   glBindFramebuffer(GL_FRAMEBUFFER, cineResolveTarget);
   glViewport(0, 0, cineResolveW, cineResolveH);
-  RunPostProcess(cineColorTex, cinePostW, cinePostH);  // samples the larger cineColorTex → downsample
+  GLuint hdr = ApplyLiveLens();                        // black-hole lensing; no-op unless a hole is on screen
+  RunPostProcess(hdr, cinePostW, cinePostH);           // samples the larger HDR buffer → downsample
   cineActive = false;
   currentPixelScale = 1.0f;
 }
@@ -8270,6 +8271,169 @@ void Renderer::EndRecordRaster() {
   rimOccluders.swap(recSavedRimOccluders);
   recSavedRimClouds.clear();      // never hold this pass's stale cloud pointers
   recSavedRimOccluders.clear();
+}
+
+// ── Raster lensing, Phase 1: far-field environment cube map baked from a BH ──
+void Renderer::EnsureLensCubemap(int faceSize) {
+  if (lensCubeTex && lensCubeFace == faceSize) return;
+  if (lensCubeTex) { glDeleteTextures(1, &lensCubeTex); lensCubeTex = 0; }
+  lensCubeFace = faceSize;
+  glGenTextures(1, &lensCubeTex);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, lensCubeTex);
+  for (int f = 0; f < 6; ++f)
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, GL_RGBA16F,
+                 faceSize, faceSize, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+}
+
+void Renderer::LensBeginFace(int face, const dvec3& bhPos, int faceSize) {
+  // Park the live camera so the bake cannot disturb the frame that follows.
+  for (int i = 0; i < 9; ++i) lensSavedCam[i] = camMatrix[i];
+  lensSavedTrans[0] = cameraTranslate[0];
+  lensSavedTrans[1] = cameraTranslate[1];
+  lensSavedTrans[2] = cameraTranslate[2];
+  lensSavedZoom = zoom;
+
+  // Camera at the black hole. Position = gCamAnchor - cameraTranslate, so to sit
+  // at bhPos set cameraTranslate = gCamAnchor - bhPos. The far field is at
+  // infinity so this offset from the live camera is invisible to it, but centring
+  // on the hole makes the escape-direction lookup exact in Phase 2.
+  cameraTranslate[0] = gCamAnchor[0] - bhPos.x;
+  cameraTranslate[1] = gCamAnchor[1] - bhPos.y;
+  cameraTranslate[2] = gCamAnchor[2] - bhPos.z;
+
+  // Conventional GL cube-map face bases. Camera looks down -Z, so the view
+  // rotation rows are (right, up, -forward) with right = forward×up, up = right×forward.
+  static const float F[6][3] = { { 1, 0, 0}, {-1, 0, 0}, { 0, 1, 0},
+                                 { 0,-1, 0}, { 0, 0, 1}, { 0, 0,-1} };
+  static const float U[6][3] = { { 0,-1, 0}, { 0,-1, 0}, { 0, 0, 1},
+                                 { 0, 0,-1}, { 0,-1, 0}, { 0,-1, 0} };
+  const float* f = F[face];
+  const float* u = U[face];
+  float r[3]  = { f[1]*u[2]-f[2]*u[1], f[2]*u[0]-f[0]*u[2], f[0]*u[1]-f[1]*u[0] };
+  float tu[3] = { r[1]*f[2]-r[2]*f[1], r[2]*f[0]-r[0]*f[2], r[0]*f[1]-r[1]*f[0] };
+  float m[9]  = { r[0], r[1], r[2],  tu[0], tu[1], tu[2],  -f[0], -f[1], -f[2] };
+  SetCameraMatrix(m);
+  zoom = 90.0f;                                   // 90° FOV per cube face
+
+  EnsureLensCubemap(faceSize);
+  BeginRecordRaster(faceSize, faceSize);          // binds record FBO, sets fbW/H, clears to sky
+}
+
+void Renderer::LensEndFace(int face) {
+  // Copy the HDR far field just rendered (record FBO colour) into the cube face.
+  if (lensCubeTex && recRasterColorTex)
+    glCopyImageSubData(recRasterColorTex, GL_TEXTURE_2D, 0, 0, 0, 0,
+                       lensCubeTex, GL_TEXTURE_CUBE_MAP, 0, 0, 0, face,
+                       lensCubeFace, lensCubeFace, 1);
+  EndRecordRaster();
+  // Restore the live camera exactly.
+  SetCameraMatrix(lensSavedCam);
+  cameraTranslate[0] = lensSavedTrans[0];
+  cameraTranslate[1] = lensSavedTrans[1];
+  cameraTranslate[2] = lensSavedTrans[2];
+  zoom = lensSavedZoom;
+}
+
+void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, int w, int h,
+                            const vec3& camRelBH, const vec3& bhDir, float rs,
+                            float cosOuter, float cosInner, int maxSteps, int composite) {
+  if (!lensRasterProgram) {
+    GLuint cs = compileShaderFromFile("src/shaders/lensRaster.glsl", GL_COMPUTE_SHADER);
+    if (!cs) { std::cerr << "[lens] lensRaster.glsl failed to compile\n"; return; }
+    lensRasterProgram = glCreateProgram();
+    glAttachShader(lensRasterProgram, cs);
+    glLinkProgram(lensRasterProgram);
+    GLint ok = 0; glGetProgramiv(lensRasterProgram, GL_LINK_STATUS, &ok);
+    glDeleteShader(cs);
+    if (!ok) {
+      char b[1024]; glGetProgramInfoLog(lensRasterProgram, 1024, nullptr, b);
+      std::cerr << "[lens] link: " << b << "\n";
+      glDeleteProgram(lensRasterProgram); lensRasterProgram = 0; return;
+    }
+  }
+  if (!lensCubeTex || !outTex) return;
+
+  glUseProgram(lensRasterProgram);
+  glBindImageTexture(0, outTex, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_CUBE_MAP, lensCubeTex);
+  glUniform1i(glGetUniformLocation(lensRasterProgram, "uLensCube"), 1);
+  if (sceneTex) {
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, sceneTex);
+    glUniform1i(glGetUniformLocation(lensRasterProgram, "uScene"), 2);
+  }
+
+  float fovy   = zoom * (float)M_PI / 180.0f;
+  float f      = 1.0f / std::tan(fovy * 0.5f);
+  float aspect = (h > 0) ? (float)w / (float)h : 1.0f;
+  GLint l;
+  if ((l = glGetUniformLocation(lensRasterProgram, "uResolution")) >= 0) glUniform2f(l, (float)w, (float)h);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uProjFxFy"))   >= 0) glUniform2f(l, f / aspect, f);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uViewRot"))    >= 0) glUniformMatrix3fv(l, 1, GL_TRUE, camMatrix);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uCamRelBH"))   >= 0) glUniform3f(l, camRelBH.x, camRelBH.y, camRelBH.z);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uBH_RS"))      >= 0) glUniform1f(l, rs);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uMaxSteps"))   >= 0) glUniform1i(l, maxSteps);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uComposite"))  >= 0) glUniform1i(l, composite);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uBHDir"))      >= 0) glUniform3f(l, bhDir.x, bhDir.y, bhDir.z);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uCosOuter"))   >= 0) glUniform1f(l, cosOuter);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uCosInner"))   >= 0) glUniform1f(l, cosInner);
+
+  glDispatchCompute((GLuint)((w + 15) / 16), (GLuint)((h + 3) / 4), 1);
+  glMemoryBarrier(GL_ALL_BARRIER_BITS);
+  glActiveTexture(GL_TEXTURE0);
+}
+
+void Renderer::DispatchRasterLens(int w, int h, const vec3& camRelBH, float rs, int maxSteps) {
+  LensDispatch(recRasterColorTex, 0, w, h, camRelBH, vec3{0.0f, 0.0f, 1.0f}, rs,
+               -1.0f, -1.0f, maxSteps, 0);   // composite 0 = full replace (headless test)
+}
+
+void Renderer::EnsureCineLensTex(int w, int h) {
+  if (cineLensTex && cineLensW == w && cineLensH == h) return;
+  if (cineLensTex) { glDeleteTextures(1, &cineLensTex); cineLensTex = 0; }
+  cineLensW = w; cineLensH = h;
+  glGenTextures(1, &cineLensTex);
+  glBindTexture(GL_TEXTURE_2D, cineLensTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+GLuint Renderer::ApplyLiveLens() {
+  if (!lensingEnabled || !lensBHActive || !lensCubeValid || !lensCubeTex || !cineColorTex)
+    return cineColorTex;
+  const int w = cineFboW, h = cineFboH;
+  EnsureCineLensTex(w, h);
+  if (!cineLensTex) return cineColorTex;
+
+  // Camera position relative to the hole (double → float), and world direction to it.
+  vec3 camRelBH{ (float)((gCamAnchor[0] - cameraTranslate[0]) - lensBHWorld.x),
+                 (float)((gCamAnchor[1] - cameraTranslate[1]) - lensBHWorld.y),
+                 (float)((gCamAnchor[2] - cameraTranslate[2]) - lensBHWorld.z) };
+  dvec3 rel = CameraRelative(lensBHWorld);                  // world vector camera → hole
+  double rl = std::sqrt(rel.x*rel.x + rel.y*rel.y + rel.z*rel.z);
+  if (rl < 1e-9) return cineColorTex;
+  vec3 bhDir{ (float)(rel.x/rl), (float)(rel.y/rl), (float)(rel.z/rl) };
+
+  // Influence cones from the shadow angular radius (~2.6·Rs/D at the photon sphere).
+  double D  = std::max(rl, (double)lensBHRs * 1.001);
+  double th = std::asin(std::min(1.0, 2.6 * (double)lensBHRs / D));
+  float cosInner = (float)std::cos(std::min(1.30,  4.0 * th));   // full lensing within ~4 shadow radii
+  float cosOuter = (float)std::cos(std::min(1.55, 12.0 * th));   // fade to scene by ~12
+
+  LensDispatch(cineLensTex, cineColorTex, w, h, camRelBH, bhDir, lensBHRs,
+               cosOuter, cosInner, 1500, 1);
+  return cineLensTex;
 }
 
 // Shared: post-process recRasterColorTex to LDR and read it back (flipped) into dst.

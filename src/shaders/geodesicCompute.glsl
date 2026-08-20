@@ -350,6 +350,7 @@ uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 =
 #include "rings_common.glsl"
 #include "rings_rt.glsl"
 #include "clouds_common.glsl"
+#include "lensing_common.glsl"    // holeAccel + RK4 (shared with the raster lensing pass)
 
 // ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.
@@ -614,37 +615,7 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
     return reflCol;
 }
 
-// ---------------------------------------------------------------------------
-// Schwarzschild geodesic acceleration in Cartesian coordinates
-//
-// For a photon at position p relative to the black hole with velocity v,
-// the exact Schwarzschild geodesic deflection in Cartesian form is:
-//
-//     a = -1.5 * r_s * h^2 / r^5 * p
-//
-// where h = |cross(p, v)| is the specific angular momentum magnitude
-// and r = |p|.
-//
-// This produces the correct photon sphere at r = 1.5 * r_s and
-// all Schwarzschild lensing effects.
-// ---------------------------------------------------------------------------
-
-// Deflection from a single hole, p relative to that hole, rs its Schwarzschild
-// radius. This is the exact Schwarzschild photon acceleration in Cartesian form.
-vec3 holeAccel(vec3 p, vec3 v, float rs)
-{
-    float r2 = dot(p, p);
-    float r  = sqrt(r2);
-
-    // Avoid singularity at r = 0
-    if (r < 0.001) return vec3(0.0);
-
-    vec3  h_vec = cross(p, v);
-    float h2    = dot(h_vec, h_vec);
-
-    float r5 = r2 * r2 * r;
-    return -1.5 * rs * h2 / r5 * p;
-}
+// holeAccel (the Schwarzschild photon acceleration) lives in lensing_common.glsl.
 
 // Superpose the deflection of every black hole in the scene. pos is world-space.
 // Not exact GR for overlapping fields, but visually correct multi-lensing and
@@ -659,56 +630,7 @@ vec3 geodesicAccel(vec3 pos, vec3 vel)
     return a;
 }
 
-// ---------------------------------------------------------------------------
-// RK4 integration step
-// ---------------------------------------------------------------------------
-
-// State: position and velocity
-struct RayState {
-    vec3 pos;
-    vec3 vel;
-};
-
-// Derivative: velocity and acceleration
-struct RayDeriv {
-    vec3 dpos; // = vel
-    vec3 dvel; // = accel
-};
-
-RayDeriv evalDeriv(vec3 pos, vec3 vel)
-{
-    // pos is world-space; geodesicAccel sums over all black holes
-    RayDeriv d;
-    d.dpos = vel;
-    d.dvel = geodesicAccel(pos, vel);
-    return d;
-}
-
-RayState rk4Step(vec3 pos, vec3 vel, float dt)
-{
-    // k1
-    RayDeriv k1 = evalDeriv(pos, vel);
-
-    // k2
-    vec3 p2 = pos + k1.dpos * (dt * 0.5);
-    vec3 v2 = vel + k1.dvel * (dt * 0.5);
-    RayDeriv k2 = evalDeriv(p2, v2);
-
-    // k3
-    vec3 p3 = pos + k2.dpos * (dt * 0.5);
-    vec3 v3 = vel + k2.dvel * (dt * 0.5);
-    RayDeriv k3 = evalDeriv(p3, v3);
-
-    // k4
-    vec3 p4 = pos + k3.dpos * dt;
-    vec3 v4 = vel + k3.dvel * dt;
-    RayDeriv k4 = evalDeriv(p4, v4);
-
-    RayState result;
-    result.pos = pos + (dt / 6.0) * (k1.dpos + 2.0 * k2.dpos + 2.0 * k3.dpos + k4.dpos);
-    result.vel = vel + (dt / 6.0) * (k1.dvel + 2.0 * k2.dvel + 2.0 * k3.dvel + k4.dvel);
-    return result;
-}
+// RK4 integrator (evalDeriv/rk4Step, RayState/RayDeriv) lives in lensing_common.glsl.
 
 // ---------------------------------------------------------------------------
 // Main

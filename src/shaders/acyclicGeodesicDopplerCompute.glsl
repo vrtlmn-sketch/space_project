@@ -360,6 +360,7 @@ uniform float uDustGlow;           // dust in-scatter: 0 = extinction only, >0 =
 #include "galaxy_common.glsl"
 #include "rings_common.glsl"
 #include "rings_rt.glsl"
+#include "lensing_common.glsl"    // holeAccel + RK4 (shared with the raster lensing pass)
 
 // ---------------------------------------------------------------------------
 // Atmosphere shells — single-scattering raymarch along a straight ray segment.
@@ -520,33 +521,12 @@ vec3 reflectionBounce(vec3 ro, vec3 rd, vec3 hitPos, vec3 normal)
     return reflCol;
 }
 
-vec3 geodesicAccel(vec3 p, vec3 v)
+vec3 geodesicAccel(vec3 p, vec3 v)   // p is already BH-relative in this shader
 {
-    float r2 = dot(p, p);
-    float r  = sqrt(r2);
-    if (r < 0.001) return vec3(0.0);
-    vec3  h_vec = cross(p, v);
-    float h2    = dot(h_vec, h_vec);
-    float r5 = r2 * r2 * r;
-    return -1.5 * BH_RS * h2 / r5 * p;
+    return holeAccel(p, v, BH_RS);
 }
 
-struct RayState { vec3 pos; vec3 vel; };
-struct RayDeriv { vec3 dpos; vec3 dvel; };
-
-RayDeriv evalDeriv(vec3 pos, vec3 vel) { RayDeriv d; d.dpos = vel; d.dvel = geodesicAccel(pos, vel); return d; }
-
-RayState rk4Step(vec3 pos, vec3 vel, float dt)
-{
-    RayDeriv k1 = evalDeriv(pos, vel);
-    vec3 p2 = pos + k1.dpos * (dt * 0.5); vec3 v2 = vel + k1.dvel * (dt * 0.5); RayDeriv k2 = evalDeriv(p2, v2);
-    vec3 p3 = pos + k2.dpos * (dt * 0.5); vec3 v3 = vel + k2.dvel * (dt * 0.5); RayDeriv k3 = evalDeriv(p3, v3);
-    vec3 p4 = pos + k3.dpos * dt;         vec3 v4 = vel + k3.dvel * dt;         RayDeriv k4 = evalDeriv(p4, v4);
-    RayState result;
-    result.pos = pos + (dt / 6.0) * (k1.dpos + 2.0 * k2.dpos + 2.0 * k3.dpos + k4.dpos);
-    result.vel = vel + (dt / 6.0) * (k1.dvel + 2.0 * k2.dvel + 2.0 * k3.dvel + k4.dvel);
-    return result;
-}
+// RK4 integrator (evalDeriv/rk4Step, RayState/RayDeriv) lives in lensing_common.glsl.
 
 // ---------------------------------------------------------------------------
 // Phase 2 helpers (identical to acyclicGeodesicCompute.glsl)
