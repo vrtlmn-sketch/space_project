@@ -1227,6 +1227,7 @@ int main(int argc, char** argv) {
     // tiny/far hole (e.g. Sgr A* across the galaxy) costs nothing and the frame is
     // byte-identical to lensing off.
     renderer.lensBHActive = false;
+    renderer.lensBHIndex  = -1;
     gLensCull = 0;                        // clouds are not culled unless a hole is lensing
     if (renderer.lensingEnabled && renderer.realisticRasterView) {
       constexpr double kPI = 3.14159265358979323846;
@@ -1253,6 +1254,7 @@ int main(int argc, char** argv) {
       }
       if (bestBH >= 0) {
         renderer.lensBHActive = true;
+        renderer.lensBHIndex  = bestBH;
         renderer.lensBHWorld  = physicsObjects[bestBH].data.position;
         renderer.lensBHRs     = physicsObjects[bestBH].schwarzschildRadius;
         const dvec3  hole = renderer.lensBHWorld;

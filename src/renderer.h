@@ -1007,6 +1007,7 @@ public:
   // reused (view-independent); rebuilt when the hole moves or is resized.
   bool   lensingEnabled = true;      // master toggle
   bool   lensBHActive   = false;     // a hole is resolvable on screen this frame
+  int    lensBHIndex    = -1;        // physicsObjects index of that hole (skip its horizon mesh)
   dvec3  lensBHWorld{0,0,0};         // its world position
   float  lensBHRs       = 0.05f;     // its Schwarzschild radius
   bool   lensCubeValid  = false;     // cube baked and usable

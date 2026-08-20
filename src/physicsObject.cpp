@@ -305,6 +305,15 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
     renderedObject.rtAtmoRadius = 0.0f;
   }
 
+  // The raster lens draws this hole's shadow itself. Drawing the event-horizon
+  // sphere too leaves its near hemisphere inside the shadow (depth-gated as a
+  // foreground solid) — the "broken ball" in the black. Skip only the lensed
+  // hole's mesh, and only on the raster-lens path (RT still needs it in-buffer).
+  const int selfIdx = (int)(this - physicsObjetcs.data());
+  if (shaderType == ObjectType::BlackHole && renderer.lensBHActive &&
+      selfIdx == renderer.lensBHIndex)
+    return;
+
   renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType, data.velocity, data.color);
 }
 

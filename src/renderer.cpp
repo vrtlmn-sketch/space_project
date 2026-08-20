@@ -8404,13 +8404,10 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosOuter"))   >= 0) glUniform1f(l, cosOuter);
   if ((l = glGetUniformLocation(lensRasterProgram, "uCosInner"))   >= 0) glUniform1f(l, cosInner);
   {
-    // Box (behind-hole ring) confined to a thin cone about the hole direction, so
-    // the magnified box only fills the ring and the true-scale scene does the rest.
-    const float th = (float)std::asin(std::min(1.0f, 2.6f * rs / std::max(bhDist, rs * 1.001f)));
-    const float boxInner = std::cos(std::min(0.15f, th));
-    const float boxOuter = std::cos(std::min(0.50f, 3.0f * th));
-    if ((l = glGetUniformLocation(lensRasterProgram, "uBoxCosInner")) >= 0) glUniform1f(l, boxInner);
-    if ((l = glGetUniformLocation(lensRasterProgram, "uBoxCosOuter")) >= 0) glUniform1f(l, boxOuter);
+    // The genuine gap (bent ray off-screen or behind a foreground solid) fades to
+    // the live empty-sky colour instead of a frozen cube snapshot.
+    const vec3 bg = backgroundRGB();
+    if ((l = glGetUniformLocation(lensRasterProgram, "uBackground")) >= 0) glUniform3f(l, bg.x, bg.y, bg.z);
   }
   if ((l = glGetUniformLocation(lensRasterProgram, "uBHDist"))     >= 0) glUniform1f(l, bhDist);
   if ((l = glGetUniformLocation(lensRasterProgram, "uNear"))       >= 0) glUniform1f(l, nearZ);
@@ -8466,8 +8463,8 @@ GLuint Renderer::ApplyLiveLens() {
   // Influence cones from the shadow angular radius (~2.6·Rs/D at the photon sphere).
   double D  = std::max(rl, (double)lensBHRs * 1.001);
   double th = std::asin(std::min(1.0, 2.6 * (double)lensBHRs / D));
-  float cosInner = (float)std::cos(std::min(1.30,  4.0 * th));   // full lensing within ~4 shadow radii
-  float cosOuter = (float)std::cos(std::min(1.55, 12.0 * th));   // fade to scene by ~12
+  float cosInner = (float)std::cos(std::min(1.20, 2.2 * th));    // full lensing within ~2 shadow radii
+  float cosOuter = (float)std::cos(std::min(1.45, 5.5 * th));    // fade to scene by ~5.5 (was 12 — a wide fuzzy halo)
 
   LensDispatch(cineLensTex, cineColorTex, cineDepthTex, w, h, camRelBH, bhDir, lensBHRs,
                cosOuter, cosInner, (float)rl, RenderedObject::sZNear, RenderedObject::sZFar,

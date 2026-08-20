@@ -167,7 +167,10 @@ void main() {
     float pd     = length(P);
     bool  inCone = dot(P, uBHDirCam) > uBHCullCos * pd;
     bool  behind = pd > uBHDist;
-    bool  cull   = inCone && ((uBHCull == 1) ? behind : !behind);
+    // Pass 1 (keep BACK) draws everything except in-cone-front; pass 2 (keep FRONT)
+    // draws ONLY in-cone-front. Out-of-cone matter is therefore drawn exactly once,
+    // not once per pass — otherwise it doubles in brightness where the hole is big.
+    bool  cull   = (uBHCull == 2) ? (inCone && !behind) : (!inCone || behind);
     if (cull) {
       gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → discarded
       gl_PointSize = 0.0;

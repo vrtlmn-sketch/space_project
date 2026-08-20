@@ -37,8 +37,7 @@ uniform int   uComposite;
 uniform vec3  uBHDir;        // normalized camera->hole direction (world)
 uniform float uCosOuter;     // early-out beyond this angle from the hole
 uniform float uCosInner;     // full lensing inside this angle
-uniform float uBoxCosOuter;  // box (behind-hole ring) appears only where the bent ray
-uniform float uBoxCosInner;  // wraps toward the hole: dot(vel, holeDir) in [outer,inner]
+uniform vec3  uBackground;   // live empty-sky colour — the gap fades to this, not a stale cube
 
 #include "lensing_common.glsl"
 
@@ -71,17 +70,26 @@ void main()
         // Outside the cone: scene unchanged.
         if (cGate < uCosOuter) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
         // Something solid in FRONT of the hole (planet/mesh): keep it, don't lens it.
-        // Only depth-writing geometry qualifies; additive stars/clouds sit at the far
-        // plane, so the galaxy is still lensed.
-        float sd = linearDist(textureLod(uSceneDepth, uv, 0.0).r);
-        if (sd < uBHDist * 0.98) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
+        // A pixel at the FAR PLANE is never a foreground occluder — only a real drawn
+        // solid (depth strictly inside the far plane) qualifies. Without the far-plane
+        // guard, getting close to a planet pulls the far plane in front of the hole and
+        // the whole background linearises to < uBHDist, switching lensing off entirely.
+        float rawd = textureLod(uSceneDepth, uv, 0.0).r;
+        if (rawd < 0.99999 && linearDist(rawd) < uBHDist * 0.98) {
+            imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return;
+        }
     }
 
     vec3  pos = uCamRelBH / max(uBH_RS, 1e-30);   // ray origin in units of Rs
     vec3  vel = rd;
+    // Hard shadow: a ray heading toward the hole whose impact parameter is below the
+    // photon-capture value b_crit = 3*sqrt(3)/2 ≈ 2.598 Rs is swallowed. This gives a
+    // crisp black disc at the correct angular radius (~2.6 Rs / D) without depending
+    // on the step budget — near-critical rays would otherwise fuzz the shadow edge.
+    float bimp     = length(cross(pos, vel));
+    bool  captured = (dot(pos, vel) < 0.0 && bimp < 2.598);
     float stepFracRs = 0.5;
-    bool  captured = false;
-    for (int step = 0; step < uMaxSteps; step++)
+    for (int step = 0; step < uMaxSteps && !captured; step++)
     {
         float r = length(pos);
         if (r <= 1.0) { captured = true; break; }
@@ -112,16 +120,18 @@ void main()
             onScreen = all(greaterThanEqual(suv, vec2(0.0))) && all(lessThanEqual(suv, vec2(1.0)));
         }
         // If the bent ray lands on a FOREGROUND solid, that isn't a lensable
-        // source (its light never passed the hole) — don't paint a ghost of it.
-        if (onScreen && linearDist(textureLod(uSceneDepth, suv, 0.0).r) < uBHDist * 0.98)
+        // source (its light never passed the hole) — don't paint a ghost of it. A
+        // far-plane pixel is not a solid (same guard as the front gate).
+        float rawd2 = textureLod(uSceneDepth, suv, 0.0).r;
+        if (onScreen && rawd2 < 0.99999 && linearDist(rawd2) < uBHDist * 0.98)
             onScreen = false;
-        vec3  sceneS = onScreen ? textureLod(uScene, suv, 0.0).rgb : boxS;
-        // The box supplies BEHIND-the-hole light, which only appears in a thin ring
-        // where the bent ray wraps toward the hole (dot(vel, holeDir) → 1). Elsewhere
-        // the correctly-scaled scene is used, so the effect stays its true size.
-        float toward = dot(vn, uBHDir);
-        float useBox = onScreen ? smoothstep(uBoxCosOuter, uBoxCosInner, toward) : 1.0;
-        lensed = mix(sceneS, boxS, useBox);
+        // Sample the REAL rendered frame wherever the bent ray lands on visible
+        // content — it carries the whole live pipeline (stars, dust reddening, glow,
+        // spikes) at full resolution, for any shape or number of galaxies, and tracks
+        // look-setting changes every frame. The genuine gap the camera never saw
+        // (off-screen, or behind a foreground solid) fades to the empty sky rather
+        // than to a frozen low-res cube snapshot that ignores live settings.
+        lensed = onScreen ? textureLod(uScene, suv, 0.0).rgb : uBackground;
     }
 
     float g        = smoothstep(uCosOuter, uCosInner, cGate);
