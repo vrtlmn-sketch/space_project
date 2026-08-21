@@ -1643,6 +1643,11 @@ int main(int argc, char** argv) {
         }
         gLensSlabMin = 0.0f; gLensSlabMax = 0.0f; gLensSlabFade = 0.0f;
         renderer.EndForeground();
+      } else {
+        // Default path: ALL clouds drawn once, per-particle lens displacement in the
+        // vertex shader (exact in depth) — pass 1 drew no cloud particles at all.
+        for (int ci : order) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
+        for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
       }
       gLensBendStrength = savedBend;
       gLensCull = 0;
@@ -1808,7 +1813,9 @@ int main(int argc, char** argv) {
         for (auto& c : clouds) if (c && !c->universeMember)
           c->temperature = (float)std::atof(eo);
       if (cmpFrame == cmpWait) {   // let buffers/scene settle first
-        const int W = 640, H = 360;   // 360p — matches how the good version was viewed
+        // 360p default; CMP_W/CMP_H override for high-res RASTER captures.
+        const int W = std::getenv("CMP_W") ? std::atoi(std::getenv("CMP_W")) : 640;
+        const int H = std::getenv("CMP_H") ? std::atoi(std::getenv("CMP_H")) : 360;
         // Optional camera offset (AU): --compare dx dy dz — for testing whether
         // structures stay attached to the scene (parallax) or swim with the camera.
         if (argc >= 5) {
@@ -1968,6 +1975,7 @@ int main(int argc, char** argv) {
         // 2) Performant (raster): draw the cinematic raster view + capture.
         if (std::getenv("SKIP_RASTER")) { std::cout << "[compare] wrote /tmp/cmp_rt.png (RT only)\n"; std::exit(0); }
         renderer.rayTracerView = false; renderer.realisticRasterView = true;
+        computeLensFraming(H);                 // black-hole lens framing for the compare capture
         renderer.BeginRecordRaster(W, H);
         renderer.DrawSkybox(skybox);
         for (auto& o : physicsObjects)
@@ -1975,17 +1983,10 @@ int main(int argc, char** argv) {
                                      RtObjectType(o.shaderType), o.data.velocity, o.data.color);
         std::vector<int> cmpOrder;
         BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cmpOrder);
-        for (int ci : cmpOrder) {
-          auto& c = clouds[ci];
-          c->renderedObject.uploadTemperature(c->temperature);
-          c->renderedObject.uploadRenderMode(c->renderMode);
-          c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
-                                             renderer.dustCoverage, renderer.dustClumpScale,
-                                             c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                             renderer.dustContrast);
-          renderer.Draw(c->renderedObject);
-        }
+        gLensCull = renderer.lensBHActive ? 2 : 0;   // pass 1: back field (front held for the lens)
+        for (int ci : cmpOrder) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
         for (int ci : cmpOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
+        gLensCull = 0;
         for (auto& obj : physicsObjects) {
           renderer.DrawAtmosphere(obj);
           renderer.DrawRings(obj);
@@ -1999,6 +2000,7 @@ int main(int argc, char** argv) {
                               ok ? &clouds[sc]->rotationDeg : nullptr);
         }
         renderer.EndNebulaPass();
+        lensForegroundCapture(cmpOrder);       // lens the hole + flat front into the capture
         renderer.SetImagePath("/tmp/cmp_raster.png");
         renderer.CaptureRecordRasterImage(W, H);
         renderer.EndRecordRaster();

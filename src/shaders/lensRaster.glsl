@@ -171,8 +171,23 @@ void main()
         // one brushed ring made of the scene's own light, no drawn arcs, no ghosts.
         vec3 col;
         vec3 primary = sampleScene(vn, col) ? col : uBackground;
-        float w = smoothstep(0.05, 0.8, sweepAng);       // radians swept: 0 → primary, strong → integral
-        lensed = mix(primary, sweepCol / 3.14159265, w);
+        // AVERAGE along the sweep, not sum/PI: the average converges exactly to the
+        // primary sample as the sweep shrinks, so the treated region is photometrically
+        // continuous with the unbent band at its edge. (Sum/PI under-counted any sweep
+        // shorter than PI — a brightness dip ringing the whole lensed region.)
+        // The average only takes over where the ray genuinely WINDS (sweep >> pi —
+        // the near-critical pile-up). A ray that sweeps less than ~a half-turn does
+        // not wind: its final direction IS the physical answer, and it stays sharp.
+        // Engaging the smear at small sweeps painted a hazy "glass ball" edge over
+        // the sky and misaligned the band at the region's boundary.
+        float w = smoothstep(2.0, 5.0, sweepAng);
+        lensed = mix(primary, sweepCol / max(sweepAng, 1e-4), w);
+        // Anti-aliased shadow rim: feather toward black over a small band of impact
+        // parameter above b_crit, instead of the per-pixel binary cut (stair-steps).
+        for (int i = 0; i < uHoleCount; i++) {
+            float b = length(cross(uHolePos[i], rd));
+            lensed *= smoothstep(2.598 * uHoleRs[i], 2.598 * uHoleRs[i] * 1.05, b);
+        }
     }
 
     // No blend with the unbent pixel: the deflection goes to zero continuously, so
