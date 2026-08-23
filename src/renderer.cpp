@@ -570,6 +570,13 @@ void Renderer::Draw(RenderedObject& ro) {
                                             AddRimOccluder(ro); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+                                            // Volumetric dust: (re)splat the volume now — keyed on
+                                            // cloudGpuDirty, so it must run before renderCloud clears
+                                            // it. The extinction march itself runs in DrawCloudDust,
+                                            // in the sprite dust's exact slot (after every cloud's
+                                            // light), so the two-phase algebra is unchanged.
+                                            if (realisticRasterView && ro.volumetricDust && !ro.isStarfield)
+                                              ro.updateDustVolume(dustClumpScale, dustCoverage, dustContrast);
                                             // Light phase only; DrawCloudDust draws the dust after EVERY
                                             // cloud's light (see CloudDrawPhase in renderedObject.h).
                                             ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Light;
@@ -1103,11 +1110,112 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
 // ran this pass, so a site that skips a cloud cannot grow dust from nothing.
 // The dust uniforms are program-wide and per-object, so they are re-sent here
 // (another cloud's Draw has overwritten them since this cloud's).
+// Volumetric dust: one full-screen march of this cloud's splat volume × the
+// shared lane field. Mode 0 multiplies transmittance over everything drawn so
+// far (GL_ZERO, GL_SRC_COLOR — the same extinction algebra as sprite dust, but
+// with real depth: the march knows exactly what the ray crosses). Mode 1 adds
+// (optical depth, depth×world-lit) into the rim-density map. The lens
+// half-space split rides the same gLens globals the particle cull uses.
+void Renderer::DrawCloudDustVolumetric(RenderedObject& ro, int mode, int w, int h) {
+  if (!ro.volumetricDust || ro.isStarfield || !ro.dustVolTex || !blitVAO) return;
+  if (!dustVolProgram) {
+    GLuint vs = compileShaderFromFile("src/shaders/blitVert.glsl", GL_VERTEX_SHADER);
+    GLuint fs = compileShaderFromFile("src/shaders/dustVolFrag.glsl", GL_FRAGMENT_SHADER);
+    if (!vs || !fs) { std::cerr << "[dustVol] shader compile failed\n"; return; }
+    dustVolProgram = glCreateProgram();
+    glAttachShader(dustVolProgram, vs);
+    glAttachShader(dustVolProgram, fs);
+    glLinkProgram(dustVolProgram);
+    GLint ok = 0; glGetProgramiv(dustVolProgram, GL_LINK_STATUS, &ok);
+    glDeleteShader(vs); glDeleteShader(fs);
+    if (!ok) {
+      char b[1024]; glGetProgramInfoLog(dustVolProgram, 1024, nullptr, b);
+      std::cerr << "[dustVol] link: " << b << "\n";
+      glDeleteProgram(dustVolProgram); dustVolProgram = 0; return;
+    }
+  }
+
+  glUseProgram(dustVolProgram);
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_3D, ro.dustVolTex);
+  GLint l;
+  if ((l = glGetUniformLocation(dustVolProgram, "uDustVol")) >= 0) glUniform1i(l, 0);
+
+  // Cloud placement, camera-relative in DOUBLE (same rule as setCloudPlacementUniforms).
+  const double ox = (ro.coordinates.x - gCamAnchor[0]) + cameraTranslate[0];
+  const double oy = (ro.coordinates.y - gCamAnchor[1]) + cameraTranslate[1];
+  const double oz = (ro.coordinates.z - gCamAnchor[2]) + cameraTranslate[2];
+  float rm[9] = {1,0,0, 0,1,0, 0,0,1};
+  if (ro.rotationDeg.x != 0.0f || ro.rotationDeg.y != 0.0f || ro.rotationDeg.z != 0.0f) {
+    double R[9];
+    EulerDegToMat3d(ro.rotationDeg, R);
+    for (int i = 0; i < 9; ++i) rm[i] = (float)R[i];
+  }
+  if ((l = glGetUniformLocation(dustVolProgram, "uCloudOriginF")) >= 0) glUniform3f(l, (float)ox, (float)oy, (float)oz);
+  if ((l = glGetUniformLocation(dustVolProgram, "uCloudRotM"))    >= 0) glUniformMatrix3fv(l, 1, GL_TRUE, rm);
+  if ((l = glGetUniformLocation(dustVolProgram, "uVolLo"))        >= 0) glUniform3f(l, ro.dustVolLo.x, ro.dustVolLo.y, ro.dustVolLo.z);
+  if ((l = glGetUniformLocation(dustVolProgram, "uVolHi"))        >= 0) glUniform3f(l, ro.dustVolHi.x, ro.dustVolHi.y, ro.dustVolHi.z);
+
+  const float fovy   = zoom * (float)M_PI / 180.0f;
+  const float f      = 1.0f / std::tan(fovy * 0.5f);
+  const float aspect = (h > 0) ? (float)w / (float)h : 1.0f;
+  if ((l = glGetUniformLocation(dustVolProgram, "uProjFxFy")) >= 0) glUniform2f(l, f / aspect, f);
+  if ((l = glGetUniformLocation(dustVolProgram, "uViewRot"))  >= 0) glUniformMatrix3fv(l, 1, GL_TRUE, camMatrix);
+  {
+    const float zn = RenderedObject::sZNear, zf = RenderedObject::sZFar;
+    const float a  = -(zf + zn) / (zf - zn);
+    const float b  = -2.0f * zf * zn / (zf - zn);
+    if ((l = glGetUniformLocation(dustVolProgram, "uProjZ")) >= 0) glUniform2f(l, a, b);
+  }
+  if ((l = glGetUniformLocation(dustVolProgram, "uSteps"))     >= 0) glUniform1i(l, 40);
+  if ((l = glGetUniformLocation(dustVolProgram, "uMode"))      >= 0) glUniform1i(l, mode);
+  if ((l = glGetUniformLocation(dustVolProgram, "uLaneScale")) >= 0) glUniform1f(l, ro.dustLaneScale());
+  // Path-length unit for tau: the cloud's own RMS size. The box diagonal was
+  // tried and is outlier-inflated (3.7x on the 59k disc) — it starved a thin
+  // disc crossing to invisibility.
+  if ((l = glGetUniformLocation(dustVolProgram, "uVolRefLen")) >= 0)
+    glUniform1f(l, std::max(2.0f * ro.rmsRadius(), 1e-6f));   // = cloudRmsRadius (2x RMS)
+
+  if ((l = glGetUniformLocation(dustVolProgram, "uDustStrength"))   >= 0) glUniform1f(l, dustStrength);
+  if ((l = glGetUniformLocation(dustVolProgram, "uDustReddening"))  >= 0) glUniform1f(l, dustReddening);
+  if ((l = glGetUniformLocation(dustVolProgram, "uDustCoverage"))   >= 0) glUniform1f(l, dustCoverage);
+  if ((l = glGetUniformLocation(dustVolProgram, "uDustContrast"))   >= 0) glUniform1f(l, dustContrast);
+  if ((l = glGetUniformLocation(dustVolProgram, "uDustClumpScale")) >= 0) glUniform1f(l, dustClumpScale);
+
+  if ((l = glGetUniformLocation(dustVolProgram, "uBHCullV"))   >= 0) glUniform1i(l, gLensCull);
+  if ((l = glGetUniformLocation(dustVolProgram, "uBHDirCamV")) >= 0) glUniform3f(l, gLensBHDirCam[0], gLensBHDirCam[1], gLensBHDirCam[2]);
+  if ((l = glGetUniformLocation(dustVolProgram, "uBHDistV"))   >= 0) glUniform1f(l, gLensBHDist);
+
+  glEnable(GL_BLEND);
+  if (mode == 0) {
+    glBlendFunc(GL_ZERO, GL_SRC_COLOR);          // dst *= transmittance
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+  } else {
+    glBlendFunc(GL_ONE, GL_ONE);                 // density accumulates
+    glDisable(GL_DEPTH_TEST);
+  }
+  glBindVertexArray(blitVAO);
+  glDrawArrays(GL_TRIANGLES, 0, 6);
+  glBindVertexArray(0);
+  glDisable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  if (mode == 0) { glDepthMask(GL_TRUE); glDepthFunc(GL_LESS); }
+  else           { glEnable(GL_DEPTH_TEST); }
+  glActiveTexture(GL_TEXTURE0);
+}
+
 void Renderer::DrawCloudDust(RenderedObject& ro) {
   if (rayTracerView || ro.meshType != MeshType::cloud) return;
   if (!ro.cloudLightDrawn) return;
   ro.cloudLightDrawn = false;
   if (!ro.realisticShading) return;          // the nav path has no dust pass
+  // Volumetric dust is a HYBRID: the screen look stays the signed-off sprite
+  // dust (below, unchanged); the splat volume exists as the depth oracle for
+  // the black-hole lens march (and future per-star/depth consumers). The full
+  // marched-screen look was built and measured: the honest column through a
+  // galaxy is smooth saturated fog — the granular look lives in the sprites.
   ro.uploadDustParams(dustStrength, dustReddening, dustCoverage, dustClumpScale,
                       ro.ownDustInfluence(dustInfluence), dustContrast);
   ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Dust;
@@ -1119,7 +1227,7 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
                                   vec3 velocity, vec3 color) {
   if (ro.isNebulaVolume) return;   // drawn by DrawNebula after the clouds; never an RT solid
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere) {
+    if (ro.meshType == MeshType::sphere && !ro.lensSkipMesh) {
       ro.uploadPlanetColor(color);
       ro.realisticShading = realisticRasterView;
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -5130,6 +5238,12 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
                           "Drawn as gray dots in the debug view only; hidden in the pretty view.\n"
                           "On by default; turn off for a plain cloud that needs no halo. (GPU physics)");
 
+      ImGui::Checkbox("Volumetric dust", &cloudForm.volumetricDust);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Give this cloud's dust a real 3D density volume for the black-hole\n"
+                          "lens: dust in front of the hole occludes and reddens the lensed ring\n"
+                          "along the BENT light path. The normal screen look is unchanged.");
+
       ImGui::Spacing();
 
       // ── Appearance ──
@@ -6040,6 +6154,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         cloudForm.computeMethod      = static_cast<int>(cloud->computeMethod);
         cloudForm.theta              = cloud->barnesHutTheta;
         cloudForm.useDarkMatterHalo  = cloud->useDarkMatterHalo;
+        cloudForm.volumetricDust     = cloud->renderedObject.volumetricDust;
         cloudForm.formationFile      = cloud->formationFile;
         cloudForm.scale              = cloud->scale;
         lastCloudIdx = cloudIdx;
@@ -6252,6 +6367,16 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                           "galaxy stays bound and two galaxies collide/merge realistically.\n"
                           "Drawn as gray dots in this debug view only; hidden in the pretty view.\n"
                           "On by default; turn off for a plain cloud that needs no halo. (GPU physics)");
+
+      if (ImGui::Checkbox("Volumetric dust##ci", &cloudForm.volumetricDust)) {
+        cloud->renderedObject.volumetricDust = cloudForm.volumetricDust;
+        cloud->renderedObject.dustVolDirty   = true;   // (re)splat on next draw
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Give this cloud's dust a real 3D density volume for the black-hole\n"
+                          "lens: dust in front of the hole occludes and reddens the lensed ring\n"
+                          "along the BENT light path. The normal screen look is unchanged.\n"
+                          "Takes effect immediately; not available for chunked (far-LOD) galaxies.");
 
       // ── Appearance ──
       ImGui::SeparatorText("Appearance");
@@ -8552,6 +8677,14 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
     glBindTexture(GL_TEXTURE_2D, sceneDepthTex);
     glUniform1i(glGetUniformLocation(lensRasterProgram, "uSceneDepth"), 4);
   }
+  // Wide-FOV back-field fallback: only when THIS site rendered it this frame
+  // (lensWideValid), so a stale pass from another camera can never leak in.
+  const bool hasWide = lensWideValid && lensWideColorTex != 0 && composite == 1;
+  if (hasWide) {
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, lensWideColorTex);
+    glUniform1i(glGetUniformLocation(lensRasterProgram, "uSceneWide"), 3);
+  }
 
   float fovy   = zoom * (float)M_PI / 180.0f;
   float f      = 1.0f / std::tan(fovy * 0.5f);
@@ -8597,6 +8730,82 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
   if ((l = glGetUniformLocation(lensRasterProgram, "uBHDist"))     >= 0) glUniform1f(l, bhDist);
   if ((l = glGetUniformLocation(lensRasterProgram, "uNear"))       >= 0) glUniform1f(l, nearZ);
   if ((l = glGetUniformLocation(lensRasterProgram, "uFar"))        >= 0) glUniform1f(l, farZ);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uHasWide"))    >= 0) glUniform1i(l, hasWide ? 1 : 0);
+  if (hasWide && (l = glGetUniformLocation(lensRasterProgram, "uProjWideFxFy")) >= 0) {
+    const float fw  = 1.0f / std::tan(lensWideFovY * (float)M_PI / 360.0f);
+    const float wa  = (lensWideH > 0) ? (float)lensWideW / (float)lensWideH : 1.0f;
+    glUniform2f(l, fw / wa, fw);
+  }
+  const bool hasCube = lensCamCubeValid && lensCubeTex != 0 && composite == 1;
+  if ((l = glGetUniformLocation(lensRasterProgram, "uHasCamCube")) >= 0) glUniform1i(l, hasCube ? 1 : 0);
+  {
+    // Volumetric dust along the bent ray: the dominant volumetric cloud's
+    // splat volume, in the march's own L-units frame.
+    RenderedObject* dro = lensDustVolRO;
+    const bool hasDust = dro && dro->dustVolTex != 0 && composite == 1;
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHasDustVol")) >= 0) glUniform1i(l, hasDust ? 1 : 0);
+    if (hasDust) {
+      glActiveTexture(GL_TEXTURE5);
+      glBindTexture(GL_TEXTURE_3D, dro->dustVolTex);
+      glActiveTexture(GL_TEXTURE0);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustVol")) >= 0) glUniform1i(l, 5);
+      const double L = std::max((double)lensBHRs, 1e-30);
+      dvec3 rr = CameraRelative(dro->coordinates);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustVolOriginL")) >= 0)
+        glUniform3f(l, (float)(rr.x / L), (float)(rr.y / L), (float)(rr.z / L));
+      float rm2[9] = {1,0,0, 0,1,0, 0,0,1};
+      if (dro->rotationDeg.x != 0.0f || dro->rotationDeg.y != 0.0f || dro->rotationDeg.z != 0.0f) {
+        double R[9];
+        EulerDegToMat3d(dro->rotationDeg, R);
+        for (int i = 0; i < 9; ++i) rm2[i] = (float)R[i];
+      }
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustVolRot"))    >= 0) glUniformMatrix3fv(l, 1, GL_TRUE, rm2);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustVolLo"))     >= 0) glUniform3f(l, dro->dustVolLo.x, dro->dustVolLo.y, dro->dustVolLo.z);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustVolHi"))     >= 0) glUniform3f(l, dro->dustVolHi.x, dro->dustVolHi.y, dro->dustVolHi.z);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustVolRefLen")) >= 0) glUniform1f(l, std::max(2.0f * dro->rmsRadius(), 1e-6f));
+      if ((l = glGetUniformLocation(lensRasterProgram, "uLUnitAU"))       >= 0) glUniform1f(l, (float)L);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustStrengthL")) >= 0) glUniform1f(l, dustStrength);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDustReddeningL"))>= 0) glUniform1f(l, dustReddening);
+    }
+  }
+  if ((l = glGetUniformLocation(lensRasterProgram, "uSrcDistL")) >= 0) {
+    const double L2 = std::max((double)lensBHRs, 1e-30);
+    const double srcAU = (lensSrcDistAU > 0.0f) ? (double)lensSrcDistAU : 2.5 * (double)bhDist;
+    glUniform1f(l, (composite == 1) ? (float)(srcAU / L2) : 0.0f);
+  }
+  {
+    // Disc-plane source: the largest cloud's plane, in the march's L-unit frame.
+    RenderedObject* pro = lensPlaneRO;
+    const bool hasPlane = pro && composite == 1 && pro->rmsRadius() > 0.0f;
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHasDiscPlane")) >= 0) glUniform1i(l, hasPlane ? 1 : 0);
+    if (hasPlane) {
+      const double L2 = std::max((double)lensBHRs, 1e-30);
+      dvec3 rr = CameraRelative(pro->coordinates);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDiscPointL")) >= 0)
+        glUniform3f(l, (float)(rr.x / L2), (float)(rr.y / L2), (float)(rr.z / L2));
+      float rm3[9] = {1,0,0, 0,1,0, 0,0,1};
+      if (pro->rotationDeg.x != 0.0f || pro->rotationDeg.y != 0.0f || pro->rotationDeg.z != 0.0f) {
+        double R[9];
+        EulerDegToMat3d(pro->rotationDeg, R);
+        for (int i = 0; i < 9; ++i) rm3[i] = (float)R[i];
+      }
+      // Plane normal = the cloud's local +Y axis in world (R * (0,1,0)).
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDiscNormal")) >= 0)
+        glUniform3f(l, rm3[1], rm3[4], rm3[7]);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uDiscRadL")) >= 0)
+        glUniform1f(l, (float)(2.5 * (double)pro->rmsRadius() / L2));
+    }
+  }
+  if ((l = glGetUniformLocation(lensRasterProgram, "uCubeGlowScale")) >= 0) {
+    // (main px solid angle) / (cube px solid angle): brings the small 90-deg cube
+    // faces onto the main frame's per-pixel photometric scale for collected glow.
+    const float pixMain = fovy / std::max(1, h);
+    const float pixCube = ((float)M_PI * 0.5f) / std::max(1, lensFaceSize);
+    const float r       = pixMain / pixCube;
+    glUniform1f(l, r * r);
+  }
+  lensWideValid    = false;   // consumed — the next dispatch needs its own fresh pass
+  lensCamCubeValid = false;
 
   glDispatchCompute((GLuint)((w + 15) / 16), (GLuint)((h + 3) / 4), 1);
   glMemoryBarrier(GL_ALL_BARRIER_BITS);
@@ -8689,6 +8898,156 @@ bool Renderer::LensBackFieldAndPrepareFront() {
   BlitToCine(lensed);                        // lensed back field → lensColorTex (via lensFBO)
   lensViewportDone = true;
   return true;
+}
+
+void Renderer::EnsureLensWideFBO(int w, int h) {
+  if (w == lensWideW && h == lensWideH && lensWideFBO) return;
+  if (lensWideFBO)      { glDeleteFramebuffers(1, &lensWideFBO);  lensWideFBO = 0; }
+  if (lensWideColorTex) { glDeleteTextures(1, &lensWideColorTex); lensWideColorTex = 0; }
+  if (lensWideDepthTex) { glDeleteTextures(1, &lensWideDepthTex); lensWideDepthTex = 0; }
+  lensWideW = w; lensWideH = h;
+  glGenFramebuffers(1, &lensWideFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, lensWideFBO);
+  glGenTextures(1, &lensWideColorTex);
+  glBindTexture(GL_TEXTURE_2D, lensWideColorTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lensWideColorTex, 0);
+  glGenTextures(1, &lensWideDepthTex);
+  glBindTexture(GL_TEXTURE_2D, lensWideDepthTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, lensWideDepthTex, 0);
+  GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (st != GL_FRAMEBUFFER_COMPLETE)
+    std::cerr << "[lensWide] FBO incomplete: 0x" << std::hex << st << std::dec << "\n";
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+bool Renderer::LensBeginWide() {
+  if (!lensingEnabled || !lensBHActive || !lensColorTex || lensH <= 0) return false;
+  // Same size rule as the lens dispatch (720p cap) — one pixel budget for both.
+  const int h = std::min(lensH, 720);
+  const int w = std::max(1, (int)std::lround((double)lensW * h / lensH));
+  // Widen the frustum in TANGENT space: tan(fov'/2) = 3 x tan(fov/2), capped at a
+  // 75 deg half-angle. In tangent space the widening is exact for any main FOV, and
+  // the weak-deflection bound (a non-captured ray bends at most ~2Rs/b_crit ≈ 0.77
+  // rad) means almost every non-winding escape direction lands inside this cone.
+  const float tanHalf  = std::tan(zoom * (float)M_PI / 360.0f);
+  const float tanWide  = std::min(3.0f * tanHalf, 3.73f);
+  const float wideFov  = 2.0f * std::atan(tanWide) * 180.0f / (float)M_PI;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &lensWideSavedFBO);
+  glGetIntegerv(GL_VIEWPORT, lensWideSavedVp);
+  lensWideSavedZoom       = zoom;
+  lensWideSavedPixelScale = currentPixelScale;
+  // Nested scene pass: keep the outer pass's rim lists out of it (same trap as
+  // BeginRecordRaster — sharing them doubles every cloud in the density pass).
+  lensWideSavedRimClouds.swap(rimClouds);
+  lensWideSavedRimOccluders.swap(rimOccluders);
+  rimClouds.clear();
+  rimOccluders.clear();
+  EnsureLensWideFBO(w, h);
+  zoom              = wideFov;
+  lensWideFovY      = wideFov;
+  currentPixelScale = 1.0f;
+  glBindFramebuffer(GL_FRAMEBUFFER, lensWideFBO);
+  glViewport(0, 0, w, h);
+  fbWidth = w; fbHeight = h;
+  ClearSceneTarget();
+  return true;
+}
+
+void Renderer::LensEndWide() {
+  zoom              = lensWideSavedZoom;
+  currentPixelScale = lensWideSavedPixelScale;
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)lensWideSavedFBO);
+  glViewport(lensWideSavedVp[0], lensWideSavedVp[1], lensWideSavedVp[2], lensWideSavedVp[3]);
+  fbWidth = lensWideSavedVp[2]; fbHeight = lensWideSavedVp[3];
+  rimClouds.swap(lensWideSavedRimClouds);
+  rimOccluders.swap(lensWideSavedRimOccluders);
+  lensWideSavedRimClouds.clear();
+  lensWideSavedRimOccluders.clear();
+  lensWideValid = true;
+}
+
+void Renderer::EnsureLensFaceFBO(int faceSize) {
+  if (faceSize == lensFaceSize && lensFaceFBO) return;
+  if (lensFaceFBO)      { glDeleteFramebuffers(1, &lensFaceFBO);  lensFaceFBO = 0; }
+  if (lensFaceColorTex) { glDeleteTextures(1, &lensFaceColorTex); lensFaceColorTex = 0; }
+  if (lensFaceDepthTex) { glDeleteTextures(1, &lensFaceDepthTex); lensFaceDepthTex = 0; }
+  lensFaceSize = faceSize;
+  glGenFramebuffers(1, &lensFaceFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, lensFaceFBO);
+  glGenTextures(1, &lensFaceColorTex);
+  glBindTexture(GL_TEXTURE_2D, lensFaceColorTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, faceSize, faceSize, 0, GL_RGBA, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, lensFaceColorTex, 0);
+  glGenTextures(1, &lensFaceDepthTex);
+  glBindTexture(GL_TEXTURE_2D, lensFaceDepthTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, faceSize, faceSize, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, lensFaceDepthTex, 0);
+  GLenum st = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+  if (st != GL_FRAMEBUFFER_COMPLETE)
+    std::cerr << "[lensFace] FBO incomplete: 0x" << std::hex << st << std::dec << "\n";
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+bool Renderer::LensBeginFaceCam(int face, int faceSize) {
+  if (!lensingEnabled || !lensBHActive) return false;
+  // Same face bases as LensBeginFace, but the camera KEEPS ITS POSITION — the
+  // remap samples directions from the camera, so the cube must be shot from it.
+  static const float F[6][3] = { { 1, 0, 0}, {-1, 0, 0}, { 0, 1, 0},
+                                 { 0,-1, 0}, { 0, 0, 1}, { 0, 0,-1} };
+  static const float U[6][3] = { { 0,-1, 0}, { 0,-1, 0}, { 0, 0, 1},
+                                 { 0, 0,-1}, { 0,-1, 0}, { 0,-1, 0} };
+  for (int i = 0; i < 9; ++i) lensFaceSavedCam[i] = camMatrix[i];
+  lensFaceSavedZoom       = zoom;
+  lensFaceSavedPixelScale = currentPixelScale;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &lensFaceSavedFBO);
+  glGetIntegerv(GL_VIEWPORT, lensFaceSavedVp);
+  lensFaceSavedRimClouds.swap(rimClouds);
+  lensFaceSavedRimOccluders.swap(rimOccluders);
+  rimClouds.clear();
+  rimOccluders.clear();
+  const float* f = F[face];
+  const float* u = U[face];
+  float r[3]  = { f[1]*u[2]-f[2]*u[1], f[2]*u[0]-f[0]*u[2], f[0]*u[1]-f[1]*u[0] };
+  float tu[3] = { r[1]*f[2]-r[2]*f[1], r[2]*f[0]-r[0]*f[2], r[0]*f[1]-r[1]*f[0] };
+  float m[9]  = { r[0], r[1], r[2],  tu[0], tu[1], tu[2],  -f[0], -f[1], -f[2] };
+  SetCameraMatrix(m);
+  zoom = 90.0f;
+  currentPixelScale = 1.0f;
+  EnsureLensCubemap(faceSize);
+  EnsureLensFaceFBO(faceSize);
+  glBindFramebuffer(GL_FRAMEBUFFER, lensFaceFBO);
+  glViewport(0, 0, faceSize, faceSize);
+  fbWidth = faceSize; fbHeight = faceSize;
+  ClearSceneTarget();
+  return true;
+}
+
+void Renderer::LensEndFaceCam(int face) {
+  if (lensCubeTex && lensFaceColorTex)
+    glCopyImageSubData(lensFaceColorTex, GL_TEXTURE_2D, 0, 0, 0, 0,
+                       lensCubeTex, GL_TEXTURE_CUBE_MAP, 0, 0, 0, face,
+                       lensFaceSize, lensFaceSize, 1);
+  SetCameraMatrix(lensFaceSavedCam);
+  zoom              = lensFaceSavedZoom;
+  currentPixelScale = lensFaceSavedPixelScale;
+  glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)lensFaceSavedFBO);
+  glViewport(lensFaceSavedVp[0], lensFaceSavedVp[1], lensFaceSavedVp[2], lensFaceSavedVp[3]);
+  fbWidth = lensFaceSavedVp[2]; fbHeight = lensFaceSavedVp[3];
+  rimClouds.swap(lensFaceSavedRimClouds);
+  rimOccluders.swap(lensFaceSavedRimOccluders);
+  lensFaceSavedRimClouds.clear();
+  lensFaceSavedRimOccluders.clear();
+  if (face == 5) lensCamCubeValid = true;   // all six faces fresh
 }
 
 void Renderer::BlitToCine(GLuint srcTex) {

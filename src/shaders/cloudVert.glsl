@@ -34,6 +34,8 @@ uniform int  uHasViewCentre;  // 1 = use it (deep zoom); 0 = float rotate here
 uniform int   uBHCull;      // 0 = off, 1 = keep FRONT (cull behind), 2 = keep BACK (cull in front)
 uniform vec3  uBHDirCam;    // normalized camera->hole (camera-relative, world axes)
 uniform float uBHDist;      // camera->hole distance
+uniform float uBHSplitDist; // two-pass split (~4x hole distance): remap beyond, particles nearer
+uniform float uBHShadowR;   // photon-capture radius, aspect-corrected NDC
 uniform float uBHCullCos;   // cos of the cull cone half-angle
 // Cosmetic single-image thin-lens bend of the FRONT particles (front pass only).
 uniform vec2  uBHScreen;    // hole position in aspect-corrected NDC
@@ -76,35 +78,19 @@ out float vHot;     // 1 = hot blue star (seeds glowing gas)
 out float vRim;     // world-lit rim factor forwarded to the density map
 out float vSlabW;   // depth-slab cross-fade weight (1 = full; <1 near a slab edge)
 
-float hash11(float p) {
-  p = fract(p * 0.1031);
-  p *= p + 33.33;
-  p *= p + p;
-  return fract(p);
-}
+// Volumetric dust (opt-in per cloud): the dust FIELD moved to dust_common.glsl
+// so the sprite path, the per-star transmission below and the screen march
+// (dustVolFrag.glsl) read the SAME lanes. Aliases keep the star-identity
+// hashes bit-identical to the pre-include code.
+uniform int       uDustVolOn;   // 1 = this cloud's dust is the marched volume
+uniform sampler3D uDustVol;     // splat density (R16F), cloud-local box
+uniform vec3      uDustVolLo;   // volume box, cloud-local
+uniform vec3      uDustVolHi;
 
-float hash13(vec3 p) {
-  p = fract(p * 0.1031);
-  p += dot(p, p.zyx + 31.32);
-  return fract((p.x + p.y) * p.z);
-}
+#include "dust_common.glsl"
 
-// Value noise + 3-octave FBM → smooth, connected filaments (not blocky cells).
-float vnoise(vec3 x) {
-  vec3 i = floor(x), f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
-  float n000 = hash13(i + vec3(0,0,0)), n100 = hash13(i + vec3(1,0,0));
-  float n010 = hash13(i + vec3(0,1,0)), n110 = hash13(i + vec3(1,1,0));
-  float n001 = hash13(i + vec3(0,0,1)), n101 = hash13(i + vec3(1,0,1));
-  float n011 = hash13(i + vec3(0,1,1)), n111 = hash13(i + vec3(1,1,1));
-  return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
-             mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
-}
-float fbm3(vec3 p) {
-  float a = 0.5, s = 0.0;
-  for (int i = 0; i < 3; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; }
-  return s / 0.875;   // normalise ~0..1
-}
+float hash11(float p) { return dcHash11(p); }
+float hash13(vec3 p)  { return dcHash13(p); }
 
 vec3 blackbody(float T) {
   T = clamp(T, 1000.0, 40000.0);
@@ -118,18 +104,6 @@ vec3 blackbody(float T) {
   else if (T <= 1900.0) b = 0.0;
   else b = clamp(0.54320678911 * log(t - 10.0) - 1.19625408914, 0.0, 1.0);
   return vec3(r, g, b);
-}
-
-// Lane mask at a galaxy-local position: a soft FBM field (0 in gaps, up to 1 in
-// lanes). It is only a TEXTURE — density comes from the star particles carrying
-// it, so where stars are dense the (soft, overlapping) dust sprites compound into
-// thick lanes, and the sparse halo stays clear. Dust follows star formation.
-float dustLane(vec3 p, float baseScale) {
-  float scale = max(baseScale * uDustClumpScale, 1e-6);
-  float n = fbm3(p / scale);
-  float thr = 0.85 - clamp(uDustCoverage, 0.0, 1.0) * 0.7;   // coverage widens the lanes
-  float d = smoothstep(thr, thr + 0.30, n);
-  return pow(d, max(uDustContrast, 0.25));                    // concentration sharpens lanes
 }
 
 void main() {
@@ -166,17 +140,18 @@ void main() {
   vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
   gl_Position     = centreClip + offsetClip;
 
-  // Front/back split about the hole: a pure HALF-SPACE at the hole's distance, no
-  // cone. Light from matter nearer than the hole never passes near it and bends
-  // ZERO, so ALL of it belongs to the flat front pass — the old cone put out-of-cone
-  // front matter into the lensed back field, and the lens visibly displaced it (the
-  // arc-shaped void carved through the foreground). Each particle still draws
-  // exactly once: pass 1 = behind the hole (lensed), pass 2 = in front (flat cover).
+  // Two-pass split about the hole: a pure HALF-SPACE at the FAR split distance
+  // (~4x the hole distance). The image remap treats its sources as at infinity,
+  // which is only honest for matter far behind the hole — so only that goes to
+  // pass 1. Everything nearer (the SHELL: foreground AND the near-behind band)
+  // draws in pass 2 with the depth-correct per-particle displacement below,
+  // which is zero in front and grows smoothly with depth — the cloud itself
+  // bends, and flows into the rim instead of butting against a seam.
   vSlabW = 1.0;
   if (uBHCull != 0) {
     vec3  P      = center + offset;          // this particle, camera-relative (world axes)
     float pd     = length(P);
-    bool  behind = pd > uBHDist;
+    bool  behind = pd > uBHSplitDist;
     bool  cull   = (uBHCull == 2) ? !behind : behind;
     // Depth SLAB split (front pass only): the foreground is drawn one slab at a time,
     // each remapped at its own strength (near hole full → far flat) and composited
@@ -197,16 +172,18 @@ void main() {
     }
   }
 
-  // Cosmetic single-image thin-lens bend of the surviving FRONT particles, so the
-  // foreground agrees with the lensed background (the realism is carried by the
-  // baked cube; this is just a radial point-mass displacement — a few mults).
+  // Per-particle bend of the surviving FRONT particles: a 3D BUBBLE around the
+  // hole. Only matter genuinely CLOSE to the hole in 3D winds into the rim —
+  // "bent, but only near the hole" — while everything nearer the camera draws
+  // flat and COVERS, including partially covering the shadow. (A depth-plane
+  // ramp was tried here and displaced a whole ring of the disc at the hole's
+  // DISTANCE regardless of its 3D distance to the hole — evacuating the centre
+  // and uncovering the hole, the exact failure the slab work solved. The 3D
+  // ball is the correct criterion, and uBHBendReach — the Bend Reach slider —
+  // sets how much of the cloud participates in the rim.)
   if (uBHCull == 1 && uBHEinsteinR > 0.0 && gl_Position.w > 1e-6) {
-    // Only matter physically CLOSE to the hole bends; a cloud far in front is not
-    // lensed (its light never passed the hole) and simply covers it.
     vec3  bhRel = uBHDirCam * uBHDist;                                      // hole, camera-relative
     float d3d   = length((center + offset) - bhRel);                       // this particle → hole, 3D
-    // Fade the bend out fast: only matter within ~one Einstein impact parameter of
-    // the hole bends (into the ring); everything farther covers the hole.
     float str   = uBHBendStr * (1.0 - smoothstep(uBHBendReach * 0.4, uBHBendReach, d3d));
     if (str > 0.001) {
       float aspect = uProj[1][1] / uProj[0][0];

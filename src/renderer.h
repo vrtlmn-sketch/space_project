@@ -155,6 +155,7 @@ struct CloudFormState {
   float nebulaScatterScale = 0.4f;
   float particleSizeSpread = 0.0f;
   float scale = 1.0f;
+  bool  volumetricDust = false; // dust as a marched 3D medium (opt-in per cloud)
 };
 
 // ---- Callbacks from Renderer back to main ----
@@ -377,6 +378,11 @@ private:
   // ── Blit shader (fullscreen quad to display compute output) ──
   GLuint blitProgram{0};
   GLuint blitVAO{0}, blitVBO{0};
+  // Volumetric dust march (dustVolFrag.glsl): mode 0 = extinction over the
+  // scene (runs inside Draw, BEFORE the cloud's light), mode 1 = rim density
+  // into the half-res RG16F map (replaces renderCloudDustDensity per cloud).
+  GLuint dustVolProgram{0};
+  void   DrawCloudDustVolumetric(RenderedObject& ro, int mode, int w, int h);
   GLint  blitLocTexture{-1};
 
   // ── HDR post-process (RT views): bloom + ACES tonemap ──
@@ -1025,6 +1031,17 @@ public:
   static constexpr int kLensMaxHoles = 4;
   struct LensHoleWorld { dvec3 world; float rs; };
   std::vector<LensHoleWorld> lensHoles;
+  // Dominant volumetric-dust cloud this frame (main.cpp's computeLensFraming
+  // picks it; nulled every frame): its splat volume is sampled by the lens
+  // march so front dust occludes/reddens the ring along the bent path.
+  RenderedObject* lensDustVolRO = nullptr;
+  // Finite-source distance for the lens's primary sample (AU): hole distance +
+  // the largest cloud's diameter — where the lensed band actually lives.
+  // 0 = no cloud found; the dispatch falls back to 2.5x the hole distance.
+  float lensSrcDistAU = 0.0f;
+  // Largest cloud this frame — its PLANE is the lens's disc-crossing source
+  // (see uHasDiscPlane in lensRaster.glsl). Nulled every frame with lensDustVolRO.
+  RenderedObject* lensPlaneRO = nullptr;
   // Per-dispatch uniform arrays (ApplyLiveLens fills from lensHoles; LensDispatch uploads).
   int    lensUHoleCount = 0;
   vec3   lensUHolePos[kLensMaxHoles];
@@ -1047,6 +1064,48 @@ public:
   // Lens the back field now in the cine buffer and write it back; returns true if
   // it ran (then the caller draws the FRONT-of-hole particles on top).
   bool   LensBackFieldAndPrepareFront();
+
+  // ── Wide-FOV back-field source ───────────────────────────────────────────
+  // A strongly bent ray's escape direction usually points OUTSIDE the camera
+  // frustum, so sampling only the main frame starves the lens: arcs cut off
+  // mid-air and the photon rim dims wherever its light source is off-screen.
+  // This is the same back-field pass rendered once more at ~3x the frustum
+  // (same camera, same cloud pipeline); the lens shader falls back to it when
+  // a bent direction leaves the main frame. Filled per lens site, consumed by
+  // the next dispatch (lensWideValid), so a record-camera pass can never feed
+  // a viewport dispatch.
+  GLuint lensWideFBO = 0, lensWideColorTex = 0, lensWideDepthTex = 0;
+  int    lensWideW = 0, lensWideH = 0;
+  float  lensWideFovY = 0.0f;        // degrees, the widened vertical FOV
+  bool   lensWideValid = false;
+  GLint  lensWideSavedFBO = 0;
+  int    lensWideSavedVp[4] = {0,0,0,0};
+  float  lensWideSavedZoom = 45.0f, lensWideSavedPixelScale = 1.0f;
+  std::vector<RenderedObject*> lensWideSavedRimClouds;
+  std::vector<RimOccluder>     lensWideSavedRimOccluders;
+  void   EnsureLensWideFBO(int w, int h);
+  bool   LensBeginWide();            // widen zoom, bind + clear the wide target
+  void   LensEndWide();              // restore zoom/FBO/viewport, mark the buffer fresh
+
+  // ── Full-sphere back-field source (camera cube) ──────────────────────────
+  // A winding ray's escape directions sweep the WHOLE sphere — the band is a
+  // great circle across the sky, crossed twice per turn, and much of that light
+  // is behind the camera where no planar buffer reaches. This is a small cube
+  // of the back field baked AT the camera, the last rung of the sample ladder
+  // (main frame → wide buffer → cube). It feeds the sweep average and the deep
+  // windings, which compress everything to sub-pixel — so low res is enough.
+  GLuint lensFaceFBO = 0, lensFaceColorTex = 0, lensFaceDepthTex = 0;
+  int    lensFaceSize = 0;
+  bool   lensCamCubeValid = false;
+  float  lensFaceSavedCam[9] = {1,0,0,0,1,0,0,0,1};
+  float  lensFaceSavedZoom = 45.0f, lensFaceSavedPixelScale = 1.0f;
+  GLint  lensFaceSavedFBO = 0;
+  int    lensFaceSavedVp[4] = {0,0,0,0};
+  std::vector<RenderedObject*> lensFaceSavedRimClouds;
+  std::vector<RimOccluder>     lensFaceSavedRimOccluders;
+  void   EnsureLensFaceFBO(int faceSize);
+  bool   LensBeginFaceCam(int face, int faceSize);   // rotate to face, keep position
+  void   LensEndFaceCam(int face);                   // copy into lensCubeTex, restore
 
   // Whole foreground image-remapped by the analytic thin lens (a SMOOTH theta_E^2/r
   // map, weaker than the background). Because it is an image remap, sources STRETCH

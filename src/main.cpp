@@ -62,6 +62,12 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
   cloud->nebulaScatterScale = cd.nebulaScatterScale;
   cloud->particleSizeSpread = cd.particleSizeSpread;
   cloud->scale              = cd.scale;
+  // Volumetric dust flag lives on the RenderedObject (like the halo params).
+  // DUST_VOL=1 forces it on for every loaded cloud — the harness A/B gate.
+  {
+    static const bool forceVol = std::getenv("DUST_VOL") != nullptr;
+    cloud->renderedObject.volumetricDust = forceVol || cd.volumetricDust;
+  }
   if (cd.haloSet) {
     cloud->renderedObject.haloVFlat = cd.haloVFlat;
     cloud->renderedObject.haloRCore = cd.haloRCore;
@@ -531,6 +537,7 @@ int main(int argc, char** argv) {
     cd.nebulaScatterScale = cf.nebulaScatterScale;
     cd.particleSizeSpread = cf.particleSizeSpread;
     cd.scale = cf.scale;
+    cd.volumetricDust = cf.volumetricDust;
     return cd;
   };
 
@@ -871,6 +878,7 @@ int main(int argc, char** argv) {
       cd.nebulaScatterScale = c->nebulaScatterScale;
       cd.particleSizeSpread = c->particleSizeSpread;
       cd.scale = c->scale;
+      cd.volumetricDust = c->renderedObject.volumetricDust;
       cd.haloVFlat = c->renderedObject.haloVFlat;
       cd.haloRCore = c->renderedObject.haloRCore;
       cd.haloSet   = true;
@@ -1241,7 +1249,11 @@ int main(int argc, char** argv) {
       renderer.lensBHActive = false;
       renderer.lensBHIndex  = -1;
       renderer.lensHoles.clear();
+      renderer.lensDustVolRO = nullptr;   // re-picked below; never stale across frames
+      renderer.lensPlaneRO   = nullptr;
       gLensCull = 0;
+      static const bool lensOff = std::getenv("LENS_OFF") != nullptr;   // harness A/B gate
+      if (lensOff) return;
       if (!(renderer.lensingEnabled && renderer.realisticRasterView)) return;
       constexpr double kPI = 3.14159265358979323846;
       const dvec3 camPos{ gCamAnchor[0] - renderer.cameraTranslate[0],
@@ -1253,6 +1265,7 @@ int main(int argc, char** argv) {
       std::vector<std::pair<double,int>> holes;   // (shadow angle, physicsObjects index)
       for (int i = 0; i < (int)physicsObjects.size(); ++i) {
         if (physicsObjects[i].shaderType != ObjectType::BlackHole) continue;
+        physicsObjects[i].renderedObject.lensSkipMesh = false;   // re-decided below
         const dvec3 bh = physicsObjects[i].data.position;
         const double dx = bh.x - camPos.x, dy = bh.y - camPos.y, dz = bh.z - camPos.z;
         const double D  = std::sqrt(dx*dx + dy*dy + dz*dz);
@@ -1277,6 +1290,9 @@ int main(int argc, char** argv) {
       renderer.lensBHIndex  = bestBH;
       renderer.lensBHWorld  = physicsObjects[bestBH].data.position;
       renderer.lensBHRs     = physicsObjects[bestBH].schwarzschildRadius;
+      // The lens paints this hole's shadow; its horizon mesh must not draw in
+      // the raster path (it pastes un-lensed over the front pass — the puck).
+      physicsObjects[bestBH].renderedObject.lensSkipMesh = true;
       const dvec3  hole = renderer.lensBHWorld;
       const double rsAU = (double)renderer.lensBHRs;
       const double rx = hole.x - camPos.x, ry = hole.y - camPos.y, rz = hole.z - camPos.z;
@@ -1301,9 +1317,35 @@ int main(int argc, char** argv) {
       const double thE = std::sqrt(2.0 * rsAU / std::max(rl, rsAU*1.001));
       gLensEinsteinR    = (float)(std::tan(std::min(thE, 1.4)) * f);
       gLensBendStrength = 1.0f;
+      // Split stays AT the hole (the anchor look: everything behind rides the
+      // image remap). A far split was tried (LENS_SPLIT_K) and gutted the ring:
+      // the arch IS the near-behind band under the remap, and per-particle
+      // primary displacement cannot rebuild a wrap-around image. The foreground
+      // blend is done on the FRONT side instead (transition shell in cloudVert).
+      static const double kSplit = [](){ const char* e = std::getenv("LENS_SPLIT_K");
+                                         return e ? std::atof(e) : 1.0; }();
+      gLensBHSplitDist = (float)(kSplit * rl);
+      gLensBHShadowR   = (float)(std::tan(std::asin(std::min(1.0,
+                             2.598 * rsAU / std::max(rl, rsAU*1.001)))) * f);
       static const double reachMul = [](){ const char* e = std::getenv("LENS_BEND_REACH");
                                            return e ? std::atof(e) : 1.0; }();
       gLensBendReach    = (float)(reachMul * std::sqrt(2.0 * rsAU * std::max(rl, rsAU)));
+      // Dominant volumetric-dust cloud: its splat volume rides the lens march
+      // (front dust occludes/reddens the ring along the bent path). Also derive
+      // the finite-source distance: the band the lens images lives at ~the hole
+      // distance plus the biggest cloud's diameter, not at infinity.
+      {
+        float best = -1.0f, bestAny = -1.0f;
+        for (auto& c : clouds) {
+          auto& cro = c->renderedObject;
+          if (cro.rmsRadius() > bestAny) { bestAny = cro.rmsRadius(); renderer.lensPlaneRO = &cro; }
+          if (cro.volumetricDust && !cro.isStarfield && cro.dustVolTex != 0 && cro.rmsRadius() > best) {
+            best = cro.rmsRadius();
+            renderer.lensDustVolRO = &cro;
+          }
+        }
+        renderer.lensSrcDistAU = (bestAny > 0.0f) ? (float)(rl + 2.0 * (double)bestAny) : 0.0f;
+      }
     };
     computeLensFraming(renderer.GetFbHeight());
 
@@ -1506,9 +1548,48 @@ int main(int argc, char** argv) {
     }
     renderer.EndNebulaPass();
 
+    // Wide-FOV back-field pass: the same clouds once more at ~3x the frustum, into
+    // the lens's fallback buffer. Bent rays whose escape direction leaves the main
+    // frame sample THIS instead of starving to background — it is what makes the
+    // arcs and the photon rim continuous. Runs per lens site, right before the
+    // dispatch that consumes it, always with the site's own camera.
+    auto renderLensWideBack = [&](const std::vector<int>& order){
+      if (!renderer.lensBHActive || !renderer.lensingEnabled) return;
+      auto drawBackField = [&](){
+        const int savedCull = gLensCull;
+        gLensCull = 2;                                 // back field only, same as pass 1
+        for (int ci : order) {
+          auto& c = clouds[ci];
+          c->renderedObject.uploadTemperature(c->temperature);
+          c->renderedObject.uploadRenderMode(c->renderMode);
+          c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+                                             renderer.dustCoverage, renderer.dustClumpScale,
+                                             c->renderedObject.ownDustInfluence(renderer.dustInfluence),
+                                             renderer.dustContrast);
+          renderer.Draw(c->renderedObject);
+        }
+        for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
+        gLensCull = savedCull;
+      };
+      // Full-sphere cube (6 small faces): what the sweep and the deep windings see.
+      // 512/face — the strong magnification near the photon ring stretches cube
+      // texels; 256 showed as blocky columns where the inner arc meets the band.
+      for (int face = 0; face < 6; ++face) {
+        if (!renderer.LensBeginFaceCam(face, 512)) break;
+        drawBackField();
+        renderer.LensEndFaceCam(face);
+      }
+      // Wide planar buffer: mid-res tier for near-frame escape directions.
+      if (renderer.LensBeginWide()) {
+        drawBackField();
+        renderer.LensEndWide();
+      }
+    };
+
     // ── Two-pass black-hole lensing (viewport): the back field is now in the cine
     // buffer; lens it, then draw ONLY the front-of-hole particles on top so the
     // galaxy covers the hole (our clouds, additively, no new pipeline).
+    renderLensWideBack(cloudDrawOrder);
     if (renderer.LensBackFieldAndPrepareFront()) {
       gLensCull = 1;                                 // keep only FRONT-of-hole particles
       auto uploadCloud = [&](int ci){
@@ -1620,6 +1701,7 @@ int main(int argc, char** argv) {
                                          renderer.dustContrast);
     };
     auto lensForegroundCapture = [&](std::vector<int>& order){
+      renderLensWideBack(order);   // fresh wide back field for THIS capture camera
       if (!renderer.LensBackFieldAndPrepareFront()) { gLensCull = 0; return; }
       const float savedBend = gLensBendStrength;
       gLensBendStrength = 0.0f;

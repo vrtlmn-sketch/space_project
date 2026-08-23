@@ -48,6 +48,15 @@ extern int    gLensCull;        // 0 off, 1 = keep FRONT (+bend), 2 = keep BACK
 extern float  gLensBHDirCam[3]; // normalized camera->hole (camera-relative, world axes)
 extern float  gLensBHDist;      // camera->hole distance
 extern float  gLensCullCos;     // cos of the cull cone half-angle
+// Depth-continuous lensing shell: the image remap treats its sources as at
+// infinity, which is only honest for matter FAR behind the hole. The two-pass
+// split therefore sits at gLensBHSplitDist (~4x the hole distance); everything
+// nearer draws as particles with the depth-correct displacement
+// thetaE^2(d) = thetaE^2(inf) * (d-D)/d — zero in front, growing smoothly
+// behind, meeting the remap's strength at the split. Matter whose primary
+// image would form inside the photon sphere (gLensBHShadowR) is swallowed.
+extern float  gLensBHSplitDist; // far split: image remap beyond, particles nearer
+extern float  gLensBHShadowR;   // shadow (photon-capture) radius, aspect-corrected NDC
 // Cosmetic single-image thin-lens bend of the FRONT particles (front pass only),
 // so they agree with the lensed background. The realism comes from the baked cube.
 extern float  gLensBHScreen[2]; // hole position in aspect-corrected NDC
@@ -472,6 +481,31 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   static float HaloVCirc(float vFlat, float rCore, float r) {
     return (r > 0.0f && vFlat > 0.0f) ? vFlat * r / (r + rCore) : 0.0f;
   }
+
+  // ── Volumetric dust (opt-in per cloud, persisted in CloudData) ──
+  // The dust becomes a real 3D medium: particle mass splatted into a small R16F
+  // volume (the envelope), multiplied at sample time by the SAME lane field the
+  // sprites use (dust_common.glsl). Consumed by the per-star transmission in
+  // cloudVert, the screen extinction march, the rim-density march, and (next)
+  // the black-hole geodesic march. Chunked starfields never use it — sprites
+  // stay their far-field stand-in.
+  // Set on the dominant lensed hole each frame: the lens paints its shadow, so
+  // its horizon mesh must not draw in the raster path — the mesh's screen disc
+  // is protected by the lens's foreground-solid gate and pasted UN-lensed over
+  // the front pass (the "dark puck" at the band waist).
+  bool         lensSkipMesh{false};
+  bool         volumetricDust{false};
+  unsigned int dustVolTex{0};
+  int          dustVolN{0};
+  bool         dustVolDirty{true};   // re-splat requested (particle set changed)
+  unsigned long long dustVolKey{0};  // lane-slider fingerprint → re-splat on change
+  vec3         dustVolLo{0,0,0}, dustVolHi{0,0,0};   // cloud-local splat box
+  // Splat density × LANE into the volume (lane evaluated per particle on the
+  // CPU — the 5 AU lane field is hopelessly undersampled by any march, and the
+  // sprite system never resolved it either: it sampled at particles and drew
+  // ~30 AU billboards, which is exactly what a lane-weighted splat reproduces).
+  void  updateDustVolume(float clumpScale, float coverage, float contrast);
+  float dustLaneScale() const { return hashScale; }  // frozen lane scale, for the march
   // Plummer softening^2 for this cloud's gravity: a quarter of the mean
   // inter-particle spacing, floored at the historic constant 0.001 AU^2 so a
   // small formation simulates exactly as it always did.

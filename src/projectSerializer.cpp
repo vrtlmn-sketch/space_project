@@ -196,6 +196,7 @@ bool ProjectSerializer::Save(const std::string& path,
       {"nebulaScatterScale",cloud.nebulaScatterScale},
       {"particleSizeSpread",cloud.particleSizeSpread},
       {"scale",             cloud.scale},
+      {"volumetricDust",    cloud.volumetricDust},
       {"haloVFlat",         cloud.haloVFlat},
       {"haloRCore",         cloud.haloRCore},
       {"simulatePhysics",   cloud.simulatePhysics},
@@ -528,6 +529,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
     cd.particleSizeSpread = c.value("particleSizeSpread", 0.0f);
     cd.scale              = c.value("scale",              1.0f);
+    cd.volumetricDust     = c.value("volumetricDust",     CloudData{}.volumetricDust);
     cd.haloSet            = c.contains("haloVFlat");
     cd.haloVFlat          = c.value("haloVFlat",          0.0f);
     cd.haloRCore          = c.value("haloRCore",          0.0f);
