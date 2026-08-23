@@ -912,3 +912,98 @@ one is drawn.
 `docs/universe.md` — the universe feature: design, decisions, implementation
 status, known bugs, and the agreed next step. Read it before touching universe
 generation.
+
+## The raster black-hole lens: sources live at a DEPTH, not at infinity
+
+`src/shaders/lensRaster.glsl` (compute) bends every pixel's ray around every
+resolvable hole with the shared geodesic physics and samples the ALREADY
+RENDERED frame. Two passes: pass 1 draws the BACK field (particles farther
+than the hole, `gLensCull=2`), the lens remaps it, pass 2 draws the front
+particles flat on top (`gLensCull=1`). Harness: `PROJECT=projects/bh_disk.json`
+(hole + its own accretion disk — the Interstellar composition), `bh_ref.json`
+(galaxy, above-plane), `bh_out.json` (galaxy, from outside), `CMP_W/CMP_H`
+for 1280x720 captures, `LENS_OFF=1` to A/B the lens away.
+
+**The ground truth for GEOMETRY is in the repo**: `SKIP_RASTER=1 PROJECT=...
+--compare` renders the same scene with the geodesic shaders (`/tmp/cmp_geo.png`,
+256x144). Compare ring positions, gap and continuity against it — never judge
+lens geometry from the raster image alone (photometry differs; geometry must
+not). Every "it is done" that was later wrong had skipped this.
+
+What makes it read as a black hole, and the one lie that kept breaking it:
+
+- **The back field is NOT at infinity.** The matter that makes the ring is the
+  band right behind the hole. Sampling by the bent ray's direction-at-infinity
+  over-bends it (ring floats off the shadow), destroys parallax (ring is not a
+  continuation of the band) and leaves a fog gap. Fix: the march finds where
+  the ray CROSSES THE DOMINANT CLOUD'S PLANE past the hole (`uHasDiscPlane`,
+  detected during the march once every hole recedes, else on the escape line)
+  and samples the back field at THAT POINT'S direction. Per ray, parallax-true,
+  identity for an unbent ray (the crossing lies on its own line). The inner
+  edge then hugs the shadow at b = sqrt(2 Rs a), as physics says. Rays that
+  never cross fall back to a finite SOURCE SPHERE (`uSrcDistL` = hole distance +
+  largest cloud diameter), then to the escape direction.
+- **The data ladder**: a strongly bent ray's answer usually lies OUTSIDE the
+  frustum. `sampleScene` reads main frame -> wide-FOV back-field pass (3x tan,
+  `LensBeginWide`) -> full-sphere camera cube (6x512, `LensBeginFaceCam`), all
+  rendered by the ordinary cloud pipeline and gated on a resolvable hole
+  (milky_way pays nothing). Mixing buffers of different angular resolution is a
+  PHOTOMETRIC trap: the pipeline deposits light per pixel, so a 90-deg/512 face
+  reads ~8x brighter than the main frame — `uCubeGlowScale` = (main px solid
+  angle)/(cube px solid angle).
+- **Path-collected glow**: each march step projects the ray's real 3D position
+  back to the camera and gathers the cube there, weighted by swept camera
+  angle — identically zero for an unbent ray, bounded by the pixel's angular
+  distance to the hole. Read the CUBE only (sharp buffers painted spokes),
+  sub-stepped (single samples banded), attenuated by front dust as it goes.
+  Captured rays stay pure black: showing their collected glow drew a veil over
+  the shadow (those columns are dominated by matter BEHIND the hole).
+- **Sweep average only past a full winding** (`smoothstep(2pi, 4pi)`): below
+  that the final direction is the answer and stays sharp; engaging the smear
+  early integrated the band along each pixel's RADIAL path — streaks.
+- **Front matter bends in a 3D BUBBLE around the hole** (`uBHBendReach`, fade
+  over 3D distance to the hole), NOT by depth. A depth-plane ramp was tried:
+  it displaced a whole ring of the disc at the hole's DISTANCE regardless of
+  3D distance, evacuating the centre and uncovering the hole. Moving the
+  two-pass split far behind the hole (`LENS_SPLIT_K`) was also tried: the
+  arch IS the near-behind band under the remap, and per-particle primary
+  displacement cannot rebuild a wrap-around image — it gutted the ring.
+- **The hole's horizon mesh is skipped in the raster path when lensed**
+  (`lensSkipMesh`): the lens's foreground-solid gate protected its screen disc
+  and pasted it un-lensed over the front pass.
+- Three per-pixel dithers (cube texel, sub-texel UV, march phase) turn the
+  photon ring's magnified texel grid and winding plateaus into grain.
+- The shadow is analytic capture (b < 2.598 Rs) feathered over 5%; its visible
+  size is ~2.6 Rs/D, and the big dark disc around it in a galaxy scene is
+  imaged EMPTY SKY — the Einstein ring of the band sits at sqrt(2Rs/D)·D.
+
+### Volumetric dust is a HYBRID: sprites own the look, the volume owns depth
+
+`volumetricDust` (per cloud, opt-in, persisted in CloudData; `DUST_VOL=1` to
+force) splats the particles into a 96^3 R16F volume with the lane field
+(`dust_common.glsl`, ONE definition shared by cloudVert, the march and the
+RT CPU twin) baked in per particle (`updateDustVolume`, re-splat on
+`cloudGpuDirty` or a shape-slider change). The lens march samples it in the
+FRONT half-space only (back dust is already in the sampled image): front
+clumps occlude and redden the ring along the BENT path.
+
+The full marched SCREEN look was built and measured (`dustVolFrag.glsl`,
+`DrawCloudDustVolumetric`, both extinction and rim modes — no call site now):
+the honest column through a galaxy is smooth saturated fog. The granular
+look lives in the stochastic billboard product, not in the density field —
+no affordable volume reproduces it (lane cells ~5 AU, galaxy 3600 AU). So the
+sprites stay, byte-identical, and the volume is the depth oracle. Traps met:
+max-normalising the splat crushes a disc under its core voxel (use the mean
+nonzero voxel, LINEAR, no clamp — clamping flattened lane and gap into one
+fog); normalise tau by the cloud RMS, not the outlier-inflated box diagonal;
+weight by NUMBER density, not mass.
+
+### Accretion disk = a cloud
+
+`templates/formations/accretion_disk_30k.json`: thin Keplerian disc scaled
+to the 4.15e6 Msun hole (3-20 Rs, H/R 1.5%, denser inward, orbital
+velocities). Gargantua's look is what the lens does to a ring of matter
+around the hole — a galaxy alone can never produce it, there is no matter at
+3-20 Rs to make the cross. Known remaining gap vs the geodesic: it resolves
+several discrete wound ring echoes; the raster shows the primary image filled
+and averages deeper windings.
