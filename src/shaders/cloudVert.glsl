@@ -355,7 +355,14 @@ void main() {
     float pxCap    = uViewportH * uLfMaxSprite;              // largest sprite we will draw
     float maxHalfA = min(uLfMaxMu * srcAng,
                          pxCap / (uProj[1][1] * max(uViewportH, 1.0)));
-    float srcUse   = min(srcAng, maxHalfA / max(muMax, 1e-30));
+    // ALWAYS DRAW THE WHOLE SOURCE. The budget below is spent by truncating the
+    // IMAGE, never by shrinking the source: shrinking removes matter, and it
+    // removed most of the dust from every arc — at the default budget a dust
+    // puff was drawn at 42% of its radius, i.e. under a fifth of its area, so
+    // the arcs came out blue-white while the geodesic shows them full of dust.
+    // Lensing conserves surface brightness; the arc has to read exactly as dark
+    // as the unlensed lane, and may only cover more sky.
+    float srcUse   = srcAng;
     float tangA    = srcUse * muT;                           // along the arc
     float radlA    = srcUse * gLfMuR;                        // across it
     // A square sprite has to bound a BENT shape, so allow for the arc's sagitta.
@@ -364,7 +371,29 @@ void main() {
     // Final consistency: if the sagitta pushed the footprint over budget, shrink
     // the source to match. The image extent falls at least as fast as the source
     // does, so the profile still runs out inside the footprint.
-    if (halfA > maxHalfA) { srcUse *= maxHalfA / halfA; halfA = maxHalfA; }
+    // Over budget: clip the arc rather than shrink the source. The fade at the
+    // footprint edge (cloudFrag) softens the cut so it is not a hard rectangle.
+    halfA = min(halfA, maxHalfA);
+    // SIZE THE FOOTPRINT FROM THE MAP, NOT FROM THE CENTRE'S JACOBIAN.
+    // Everything above estimates the image extent from the magnification at the
+    // sprite's centre, and near the shadow that badly UNDERESTIMATES it: the
+    // whole square then maps inside the source disc, nothing is discarded, and
+    // the sprite draws as a hard-edged rectangle.
+    //
+    // Measure how much source the footprint actually reaches — radially with the
+    // map itself (explicit, no solve), tangentially from the source's own radius
+    // — and if it reaches less than the sprite holds, GROW the footprint to
+    // cover it. Growing is what keeps the arc's content: shrinking the source
+    // instead removes it, and a dust lane's arc came out with barely any dust in
+    // it. Lensing conserves surface brightness, so the arc must read exactly as
+    // dark as the unlensed lane; it may only cover more sky.
+    {
+        float bEdge  = lfBeta(gLfThetaS + halfA, gLfGeom.x, gLfGeom.y, gLfGeom.z);
+        float reachR = abs(bEdge - gLfBetaS);
+        float reachT = abs(gLfBetaS) * (halfA / max(gLfThetaS, 1e-9));
+        float reach  = max(min(reachR, reachT), 1e-30);
+        if (reach < srcUse) halfA = min(halfA * min(srcUse / reach, 1.6), maxHalfA);
+    }
     gl_PointSize   = halfA * uProj[1][1] * max(uViewportH, 1.0);
     halfS          = srcUse * uProj[1][1];                   // what the frag clips against
 

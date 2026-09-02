@@ -95,7 +95,12 @@ vec3 blackbody(float T) {
 //
 // Returns the source-space equivalent of gl_PointCoord. Unlensed sprites take
 // the first line and are bit-identical to the pre-lens renderer.
+// How much of this fragment survives the footprint's edge. 1 everywhere except
+// where a magnified arc runs off the square sprite that bounds it.
+float gLfEdgeFade = 1.0;
+
 vec2 lfSourceCoord() {
+    gLfEdgeFade = 1.0;
     if (vLfSrcRad <= 0.0) return gl_PointCoord;
     // This pixel's own view direction, reconstructed exactly from where it sits
     // in the sprite. No small-angle step anywhere below: the sprite that draws a
@@ -130,6 +135,13 @@ vec2 lfSourceCoord() {
     // Negated form so a NaN discards too: every comparison against NaN is false,
     // so `> 1.0` would let it through and the sprite would draw its whole square.
     if (!(dot(pc, pc) <= 1.0)) discard;             // outside the source disc
+    // A square sprite cannot hold a long arc. Where the arc runs off the
+    // footprint the profile is still strong at the boundary, and cutting it
+    // there is what draws the hard-edged rectangles around the shadow. Fade the
+    // last of the footprint instead. This costs nothing anywhere else: a sprite
+    // whose profile has already run out by the boundary is multiplied by a fade
+    // where it is aleady zero.
+    gLfEdgeFade = smoothstep(1.0, 0.82, max(abs(q.x), abs(q.y)));
     pc.y = -pc.y;                                   // back into gl_PointCoord's orientation, so the
     return pc * 0.5 + 0.5;                          // profile and its FBM read the same way as unlensed
 }
@@ -168,7 +180,7 @@ void main() {
                 // G/R ratio tells each screen edge whether it faces the light
                 // in 3D — rims stay put when the camera orbits.
                 float d = vDust * dens;
-                FragColor = vec4(d, d * vRim, 0.0, 1.0);
+                FragColor = vec4(d, d * vRim, 0.0, 1.0) * gLfEdgeFade;
                 return;
             }
 
@@ -182,7 +194,7 @@ void main() {
             // deep red-brown lane (reddened light blocked by dust) rather than a
             // pure-black "hole"/burn-mark. Red passes most, blue least.
             vec3 trans = max(exp(-t * dExt), vec3(0.10, 0.035, 0.02));
-            FragColor = vec4(mix(vec3(1.0), trans, vSlabW), 1.0);   // slab weight fades the extinction
+            FragColor = vec4(mix(vec3(1.0), trans, vSlabW * gLfEdgeFade), 1.0);   // slab weight fades the extinction
             return;
         }
 
@@ -195,7 +207,7 @@ void main() {
             float dens = smoothstep(0.30, 0.90, env * (0.22 + 0.9 * n));
             if (dens <= 0.001) discard;
             vec3 gasCol = mix(vec3(1.0, 0.30, 0.45), vec3(0.45, 0.6, 1.0), 0.25 * vHot);
-            FragColor = vec4(gasCol * dens * uGasStrength * 0.02 * uPointDim * vSlabW, 1.0);
+            FragColor = vec4(gasCol * dens * uGasStrength * 0.02 * uPointDim * vSlabW * gLfEdgeFade, 1.0);
             return;
         }
 
@@ -218,7 +230,7 @@ void main() {
             float halo = exp(-r2 * 1.4);
             c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim;
         }
-        FragColor = vec4(c * vSlabW, 1.0);       // slab weight fades the star/haze light
+        FragColor = vec4(c * vSlabW * gLfEdgeFade, 1.0);   // slab weight fades the star/haze light
         return;
     }
 

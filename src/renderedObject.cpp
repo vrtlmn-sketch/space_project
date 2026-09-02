@@ -63,7 +63,6 @@ void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz
   if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDist")) >= 0) glUniform1fv(l, gLfCount, gLfHoleDist);
   if ((l = glGetUniformLocation((GLuint)program, "uLfHoleRs"))   >= 0) glUniform1fv(l, gLfCount, gLfHoleRs);
   if ((l = glGetUniformLocation((GLuint)program, "uLfPxPerRad")) >= 0) glUniform1f(l, gLfPxPerRad);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfPxPerRadA")) >= 0) glUniform1f(l, gLfPxPerRad);
   if ((l = glGetUniformLocation((GLuint)program, "uLfMaxMu"))    >= 0) glUniform1f(l, gLfMaxMu);
   if ((l = glGetUniformLocation((GLuint)program, "uLfMaxSprite")) >= 0) glUniform1f(l, gLfMaxSprite);
   if ((l = glGetUniformLocation((GLuint)program, "uLfFy"))       >= 0) glUniform1f(l, gLfFy);
@@ -2767,6 +2766,15 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
     r00 = cc*cb;            r01 = cc*sb*sa - sc*ca; r02 = cc*sb*ca + sc*sa;
     r10 = sc*cb;            r11 = sc*sb*sa + cc*ca; r12 = sc*sb*ca - cc*sa;
     r20 = -sb;             r21 = cb*sa;            r22 = cb*ca;
+  }
+  // The lens draws the black hole's silhouette at its SHADOW radius, not its
+  // horizon: no image can land inside 2.598 rs, so anything smaller leaves an
+  // annulus of plain background between the disc and the ring — which reads as
+  // the ring being detached from a small dot. 1.0 for everything else.
+  if (lensMeshScale != 1.0f) {
+    r00 *= lensMeshScale; r01 *= lensMeshScale; r02 *= lensMeshScale;
+    r10 *= lensMeshScale; r11 *= lensMeshScale; r12 *= lensMeshScale;
+    r20 *= lensMeshScale; r21 *= lensMeshScale; r22 *= lensMeshScale;
   }
   float worldEarth[16] = {
     r00, r10, r20, 0,

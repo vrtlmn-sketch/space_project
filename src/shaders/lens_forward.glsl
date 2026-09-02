@@ -31,7 +31,11 @@
 const float LF_BCRIT = 2.5980762;   // 3*sqrt(3)/2 — photon capture, in units of rs
 const float LF_QMAX  = 8.0;         // table range; alpha up to ~7.6 rad (over one winding)
 
-uniform float uLfPxPerRadA;  // mirror of uLfPxPerRad, declared before use
+uniform float uLfPxPerRad;  // pixels per radian — the "is this worth doing" gate.
+                            // Declared HERE, above every user: GLSL requires declaration
+                            // before use, and putting it further down silently failed the
+                            // whole cloud shader to compile — which draws nothing and
+                            // therefore looks FAST.
 uniform sampler2D uLfLut;   // R = alpha(q), G = d(alpha)/dq. Built by lensForward.cpp
                             // by integrating the SAME null geodesic the ray tracer
                             // marches, so the raster ring and the geodesic ring
@@ -177,7 +181,7 @@ bool lfSolve(float betaTrue, float delta, float Dl, float rs, int branch, out fl
         float tw = lfWeakGuess(betaTrue, delta, Dl, rs, branch);
         if (delta > 0.0) tw = max(tw, thPh * (1.0 + 1e-6));
         if (tw > lo && tw < hi
-            && abs(lfBeta(tw, delta, Dl, rs) - target) * uLfPxPerRadA < 0.02) { theta = tw; return true; }
+            && abs(lfBeta(tw, delta, Dl, rs) - target) * uLfPxPerRad < 0.02) { theta = tw; return true; }
     }
     // BISECTION, not Newton. This is a Born-profile model and in the deep
     // near-field it can FOLD; where it folds there are several roots and each is
@@ -208,7 +212,6 @@ uniform vec3  uLfHoleDirW[4];    // unit camera->hole, WORLD axes
 uniform float uLfHoleDist[4];    // Dl (AU)
 uniform float uLfHoleRs[4];      // rs (AU)
 uniform float uLfDelta0[4];      // PER OBJECT: (object centre - hole) . holeDir, in double on the CPU
-uniform float uLfPxPerRad;       // pixels per radian — the "is this worth doing" gate
 uniform float uLfMaxMu;          // cap on how far a sprite may be stretched (fill-rate guard)
 uniform float uLfMaxSprite;      // largest lensed sprite, as a fraction of viewport height.
                                  // The single strongest speed dial: cost is dominated by a few

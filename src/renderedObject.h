@@ -524,6 +524,7 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // is protected by the lens's foreground-solid gate and pasted UN-lensed over
   // the front pass (the "dark puck" at the band waist).
   bool         lensSkipMesh{false};
+  float        lensMeshScale{1.0f};   // silhouette drawn at the SHADOW radius (2.598 rs), not the horizon
   bool         volumetricDust{false};
   unsigned int dustVolTex{0};
   int          dustVolN{0};

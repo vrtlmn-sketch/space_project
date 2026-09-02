@@ -1038,6 +1038,27 @@ neither brighter nor darker than unbent dust.
   image" culled 8.9% of the direct images — thousands of particles blinking out
   around the hole. The only honest absence is the betaMin test. The direct image
   now always stands.
+- **A STRETCH BUDGET MUST TRUNCATE THE IMAGE, NEVER SHRINK THE SOURCE.** Spending
+  it by drawing a smaller piece of each source keeps the footprint small and
+  deletes matter: at the default budget a dust puff was drawn at 42% of its
+  radius — under a fifth of its area — so every arc came out blue-white while the
+  dust stayed behind in the unlensed band. The geodesic shows those rings FULL of
+  dark red dust, which is what caught it. Lensing conserves surface brightness:
+  an arc must read exactly as dark as the unlensed lane and may only cover more
+  sky. Draw the whole source, clip the arc at the footprint, and fade the cut.
+  Measured: arc dust share 14.0% -> 35.7%, at no cost in frame time.
+- **Size the footprint from the MAP, not from the centre's Jacobian.** The
+  magnification at a sprite's centre badly underestimates how hard the map
+  compresses further out near the shadow; the whole square then lands inside the
+  source disc, nothing is discarded, and the sprite draws as a hard-edged
+  rectangle. Those are the blocks that appear around a big hole. Measure how much
+  source the footprint actually reaches (the forward map, explicit, no solve) and
+  grow it to cover.
+- **Draw the hole's silhouette at the SHADOW radius (2.598 rs), not the horizon.**
+  No image can land inside 2.598 rs, so a disc drawn at rs leaves an annulus of
+  plain background between it and the ring — which reads as the ring being
+  detached from a small dot. Measured on one scene: drawn disc 29 px, true shadow
+  229 px. `RenderedObject::lensMeshScale` carries the factor.
 - **The solver is BISECTION, not Newton.** This is a Born-profile model and in
   the deep near-field it can FOLD (measured on bh_disk: 15 of 600 source depths,
   worst 0.88 px). Where it folds there are several roots and each is a legitimate
@@ -1125,6 +1146,12 @@ What that means for optimising it:
   537 731 pixels. The harness prints the compile error to STDERR and the runs
   were discarding it. Always `2>` a file and grep for `error` after touching a
   shader, and treat any large speed-up with a changed image as a broken build.
+- **Never trust a single timing sample on this machine.** Chasing the dust fix
+  produced readings of 861-939 ms/frame that looked like a 5x regression; a
+  repeat showed lens-OFF also reading 899 ms once, which is impossible, and the
+  true medians were 36 ms (off) and 182 ms (on). Take the median of three, and
+  treat any reading that implies an impossible conclusion as an outlier before
+  reporting it.
 - **Timings are only comparable within one power state.** This machine on
   battery clocks the iGPU to 400 MHz of 1800 (`pp_dpm_sclk`) with the CPU
   governor at `powersave`; the same scene measured 176 ms/frame on AC and

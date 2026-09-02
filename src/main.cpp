@@ -1269,7 +1269,8 @@ int main(int argc, char** argv) {
       std::vector<std::pair<double,int>> holes;   // (shadow angle, physicsObjects index)
       for (int i = 0; i < (int)physicsObjects.size(); ++i) {
         if (physicsObjects[i].shaderType != ObjectType::BlackHole) continue;
-        physicsObjects[i].renderedObject.lensSkipMesh = false;   // re-decided below
+        physicsObjects[i].renderedObject.lensSkipMesh  = false;   // re-decided below
+        physicsObjects[i].renderedObject.lensMeshScale = 1.0f;
         const dvec3 bh = physicsObjects[i].data.position;
         const double dx = bh.x - camPos.x, dy = bh.y - camPos.y, dz = bh.z - camPos.z;
         const double D  = std::sqrt(dx*dx + dy*dy + dz*dz);
@@ -1319,6 +1320,16 @@ int main(int argc, char** argv) {
           gLfHoleDirV[k*3+2] = (float)(RV[6]*nx + RV[7]*ny + RV[8]*nz);
           gLfHoleDist[k]     = (float)D;
           gLfHoleRs[k]       = po.schwarzschildRadius;
+          // Draw this hole's silhouette at the photon-capture radius. Light can
+          // reach us from anywhere outside 2.598 rs and from nowhere inside it,
+          // so that circle IS the shadow; drawing only the horizon left a ring
+          // of plain background around it.
+          {
+            RenderedObject& ro = physicsObjects[holes[(size_t)k].second].renderedObject;
+            const float vr = physicsObjects[holes[(size_t)k].second].visualRadius;
+            ro.lensMeshScale = (vr > 1e-9f)
+                             ? (2.598f * po.schwarzschildRadius / vr) : 1.0f;
+          }
         }
         gLfPxPerRad = (float)pxPerRad;
         gLfFy       = (float)(1.0 / std::tan((double)renderer.zoom * 0.5 * kPI / 180.0));
