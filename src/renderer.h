@@ -1018,10 +1018,23 @@ public:
   // on screen to be worth lensing (else lensBHActive stays false and the frame is
   // byte-identical to lensing off). The far-field cube is baked from the hole and
   // reused (view-independent); rebuilt when the hole moves or is resized.
+  // ── Forward lens ──
+  // The per-source map (src/shaders/lens_forward.glsl). Replaces the two-pass
+  // image remap: no back-field render, no camera cube, no apex vantages, no
+  // foreground slabs, no per-pixel compute march. One extra draw per hole for
+  // the secondary images, and that is the whole cost.
+  bool     lensForward    = true;
+  bool     lensSecondary  = true;    // draw the inner (secondary) image of each hole
+  float    lensMaxStretch = 2.5f;    // how many times its own size a sprite may be stretched into
+                                     // an arc; spent by shrinking the source, never the footprint
+  unsigned lensLutTex     = 0;       // RG32F deflection table (built once, from the geodesic)
+  void     EnsureLensLut();
+
   bool   lensingEnabled = true;      // master toggle
-  int    lensDustWarp   = 0;         // foreground remap OFF by default: flat cover + the sweep-integral ring
+  int    lensDustWarp   = 1;         // foreground slab pass ON; with Bend 0 it is the flat cover (the signed-off look)
                                      // is the RT-like pair (the remap evacuated the plane and dug gaps at the feet)
-  bool   lensBHActive   = false;     // a hole is resolvable on screen this frame
+  bool   lensBHActive   = false;     // a hole's lensing is visible on screen this frame (Einstein angle ~px)
+  bool   lensBHStrong   = false;     // the dominant hole's SHADOW is also resolvable (strong-field zone visible)
   int    lensBHIndex    = -1;        // physicsObjects index of the DOMINANT hole (skip its horizon mesh)
   dvec3  lensBHWorld{0,0,0};         // dominant hole world position (reference length L = its Rs)
   float  lensBHRs       = 0.05f;     // dominant hole Schwarzschild radius
@@ -1059,7 +1072,7 @@ public:
   GLuint ApplyLiveLens();
   // Copy a texture into the cine HDR buffer (used to write the lensed back-field
   // back before the front-particle pass draws on top). Upscales if smaller.
-  void   BlitToCine(GLuint srcTex);
+  void   BlitToCine(GLuint srcTex, bool blendByAlpha = false);
   bool   lensViewportDone = false;   // viewport ran the two-pass lens → CineResolve skips its post-lens
   // Lens the back field now in the cine buffer and write it back; returns true if
   // it ran (then the caller draws the FRONT-of-hole particles on top).
@@ -1095,7 +1108,9 @@ public:
   // (main frame → wide buffer → cube). It feeds the sweep average and the deep
   // windings, which compress everything to sub-pixel — so low res is enough.
   GLuint lensFaceFBO = 0, lensFaceColorTex = 0, lensFaceDepthTex = 0;
-  int    lensFaceSize = 0;
+  int    lensFaceSize = 0;                       // the PADDED render target size
+  int    lensFacePad  = 0;                       // border band rendered beyond 90 deg (sprite-clip guard)
+  static constexpr float kLensFaceMargin = 1.3f; // tan(half-fov) of the over-wide face frustum
   bool   lensCamCubeValid = false;
   float  lensFaceSavedCam[9] = {1,0,0,0,1,0,0,0,1};
   float  lensFaceSavedZoom = 45.0f, lensFaceSavedPixelScale = 1.0f;
@@ -1106,6 +1121,22 @@ public:
   void   EnsureLensFaceFBO(int faceSize);
   bool   LensBeginFaceCam(int face, int faceSize);   // rotate to face, keep position
   void   LensEndFaceCam(int face);                   // copy into lensCubeTex, restore
+  // ── Apex cubes: the far field as the BENT rays see it ─────────────────────
+  // A ray that goes over the hole and lands on the far side of the disc meets
+  // its surface from ABOVE the hole, not from the camera. The camera's image
+  // of an edge-on disc is a saturated band with no surface in it, so remapping
+  // it paints the ring one colour. These two cubes render the back field from
+  // a vantage a few Rs above/below the hole on the plane's normal; the disc-
+  // crossing sample reads the cube of the side the ray came from. The lensed
+  // material then looks the same whatever the camera's direction.
+  GLuint lensApexTex[2] = {0, 0}; int lensApexSize = 0;
+  bool   lensApexValid = false;
+  bool   lensFaceApexPass = false;               // LensEndFaceCam: do not copy into the camera cube
+  dvec3  lensApexPos[2];                           // world positions of the two vantages
+  double lensApexSavedTrans[3] = {0, 0, 0};
+  void   EnsureLensApexCubes(int faceSize);
+  bool   LensBeginFaceAt(int face, int faceSize, const dvec3& pos);   // rotate to face, camera AT pos
+  void   LensEndFaceAt(int face, int which);                          // copy into lensApexTex[which], restore
 
   // Whole foreground image-remapped by the analytic thin lens (a SMOOTH theta_E^2/r
   // map, weaker than the background). Because it is an image remap, sources STRETCH
@@ -1120,9 +1151,9 @@ public:
   bool   fgActive = false;
   GLuint fgDustWarpProgram = 0;
   int    fgDustLocTex = -1, fgDustLocHole = -1, fgDustLocRE = -1, fgDustLocAspect = -1, fgDustLocAtten = -1;
-  int    lensSlabs   = 3;        // foreground depth slabs (near-hole full bend → far flat), composited back-to-front
-  float  lensFgAtten = 0.9f;     // near-hole foreground remap strength (the wrap roundness)
-  float  lensFgBand  = 1.5f;     // depth (× reach) over which the bend fades to flat — where the bend starts
+  int    lensSlabs   = 1;        // foreground depth slabs (near-hole full bend → far flat), composited back-to-front
+  float  lensFgAtten = 0.0f;     // near-hole foreground remap strength (0 = flat cover, the signed-off look)
+  float  lensFgBand  = 0.3f;     // depth (× reach) over which the bend fades to flat — where the bend starts
   void   EnsureFgBuffers(int w, int h);
   bool   BeginForeground();      // save target + ensure buffers. true → draw the slabs.
   void   FgBindLight();          // bind fgLight (cleared black) for the additive star + dust draw

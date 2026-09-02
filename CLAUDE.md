@@ -913,90 +913,198 @@ one is drawn.
 status, known bugs, and the agreed next step. Read it before touching universe
 generation.
 
-## The raster black-hole lens: sources live at a DEPTH, not at infinity
+## Lens experiments that FAILED (2026-08-23) — read before touching the lens again
 
-`src/shaders/lensRaster.glsl` (compute) bends every pixel's ray around every
-resolvable hole with the shared geodesic physics and samples the ALREADY
-RENDERED frame. Two passes: pass 1 draws the BACK field (particles farther
-than the hole, `gLensCull=2`), the lens remaps it, pass 2 draws the front
-particles flat on top (`gLensCull=1`). Harness: `PROJECT=projects/bh_disk.json`
-(hole + its own accretion disk — the Interstellar composition), `bh_ref.json`
-(galaxy, above-plane), `bh_out.json` (galaxy, from outside), `CMP_W/CMP_H`
-for 1280x720 captures, `LENS_OFF=1` to A/B the lens away.
+One day, four redesigns, all reverted to the lens below; the work is in
+`lens_onerule_experiment.patch` (applies on bb06d0e). What was tried and why
+each looked worse than the committed lens — judged at full resolution, which is
+the only way to judge it (the 360p harness captures hid every one of these):
 
-**The ground truth for GEOMETRY is in the repo**: `SKIP_RASTER=1 PROJECT=...
---compare` renders the same scene with the geodesic shaders (`/tmp/cmp_geo.png`,
-256x144). Compare ring positions, gap and continuity against it — never judge
-lens geometry from the raster image alone (photometry differs; geometry must
-not). Every "it is done" that was later wrong had skipped this.
+- **Volumetric emissivity** (bent ray integrates `rho * I(dir)/C(dir)` from a
+  density volume; exact identity for unbent rays). Every star became a RADIAL
+  streak: a star's light is spread over its whole column, every bent ray
+  crossing that column anywhere in depth picks up a piece, and the locus of
+  those rays is a radial line. Tube over the shadow, horizontal cut.
+- **Density-quartile depth sheets** per pixel: each star became 4 displaced
+  dots; the far disc quantised into rings.
+- **Depth slabs** (particles binned by camera distance, per-pixel mean depth):
+  a pixel's column through an edge-on disc is hundreds of AU deep, so every
+  slab collapses to one depth per pixel — concentric rings on the disc, onion
+  layers on a galaxy. Finer slabs only make more rings.
+- **Flat front + per-cloud plane for the far side** (= the committed lens's
+  geometry, per cloud, all crossings summed): the far side is still the sprite
+  HAZE stretched into a flat opaque sheet with a hard edge against the 3D
+  sprite field, no photon-ring/gap structure in galaxy scenes, and with the
+  extra passes (per-cloud slabs on three rungs, column pass, dust passes) it
+  ran at a few fps. Worse than the committed lens on every axis.
 
-What makes it read as a black hole, and the one lie that kept breaking it:
+What the committed lens gets right and every redesign lost: the far field is
+sampled at the cloud's PLANE CROSSING (exact for a thin disc, a fair proxy
+otherwise) and the front is drawn FLAT (physically right: light from matter in
+front of the hole never passes the hole). What it still gets wrong, unsolved:
+the bent zone is the sprite haze remapped — flat, opaque, brighter with
+glow/spread, a hard edge against the unbent sprites; no secondary arch or
+dark gap in galaxy scenes. That is the real problem; a depth model does not
+touch it. Any future attempt must show a full-resolution side-by-side against
+THIS lens and list what got worse before claiming anything.
 
-- **The back field is NOT at infinity.** The matter that makes the ring is the
-  band right behind the hole. Sampling by the bent ray's direction-at-infinity
-  over-bends it (ring floats off the shadow), destroys parallax (ring is not a
-  continuation of the band) and leaves a fog gap. Fix: the march finds where
-  the ray CROSSES THE DOMINANT CLOUD'S PLANE past the hole (`uHasDiscPlane`,
-  detected during the march once every hole recedes, else on the escape line)
-  and samples the back field at THAT POINT'S direction. Per ray, parallax-true,
-  identity for an unbent ray (the crossing lies on its own line). The inner
-  edge then hugs the shadow at b = sqrt(2 Rs a), as physics says. Rays that
-  never cross fall back to a finite SOURCE SPHERE (`uSrcDistL` = hole distance +
-  largest cloud diameter), then to the escape direction.
-- **The data ladder**: a strongly bent ray's answer usually lies OUTSIDE the
-  frustum. `sampleScene` reads main frame -> wide-FOV back-field pass (3x tan,
-  `LensBeginWide`) -> full-sphere camera cube (6x512, `LensBeginFaceCam`), all
-  rendered by the ordinary cloud pipeline and gated on a resolvable hole
-  (milky_way pays nothing). Mixing buffers of different angular resolution is a
-  PHOTOMETRIC trap: the pipeline deposits light per pixel, so a 90-deg/512 face
-  reads ~8x brighter than the main frame — `uCubeGlowScale` = (main px solid
-  angle)/(cube px solid angle).
-- **Path-collected glow**: each march step projects the ray's real 3D position
-  back to the camera and gathers the cube there, weighted by swept camera
-  angle — identically zero for an unbent ray, bounded by the pixel's angular
-  distance to the hole. Read the CUBE only (sharp buffers painted spokes),
-  sub-stepped (single samples banded), attenuated by front dust as it goes.
-  Captured rays stay pure black: showing their collected glow drew a veil over
-  the shadow (those columns are dominated by matter BEHIND the hole).
-- **Sweep average only past a full winding** (`smoothstep(2pi, 4pi)`): below
-  that the final direction is the answer and stays sharp; engaging the smear
-  early integrated the band along each pixel's RADIAL path — streaks.
-- **Front matter bends in a 3D BUBBLE around the hole** (`uBHBendReach`, fade
-  over 3D distance to the hole), NOT by depth. A depth-plane ramp was tried:
-  it displaced a whole ring of the disc at the hole's DISTANCE regardless of
-  3D distance, evacuating the centre and uncovering the hole. Moving the
-  two-pass split far behind the hole (`LENS_SPLIT_K`) was also tried: the
-  arch IS the near-behind band under the remap, and per-particle primary
-  displacement cannot rebuild a wrap-around image — it gutted the ring.
-- **The hole's horizon mesh is skipped in the raster path when lensed**
-  (`lensSkipMesh`): the lens's foreground-solid gate protected its screen disc
-  and pasted it un-lensed over the front pass.
-- Three per-pixel dithers (cube texel, sub-texel UV, march phase) turn the
-  photon ring's magnified texel grid and winding plateaus into grain.
-- The shadow is analytic capture (b < 2.598 Rs) feathered over 5%; its visible
-  size is ~2.6 Rs/D, and the big dark disc around it in a galaxy scene is
-  imaged EMPTY SKY — the Einstein ring of the band sits at sqrt(2Rs/D)·D.
+Harness: the raster capture is 1600x900 by default (`CMP_W/CMP_H` override;
+RT stays 640x360), so the old milky_way mean (29.16 at 360p) no longer applies
+— byte-compare against a same-sitting control instead.
 
-### Volumetric dust is a HYBRID: sprites own the look, the volume owns depth
+## The raster lens is FORWARD: each source is bent by its own position
 
-`volumetricDust` (per cloud, opt-in, persisted in CloudData; `DUST_VOL=1` to
-force) splats the particles into a 96^3 R16F volume with the lane field
-(`dust_common.glsl`, ONE definition shared by cloudVert, the march and the
-RT CPU twin) baked in per particle (`updateDustVolume`, re-splat on
-`cloudGpuDirty` or a shape-slider change). The lens march samples it in the
-FRONT half-space only (back dust is already in the sampled image): front
-clumps occlude and redden the ring along the BENT path.
+**This replaced the two-pass image remap** (`lensRaster.glsl` and everything
+around it) on 2026-09-02. Read the failure log above first — it is the record of
+why the old one could not be fixed.
 
-The full marched SCREEN look was built and measured (`dustVolFrag.glsl`,
-`DrawCloudDustVolumetric`, both extinction and rim modes — no call site now):
-the honest column through a galaxy is smooth saturated fog. The granular
-look lives in the stochastic billboard product, not in the density field —
-no affordable volume reproduces it (lane cells ~5 AU, galaxy 3600 AU). So the
-sprites stay, byte-identical, and the volume is the depth oracle. Traps met:
-max-normalising the splat crushes a disc under its core voxel (use the mean
-nonzero voxel, LINEAR, no clamp — clamping flattened lane and gap into one
-fog); normalise tau by the cloud RMS, not the outlier-inflated box diagonal;
-weight by NUMBER density, not mass.
+The old lens was BACKWARD: per pixel, bend a ray, then ask "what is out there?"
+But the raster pipeline has no scene to ask — only rendered PICTURES of it — so
+it had to guess the depth of whatever it sampled. Every scene assumption grew out
+of that one gap: a dominant disc plane to find the crossing, a source sphere when
+the plane missed, apex cubes because an image is only valid from its own vantage,
+and a front/back particle split so the sampled image would not contain the
+foreground. That split is the "seam in space", and the plane is why a top-down
+view made the hole vanish, why a spherical cloud had nothing to key on, and why
+two colliding clouds picked one plane and got the other wrong.
+
+Turn it around. The renderer DOES have the scene — particles with exact
+positions — so ask each SOURCE where its light lands. One rule, `lfPlace` in
+`src/shaders/lens_forward.glsl`, applied to every particle, dust puff and star
+alike:
+
+```
+beta = theta - alpha(b) * 0.5 * [ h + (Dl*delta - b^2)/hl ] / Ds
+b = Dl*sin(theta),  h = sqrt(b^2+delta^2),  hl = sqrt(b^2+Dl^2),  Ds = Dl+delta
+```
+
+`delta` is the source's position along the camera->hole axis measured FROM THE
+HOLE, positive behind it. That is the whole input. **No plane, no split, no
+reach, no falloff, no dominant cloud** — the absence is the point, and it is why
+a sphere, a disc seen face-on, two holes and empty space all behave the same.
+
+- `delta -> +inf` gives `D_ls/D_s`, the textbook thin lens.
+- `delta = 0` gives `b/(2 Dl)`: **half** the bend. A source level with the hole
+  only gets the outgoing half of the encounter. The thin lens says ZERO here,
+  which is exactly why it cannot draw an accretion disc at 3-20 rs.
+- `delta -> -inf` gives 0. Light from in front never passes the hole, so it does
+  not bend **and it covers the shadow**. That is physics, not a rule.
+
+Measured, front to back through a hole, 20000 steps: the image moves 412
+rs-angles with a largest single step of 0.014% of the travel. There is no jump
+anywhere because there is no boundary anywhere.
+
+**The dust needed no second system.** Dust is `uCloudPass == 3` in the same
+`cloudVert.glsl` — same VBO, same draw. So it bends by the same rule for free,
+and because the FRAGMENT shader runs the map's explicit direction per pixel
+(`lfSourceCoord`, replacing `gl_PointCoord`), the FBM that carves a puff into a
+wisp is evaluated in SOURCE space: a lane stretches into a real arc with its
+internal structure stretched too, not a stretched disc with unstretched noise
+painted inside. Optical depth is carried across unchanged, so bent dust is
+neither brighter nor darker than unbent dust.
+
+- `src/lensForward.cpp` is the C++ MIRROR of the shader — same formulas, same
+  constants. It exists so the map can be PROVEN on the CPU (monotonicity, solver
+  convergence, identity at rs=0, depth-continuity, cull rate) instead of debugged
+  through a framebuffer. `LENS_LUT_TEST=1` prints the whole suite. **Change both
+  together.**
+- `alpha(b)` is a 1024-tap table built at first use by integrating the SAME null
+  geodesic the ray tracer marches, so the raster ring and the geodesic ring agree
+  by construction. Uniform in `q = -ln(1 - b_c/b)`, where alpha is nearly linear
+  even at the photon sphere: worst interpolation error 8e-7 rad. Costs ~155 ms,
+  once, and only when a hole is actually resolvable.
+- Two images per hole: `gl_InstanceID` 0 is the direct image, 1..N the secondary
+  of hole N-1. They occupy **disjoint** regions of the screen (the sign of beta
+  selects the branch), which is what lets the multiplicative dust be drawn twice
+  and still never darken a pixel twice.
+- Cost on bh_ref: **+1.0 s** against +9.4 s for the old lens, and +3 MB against
+  ~145 MB of FBOs. A scene with no resolvable hole measures no cost at all
+  (milky_way 2.61 s vs 2.68 s lens-off), and milky_way stays byte-identical.
+
+### Traps this cost real time to find
+
+- **`gl_PointCoord`'s origin is UPPER-LEFT — its t axis runs DOWN, screen y runs
+  UP.** The fragment map builds each sprite's footprint in screen space, so
+  without a flip every footprint is mirrored top-to-bottom and **every arc curves
+  the wrong way**: the arch over the hole is drawn as a hammock under it. One
+  sign, and it is nearly invisible in the obvious test — a round sprite is
+  unchanged by a mirror, and so is a symmetric Einstein ring, so the sphere scene
+  passed while the disc was inverted. Measured before/after with a structure
+  tensor: streak-vs-tangential alignment 0.62 -> 0.74 (the geodesic scores 0.77),
+  and the best-fit arc centre moved from 140 px above the hole to the hole. Flip
+  on the way in and back on the way out, so the profile's FBM still reads the
+  same way as an unlensed sprite.
+- **A LENS MUST NEVER DELETE MATTER.** Reporting slow solver convergence as "no
+  image" culled 8.9% of the direct images — thousands of particles blinking out
+  around the hole. The only honest absence is the betaMin test. The direct image
+  now always stands.
+- **The solver is BISECTION, not Newton.** This is a Born-profile model and in
+  the deep near-field it can FOLD (measured on bh_disk: 15 of 600 source depths,
+  worst 0.88 px). Where it folds there are several roots and each is a legitimate
+  image, but a fold breaks the bracket invariant a Newton safeguard relies on and
+  returned roots tens of pixels wrong. 24 halvings is 0.007 px worst, nothing
+  culled. The direct image is additionally bracketed at `theta > beta`, which is
+  exact (alpha*g > 0 always) and steps over the fold entirely.
+- **Capture applies only to sources BEHIND the hole.** A source in front is
+  reached before closest approach, so its image may sit anywhere, including
+  inside the shadow disc — which is precisely how foreground matter covers the
+  hole. An unconditional capture test deleted every particle directly in front of
+  the hole and punched the foreground open.
+- **`theta` must stay below pi/2.** Past it `b = Dl*sin(theta)` turns over, every
+  evaluation returns the capture sentinel, and the bracket-doubling loop walks off
+  to hundreds of radians. That is what threw particles near the hole's axis across
+  the screen as radial streaks.
+- **`inf * 0 = NaN`, and NaN fails every discard test.** A fragment exactly on the
+  hole's screen position has `b = 0`, where `2rs/b` is infinite while the Born
+  factor goes as `b^2`. The NaN then passed `dot(pc,pc) > 1.0` (all NaN
+  comparisons are false) and the sprite drew its ENTIRE square: dark red boxes
+  stacked over the hole. `b` is floored, and the test is written negated so a NaN
+  discards.
+- **A stretch budget must be spent by shrinking the SOURCE, never the footprint.**
+  Sizing a sprite from a capped magnification while the fragment shader still maps
+  pixels through the TRUE one leaves every pixel inside the source disc — the same
+  filled squares, from a different cause. Both budgets (the stretch limit and the
+  pixel cap) now feed one source-shrink, so the profile always runs out inside the
+  footprint.
+- **The early-out must not use the thin-lens Einstein angle.** It is proportional
+  to `delta` and therefore ~0 for matter level with the hole — exactly where the
+  Born term is large. A thin-lens gate skipped every particle of an accretion disc
+  and left the disc unbent while distant matter moved. Gate on the actual
+  displacement instead: one table fetch.
+- **Finite-source limit.** `theta/beta` diverges as a source nears the axis, but a
+  source of angular radius R can never be closer to the axis than R, so its
+  stretch is bounded by `theta/R`. This is the physical reason lensed images are
+  bright arcs rather than infinitely thin infinitely long ones.
+- **`delta` needs DOUBLE.** Forming (axial distance - Dl) in float32 at 1e6 AU
+  leaves nothing of the near-hole term. The object's offset from each hole
+  (`uLfDelta0`) is differenced on the CPU in double and the shader only ever adds
+  a small per-particle offset. Starfield chunks upload it again per CHUNK, because
+  that is what the vertex shader offsets from.
+
+### Test scenes for context-independence
+
+`projects/lens_test_sphere.json` (a uniform SPHERE — no plane exists, so any
+plane-based lens has nothing to key on), `lens_test_topdown.json` (bh_ref seen
+from straight above the galaxy plane, the view where the old lens showed nothing
+at all), `lens_test_twoholes.json`. Verified on the sphere: evacuated centre,
+ring of tangential arcs, and pixels change ONLY within r=322 px — the map
+converges to the identity on its own, with no fade to tune.
+
+**The ground truth for GEOMETRY is still `SKIP_RASTER=1 PROJECT=... --compare`**
+(`/tmp/cmp_geo.png`). Verified on bh_disk that sprite CENTRES form the same arch
+the geodesic does (peak directly over the hole, dropping at the sides).
+
+### Known gaps
+
+- The drawn black disc is the HORIZON (rs); the true shadow is 2.598 rs. No image
+  lands in the annulus between them, so it renders as empty sky — invisible on a
+  dark background, wrong on a bright one.
+- Meshes (planets), nebula volumes and the skybox are NOT bent yet. The map is
+  written to drop into `defaultVert.glsl` the same way; the skybox wants the
+  per-pixel backward form, which is exact for sources at infinity.
+- bh_disk parks the camera 23.5 rs from the hole, deep in the strong field where
+  the Born-profile factorisation is weakest. Galaxy-scale scenes are far-field,
+  where it is exact.
 
 ### Accretion disk = a cloud
 

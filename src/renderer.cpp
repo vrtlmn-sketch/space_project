@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "lensForward.h"
 #include "dynamics.h"
 #include "physicsObject.h"
 #include "units.h"
@@ -583,7 +584,10 @@ void Renderer::Draw(RenderedObject& ro) {
                                             ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::All;
                                             ro.cloudLightDrawn = true;
-                                            if (realisticRasterView) rimClouds.push_back(&ro); }
+                                            if (realisticRasterView && std::find(rimClouds.begin(), rimClouds.end(), &ro) == rimClouds.end())
+                                              rimClouds.push_back(&ro);   // deduped: the lens's extra passes draw the same cloud again, and a double
+                                                                          // registration ran the dust-density pass twice (doubled density, darker skin)
+                                          }
     if (ro.meshType == MeshType::grid)    ro.renderGrid(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   if (rayTracerView) {
@@ -3943,24 +3947,22 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Real-time gravitational lensing in the raster view.\n"
                         "Off = the black hole is an ordinary object.");
-    bool warp = lensDustWarp != 0;
-    if (ImGui::Checkbox("Bend the foreground", &warp)) lensDustWarp = warp ? 1 : 0;
+    ImGui::BeginDisabled(!lensingEnabled);
+    ImGui::Checkbox("Secondary images", &lensSecondary);
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Remap the matter IN FRONT of the hole in depth slabs so it\n"
-                        "curves around the rim while distant matter stays flat and covers.");
-    ImGui::BeginDisabled(!lensingEnabled || lensDustWarp == 0);
-    ImGui::SeparatorText("Foreground Bend");
-    ImGui::SliderFloat("Bend",  &lensFgAtten, 0.0f, 1.5f, "%.2f");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("How hard the near-hole matter wraps around the rim.");
-    ImGui::SliderFloat("Depth", &lensFgBand, 0.3f, 5.0f, "%.2f");
+      ImGui::SetTooltip("Draw the inner image each hole makes as well as the direct one:\n"
+                        "the arc INSIDE the Einstein ring, on the opposite side.\n"
+                        "One extra draw per hole. Off is cheaper and loses the inner arc.");
+    ImGui::SliderFloat("Stretch", &lensMaxStretch, 1.0f, 12.0f, "%.1fx");
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("How close to the hole the bend begins (x Einstein impact parameter).\n"
-                        "Lower = only matter hugging the hole bends; the rest stays flat and covers.");
-    ImGui::SliderInt("Slabs", &lensSlabs, 1, 8);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Depth layers for the foreground remap. More = smoother depth ramp,\n"
-                        "a little more cost. Raise if the ramp looks stepped.");
+      ImGui::SetTooltip("How far a magnified sprite may stretch into an arc, as a multiple of\n"
+                        "its own size. Higher = longer arcs near the ring and more fill cost;\n"
+                        "1 moves matter without stretching it.\n"
+                        "It is spent by drawing a smaller piece of the source, so the profile\n"
+                        "always runs out inside the sprite - never a hard-edged square.");
     ImGui::EndDisabled();
+    ImGui::TextDisabled("Every source is bent by its own position. There is no\n"
+                        "foreground/background split, so nothing pops as you fly.");
   }
 
   // ── Dust & Gas Clouds ──────────────────────────────────────────────────────
@@ -8695,6 +8697,8 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
   if ((l = glGetUniformLocation(lensRasterProgram, "uViewRot"))    >= 0) glUniformMatrix3fv(l, 1, GL_TRUE, camMatrix);
   if ((l = glGetUniformLocation(lensRasterProgram, "uMaxSteps"))   >= 0) glUniform1i(l, maxSteps);
   if ((l = glGetUniformLocation(lensRasterProgram, "uComposite"))  >= 0) glUniform1i(l, composite);
+  if ((l = glGetUniformLocation(lensRasterProgram, "uDebugView"))  >= 0)
+    glUniform1i(l, std::getenv("LENS_DBGVIEW") ? std::atoi(std::getenv("LENS_DBGVIEW")) : 0);
   {
     // Multi-hole uniform arrays. The live path fills the member arrays (from every
     // resolvable hole); the headless path leaves them empty, so synthesize a single
@@ -8796,11 +8800,35 @@ void Renderer::LensDispatch(GLuint outTex, GLuint sceneTex, GLuint sceneDepthTex
         glUniform1f(l, (float)(2.5 * (double)pro->rmsRadius() / L2));
     }
   }
+  {
+    if ((l = glGetUniformLocation(lensRasterProgram, "uSplitL")) >= 0)
+      glUniform1f(l, gLensBHSplitDist / std::max(rs, 1e-30f));
+    if ((l = glGetUniformLocation(lensRasterProgram, "uPxPerRad")) >= 0)
+      glUniform1f(l, (float)h / std::max(fovy, 1e-6f));
+    // Apex cubes for the disc-crossing sample (see renderLensWideBack in main.cpp).
+    const bool hasApex = lensApexValid && lensApexTex[0] && lensApexTex[1] && composite == 1;
+    if ((l = glGetUniformLocation(lensRasterProgram, "uHasApex")) >= 0) glUniform1i(l, hasApex ? 1 : 0);
+    if (hasApex) {
+      glActiveTexture(GL_TEXTURE6); glBindTexture(GL_TEXTURE_CUBE_MAP, lensApexTex[0]);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uApexCube0")) >= 0) glUniform1i(l, 6);
+      glActiveTexture(GL_TEXTURE7); glBindTexture(GL_TEXTURE_CUBE_MAP, lensApexTex[1]);
+      if ((l = glGetUniformLocation(lensRasterProgram, "uApexCube1")) >= 0) glUniform1i(l, 7);
+      glActiveTexture(GL_TEXTURE0);
+      const double L = std::max((double)lensBHRs, 1e-30);
+      float ap[6];
+      for (int i = 0; i < 2; i++) {
+        dvec3 rr = CameraRelative(lensApexPos[i]);
+        ap[3*i+0] = (float)(rr.x / L); ap[3*i+1] = (float)(rr.y / L); ap[3*i+2] = (float)(rr.z / L);
+      }
+      if ((l = glGetUniformLocation(lensRasterProgram, "uApexPosL")) >= 0) glUniform3fv(l, 2, ap);
+    }
+    lensApexValid = false;   // consumed — each site renders its own
+  }
   if ((l = glGetUniformLocation(lensRasterProgram, "uCubeGlowScale")) >= 0) {
     // (main px solid angle) / (cube px solid angle): brings the small 90-deg cube
     // faces onto the main frame's per-pixel photometric scale for collected glow.
     const float pixMain = fovy / std::max(1, h);
-    const float pixCube = ((float)M_PI * 0.5f) / std::max(1, lensFaceSize);
+    const float pixCube = ((float)M_PI * 0.5f) / std::max(1, lensFaceSize - 2 * lensFacePad);   // the central 90-deg region's resolution
     const float r       = pixMain / pixCube;
     glUniform1f(l, r * r);
   }
@@ -8835,11 +8863,14 @@ void Renderer::EnsureCineLensTex(int w, int h) {
 GLuint Renderer::ApplyLiveLens() {
   if (!lensingEnabled || !lensBHActive || !lensColorTex)   // no cube needed: samples the live frame
     return lensColorTex;
-  // SAFETY: cap the lens resolution and step budget so a big on-screen hole (which
-  // now really bends light) can never exceed the GPU watchdog and reset the driver.
-  // When lensing is active the frame is bounded to ~720p and upscaled by the post
-  // chain — a soft frame while staring into a black hole, never a crash.
-  const int maxH = 720;
+  // Lens resolution: the OUTPUT must match the native frame or every star core
+  // inside the footprint is quantised away — peaks drop, the spike pass stops
+  // firing, and the footprint's perimeter becomes a visible "sharpness edge"
+  // (the circle where the sparkles stop). With the per-pixel early-out the
+  // untouched pixels are nearly free, so native-res is affordable; LENS_RES
+  // overrides (720 restores the old cost bound for weak GPUs).
+  static const int maxH = [](){ const char* e = std::getenv("LENS_RES");
+                                return e ? std::max(180, std::atoi(e)) : 1080; }();
   const int h = std::min(lensH, maxH);
   const int w = (lensH > 0) ? std::max(1, (int)std::lround((double)lensW * h / lensH)) : lensW;
   const int lensSteps = 800;
@@ -8895,7 +8926,7 @@ bool Renderer::LensBackFieldAndPrepareFront() {
   if (!lensingEnabled || !lensBHActive || !lensColorTex) return false;   // no cube needed
   GLuint lensed = ApplyLiveLens();          // lensColorTex (back field) → cineLensTex
   if (lensed != cineLensTex) return false;  // did not run
-  BlitToCine(lensed);                        // lensed back field → lensColorTex (via lensFBO)
+  BlitToCine(lensed, true);                  // lensed back field → lensColorTex, only where it bent
   lensViewportDone = true;
   return true;
 }
@@ -8974,6 +9005,24 @@ void Renderer::LensEndWide() {
   lensWideValid = true;
 }
 
+// The deflection table, built once by integrating the SAME null geodesic the
+// ray tracer marches (src/lensForward.cpp). Costs ~150 ms, and only the first
+// time a hole is actually resolvable — a scene with no black hole never pays it.
+void Renderer::EnsureLensLut() {
+  if (lensLutTex) return;
+  const std::vector<float>& rg = lensfwd::DeflectionLutRG();
+  glGenTextures(1, &lensLutTex);
+  glBindTexture(GL_TEXTURE_2D, (GLuint)lensLutTex);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, lensfwd::kLutSize, 1, 0, GL_RG, GL_FLOAT, rg.data());
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  gLfLutTex = lensLutTex;
+  if (std::getenv("LENS_LUT_TEST")) { lensfwd::SelfTest(); lensfwd::SolverTest(); }
+}
+
 void Renderer::EnsureLensFaceFBO(int faceSize) {
   if (faceSize == lensFaceSize && lensFaceFBO) return;
   if (lensFaceFBO)      { glDeleteFramebuffers(1, &lensFaceFBO);  lensFaceFBO = 0; }
@@ -9021,22 +9070,32 @@ bool Renderer::LensBeginFaceCam(int face, int faceSize) {
   float tu[3] = { r[1]*f[2]-r[2]*f[1], r[2]*f[0]-r[0]*f[2], r[0]*f[1]-r[1]*f[0] };
   float m[9]  = { r[0], r[1], r[2],  tu[0], tu[1], tu[2],  -f[0], -f[1], -f[2] };
   SetCameraMatrix(m);
-  zoom = 90.0f;
+  // OVER-WIDE face frustum: GL clips a point sprite the moment its CENTER
+  // leaves the viewport, so a plain 90-degree face is missing a border band of
+  // sprites — under the ring's magnification those bands showed as bright
+  // wedges radiating from the hole (cube-face seams). Render at ~105 degrees
+  // into a 1.3x target and copy out the central 90 (LensEndFace*): sprites
+  // straddling a face edge now exist on both sides. Tangent space: the centre
+  // faceSize x faceSize region spans tan = +-1 exactly, so all photometry and
+  // angular-resolution math keyed to lensFaceSize is unchanged.
+  zoom = 2.0f * std::atan(kLensFaceMargin) * 180.0f / (float)M_PI;
   currentPixelScale = 1.0f;
+  lensFacePad = (int)std::lround(0.5 * (kLensFaceMargin - 1.0) * faceSize);
   EnsureLensCubemap(faceSize);
-  EnsureLensFaceFBO(faceSize);
+  EnsureLensFaceFBO(faceSize + 2 * lensFacePad);
   glBindFramebuffer(GL_FRAMEBUFFER, lensFaceFBO);
-  glViewport(0, 0, faceSize, faceSize);
-  fbWidth = faceSize; fbHeight = faceSize;
+  glViewport(0, 0, faceSize + 2 * lensFacePad, faceSize + 2 * lensFacePad);
+  fbWidth = faceSize + 2 * lensFacePad; fbHeight = faceSize + 2 * lensFacePad;
   ClearSceneTarget();
   return true;
 }
 
 void Renderer::LensEndFaceCam(int face) {
-  if (lensCubeTex && lensFaceColorTex)
-    glCopyImageSubData(lensFaceColorTex, GL_TEXTURE_2D, 0, 0, 0, 0,
+  const int inner = lensFaceSize - 2 * lensFacePad;   // the central 90-degree region
+  if (lensCubeTex && lensFaceColorTex && !lensFaceApexPass)
+    glCopyImageSubData(lensFaceColorTex, GL_TEXTURE_2D, 0, lensFacePad, lensFacePad, 0,
                        lensCubeTex, GL_TEXTURE_CUBE_MAP, 0, 0, 0, face,
-                       lensFaceSize, lensFaceSize, 1);
+                       inner, inner, 1);
   SetCameraMatrix(lensFaceSavedCam);
   zoom              = lensFaceSavedZoom;
   currentPixelScale = lensFaceSavedPixelScale;
@@ -9050,12 +9109,109 @@ void Renderer::LensEndFaceCam(int face) {
   if (face == 5) lensCamCubeValid = true;   // all six faces fresh
 }
 
-void Renderer::BlitToCine(GLuint srcTex) {
+void Renderer::EnsureLensApexCubes(int faceSize) {
+  if (lensApexTex[0] && lensApexSize == faceSize) return;
+  for (int i = 0; i < 2; i++) {
+    if (lensApexTex[i]) { glDeleteTextures(1, &lensApexTex[i]); lensApexTex[i] = 0; }
+    glGenTextures(1, &lensApexTex[i]);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, lensApexTex[i]);
+    for (int f = 0; f < 6; ++f)
+      glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, GL_RGBA16F, faceSize, faceSize, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+  }
+  glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+  lensApexSize = faceSize;
+}
+
+bool Renderer::LensBeginFaceAt(int face, int faceSize, const dvec3& pos) {
+  if (!LensBeginFaceCam(face, faceSize)) return false;   // saves FBO/viewport/camera/rim lists, binds the face target
+  lensApexSavedTrans[0] = cameraTranslate[0];
+  lensApexSavedTrans[1] = cameraTranslate[1];
+  lensApexSavedTrans[2] = cameraTranslate[2];
+  cameraTranslate[0] = gCamAnchor[0] - pos.x;             // camera position = anchor - translate
+  cameraTranslate[1] = gCamAnchor[1] - pos.y;
+  cameraTranslate[2] = gCamAnchor[2] - pos.z;
+  // Sprites are sized in PIXELS (cloudVert: gl_PointSize * ps), so in a 90-deg
+  // face they would be angularly larger and brighter than in the frame (a face
+  // pixel spans more sky). Scale the pixel size so every sprite keeps the
+  // FRAME's angular size; the cube then reads per-pixel like the frame and needs
+  // no photometric factor — the remapped material looks like the unbent one.
+  const float pixMain = (lensFaceSavedZoom * (float)M_PI / 180.0f) / std::max(1, lensH);
+  const float pixCube = ((float)M_PI * 0.5f) / std::max(1, faceSize);
+  currentPixelScale = lensFaceSavedPixelScale * pixMain / pixCube;
+  // Perspective-sized sprites (gas, dust) keep the REAL camera's flux: sized by
+  // the distance to it, with the main camera's optics (uSizeRef* in cloudVert).
+  gLensSizeRefOn     = 1;
+  gLensSizeRefRel[0] = (float)((gCamAnchor[0] - lensApexSavedTrans[0]) - pos.x);
+  gLensSizeRefRel[1] = (float)((gCamAnchor[1] - lensApexSavedTrans[1]) - pos.y);
+  gLensSizeRefRel[2] = (float)((gCamAnchor[2] - lensApexSavedTrans[2]) - pos.z);
+  gLensSizeRefFy     = 1.0f / std::tan(lensFaceSavedZoom * (float)M_PI / 360.0f);
+  gLensSizeRefH      = (float)std::max(1, lensH);
+  EnsureLensApexCubes(faceSize);
+  ClearSceneTarget();
+  return true;
+}
+
+static void lensDebugDumpFace(GLuint tex, int size, const char* tag, int which, int face) {
+  if (!std::getenv("LENS_DUMP_APEX")) return;
+  std::vector<float> hdr((size_t)size * size * 4);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, hdr.data());
+  std::vector<uint8_t> ldr((size_t)size * size * 4);
+  for (size_t i = 0; i < hdr.size(); i += 4) {
+    for (int c = 0; c < 3; ++c) {
+      float v = hdr[i + c];
+      ldr[i + c] = (uint8_t)std::lround(std::min(1.0f, v / (1.0f + v)) * 255.0f);
+    }
+    ldr[i + 3] = 255;
+  }
+  char path[128], cmd[512];
+  std::snprintf(path, sizeof(path), "/tmp/lens_%s_%d_f%d.png", tag, which, face);
+  std::snprintf(cmd, sizeof(cmd),
+    "ffmpeg -y -f rawvideo -pix_fmt rgba -s %dx%d -i - -frames:v 1 -update 1 \"%s\" 2>/dev/null",
+    size, size, path);
+  FILE* pipe = popen(cmd, "w");
+  if (pipe) { fwrite(ldr.data(), 1, ldr.size(), pipe); pclose(pipe); }
+}
+
+void Renderer::LensEndFaceAt(int face, int which) {
+  gLensSizeRefOn = 0;
+  lensDebugDumpFace(lensFaceColorTex, lensFaceSize, "apex", which, face);
+  const int inner = lensFaceSize - 2 * lensFacePad;
+  if (lensApexTex[which] && lensFaceColorTex)
+    glCopyImageSubData(lensFaceColorTex, GL_TEXTURE_2D, 0, lensFacePad, lensFacePad, 0,
+                       lensApexTex[which], GL_TEXTURE_CUBE_MAP, 0, 0, 0, face,
+                       inner, inner, 1);
+  cameraTranslate[0] = lensApexSavedTrans[0];
+  cameraTranslate[1] = lensApexSavedTrans[1];
+  cameraTranslate[2] = lensApexSavedTrans[2];
+  const bool camValid = lensCamCubeValid;                  // LensEndFaceCam would mark the CAMERA cube fresh
+  lensFaceApexPass = true;
+  LensEndFaceCam(face);
+  lensFaceApexPass = false;
+  lensCamCubeValid = camValid;
+  if (face == 5 && which == 1) lensApexValid = true;
+}
+
+void Renderer::BlitToCine(GLuint srcTex, bool blendByAlpha) {
   if (!blitProgram || !blitVAO || !lensFBO || !srcTex) return;
   glBindFramebuffer(GL_FRAMEBUFFER, lensFBO);
   glViewport(0, 0, lensW, lensH);
   glDisable(GL_DEPTH_TEST);
-  glDisable(GL_BLEND);
+  if (blendByAlpha) {
+    // The lens's footprint alpha: bent pixels replace, untouched pixels keep
+    // the native-resolution frame (the lens buffer may be capped at 720p —
+    // replacing everything swapped the whole viewport for a 720p upscale and
+    // dimmed every star the moment the lens activated).
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  } else {
+    glDisable(GL_BLEND);
+  }
   glUseProgram(blitProgram);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, srcTex);
@@ -9063,6 +9219,7 @@ void Renderer::BlitToCine(GLuint srcTex) {
   glBindVertexArray(blitVAO);
   glDrawArrays(GL_TRIANGLES, 0, 6);
   glBindVertexArray(0);
+  glDisable(GL_BLEND);
 }
 
 // Shared: post-process recRasterColorTex to LDR and read it back (flipped) into dst.

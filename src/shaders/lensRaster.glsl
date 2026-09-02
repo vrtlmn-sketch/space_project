@@ -64,6 +64,17 @@ uniform float uDiscRadL;     // disc radius bound (L units)
 // ~8x brighter than the main frame over the same sky. This is (main px solid angle)
 // / (cube px solid angle), bringing collected cube light onto the frame's scale.
 uniform float uCubeGlowScale;
+// Apex cubes: the back field rendered from a few Rs above (0) / below (1) the
+// hole on the disc plane's normal. A ray that went over the hole meets the far
+// side of the disc from above — the camera's image of an edge-on disc is a
+// saturated band with no surface in it, so remapping it paints the ring one
+// colour. The crossing sample reads the cube of the side the ray came from.
+layout(binding = 6) uniform samplerCube uApexCube0;
+layout(binding = 7) uniform samplerCube uApexCube1;
+uniform int   uHasApex;
+uniform vec3  uApexPosL[2];
+uniform float uSplitL;       // the front/back split (camera distance, L units)
+uniform float uPxPerRad;     // output pixels per radian: visibility gates live in PIXELS, not angle
 
 uniform vec2  uResolution;
 uniform vec2  uProjFxFy;     // (uProj[0][0], uProj[1][1]) — same ray build as the RT shaders
@@ -153,6 +164,66 @@ bool sampleScene(vec3 dir, out vec3 col) {
     return false;
 }
 
+// The scene's radiance at point X for a ray ARRIVING along varr. A rendered
+// image is only valid for rays arriving along its own viewing direction, so
+// blend the camera frame and the two apex cubes by how well each one's
+// direction to X matches the arrival direction (sharp weights: effectively a
+// selector with smooth handover). Top-down views pick the camera everywhere
+// (the approved look, correct magnification); an edge-on over-the-top ray
+// picks the apex above the hole (the far disc's SURFACE); grazing rays pick
+// the camera (the edge-on band — which is what they really see).
+uniform int uDebugView;   // 1: false-color diagnostics (nCross, apex weight, arrival elevation)
+float gDbgTA   = 0.0;     // apex weight of the last crossing sample
+float gDbgEArr = 0.0;     // arrival elevation of the last crossing sample
+
+vec3 lensSourceSample(vec3 X, vec3 varr) {
+    vec3 dc = normalize(X);
+    vec3 sc;
+    if (!sampleScene(dc, sc)) sc = uBackground;
+    gDbgTA   = 0.0;
+    gDbgEArr = dot(varr, uDiscNormal);
+    if (uHasApex != 1) return sc;
+    // The camera frame is the sharp, photometrically native source. The apex
+    // cubes take over only to the extent they match the ray's ARRIVAL direction
+    // BETTER than the camera does. For a FAR source every vantage's direction
+    // converges — the errors tie — and the camera must win outright: blending a
+    // tie mixed 2/3 low-res cube into mildly bent pixels, a washed off-colour
+    // patch with a visible rim. For an edge-on over-the-top ray the camera is
+    // off by ~90 deg and the matching apex takes over completely.
+    vec3  da = normalize(X - uApexPosL[0]);
+    vec3  db = normalize(X - uApexPosL[1]);
+    // Mismatch = direction error + heavily weighted ELEVATION error above the
+    // disc plane. Near a thin disc the radiance changes violently with
+    // elevation (grazing = the one-colour integrated band, slightly above =
+    // the surface), so a vantage can be wrong even when its direction error is
+    // small: the camera's near-grazing ray must lose to the apex for an
+    // over-the-top arrival even though it points almost the right way.
+    // BOTH apexes are weighed CONTINUOUSLY: a hard best-side pick made the
+    // sample jump wherever the two apexes tied (their elevation terms differ
+    // even at the tie, so the error itself jumped) — a razor-straight seam
+    // through the wings beside the shadow. At the tie the two cubes blend
+    // evenly; away from it one dominates smoothly; ties with the camera still
+    // go to the sharp camera frame.
+    float eArr  = dot(varr, uDiscNormal);
+    float errC  = acos(clamp(dot(varr, dc), -1.0, 1.0)) + 3.0 * abs(dot(dc, uDiscNormal) - eArr);
+    float errA0 = acos(clamp(dot(varr, da), -1.0, 1.0)) + 3.0 * abs(dot(da, uDiscNormal) - eArr);
+    float errA1 = acos(clamp(dot(varr, db), -1.0, 1.0)) + 3.0 * abs(dot(db, uDiscNormal) - eArr);
+    // Wide handover ramp: the error difference swings fast where the arrival
+    // grazes the plane (the wings beside the shadow), so a narrow ramp
+    // compressed to a few pixels — a visible seam between the camera-blob
+    // regime and the apex regime. Ties still go to the camera (t = 0 until the
+    // apex is strictly better), so mild-bend pixels stay sharp.
+    float t0 = clamp((errC - errA0) / 1.0, 0.0, 1.0);
+    float t1 = clamp((errC - errA1) / 1.0, 0.0, 1.0);
+    float tA = max(t0, t1);
+    gDbgTA = tA;
+    if (tA <= 0.001) return sc;
+    vec3 sa0 = textureLod(uApexCube0, da + gCubeJit, 0.0).rgb;
+    vec3 sa1 = textureLod(uApexCube1, db + gCubeJit, 0.0).rgb;
+    vec3 sa  = (sa0 * t0 + sa1 * t1) / max(t0 + t1, 1e-6);
+    return mix(sc, sa, tA);
+}
+
 void main()
 {
     ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
@@ -178,19 +249,26 @@ void main()
     // by construction — so the lensed region needs NO fade to blend with the scene;
     // the map itself converges to identity. (A hand-tuned angular fade here is what
     // made the arch translucent and cut it off before it reached the plane.)
+    float lensAlpha = 1.0;
     if (uComposite == 1) {
         float aTot = 0.0;
         for (int i = 0; i < uHoleCount; i++) {
             float b = length(cross(uHolePos[i], rd));    // ray from the camera (origin)
             aTot += 2.0 * uHoleRs[i] / max(b, 1e-6);
         }
-        if (aTot < 2e-4) { imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return; }
+        lensAlpha = smoothstep(0.4, 1.2, aTot * uPxPerRad);   // footprint in PIXELS: sub-pixel bend keeps the native pixel at any hole size or resolution
+        // ALPHA IS THE LENS'S FOOTPRINT: 0 where the ray is untouched (or a
+        // solid stands in front), 1 where it bends. The write-back blends by
+        // it, so the lens NEVER replaces native-resolution pixels it did not
+        // change — before this, activating the lens swapped the whole frame
+        // for a 720p upscale and every star in the galaxy dimmed (the "jump").
+        if (aTot * uPxPerRad < 0.4) { imageStore(outImage, pix, vec4(0.0)); return; }
         // A real drawn solid in front of the holes (planet/mesh) stays unlensed; a
         // far-plane pixel is never a foreground occluder (else a nearby planet that
         // pulls the far plane in front of a hole would switch lensing off entirely).
         float rawd = textureLod(uSceneDepth, uv, 0.0).r;
         if (rawd < 0.99999 && linearDist(rawd) < uBHDist * 0.98) {
-            imageStore(outImage, pix, textureLod(uScene, uv, 0.0)); return;
+            imageStore(outImage, pix, vec4(0.0)); return;
         }
     }
 
@@ -204,40 +282,18 @@ void main()
         vec3 d = pos - uHolePos[i];
         if (dot(d, vel) < 0.0 && length(cross(d, vel)) < 2.598 * uHoleRs[i]) { captured = true; break; }
     }
-    // Sweep integral: what RT's ring actually is. As the ray wraps, its direction
-    // sweeps across the sky; the pixel gathers the scene along that WHOLE sweep,
-    // weighted by the angle turned each step. Straight rays sweep ~0 (pixel stays
-    // identical to the plain sample); near-critical rays sweep multiple turns, so
-    // the galaxy band is crossed repeatedly and the rim brightens naturally. The
-    // winding spacing errors of a step-limited integrator stop mattering because
-    // the windings are INTEGRATED, not drawn as separate arcs.
-    vec3  sweepCol = vec3(0.0);
-    float sweepAng = 0.0;
-    // Path-collected glow: what RT actually does that a direction remap cannot —
-    // the ray COLLECTS the light of the material it passes through. The 2D proxy:
-    // at each step, project the ray's real 3D POSITION back to the camera and
-    // gather the back-field column there, weighted by the camera angle swept this
-    // step. An unbent ray's projection never moves (dGlow = 0: the term vanishes
-    // identically outside the lensed region — no fade needed), while a ray that
-    // dives toward the hole drags its projection across the columns BETWEEN its
-    // pixel and the hole — so the band's own light streams inward and hugs the
-    // shadow, the way the disk glow does in Interstellar. Bounded by the pixel's
-    // angular distance to the hole (windings project to a tiny circle), so it can
-    // never blow up. Failed samples add NOTHING (glow is real light only).
-    vec3  glowCol  = vec3(0.0);
-    vec3  glowPrev = rd;              // projection of pos -> rd as pos -> 0
-    // Disc-plane crossing (see uHasDiscPlane): the bent ray's crossing of the
-    // dominant cloud's plane PAST the hole is the true source point of this
-    // pixel's primary image. Detected during the march (sign change of the
-    // plane distance once every hole is receding) and, failing that, on the
-    // straight escape line after the loop.
-    vec3  crossPos = vec3(0.0);
-    bool  hasCross = false;
+    // Disc-plane crossings, ALL of them: a winding ray meets the disc every
+    // half turn, and each crossing is another image (the wound echoes near the
+    // shadow — the extreme lensing). Each is sampled from the source that
+    // matches the ray's ARRIVAL direction there (lensSourceSample), minus the
+    // empty-sky floor so the sky is only counted once.
+    vec3  crossAcc = vec3(0.0);
+    float crossMax = 0.0;
+    int   nCross   = 0;
     float prevSide = 0.0;
     bool  sideInit = false;
     // Running transmittance through the volumetric dust the BENT ray crosses in
-    // front of the hole. Attenuates the glow progressively (light collected
-    // beyond a clump arrives reddened) and the final far-field sample.
+    // front of the hole. Attenuates the final far-field sample (reddened).
     vec3  dustT    = vec3(1.0);
     float stepFracRs = 0.5 * gStepJit;   // per-pixel phase: winding plateaus -> grain
     for (int step = 0; step < uMaxSteps && !captured; step++)
@@ -262,16 +318,54 @@ void main()
         vec3 prevPos = pos;
         pos = s.pos;
         vec3 nv = normalize(s.vel);
-        if (uComposite == 1 && uHasDiscPlane == 1 && !hasCross && movingAway) {
+        // NO movingAway gate: dropping the inbound-leg crossings switched those
+        // pixels to the escape-line fallback (a different estimator, different
+        // arrival direction, different source) — a hard-edged wedge at each
+        // side of the shadow. An inbound crossing is a real disc passage; the
+        // disc-edge fade already bounds what it can sample.
+        if (uComposite == 1 && uHasDiscPlane == 1 && nCross < 6) {
             float sd0 = dot(prevPos - uDiscPointL, uDiscNormal);
             float sd1 = dot(pos     - uDiscPointL, uDiscNormal);
             if (!sideInit) { prevSide = sd0; sideInit = true; }
             if (sd0 * sd1 < 0.0) {
                 vec3 Xc = mix(prevPos, pos, sd0 / (sd0 - sd1));
-                if (length(Xc - uDiscPointL) < uDiscRadL * 1.15) { crossPos = Xc; hasCross = true; }
+                // Gate by the MATTER, not the ray: a crossing counts iff its
+                // point lies beyond the front/back split — the same statement
+                // the flat foreground pass makes, so the ring emerges exactly
+                // where the flat matter ends, with no orphaned band beside the
+                // hole. (Gating on the ray "moving away" dropped crossings near
+                // closest approach — the dark crescents at the hole's sides.)
+                // The split surface is where deflection is still small, so the
+                // handover is smooth by construction.
+                {
+                    // No split gate here: pass membership is decided per particle
+                    // by its own magnification (cloudVert), so the back image holds
+                    // exactly what crossings should sample. (A soft |Xc|/split gate
+                    // sat at 0.5 for every plane-through-hole crossing and halved
+                    // the whole arch.)
+                    float w = 1.0 - smoothstep(0.95, 1.15, length(Xc - uDiscPointL) / max(uDiscRadL, 1e-6));
+                    // Sheet-model CONDITIONING, not an angle cut: the crossing
+                    // point slides along the sheet by ~D*pixAng/sin(elev) per
+                    // output pixel. While that is small against the cloud's own
+                    // structure scale the sample stays coherent (the disc's
+                    // shallow arch crossings are FINE); once neighbouring
+                    // pixels land decorrelated distances apart (grazing inside
+                    // a galaxy) the model smears — fade it to the sphere
+                    // fallback, the same estimator the no-crossing side uses,
+                    // so no boundary can form anywhere.
+                    {
+                        float slide = length(Xc) / (uPxPerRad * max(abs(dot(nv, uDiscNormal)), 1e-3));
+                        w *= 1.0 - smoothstep(1.0, 3.0, slide / max(0.05 * uDiscRadL, 1e-6));
+                    }
+                    if (w > 0.001) {
+                        crossAcc += (lensSourceSample(Xc, nv) - uBackground) * w;   // signed: dust darker than the sky floor stays dark
+                        crossMax  = max(crossMax, w);
+                        nCross++;
+                    }
+                }
             }
         }
-        if (uComposite == 1 && uHasDustVol == 1) {
+        if (false && uComposite == 1 && uHasDustVol == 1) {   // volume dust disabled: double-counted the sprite front dust
             // Front half-space only: back-of-hole dust is already baked into the
             // sampled back-field image; sampling it here would count it twice.
             float along = dot(pos, uHoleDir[0]) * uLUnitAU;
@@ -285,34 +379,6 @@ void main()
                         vec3  dExt = vec3(1.0, 1.0 + uDustReddeningL, 1.0 + 2.6 * uDustReddeningL);
                         dustT *= exp(-tauS * dExt);
                     }
-                }
-            }
-        }
-        if (uComposite == 1) {
-            float dTh = acos(clamp(dot(nv, vel), -1.0, 1.0));   // direction turned this step
-            if (dTh > 1e-5) {
-                vec3 c;
-                sweepCol += (sampleScene(nv, c) ? c : uBackground) * dTh;
-                sweepAng += dTh;
-            }
-            if (length(pos) > 1e-3) {
-                vec3  pd    = normalize(pos);
-                float dGlow = acos(clamp(dot(pd, glowPrev), -1.0, 1.0));
-                if (dGlow > 1e-6 && uHasCamCube == 1) {
-                    // Substep the arc: one march step can drag the projection across
-                    // dozens of image pixels (dt grows with r), and sampling that arc
-                    // once banded the glow into scalloped rows. Sample every ~4 px.
-                    // The glow reads the CUBE only: it is a soft volumetric term, and
-                    // dragging the full-res frame's sharp columns along the path
-                    // painted spokes and stripes; the cube's gentle footprint is the
-                    // right point-spread for collected light.
-                    float pixAng = 2.0 / (uProjFxFy.y * uResolution.y);
-                    int   n = int(clamp(dGlow / (4.0 * pixAng), 1.0, 24.0));
-                    for (int k = 0; k < n; k++) {
-                        vec3 sd = normalize(mix(glowPrev, pd, (float(k) + 0.5) / float(n)));
-                        glowCol += textureLod(uLensCube, sd + gCubeJit, 0.0).rgb * (uCubeGlowScale * dGlow / float(n)) * dustT;
-                    }
-                    glowPrev = pd;
                 }
             }
         }
@@ -335,19 +401,27 @@ void main()
         lensed = vec3(0.0);
     } else {
         // Weak bend: plain sample of the real frame in the (barely) bent direction —
-        // pixel-identical to no lensing as the sweep goes to zero. Strong bend: the
-        // sweep integral takes over, normalised by PI so a half-turn sweep matches
-        // the band's direct brightness and a multi-turn sweep brightens the rim —
-        // one brushed ring made of the scene's own light, no drawn arcs, no ghosts.
+        // pixel-identical to no lensing as the deflection goes to zero.
         // Escape-line crossing: most bent rays cross the disc plane on the
         // straight run PAST the marched region.
-        if (uHasDiscPlane == 1 && !hasCross) {
+        if (uHasDiscPlane == 1 && nCross == 0) {
             float dn = dot(vn, uDiscNormal);
             if (abs(dn) > 1e-6) {
                 float t = dot(uDiscPointL - pos, uDiscNormal) / dn;
                 if (t > 0.0) {
                     vec3 Xc = pos + t * vn;
-                    if (length(Xc - uDiscPointL) < uDiscRadL * 1.15) { crossPos = Xc; hasCross = true; }
+                    {
+                        float w = 1.0 - smoothstep(0.95, 1.15, length(Xc - uDiscPointL) / max(uDiscRadL, 1e-6));
+                        {
+                            float slide = length(Xc) / (uPxPerRad * max(abs(dot(vn, uDiscNormal)), 1e-3));
+                            w *= 1.0 - smoothstep(1.0, 3.0, slide / max(0.05 * uDiscRadL, 1e-6));   // conditioning, as above
+                        }
+                        if (w > 0.001) {
+                            crossAcc += (lensSourceSample(Xc, vn) - uBackground) * w;
+                            crossMax  = max(crossMax, w);
+                            nCross++;
+                        }
+                    }
                 }
             }
         }
@@ -359,29 +433,16 @@ void main()
             if (disc > 0.0) sdir = normalize(pos + (-b + sqrt(disc)) * vn);
         }
         vec3 primary = sampleScene(sdir, col) ? col : uBackground;
-        if (hasCross) {
-            // Sample the back field at the CROSSING POINT's own direction — the
-            // parallax-true source of this pixel's primary image. Soft-blended
-            // by distance to the disc edge so leaving the disc has no seam.
-            float edgeW = 1.0 - smoothstep(0.95, 1.15, length(crossPos - uDiscPointL) / max(uDiscRadL, 1e-6));
-            vec3 ccol;
-            if (edgeW > 0.001 && sampleScene(normalize(crossPos), ccol))
-                primary = mix(primary, ccol, edgeW);
-        }
-        // AVERAGE along the sweep, not sum/PI: the average converges exactly to the
-        // primary sample as the sweep shrinks, so the treated region is photometrically
-        // continuous with the unbent band at its edge. (Sum/PI under-counted any sweep
-        // shorter than PI — a brightness dip ringing the whole lensed region.)
-        // The average takes over ONLY past a full winding. Below that the final
-        // direction IS the physical answer and stays sharp — a spherical lens can
-        // only stretch sources TANGENTIALLY (beta < theta on the primary branch),
-        // which is what draws thin ring arcs. Engaging the smear earlier (it used
-        // to start at sweep 2.0) integrated the clumpy band along each pixel's
-        // RADIAL sweep path: tangential structure kept, radial structure erased —
-        // radial STREAKS, the "broken rings". Past ~2 pi the average is the whole
-        // sky's mean, azimuthally constant: the continuous photon-ring glow.
-        float w = smoothstep(6.283, 12.566, sweepAng);
-        lensed = mix(primary, sweepCol / max(sweepAng, 1e-4), w);
+        // The crossings REPLACE the escape sample where the disc covers it
+        // (crossMax -> 1) and stack on top of each other: one crossing behaves
+        // exactly like the old single-crossing remap; a winding ray adds an
+        // image per half turn — the wound echoes and the bright rim come from
+        // the geometry, not from a smear. (The sweep AVERAGE that used to take
+        // over past a full winding is what washed the near-hole zone into one
+        // colour; it is gone.)
+        if (nCross > 0)
+            primary = mix(primary, max(uBackground + crossAcc, vec3(0.0)), crossMax);
+        lensed = primary;
         // Anti-aliased shadow rim: feather toward black over a small band of impact
         // parameter above b_crit, instead of the per-pixel binary cut (stair-steps).
         for (int i = 0; i < uHoleCount; i++) {
@@ -391,12 +452,11 @@ void main()
         // Front volumetric dust occludes the lensed far field along the BENT
         // path — the ring genuinely dims behind a real clump (dustT is 1 when
         // no volumetric cloud is active, so nothing changes without it).
-        lensed *= dustT;
-        // The path-collected glow rides ON TOP of the remap (and outside the rim
-        // feather — it was emitted before the horizon): the remap is the far field,
-        // the glow is the material the bent ray passed on the way. Each glow
-        // sample was already attenuated by the dust in front of it at collection.
-        lensed += glowCol;
+        // (No volume-dust factor here: the foreground pass multiplies the lensed
+        // result by the SPRITE front dust — the look's truth — so the volume's
+        // dustT on top applied front dust TWICE whenever "Volumetric dust" was
+        // on: the hole visibly darkened the clouds. The glow term is likewise
+        // gone: with every crossing summed it double-poured the band's light.)
     }
 
     // No blend with the unbent pixel: the deflection goes to zero continuously, so
@@ -405,5 +465,9 @@ void main()
     // band at once — suppressing the lens for the first un-captures the second. The
     // near-behind matter is handled geometrically instead: the front/back split sits
     // slightly BEHIND the hole, so ~zero-displacement matter draws flat.)
-    imageStore(outImage, pix, vec4(lensed, 1.0));
+    if (uDebugView == 1) {
+        imageStore(outImage, pix, vec4(float(nCross) / 4.0, gDbgTA, abs(gDbgEArr), 1.0));
+        return;
+    }
+    imageStore(outImage, pix, vec4(lensed, lensAlpha));
 }

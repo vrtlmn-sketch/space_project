@@ -1247,11 +1247,15 @@ int main(int argc, char** argv) {
     // drops the front matter and looks wrong. renderH drives the sub-pixel resolve gate.
     auto computeLensFraming = [&](int renderH){
       renderer.lensBHActive = false;
+      renderer.lensBHStrong = false;
       renderer.lensBHIndex  = -1;
+      gLensBHRsAU = 0.0f;
       renderer.lensHoles.clear();
       renderer.lensDustVolRO = nullptr;   // re-picked below; never stale across frames
       renderer.lensPlaneRO   = nullptr;
       gLensCull = 0;
+      gLfCount  = 0;
+      gLfImages = 1;                      // one draw per particle until a hole says otherwise
       static const bool lensOff = std::getenv("LENS_OFF") != nullptr;   // harness A/B gate
       if (lensOff) return;
       if (!(renderer.lensingEnabled && renderer.realisticRasterView)) return;
@@ -1272,7 +1276,16 @@ int main(int argc, char** argv) {
         if (D < 1e-9) continue;
         const double th = std::asin(std::min(1.0,
             2.6 * (double)physicsObjects[i].schwarzschildRadius / D));
-        if (2.0 * th * pxPerRad < 2.0) continue;
+        // Activate on the EFFECT size, not the shadow size. The lens's reach is
+        // the Einstein angle (~sqrt(2 Rs / D)), which for a heavy hole is tens
+        // of pixels while the shadow is still sub-pixel — gating on the shadow
+        // switched the whole frame from "untouched" to "visibly rearranged" in
+        // one step (the jump: band dimmed into the arches, clouds stretched).
+        // Opening at thE ~ 3/4 px means the largest displacement is sub-pixel
+        // at the moment of activation and grows continuously from there.
+        const double thE = std::sqrt(2.0 * (double)physicsObjects[i].schwarzschildRadius /
+                                     std::max(D, 1e-12));
+        if (2.0 * th * pxPerRad < 2.0 && thE * pxPerRad < 0.75) continue;
         const double cosang = (dx*fwd.x + dy*fwd.y + dz*fwd.z) / D;
         const double halfCone = std::min(3.0, (double)renderer.zoom * 0.5 * 1.9 * kPI/180.0 + 12.0*th);
         if (cosang < std::cos(halfCone)) continue;
@@ -1282,11 +1295,53 @@ int main(int argc, char** argv) {
                 [](const auto& a, const auto& b){ return a.first > b.first; });
       if ((int)holes.size() > Renderer::kLensMaxHoles) holes.resize(Renderer::kLensMaxHoles);
       if (holes.empty()) return;
+
+      // ── Forward lens ───────────────────────────────────────────────────────
+      // Everything the per-source map needs, and nothing about the scene. Note
+      // what is NOT here: no dominant cloud, no disc plane, no split distance.
+      // That absence is the point — it is why a sphere, a disc seen face-on, two
+      // colliding galaxies and empty space all behave the same.
+      static const bool legacyLens = std::getenv("LENS_LEGACY") != nullptr;   // A/B against the old lens
+      if (renderer.lensForward && !legacyLens) {
+        renderer.EnsureLensLut();
+        const double* RV = gViewRotD;
+        gLfCount = (int)holes.size();
+        for (int k = 0; k < gLfCount; ++k) {
+          const auto&  po = physicsObjects[holes[(size_t)k].second];
+          const dvec3  bh = po.data.position;
+          const double dx = bh.x - camPos.x, dy = bh.y - camPos.y, dz = bh.z - camPos.z;
+          const double D  = std::sqrt(dx*dx + dy*dy + dz*dz);
+          gLfHoleRelD[k][0] = dx; gLfHoleRelD[k][1] = dy; gLfHoleRelD[k][2] = dz;
+          const double nx = dx / D, ny = dy / D, nz = dz / D;
+          gLfHoleDirW[k*3+0] = (float)nx; gLfHoleDirW[k*3+1] = (float)ny; gLfHoleDirW[k*3+2] = (float)nz;
+          gLfHoleDirV[k*3+0] = (float)(RV[0]*nx + RV[1]*ny + RV[2]*nz);
+          gLfHoleDirV[k*3+1] = (float)(RV[3]*nx + RV[4]*ny + RV[5]*nz);
+          gLfHoleDirV[k*3+2] = (float)(RV[6]*nx + RV[7]*ny + RV[8]*nz);
+          gLfHoleDist[k]     = (float)D;
+          gLfHoleRs[k]       = po.schwarzschildRadius;
+        }
+        gLfPxPerRad = (float)pxPerRad;
+        gLfFy       = (float)(1.0 / std::tan((double)renderer.zoom * 0.5 * kPI / 180.0));
+        gLfMaxMu    = renderer.lensMaxStretch;
+        if (const char* e = std::getenv("LF_MAXMU")) gLfMaxMu = (float)std::atof(e);
+        // One extra pass per hole draws that hole's SECONDARY image (the arc
+        // inside the Einstein ring). It is not a second model — the same map,
+        // the same sprites, a different root of the same equation — and the two
+        // images never share a pixel, so the multiplicative dust stays correct.
+        bool wantSecondary = renderer.lensSecondary;
+        if (const char* e = std::getenv("LF_SECONDARY")) wantSecondary = (std::atoi(e) != 0);
+        gLfImages   = wantSecondary ? (1 + gLfCount) : 1;
+        // The old two-pass lens must stay switched off: it is the thing being
+        // replaced, and lensBHActive is what gates every one of its passes.
+        return;
+      }
+
       const int bestBH = holes.front().second;
       for (const auto& hp : holes)
         renderer.lensHoles.push_back({ physicsObjects[hp.second].data.position,
                                        physicsObjects[hp.second].schwarzschildRadius });
       renderer.lensBHActive = true;
+      renderer.lensBHStrong = 2.0 * holes.front().first * pxPerRad >= 2.0;   // shadow resolvable → winding zone visible
       renderer.lensBHIndex  = bestBH;
       renderer.lensBHWorld  = physicsObjects[bestBH].data.position;
       renderer.lensBHRs     = physicsObjects[bestBH].schwarzschildRadius;
@@ -1324,9 +1379,10 @@ int main(int argc, char** argv) {
       // blend is done on the FRONT side instead (transition shell in cloudVert).
       static const double kSplit = [](){ const char* e = std::getenv("LENS_SPLIT_K");
                                          return e ? std::atof(e) : 1.0; }();
-      gLensBHSplitDist = (float)(kSplit * rl);
+      gLensBHSplitDist = (float)(kSplit * rl);   // provisional; re-anchored to the CLOUD PLANE below
       gLensBHShadowR   = (float)(std::tan(std::asin(std::min(1.0,
                              2.598 * rsAU / std::max(rl, rsAU*1.001)))) * f);
+      gLensBHRsAU      = (float)rsAU;
       static const double reachMul = [](){ const char* e = std::getenv("LENS_BEND_REACH");
                                            return e ? std::atof(e) : 1.0; }();
       gLensBendReach    = (float)(reachMul * std::sqrt(2.0 * rsAU * std::max(rl, rsAU)));
@@ -1345,6 +1401,27 @@ int main(int argc, char** argv) {
           }
         }
         renderer.lensSrcDistAU = (bestAny > 0.0f) ? (float)(rl + 2.0 * (double)bestAny) : 0.0f;
+        // The front/back split lives where the SPLIT IN THE MATTER is: the
+        // dominant cloud's plane, measured along the camera->hole line. With
+        // the hole inside the cloud's plane (the disc scenes) this is the hole
+        // distance, as before. With the hole in FRONT of the cloud it moves
+        // back to the plane — the matter between hole and plane is then drawn
+        // in the foreground pass with its own per-particle thin-lens map
+        // (cloudVert), whose displacement matches the crossing model exactly
+        // at the plane: the regimes join with no seam, no torn band.
+        if (renderer.lensPlaneRO) {
+          double R[9] = {1,0,0, 0,1,0, 0,0,1};
+          const vec3 rot = renderer.lensPlaneRO->rotationDeg;
+          if (rot.x != 0.0f || rot.y != 0.0f || rot.z != 0.0f) EulerDegToMat3d(rot, R);
+          const dvec3 n{ R[1], R[4], R[7] };
+          const dvec3 c0 = renderer.lensPlaneRO->coordinates;
+          const double denom = dxd * n.x + dyd * n.y + dzd * n.z;   // hole direction . plane normal
+          const double num   = (c0.x - camPos.x) * n.x + (c0.y - camPos.y) * n.y + (c0.z - camPos.z) * n.z;
+          double dPlane = (std::abs(denom) > 1e-6) ? num / denom : rl;
+          const double dMax = rl + 2.0 * std::max((double)bestAny, 0.0);
+          dPlane = std::min(std::max(dPlane, rl), dMax);
+          gLensBHSplitDist = (float)(kSplit * dPlane);
+        }
       }
     };
     computeLensFraming(renderer.GetFbHeight());
@@ -1555,9 +1632,9 @@ int main(int argc, char** argv) {
     // dispatch that consumes it, always with the site's own camera.
     auto renderLensWideBack = [&](const std::vector<int>& order){
       if (!renderer.lensBHActive || !renderer.lensingEnabled) return;
-      auto drawBackField = [&](){
+      auto drawBackField = [&](int cull = 2){
         const int savedCull = gLensCull;
-        gLensCull = 2;                                 // back field only, same as pass 1
+        gLensCull = cull;                              // 2: back field only (same as pass 1); 0: everything (apex vantage)
         for (int ci : order) {
           auto& c = clouds[ci];
           c->renderedObject.uploadTemperature(c->temperature);
@@ -1571,18 +1648,51 @@ int main(int argc, char** argv) {
         for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
         gLensCull = savedCull;
       };
-      // Full-sphere cube (6 small faces): what the sweep and the deep windings see.
-      // 512/face — the strong magnification near the photon ring stretches cube
-      // texels; 256 showed as blocky columns where the inner arc meets the band.
-      for (int face = 0; face < 6; ++face) {
-        if (!renderer.LensBeginFaceCam(face, 512)) break;
-        drawBackField();
-        renderer.LensEndFaceCam(face);
-      }
+      // Full-sphere cube (6 small faces): what the deep windings see. Only worth
+      // rendering when the strong-field zone is resolvable (lensBHStrong) — the
+      // weak-field regime never sends a ray to the cube rung.
+      if (renderer.lensBHStrong)
+        for (int face = 0; face < 6; ++face) {
+          if (!renderer.LensBeginFaceCam(face, 512)) break;
+          drawBackField();
+          renderer.LensEndFaceCam(face);
+        }
       // Wide planar buffer: mid-res tier for near-frame escape directions.
       if (renderer.LensBeginWide()) {
         drawBackField();
         renderer.LensEndWide();
+      }
+      // Apex cubes: the back field from a few Rs above and below the hole on the
+      // dominant cloud's plane normal — what a ray that went over (under) the
+      // hole sees when it lands on the far side. The disc-crossing sample reads
+      // these instead of the camera's image, so the lensed far side shows its
+      // surface from the same vantage whatever the camera's direction.
+      if (renderer.lensPlaneRO && renderer.lensBHStrong) {
+        double R[9] = {1,0,0, 0,1,0, 0,0,1};
+        const vec3 rot = renderer.lensPlaneRO->rotationDeg;
+        if (rot.x != 0.0f || rot.y != 0.0f || rot.z != 0.0f) EulerDegToMat3d(rot, R);
+        dvec3 n{ R[1], R[4], R[7] };                        // plane normal = local +Y in world
+        const dvec3 camPosW{ gCamAnchor[0] - renderer.cameraTranslate[0],
+                             gCamAnchor[1] - renderer.cameraTranslate[1],
+                             gCamAnchor[2] - renderer.cameraTranslate[2] };
+        const dvec3 toCam{ camPosW.x - renderer.lensBHWorld.x, camPosW.y - renderer.lensBHWorld.y, camPosW.z - renderer.lensBHWorld.z };
+        if (toCam.x * n.x + toCam.y * n.y + toCam.z * n.z < 0.0) { n.x = -n.x; n.y = -n.y; n.z = -n.z; }   // side 0 = the camera's side
+        const double h = 3.5 * (double)renderer.lensBHRs;    // the apex of a ray that lands on the near-behind disc
+        renderer.lensApexPos[0] = dvec3{ renderer.lensBHWorld.x + n.x * h, renderer.lensBHWorld.y + n.y * h, renderer.lensBHWorld.z + n.z * h };
+        renderer.lensApexPos[1] = dvec3{ renderer.lensBHWorld.x - n.x * h, renderer.lensBHWorld.y - n.y * h, renderer.lensBHWorld.z - n.z * h };
+        static const int apexFS = [](){ const char* e = std::getenv("LENS_APEX");
+                                        return e ? std::max(128, std::atoi(e)) : 512; }();
+        for (int which = 0; which < 2; ++which)
+          for (int face = 0; face < 6; ++face) {
+            if (!renderer.LensBeginFaceAt(face, apexFS, renderer.lensApexPos[which])) break;
+            // EVERYTHING, no membership cull: the apex cube is a radiance ORACLE
+            // for crossing samples, not part of the pass-1/pass-2 partition. The
+            // partition holds only what the REMAP must stretch; a crossing can
+            // land on matter of ANY magnification (the wings beside the hole),
+            // and culling it left the cube black there — the empty dome.
+            drawBackField(0);
+            renderer.LensEndFaceAt(face, which);
+          }
       }
     };
 
@@ -1703,6 +1813,7 @@ int main(int argc, char** argv) {
     auto lensForegroundCapture = [&](std::vector<int>& order){
       renderLensWideBack(order);   // fresh wide back field for THIS capture camera
       if (!renderer.LensBackFieldAndPrepareFront()) { gLensCull = 0; return; }
+      if (std::getenv("LENS_NOFRONT")) { gLensCull = 0; return; }   // diagnostic: lens output alone, no pass-2 front
       const float savedBend = gLensBendStrength;
       gLensBendStrength = 0.0f;
       gLensCull = 1;
@@ -1895,9 +2006,12 @@ int main(int argc, char** argv) {
         for (auto& c : clouds) if (c && !c->universeMember)
           c->temperature = (float)std::atof(eo);
       if (cmpFrame == cmpWait) {   // let buffers/scene settle first
-        // 360p default; CMP_W/CMP_H override for high-res RASTER captures.
-        const int W = std::getenv("CMP_W") ? std::atoi(std::getenv("CMP_W")) : 640;
-        const int H = std::getenv("CMP_H") ? std::atoi(std::getenv("CMP_H")) : 360;
+        // RT captures stay 360p (the compute path is slow); the RASTER capture is
+        // 1600x900 by default — it is judged by eye, and 360p hid the lens's
+        // artefacts behind its own blur. CMP_W/CMP_H override the raster size.
+        const int W = 640, H = 360;
+        const int RW = std::getenv("CMP_W") ? std::atoi(std::getenv("CMP_W")) : 1600;
+        const int RH = std::getenv("CMP_H") ? std::atoi(std::getenv("CMP_H")) : 900;
         // Optional camera offset (AU): --compare dx dy dz — for testing whether
         // structures stay attached to the scene (parallax) or swim with the camera.
         if (argc >= 5) {
@@ -2057,8 +2171,8 @@ int main(int argc, char** argv) {
         // 2) Performant (raster): draw the cinematic raster view + capture.
         if (std::getenv("SKIP_RASTER")) { std::cout << "[compare] wrote /tmp/cmp_rt.png (RT only)\n"; std::exit(0); }
         renderer.rayTracerView = false; renderer.realisticRasterView = true;
-        computeLensFraming(H);                 // black-hole lens framing for the compare capture
-        renderer.BeginRecordRaster(W, H);
+        computeLensFraming(RH);                // black-hole lens framing for the compare capture
+        renderer.BeginRecordRaster(RW, RH);
         renderer.DrawSkybox(skybox);
         for (auto& o : physicsObjects)
           renderer.DrawPhysicsObject(o.renderedObject, o.data.mass, o.temperature,
@@ -2082,9 +2196,10 @@ int main(int argc, char** argv) {
                               ok ? &clouds[sc]->rotationDeg : nullptr);
         }
         renderer.EndNebulaPass();
-        lensForegroundCapture(cmpOrder);       // lens the hole + flat front into the capture
+        if (!std::getenv("LENS_PASS1"))        // LENS_PASS1=1: capture the RAW back-field image (diagnostic)
+          lensForegroundCapture(cmpOrder);     // lens the hole + flat front into the capture
         renderer.SetImagePath("/tmp/cmp_raster.png");
-        renderer.CaptureRecordRasterImage(W, H);
+        renderer.CaptureRecordRasterImage(RW, RH);
         renderer.EndRecordRaster();
         std::cout << "[compare] wrote /tmp/cmp_rt.png and /tmp/cmp_raster.png\n";
         // Harness gate: save the scene as a project before exiting, so

@@ -56,7 +56,10 @@ extern float  gLensCullCos;     // cos of the cull cone half-angle
 // behind, meeting the remap's strength at the split. Matter whose primary
 // image would form inside the photon sphere (gLensBHShadowR) is swallowed.
 extern float  gLensBHSplitDist; // far split: image remap beyond, particles nearer
-extern float  gLensBHShadowR;   // shadow (photon-capture) radius, aspect-corrected NDC
+extern float  gLensBHShadowR;
+extern float  gLensBHRsAU;      // dominant hole Rs (AU) for the per-particle magnification split
+extern int    gLensSizeRefOn;     // apex passes: size perspective sprites by the REAL camera's distance
+extern float  gLensSizeRefRel[3], gLensSizeRefFy, gLensSizeRefH;   // shadow (photon-capture) radius, aspect-corrected NDC
 // Cosmetic single-image thin-lens bend of the FRONT particles (front pass only),
 // so they agree with the lensed background. The realism comes from the baked cube.
 extern float  gLensBHScreen[2]; // hole position in aspect-corrected NDC
@@ -68,6 +71,32 @@ extern int    gLensDustToBuffer;// 1 = dust drawn into the fg extinction buffer:
 extern float  gLensSlabMin;     // foreground depth-slab cross-fade band [min,max] in hole-distance
 extern float  gLensSlabMax;     // 0/0 = no slab split
 extern float  gLensSlabFade;    // half-width of the cross-fade at each slab edge
+
+// ── Forward lens (src/shaders/lens_forward.glsl, src/lensForward.cpp) ────────
+// The state the per-source lens map needs. Every one of these is derived from
+// the holes alone — there is deliberately nothing here describing the SCENE (no
+// disc plane, no dominant cloud, no split distance), which is what makes the map
+// behave the same in a flat galaxy, a spherical one, two colliding ones, or
+// empty space.
+extern int    gLfCount;          // resolvable holes; 0 = the map is skipped entirely
+extern float  gLfHoleDirV[4 * 3];// unit camera->hole, VIEW axes  (for the image geometry)
+extern float  gLfHoleDirW[4 * 3];// unit camera->hole, WORLD axes (for the per-particle delta)
+extern float  gLfHoleDist[4];    // Dl, AU
+extern float  gLfHoleRs[4];      // rs, AU
+extern double gLfHoleRelD[4][3]; // camera-relative hole position, DOUBLE — delta0 is computed
+                                 // from this per object, because (axial distance - Dl) in
+                                 // float32 at 1e6 AU leaves nothing of the near-hole term
+extern float  gLfFy;             // uProj[1][1]: screen space is tan-space times this
+extern float  gLfPxPerRad;       // pixels per radian: the "too small to matter" gate
+extern float  gLfMaxMu;          // stretch cap (fill-rate guard)
+extern int    gLfImages;         // draw instances: 1 (direct) + one secondary image per hole
+extern unsigned gLfLutTex;       // RG32F deflection table, built by lensfwd::DeflectionLutRG()
+
+// Uploads the whole lens block for `program`, including this object's own
+// delta0 for each hole, computed in double from its camera-relative centre.
+// Starfield chunks call it again per chunk with the CHUNK's centre, because
+// that is what the vertex shader offsets from.
+void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz);
 
 class RenderedObject {
   friend class CloudObject;  // CloudObject needs direct access for GPU readback

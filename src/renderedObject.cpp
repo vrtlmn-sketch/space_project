@@ -32,9 +32,61 @@ float  gLensBendStrength = 1.0f;
 float  gLensBendReach = 1e30f;
 int    gLensDustLayer = 0;
 int    gLensDustToBuffer = 0;
+int    gLensSizeRefOn = 0;
+float  gLensSizeRefRel[3] = {0, 0, 0}, gLensSizeRefFy = 1.0f, gLensSizeRefH = 720.0f;
+float  gLensBHRsAU = 0.0f;
 float  gLensSlabMin = 0.0f;
 float  gLensSlabMax = 0.0f;
 float  gLensSlabFade = 0.0f;
+
+int      gLfCount = 0;
+float    gLfHoleDirV[4 * 3] = {0};
+float    gLfHoleDirW[4 * 3] = {0};
+float    gLfHoleDist[4]     = {0};
+float    gLfHoleRs[4]       = {0};
+double   gLfHoleRelD[4][3]  = {{0}};
+float    gLfFy              = 1.0f;
+float    gLfPxPerRad        = 1.0f;
+float    gLfMaxMu           = 24.0f;
+int      gLfImages          = 1;
+unsigned gLfLutTex          = 0;
+
+void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz)
+{
+  GLint l = glGetUniformLocation((GLuint)program, "uLfCount");
+  if (l < 0) return;                      // shader has no lens (lines, RT, post)
+  glUniform1i(l, gLfCount);
+  if (gLfCount <= 0) return;
+  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDirV")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirV);
+  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDirW")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirW);
+  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDist")) >= 0) glUniform1fv(l, gLfCount, gLfHoleDist);
+  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleRs"))   >= 0) glUniform1fv(l, gLfCount, gLfHoleRs);
+  if ((l = glGetUniformLocation((GLuint)program, "uLfPxPerRad")) >= 0) glUniform1f(l, gLfPxPerRad);
+  if ((l = glGetUniformLocation((GLuint)program, "uLfMaxMu"))    >= 0) glUniform1f(l, gLfMaxMu);
+  if ((l = glGetUniformLocation((GLuint)program, "uLfFy"))       >= 0) glUniform1f(l, gLfFy);
+  // delta0: how far THIS object's centre sits behind each hole, along that
+  // hole's line of sight. Differenced in DOUBLE here so the shader only ever
+  // adds a small per-particle offset to it — forming the same quantity in the
+  // shader would subtract two ~1e6 AU floats and destroy exactly the near-hole
+  // term that an accretion disc at a few rs depends on.
+  float d0[4] = {0, 0, 0, 0};
+  for (int h = 0; h < gLfCount && h < 4; ++h) {
+    const double rx = cx - gLfHoleRelD[h][0];
+    const double ry = cy - gLfHoleRelD[h][1];
+    const double rz = cz - gLfHoleRelD[h][2];
+    d0[h] = (float)(rx * (double)gLfHoleDirW[h * 3 + 0]
+                  + ry * (double)gLfHoleDirW[h * 3 + 1]
+                  + rz * (double)gLfHoleDirW[h * 3 + 2]);
+  }
+  if ((l = glGetUniformLocation((GLuint)program, "uLfDelta0")) >= 0) glUniform1fv(l, gLfCount, d0);
+  if (gLfLutTex && (l = glGetUniformLocation((GLuint)program, "uLfLut")) >= 0) {
+    glActiveTexture(GL_TEXTURE7);
+    glBindTexture(GL_TEXTURE_2D, (GLuint)gLfLutTex);
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(l, 7);
+  }
+}
+
 // FOV (degrees) below which the double view-space centre engages. Above it the
 // float shader path is used unchanged, so the regression baseline is untouched.
 static constexpr float kViewCentreFovDeg = 2.0f;
@@ -1031,9 +1083,17 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
   if ((lc = glGetUniformLocation(program, "uBHBendStr"))   >= 0) glUniform1f(lc, gLensBendStrength);
   if ((lc = glGetUniformLocation(program, "uBHBendReach")) >= 0) glUniform1f(lc, gLensBendReach);
   if ((lc = glGetUniformLocation(program, "uBHDustLayer")) >= 0) glUniform1i(lc, gLensDustLayer);
+  if ((lc = glGetUniformLocation(program, "uSizeRefOn"))  >= 0) glUniform1i(lc, gLensSizeRefOn);
+  if ((lc = glGetUniformLocation(program, "uSizeRefRel")) >= 0) glUniform3fv(lc, 1, gLensSizeRefRel);
+  if ((lc = glGetUniformLocation(program, "uSizeRefFy"))  >= 0) glUniform1f(lc, gLensSizeRefFy);
+  if ((lc = glGetUniformLocation(program, "uSizeRefH"))   >= 0) glUniform1f(lc, gLensSizeRefH);
+  if ((lc = glGetUniformLocation(program, "uLensRs"))      >= 0) glUniform1f(lc, gLensBHRsAU);
   if ((lc = glGetUniformLocation(program, "uBHSlabMin"))   >= 0) glUniform1f(lc, gLensSlabMin);
   if ((lc = glGetUniformLocation(program, "uBHSlabMax"))   >= 0) glUniform1f(lc, gLensSlabMax);
   if ((lc = glGetUniformLocation(program, "uBHSlabFade"))  >= 0) glUniform1f(lc, gLensSlabFade);
+
+  // Forward lens: this cloud's own offset from each hole, in double.
+  uploadLensForwardUniforms(program, ox, oy, oz);
 }
 
 void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],
@@ -1061,7 +1121,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   // 7.29 -> 9.14 inside a galaxy). That is a LOOK change, and the look is the
   // contract — it needs explicit sign-off, not a drive-by fix. Keep this call
   // byte-identical to the signed-off behaviour until then.
-  glDrawArrays(GL_POINTS, 0, bufferSize);
+  glDrawArraysInstanced(GL_POINTS, 0, bufferSize, gLfImages);
   glEnable(GL_DEPTH_TEST);
   // The post chain (bloom/tonemap) relies on overwrite semantics — leaking
   // additive blending here makes every later pass ACCUMULATE frame over frame
@@ -1876,10 +1936,13 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     // Per-chunk double view-space centre (overrides the cloud-wide one set in
     // transformPerspectiveMesh) so a deeply-zoomed chunk galaxy doesn't jitter.
     uploadViewCentre(program, vis[k].cx, vis[k].cy, vis[k].cz, fovDeg);
+    // The vertex shader offsets from uChunkCenter here, so the lens's delta0
+    // must be measured from the CHUNK, not from the galaxy's centre.
+    uploadLensForwardUniforms(program, vis[k].cx, vis[k].cy, vis[k].cz);
     if (le >= 0) glUniform1f(le, sc.extent);
     if (lp >= 0) glUniform1f(lp, vis[k].screenPx);
     if (ld >= 0) glUniform1f(ld, FarFieldDim(vis[k].want, n, cineFarFalloff));
-    glDrawArrays(GL_POINTS, sc.first, n);
+    glDrawArraysInstanced(GL_POINTS, sc.first, n, gLfImages);
     vis[k].drew = n;
     drawn += n;
   }
@@ -2941,19 +3004,19 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       glBlendFunc(GL_ONE, GL_ONE);
       if (passLoc >= 0) glUniform1i(passLoc, 0);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArrays(GL_POINTS, 0, nStars);
+      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
 
       // 2. Glowing gas — emission nebulosity near hot young stars (additive).
       if (cineGasStrength > 0.0f) {
         if (passLoc >= 0) glUniform1i(passLoc, 4);
         if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-        else             glDrawArrays(GL_POINTS, 0, nStars);
+        else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
       }
 
       // 3. Star cores — the resolved (bright) individual stars only.
       if (passLoc >= 0) glUniform1i(passLoc, 1);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArrays(GL_POINTS, 0, nStars);
+      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
     }
 
     // 4. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
@@ -2965,7 +3028,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       glBlendFunc(GL_ZERO, GL_SRC_COLOR);
       if (passLoc >= 0) glUniform1i(passLoc, 3);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArrays(GL_POINTS, 0, nStars);
+      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
     }
 
     glDisable(GL_BLEND);
@@ -2989,7 +3052,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   }
 
   if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-  else             glDrawArrays(GL_POINTS, 0, nStars);
+  else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
 
   // Dark matter: gray dots, debug view only. A separate draw of the tail with
   // uDMDraw on so the shader ignores the star hash/colour and paints them gray.

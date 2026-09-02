@@ -37,6 +37,19 @@ uniform float uBHDist;      // camera->hole distance
 uniform float uBHSplitDist; // two-pass split (~4x hole distance): remap beyond, particles nearer
 uniform float uBHShadowR;   // photon-capture radius, aspect-corrected NDC
 uniform float uBHCullCos;   // cos of the cull cone half-angle
+uniform float uLensRs;      // dominant hole's Schwarzschild radius (AU) — per-particle magnification
+// Apex-cube photometry (the lens's off-camera vantages). Lensing conserves
+// SURFACE BRIGHTNESS, so a patch of cloud must read equally bright per
+// steradian from the vantage and from the real camera. Rule: size every
+// sprite by the CAMERA's rule at the particle's camera distance, then scale
+// by (camera distance / vantage distance). World-sized sprites (gas, dust)
+// reduce to their own formula; fixed-pixel sprites (star cores, haze) grow
+// for matter near the vantage — without this the inner region read as sparse
+// dots over darkness (the fake "gap" above the shadow).
+uniform int   uSizeRefOn;
+uniform vec3  uSizeRefRel;     // real camera position relative to THIS pass's camera
+uniform float uSizeRefFy;      // main camera's 1/tan(fov/2)
+uniform float uSizeRefH;       // main frame height (px)
 // Cosmetic single-image thin-lens bend of the FRONT particles (front pass only).
 uniform vec2  uBHScreen;    // hole position in aspect-corrected NDC
 uniform float uBHEinsteinR; // Einstein radius in aspect-corrected NDC (0 = no bend)
@@ -78,6 +91,17 @@ out float vHot;     // 1 = hot blue star (seeds glowing gas)
 out float vRim;     // world-lit rim factor forwarded to the density map
 out float vSlabW;   // depth-slab cross-fade weight (1 = full; <1 near a slab edge)
 
+// Lens frame handed to the fragment shader so it can run the map's EXPLICIT
+// direction (image angle -> source angle) once per pixel. All flat: a point
+// sprite is one vertex, so interpolating them would be pure cost.
+flat out float vLfSrcRad;  // the source's UNLENSED half-size, screen space; 0 = not lensed
+flat out vec2  vLfSrcS;    // where the source would be WITHOUT the lens, screen space
+flat out vec2  vLfCenterS; // where this sprite is actually drawn, screen space
+flat out float vLfHalfS;   // the drawn sprite's half-size, screen space
+flat out vec3  vLfHoleN;   // owner hole's unit direction, view space
+flat out vec3  vLfGeom;    // (delta, Dl, rs) of the hole that owns this image
+flat out float vLfBetaS;   // signed source angle at the sprite centre (+ direct, - secondary)
+
 // Volumetric dust (opt-in per cloud): the dust FIELD moved to dust_common.glsl
 // so the sprite path, the per-star transmission below and the screen march
 // (dustVolFrag.glsl) read the SAME lanes. Aliases keep the star-identity
@@ -88,6 +112,7 @@ uniform vec3      uDustVolLo;   // volume box, cloud-local
 uniform vec3      uDustVolHi;
 
 #include "dust_common.glsl"
+#include "lens_forward.glsl"
 
 float hash11(float p) { return dcHash11(p); }
 float hash13(vec3 p)  { return dcHash13(p); }
@@ -107,6 +132,8 @@ vec3 blackbody(float T) {
 }
 
 void main() {
+  vLfSrcRad = 0.0; vLfSrcS = vec2(0.0); vLfCenterS = vec2(0.0); vLfHalfS = 0.0;
+  vLfHoleN  = vec3(0.0, 0.0, -1.0); vLfGeom = vec3(0.0); vLfBetaS = 0.0;
   // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
   // Starfield chunks arrive ALREADY camera-relative (the big subtraction was
   // done in double on the CPU), so they must not be offset again.
@@ -140,62 +167,28 @@ void main() {
   vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
   gl_Position     = centreClip + offsetClip;
 
-  // Two-pass split about the hole: a pure HALF-SPACE at the FAR split distance
-  // (~4x the hole distance). The image remap treats its sources as at infinity,
-  // which is only honest for matter far behind the hole — so only that goes to
-  // pass 1. Everything nearer (the SHELL: foreground AND the near-behind band)
-  // draws in pass 2 with the depth-correct per-particle displacement below,
-  // which is zero in front and grows smoothly with depth — the cloud itself
-  // bends, and flows into the rim instead of butting against a seam.
-  vSlabW = 1.0;
-  if (uBHCull != 0) {
-    vec3  P      = center + offset;          // this particle, camera-relative (world axes)
-    float pd     = length(P);
-    bool  behind = pd > uBHSplitDist;
-    bool  cull   = (uBHCull == 2) ? !behind : behind;
-    // Depth SLAB split (front pass only): the foreground is drawn one slab at a time,
-    // each remapped at its own strength (near hole full → far flat) and composited
-    // back-to-front. The weight ramps in/out over uBHSlabFade at each edge and adjacent
-    // slabs OVERLAP, so a particle crossing a boundary cross-fades between slabs instead
-    // of popping. The frag scales the sprite by this weight.
-    if (!cull && uBHCull == 1 && uBHSlabMax > 0.0) {
-      float d3dS = length(P - uBHDirCam * uBHDist);
-      float wl = smoothstep(uBHSlabMin - uBHSlabFade, uBHSlabMin + uBHSlabFade, d3dS);
-      float wh = 1.0 - smoothstep(uBHSlabMax - uBHSlabFade, uBHSlabMax + uBHSlabFade, d3dS);
-      vSlabW = wl * wh;
-      if (vSlabW < 0.01) cull = true;
-    }
-    if (cull) {
-      gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // outside clip space → discarded
+  // ── Gravitational lensing ────────────────────────────────────────────────
+  // Every source — star, haze lobe, dust puff, in front of the hole or behind
+  // it — is displaced by the SAME map, computed from its own position. There is
+  // no front/back pass, no plane, no split: a source in front of the hole gets a
+  // deflection of exactly zero and therefore covers the shadow, one level with
+  // the hole gets half the bend, one behind gets all of it, continuously.
+  // gl_InstanceID selects which image this draw is placing (0 = the direct
+  // image, 1..N = the secondary image around hole N-1); the two occupy disjoint
+  // regions of the screen, so the multiplicative dust can never darken a pixel
+  // twice.
+  float lfSrcRad = 0.0;      // the sprite's UNLENSED angular radius (0 = not lensed)
+  {
+    vec4 lensed = gl_Position;
+    if (!lfPlace(lensed, offset, uProj[0][0], uProj[1][1], gl_InstanceID)) {
+      gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // no image here → discarded
       gl_PointSize = 0.0;
       return;
     }
+    gl_Position = lensed;
   }
 
-  // Per-particle bend of the surviving FRONT particles: a 3D BUBBLE around the
-  // hole. Only matter genuinely CLOSE to the hole in 3D winds into the rim —
-  // "bent, but only near the hole" — while everything nearer the camera draws
-  // flat and COVERS, including partially covering the shadow. (A depth-plane
-  // ramp was tried here and displaced a whole ring of the disc at the hole's
-  // DISTANCE regardless of its 3D distance to the hole — evacuating the centre
-  // and uncovering the hole, the exact failure the slab work solved. The 3D
-  // ball is the correct criterion, and uBHBendReach — the Bend Reach slider —
-  // sets how much of the cloud participates in the rim.)
-  if (uBHCull == 1 && uBHEinsteinR > 0.0 && gl_Position.w > 1e-6) {
-    vec3  bhRel = uBHDirCam * uBHDist;                                      // hole, camera-relative
-    float d3d   = length((center + offset) - bhRel);                       // this particle → hole, 3D
-    float str   = uBHBendStr * (1.0 - smoothstep(uBHBendReach * 0.4, uBHBendReach, d3d));
-    if (str > 0.001) {
-      float aspect = uProj[1][1] / uProj[0][0];
-      vec2  pn = gl_Position.xy / gl_Position.w;                              // NDC
-      vec2  u  = vec2(pn.x * aspect, pn.y) - uBHScreen;                       // aspect-corrected offset
-      float r  = length(u);
-      float rl = 0.5 * (r + sqrt(r*r + 4.0 * uBHEinsteinR * uBHEinsteinR));   // primary-image radius
-      rl = mix(r, rl, str);
-      vec2  q2 = uBHScreen + u * (rl / max(r, 1e-6));
-      gl_Position.xy = vec2(q2.x / aspect, q2.y) * gl_Position.w;
-    }
-  }
+  vSlabW = 1.0;
 
   vRim = aRim;
   float id = float(gl_VertexID);
@@ -232,6 +225,13 @@ void main() {
   }
 
   float ps = (uCinePixelScale > 0.0) ? uCinePixelScale : 1.0;  // SSAA point-size scale
+  float sizeBoost = 1.0;
+  if (uSizeRefOn == 1) {
+    vec3  Pp    = center + offset;
+    float dRef  = length(Pp - uSizeRefRel);
+    float dHere = max(length(Pp), 1e-4);
+    sizeBoost   = clamp(dRef / dHere, 0.25, 16.0);
+  }
 
   if (uCloudPass == 1) {
     // Core pass: ONLY resolved (bright) stars draw as sharp points; the faint
@@ -254,7 +254,9 @@ void main() {
     if (uGasStrength > 0.0 && vHot > 0.22 && vMag > 0.40 && gl_Position.w > 1e-4) {
       vSeed = hash11(id * 12.3 + 5.0) * 20.0;
       float worldR = uDustInfluence * 2.0;
-      float px = worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
+      float px = (uSizeRefOn == 1)
+          ? worldR * uSizeRefFy / max(length(center + offset - uSizeRefRel), 1e-4) * (uSizeRefH * 0.5)
+          : worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
       gl_PointSize = clamp(px, 6.0, 150.0) * ps;
     } else {
       gl_PointSize = 0.0;
@@ -276,7 +278,9 @@ void main() {
       // far away, no giant discs up close. (uProj[1][1] = 1/tan(fov/2). Note
       // uDustInfluence is ~0.04× the galaxy radius, so the factor is >1.)
       float worldR = uDustInfluence * 1.5;
-      float px = worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
+      float px = (uSizeRefOn == 1)
+          ? worldR * uSizeRefFy / max(length(center + offset - uSizeRefRel), 1e-4) * (uSizeRefH * 0.5)
+          : worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
       gl_PointSize = clamp(px * (0.7 + 0.5 * lane), 3.0, 160.0) * ps;
     } else {
       gl_PointSize = 0.0;   // not in a dust lane / behind camera
@@ -303,5 +307,72 @@ void main() {
     // further away it got and ended up outshining nearby stars.
     if (uChunkScreenPx > 0.0) sz = min(sz, max(uChunkScreenPx, 1.0));
     gl_PointSize = sz;
+  }
+  gl_PointSize *= sizeBoost;   // apex-vantage surface-brightness parity (1.0 everywhere else)
+  if (uSizeRefOn == 1) gl_PointSize = min(gl_PointSize, uViewportH * 0.6);   // fill-rate guard
+
+  // ── Lensed sprite footprint ──────────────────────────────────────────────
+  // A point sprite has no extent to stretch, so give it the extent its image
+  // needs and let the FRAGMENT shader carve the real shape out of it. The
+  // footprint is the image of the source disc under the local Jacobian:
+  // tangential magnification theta/beta (this is what turns a puff into an arc)
+  // and radial magnification dtheta/dbeta, plus the sagitta of the arc's own
+  // curvature, since a square sprite has to bound a bent shape.
+  //
+  // Brightness is NOT touched here. The fragment samples the source profile at
+  // each pixel's true source point, so a stretched image covers more pixels at
+  // the SAME per-pixel intensity — which is exactly what conserved surface
+  // brightness means, and why lensed material looks like the same material.
+  // Anything that scaled brightness by magnification here would be the
+  // already-rejected uSampleWeight mistake in a new coat.
+  if (gLfActive && gl_PointSize > 0.0) {
+    float halfS   = gl_PointSize / max(uViewportH, 1.0);   // UNLENSED half-size, screen space
+    float srcAng  = halfS / max(uProj[1][1], 1e-6);         // ... as an angle
+    // FINITE-SOURCE LIMIT. The tangential magnification theta/beta diverges as a
+    // source approaches the axis, but a source of angular radius R can never be
+    // closer to the axis than R, so its stretch is bounded by theta/R. This is
+    // the physical reason real lensed images are bright arcs and not infinitely
+    // thin infinitely long ones.
+    // Without it a 160 px dust puff near the axis asked for a 500 px footprint,
+    // hit the fill-rate cap, and then covered its ENTIRE square with source —
+    // the hard-edged rectangle across the frame. Capping the pixels without
+    // capping the magnification is what turns an arc into a box.
+    float muT     = min(gLfMuT, gLfThetaS / max(srcAng, 1e-30));
+    float muMax   = max(muT, gLfMuR);
+    // A BUDGET ON HOW FAR A SPRITE MAY BE STRETCHED — and it has to be spent by
+    // shrinking the SOURCE, never by shrinking the footprint. Sizing the
+    // footprint from a capped magnification while the fragment shader still maps
+    // pixels through the TRUE one leaves every pixel inside the source disc, so
+    // the sprite fills its whole square: dark red rectangles stacked over the
+    // hole. Shrinking the source keeps the two consistent — the sprite draws a
+    // smaller piece of its puff, correctly stretched, and the profile still runs
+    // out exactly at the footprint edge.
+    // Both budgets — the stretch limit and the fill-rate limit — are expressed
+    // as one largest-allowed footprint, and BOTH are spent by shrinking the
+    // source. Clamping gl_PointSize on its own afterwards is what put the boxes
+    // back: a clamped footprint with an unclamped source leaves every pixel
+    // inside the source disc again.
+    float pxCap    = uViewportH * 0.35;                      // largest sprite we will draw
+    float maxHalfA = min(uLfMaxMu * srcAng,
+                         pxCap / (uProj[1][1] * max(uViewportH, 1.0)));
+    float srcUse   = min(srcAng, maxHalfA / max(muMax, 1e-30));
+    float tangA    = srcUse * muT;                           // along the arc
+    float radlA    = srcUse * gLfMuR;                        // across it
+    // A square sprite has to bound a BENT shape, so allow for the arc's sagitta.
+    float sagA     = (gLfThetaS > 1e-12) ? (tangA * tangA) / (2.0 * gLfThetaS) : 0.0;
+    float halfA    = max(radlA + sagA, tangA);
+    // Final consistency: if the sagitta pushed the footprint over budget, shrink
+    // the source to match. The image extent falls at least as fast as the source
+    // does, so the profile still runs out inside the footprint.
+    if (halfA > maxHalfA) { srcUse *= maxHalfA / halfA; halfA = maxHalfA; }
+    gl_PointSize   = halfA * uProj[1][1] * max(uViewportH, 1.0);
+    halfS          = srcUse * uProj[1][1];                   // what the frag clips against
+  vLfSrcRad  = halfS;
+    vLfSrcS    = gLfSrcS;
+    vLfCenterS = gLfCenterS;
+    vLfHalfS   = gl_PointSize / max(uViewportH, 1.0);
+    vLfHoleN   = gLfHoleN;
+    vLfGeom    = gLfGeom;
+    vLfBetaS   = gLfBetaS;
   }
 }
