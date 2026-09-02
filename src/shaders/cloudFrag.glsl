@@ -112,21 +112,18 @@ vec2 lfSourceCoord() {
     vec2  fragS = vLfCenterS + q * vLfHalfS;
     vec3  d     = normalize(vec3(fragS / uLfFy, -1.0));
     vec3  n     = vLfHoleN;
-    float c     = dot(d, n);
+    float c     = dot(d, n);                        // = cos(theta), free
     vec3  tv    = d - n * c;
-    float st    = length(tv);
+    float st    = length(tv);                       // = sin(theta), free
     if (st < 1e-20) discard;                        // dead on the hole's axis
-    float th    = atan(st, c);                      // this pixel's image angle
-    float bp    = lfBeta(th, vLfGeom.x, vLfGeom.y, vLfGeom.z);   // ... its source angle, signed
-    if (bp < -1e29) discard;                        // this pixel's ray is captured
-    // ONE image per pixel. The sign of beta says which branch the pixel is on,
-    // and a sprite only ever draws its own, so the direct and secondary images
-    // tile the screen without overlapping — which is what lets the multiplicative
-    // dust be drawn twice and still never darken a pixel twice.
-    if ((bp >= 0.0) != (vLfBetaS >= 0.0)) discard;
-    // Rotate the hole direction toward this pixel by the SOURCE angle. A negative
-    // bp lands on the far side on its own, so this one line covers both images.
-    vec3  sdir = n * cos(bp) + (tv / st) * sin(bp);
+    vec3  sdir; bool primary;
+    if (!lfSourceDir(d, n, c, st, tv / st, vLfGeom.x, vLfGeom.y, vLfGeom.z, sdir, primary))
+        discard;                                    // this pixel's ray is captured
+    // ONE image per pixel. Which branch the pixel is on picks it, and a sprite
+    // only ever draws its own, so the direct and secondary images tile the screen
+    // without overlapping — which is what lets the multiplicative dust be drawn
+    // twice and still never darken a pixel twice.
+    if (primary != (vLfBetaS >= 0.0)) discard;
     if (sdir.z >= 0.0) discard;                     // source would be behind the camera
     vec2  srcS = (sdir.xy / -sdir.z) * uLfFy;
     vec2  pc   = (srcS - vLfSrcS) / vLfSrcRad;      // where in the sprite's own profile this is

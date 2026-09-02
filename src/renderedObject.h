@@ -89,6 +89,7 @@ extern double gLfHoleRelD[4][3]; // camera-relative hole position, DOUBLE — de
 extern float  gLfFy;             // uProj[1][1]: screen space is tan-space times this
 extern float  gLfPxPerRad;       // pixels per radian: the "too small to matter" gate
 extern float  gLfMaxMu;          // stretch cap (fill-rate guard)
+extern float  gLfMaxSprite;      // largest lensed sprite, fraction of viewport height
 extern int    gLfImages;         // draw instances: 1 (direct) + one secondary image per hole
 extern unsigned gLfLutTex;       // RG32F deflection table, built by lensfwd::DeflectionLutRG()
 

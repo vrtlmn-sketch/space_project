@@ -352,7 +352,7 @@ void main() {
     // source. Clamping gl_PointSize on its own afterwards is what put the boxes
     // back: a clamped footprint with an unclamped source leaves every pixel
     // inside the source disc again.
-    float pxCap    = uViewportH * 0.35;                      // largest sprite we will draw
+    float pxCap    = uViewportH * uLfMaxSprite;              // largest sprite we will draw
     float maxHalfA = min(uLfMaxMu * srcAng,
                          pxCap / (uProj[1][1] * max(uViewportH, 1.0)));
     float srcUse   = min(srcAng, maxHalfA / max(muMax, 1e-30));
@@ -367,6 +367,7 @@ void main() {
     if (halfA > maxHalfA) { srcUse *= maxHalfA / halfA; halfA = maxHalfA; }
     gl_PointSize   = halfA * uProj[1][1] * max(uViewportH, 1.0);
     halfS          = srcUse * uProj[1][1];                   // what the frag clips against
+
   vLfSrcRad  = halfS;
     vLfSrcS    = gLfSrcS;
     vLfCenterS = gLfCenterS;

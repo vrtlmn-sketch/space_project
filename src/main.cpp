@@ -1324,6 +1324,8 @@ int main(int argc, char** argv) {
         gLfFy       = (float)(1.0 / std::tan((double)renderer.zoom * 0.5 * kPI / 180.0));
         gLfMaxMu    = renderer.lensMaxStretch;
         if (const char* e = std::getenv("LF_MAXMU")) gLfMaxMu = (float)std::atof(e);
+        gLfMaxSprite = renderer.lensMaxSprite;
+        if (const char* e = std::getenv("LF_MAXSPRITE")) gLfMaxSprite = (float)std::atof(e);
         // One extra pass per hole draws that hole's SECONDARY image (the arc
         // inside the Einstein ring). It is not a second model — the same map,
         // the same sprites, a different root of the same equation — and the two

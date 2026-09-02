@@ -31,10 +31,19 @@
 const float LF_BCRIT = 2.5980762;   // 3*sqrt(3)/2 — photon capture, in units of rs
 const float LF_QMAX  = 8.0;         // table range; alpha up to ~7.6 rad (over one winding)
 
+uniform float uLfPxPerRadA;  // mirror of uLfPxPerRad, declared before use
 uniform sampler2D uLfLut;   // R = alpha(q), G = d(alpha)/dq. Built by lensForward.cpp
                             // by integrating the SAME null geodesic the ray tracer
                             // marches, so the raster ring and the geodesic ring
                             // land in the same place by construction.
+
+// alpha(b) alone. The fragment path runs this millions of times a frame and
+// never uses the derivative, so it does not pay for it.
+float lfAlphaValue(float bR) {
+    float u = LF_BCRIT / bR;
+    if (u >= 1.0) return 1e8;
+    return texture(uLfLut, vec2(clamp(-log(1.0 - u) / LF_QMAX, 0.0, 1.0), 0.5)).r;
+}
 
 // alpha(b) and d(alpha)/d(b/rs), from one fetch. b is in units of rs.
 vec2 lfAlpha(float bR) {
@@ -164,6 +173,12 @@ bool lfSolve(float betaTrue, float delta, float Dl, float rs, int branch, out fl
         if (hi >= LF_HIMAX) { theta = betaTrue; return false; }   // leave it unlensed
         hi = min(hi * 2.0, LF_HIMAX);
     }
+    {
+        float tw = lfWeakGuess(betaTrue, delta, Dl, rs, branch);
+        if (delta > 0.0) tw = max(tw, thPh * (1.0 + 1e-6));
+        if (tw > lo && tw < hi
+            && abs(lfBeta(tw, delta, Dl, rs) - target) * uLfPxPerRadA < 0.02) { theta = tw; return true; }
+    }
     // BISECTION, not Newton. This is a Born-profile model and in the deep
     // near-field it can FOLD; where it folds there are several roots and each is
     // a legitimate image, but a fold breaks the bracket invariant a Newton
@@ -195,6 +210,10 @@ uniform float uLfHoleRs[4];      // rs (AU)
 uniform float uLfDelta0[4];      // PER OBJECT: (object centre - hole) . holeDir, in double on the CPU
 uniform float uLfPxPerRad;       // pixels per radian — the "is this worth doing" gate
 uniform float uLfMaxMu;          // cap on how far a sprite may be stretched (fill-rate guard)
+uniform float uLfMaxSprite;      // largest lensed sprite, as a fraction of viewport height.
+                                 // The single strongest speed dial: cost is dominated by a few
+                                 // very large magnified sprites and their area is quadratic,
+                                 // so halving this nearly halves the lens's frame time.
 
 // Filled by lfPlace, consumed by the caller and forwarded to the fragment shader.
 // Screen space here means aspect-corrected NDC, the frame in which a square
@@ -327,5 +346,47 @@ bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy, int image) {
     gLfSrcS    = T0 * fy;     // where this source would be with no lens
     gLfCenterS = Tn * fy;     // where its image is drawn
     gLfActive  = true;
+    return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// The FRAGMENT-side map. Same physics as lfBeta, arranged so a pixel never pays
+// for anything it does not use.
+//
+// theta is never formed. Everything that matters depends on sin(theta), and a
+// fragment already HAS it: d and n are unit vectors, so c = dot(d,n) is cos and
+// |d - n c| is sin. The source direction then follows from the DEFLECTION alone
+// through the angle-difference identity
+//     n cos(theta-D) + tHat sin(theta-D) = d cos D + (n sin - tHat cos) sin D
+// so one sin/cos of the small deflection replaces an atan and two more
+// transcendentals, and the unused d(beta)/d(theta) disappears with them.
+// ---------------------------------------------------------------------------
+bool lfSourceDir(vec3 d, vec3 n, float c, float st, vec3 tHat,
+                 float delta, float Dl, float rs, out vec3 sdir, out bool primary) {
+    sdir = d; primary = true;
+    if (rs <= 0.0 || Dl <= 0.0) return true;
+    float b = max(Dl * st, 1e-9 * Dl);              // b = Dl sin(theta), floored (inf*0 = NaN)
+    if (delta > 0.0 && b <= LF_BCRIT * rs) return false;   // captured (sources BEHIND only)
+    float Ds = Dl + delta;
+    if (Ds <= 0.0) return false;
+    float aFull = lfAlphaValue(max(b / rs, LF_BCRIT * 1.0000001));
+    float aWeak = 2.0 * rs / b;
+    float h     = sqrt(b * b + delta * delta);
+    float fFar  = 0.5 * (1.0 + delta / h);
+    float a     = aWeak + (aFull - aWeak) * fFar;
+    float hl    = sqrt(b * b + Dl * Dl);
+    float S     = (delta >= 0.0)
+                ? (h + (Dl * delta - b * b) / hl)
+                : (b * b * (1.0 / (h - delta) - (1.0 + delta / (Dl + hl)) / hl));
+    float D  = a * 0.5 * S / Ds;                    // the deflection this source receives
+    float cd = cos(D), sd = sin(D);
+    sdir     = d * cd + (n * st - tHat * c) * sd;   // = n cos(beta) + tHat sin(beta)
+    // The branch is the SIGN of beta = theta - D, and sin(beta) is not a safe
+    // proxy: for beta in (-2pi,-pi) — deeply wound fragments at the photon ring —
+    // the sine flips positive while beta stays negative. cos is monotone on
+    // [0,pi] and theta lives there, so theta > D is exactly c < cos(D), and past
+    // pi no theta can exceed D. Free: cos(D) is already in hand.
+    primary  = (D <= 3.14159265) && (c < cd);
     return true;
 }

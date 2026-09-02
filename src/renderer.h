@@ -1025,6 +1025,9 @@ public:
   // the secondary images, and that is the whole cost.
   bool     lensForward    = true;
   bool     lensSecondary  = true;    // draw the inner (secondary) image of each hole
+  float    lensMaxSprite  = 0.35f;   // largest lensed sprite as a fraction of viewport height.
+                                     // Measured on bh_ref: 0.35 -> 423 ms/frame, 0.15 -> 244.
+                                     // Lower truncates the longest arcs and buys a lot of speed.
   float    lensMaxStretch = 2.5f;    // how many times its own size a sprite may be stretched into
                                      // an arc; spent by shrinking the source, never the footprint
   unsigned lensLutTex     = 0;       // RG32F deflection table (built once, from the geodesic)

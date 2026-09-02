@@ -1081,6 +1081,59 @@ neither brighter nor darker than unbent dust.
   a small per-particle offset. Starfield chunks upload it again per CHUNK, because
   that is what the vertex shader offsets from.
 
+### Performance: the lens is FILL-bound, not ALU-bound
+
+Measured on `projects/bh_ref.json` (58 800-particle cloud + hole, 1200x675), per
+frame, by the slope between `COMPARE_FRAMES=3` and `=13`:
+
+| | ms/frame |
+|---|---|
+| lens off | 87 |
+| lens on | ~400 |
+| lens on, no sprite enlargement (`LF_MAXMU=1`) | 227 |
+| lens on, enlarged sprites but the fragment map ABLATED to `gl_PointCoord` | 214 |
+
+Read the last two together: with a trivial fragment shader the enlarged sprites
+still cost 119 ms over baseline. **The cost is the number of fragments
+rasterised, not the work per fragment**, and the base cloud path is already
+fill-bound (87 ms for one instance of dust/haze sprites up to 160 px).
+
+What that means for optimising it:
+- Arithmetic savings are worth little. Removing an `atan`, two transcendentals
+  and an unused derivative from the per-pixel map bought ~8%.
+- A "skip the map where the sprite is barely distorted" fast path made it
+  SLOWER (415 vs 392): the branch is divergent, so the GPU runs both sides.
+- A cheap reject before the expensive map (an exact cosine band around the arc)
+  also made it slower — the compare and its two varyings cost more than the
+  rejects saved.
+- What does work is drawing fewer/smaller fragments. **Max arc size**
+  (`lensMaxSprite`, Lens UI) caps the largest lensed sprite as a fraction of
+  viewport height: 0.35 -> 423 ms, 0.15 -> 244 ms. It truncates the longest arcs
+  and never changes brightness. Cost is dominated by a handful of very large
+  magnified sprites whose area grows as the square.
+- The untried structural fix is to stop rasterising the square: a point sprite
+  bounding a 5:1 arc is ~85% empty. Splitting a long arc into several smaller
+  sprites along it (extra `gl_InstanceID` segments, no VAO change) or oriented
+  quads would cut that area several-fold. Estimated ~30% more, at real risk to
+  the approved look.
+
+### Two traps that wasted real time measuring this
+
+- **A shader that fails to compile draws NOTHING and looks FAST.** A uniform
+  declared below its first use in `lens_forward.glsl` failed the whole cloud
+  program; the frame time "improved" from 176 ms to 17 ms and the diff was
+  537 731 pixels. The harness prints the compile error to STDERR and the runs
+  were discarding it. Always `2>` a file and grep for `error` after touching a
+  shader, and treat any large speed-up with a changed image as a broken build.
+- **Timings are only comparable within one power state.** This machine on
+  battery clocks the iGPU to 400 MHz of 1800 (`pp_dpm_sclk`) with the CPU
+  governor at `powersave`; the same scene measured 176 ms/frame on AC and
+  ~400 ms on battery. Check `/sys/class/drm/card*/device/pp_dpm_sclk` before
+  comparing against a number written down earlier, and take control and
+  candidate back to back. The first run after a reboot is also an outlier
+  (958 ms against a 430 ms steady state) — discard it, as with the raster
+  baseline.
+
 ### Test scenes for context-independence
 
 `projects/lens_test_sphere.json` (a uniform SPHERE — no plane exists, so any

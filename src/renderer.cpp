@@ -3960,6 +3960,13 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "1 moves matter without stretching it.\n"
                         "It is spent by drawing a smaller piece of the source, so the profile\n"
                         "always runs out inside the sprite - never a hard-edged square.");
+    ImGui::SliderFloat("Max arc size", &lensMaxSprite, 0.08f, 0.50f, "%.2f x height");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("The strongest SPEED dial. Caps how large a single magnified\n"
+                        "sprite may be drawn; cost is dominated by a few very big ones\n"
+                        "and their area grows as the square, so lowering this buys a lot.\n"
+                        "Measured on a galaxy + hole: 0.35 -> 423 ms/frame, 0.15 -> 244.\n"
+                        "Lower truncates the longest arcs; it never changes brightness.");
     ImGui::EndDisabled();
     ImGui::TextDisabled("Every source is bent by its own position. There is no\n"
                         "foreground/background split, so nothing pops as you fly.");
