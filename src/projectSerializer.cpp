@@ -308,6 +308,7 @@ bool ProjectSerializer::Save(const std::string& path,
     s["spikeSecondary"]    = settings.spikeSecondary;
     s["spikeChroma"]       = settings.spikeChroma;
     s["unresolvedStrength"] = settings.unresolvedStrength;
+    s["spriteRefHeight"]   = settings.spriteRefHeight;
     s["unresolvedSize"]    = settings.unresolvedSize;
     s["resolvedCut"]       = settings.resolvedCut;
     s["gasStrength"]       = settings.gasStrength;
@@ -655,6 +656,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.spikeSecondary     = s.value("spikeSecondary",     0.72f);
     st.spikeChroma        = s.value("spikeChroma",        0.65f);
     st.unresolvedStrength = s.value("unresolvedStrength", SceneSettings{}.unresolvedStrength);
+    st.spriteRefHeight    = s.value("spriteRefHeight",    SceneSettings{}.spriteRefHeight);
     st.unresolvedSize     = s.value("unresolvedSize",     SceneSettings{}.unresolvedSize);
     st.resolvedCut        = s.value("resolvedCut",        SceneSettings{}.resolvedCut);
     st.gasStrength        = s.value("gasStrength",        0.5f);

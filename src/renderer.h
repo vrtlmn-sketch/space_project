@@ -722,6 +722,17 @@ public:
   float dopplerColorStr{1.0f};   // color shift exponent (T *= D^this for stars, RGB tilt for clouds)
   float nebulaDetail{0.0f};      // 0=uniform look, 1=max per-particle hash variation
   float unresolvedStrength{3.4f};// unresolved-star field brightness (0 = off)
+  // SPRITE SIZES ARE A FRACTION OF RENDER HEIGHT, not an absolute pixel count.
+  // The haze lobe was a fixed 8..160 px and the dust/gas puffs were clamped to
+  // absolute pixels, so doubling the render height halved every sprite's size
+  // RELATIVE to the frame. Brightness here comes from sprites overlapping, so a
+  // 4K render of the same scene had less overlap than a 1080p one: thinner dust
+  // lanes, a weaker milky haze, and a generally darker, streakier image that no
+  // slider could recover. Sizes are calibrated at this height and scale with it.
+  // 0 = off (absolute pixels, the old behaviour).
+  // 720 is the signed-off default: at a 1080p render that draws sprites at 1.5x,
+  // which is denser than the pre-calibration look, and the user picked it.
+  float spriteRefHeight{720.0f};
   float unresolvedSize{45.55f};   // unresolved lobe angular width (x fixed PSF floor)
   float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)

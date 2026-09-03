@@ -801,6 +801,7 @@ int main(int argc, char** argv) {
     renderer.spikeSecondary     = s.spikeSecondary;
     renderer.spikeChroma        = s.spikeChroma;
     renderer.unresolvedStrength = s.unresolvedStrength;
+    renderer.spriteRefHeight    = s.spriteRefHeight;
     renderer.unresolvedSize     = s.unresolvedSize;
     renderer.resolvedCut        = s.resolvedCut;
     renderer.gasStrength        = s.gasStrength;
@@ -1005,6 +1006,7 @@ int main(int argc, char** argv) {
     s.spikeSecondary     = renderer.spikeSecondary;
     s.spikeChroma        = renderer.spikeChroma;
     s.unresolvedStrength = renderer.unresolvedStrength;
+    s.spriteRefHeight    = renderer.spriteRefHeight;
     s.unresolvedSize     = renderer.unresolvedSize;
     s.resolvedCut        = renderer.resolvedCut;
     s.gasStrength        = renderer.gasStrength;
@@ -2019,12 +2021,23 @@ int main(int argc, char** argv) {
         for (auto& c : clouds) if (c && !c->universeMember)
           c->temperature = (float)std::atof(eo);
       if (cmpFrame == cmpWait) {   // let buffers/scene settle first
-        // RT captures stay 360p (the compute path is slow); the RASTER capture is
-        // 1600x900 by default — it is judged by eye, and 360p hid the lens's
-        // artefacts behind its own blur. CMP_W/CMP_H override the raster size.
+        // RT captures stay 360p (the compute path is slow). The RASTER capture is
+        // 1280x720 because that is the USER'S VIEWPORT SIZE and the height every
+        // project's look is calibrated at (`spriteRefHeight` = 720), so a harness
+        // capture and what the user actually sees are the same image.
+        //
+        // This matters more than it looks. Sprite sizes scale with render height
+        // (see "Sprite sizes are a FRACTION OF RENDER HEIGHT" in CLAUDE.md), so a
+        // capture at a different height has different sprite OVERLAP — thinner
+        // dust, weaker haze — and overlap is most of the look. At the old 1600x900
+        // default every capture was judged at 1.25x the user's height, which is
+        // part of why artefacts the user could see plainly did not show up in a
+        // harness image, and why 360p captures hid the lens's artefacts entirely.
+        // CMP_W/CMP_H override the raster size; changing the HEIGHT changes the
+        // look, so an A/B must hold it fixed.
         const int W = 640, H = 360;
-        const int RW = std::getenv("CMP_W") ? std::atoi(std::getenv("CMP_W")) : 1600;
-        const int RH = std::getenv("CMP_H") ? std::atoi(std::getenv("CMP_H")) : 900;
+        const int RW = std::getenv("CMP_W") ? std::atoi(std::getenv("CMP_W")) : 1280;
+        const int RH = std::getenv("CMP_H") ? std::atoi(std::getenv("CMP_H")) : 720;
         // Optional camera offset (AU): --compare dx dy dz — for testing whether
         // structures stay attached to the scene (parallax) or swim with the camera.
         if (argc >= 5) {

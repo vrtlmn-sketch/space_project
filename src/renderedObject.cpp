@@ -49,6 +49,7 @@ float    gLfFy              = 1.0f;
 float    gLfPxPerRad        = 1.0f;
 float    gLfMaxMu           = 24.0f;
 float    gLfMaxSprite       = 0.35f;
+float    gSpriteRefHeight   = 720.0f;
 int      gLfImages          = 1;
 unsigned gLfLutTex          = 0;
 
@@ -1112,6 +1113,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glUniform1f(glGetUniformLocation(program, "uHashScale"),   hashScale);   // per-object; the program is shared
   glUniform1f(glGetUniformLocation(program, "uCinePixelScale"), 1.0f);
   glUniform1f(glGetUniformLocation(program, "uViewportH"), (float)fbHeight);
+  glUniform1f(glGetUniformLocation(program, "uSpriteRefH"), gSpriteRefHeight);
 
   glEnable(GL_PROGRAM_POINT_SIZE);
   glEnable(GL_BLEND);
@@ -2932,6 +2934,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (hsLoc >= 0) glUniform1f(hsLoc, cineHazeStrength);
     GLint hzLoc = glGetUniformLocation(program, "uUnresolvedSize");
     if (hzLoc >= 0) glUniform1f(hzLoc, cineHazeSpread);
+    { GLint rl = glGetUniformLocation(program, "uSpriteRefH"); if (rl >= 0) glUniform1f(rl, gSpriteRefHeight); }
     GLint vhLoc = glGetUniformLocation(program, "uViewportH");
     if (vhLoc >= 0) glUniform1f(vhLoc, (float)fbHeight);
     GLint rcLoc = glGetUniformLocation(program, "uResolvedCut");

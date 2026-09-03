@@ -570,6 +570,7 @@ void Renderer::Draw(RenderedObject& ro) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             AddRimOccluder(ro); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+    gSpriteRefHeight = spriteRefHeight;
     if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             // Volumetric dust: (re)splat the volume now — keyed on
                                             // cloudGpuDirty, so it must run before renderCloud clears
@@ -4089,6 +4090,51 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::TextDisabled("Resolution the Performant view renders and snaps at.\n"
                         "Viewport follows the window; a preset sets the height and\n"
                         "takes its width from the view's aspect.");
+
+    ImGui::Spacing();
+    ImGui::Text("Sprite Calibration");
+    ImGui::SetNextItemWidth(-1);
+    {
+      // 0 = off, else a reference height. A LOWER reference makes every sprite
+      // bigger at the same render height, so this is also a density dial, not
+      // only a calibration — see the tooltip.
+      static const char* rl[] = { "Off (absolute pixels)",
+                                  "240p", "360p", "480p", "540p", "720p",
+                                  "900p", "1080p", "1440p", "4K", "Custom" };
+      static const float rv[] = { 0.0f,
+                                  240.0f, 360.0f, 480.0f, 540.0f, 720.0f,
+                                  900.0f, 1080.0f, 1440.0f, 2160.0f, -1.0f };
+      const int nPre = 10;                       // entries before "Custom"
+      // A project may carry a height that is not in this list (hand-edited, or
+      // saved before an entry was added). Show it as Custom instead of silently
+      // displaying the wrong preset — the stored value is what renders.
+      int ri = nPre;
+      for (int i = 0; i < nPre; ++i) if (std::abs(spriteRefHeight - rv[i]) < 0.5f) ri = i;
+      if (ImGui::Combo("##spriteref", &ri, rl, (ri == nPre) ? nPre + 1 : nPre)
+          && ri < nPre)
+        spriteRefHeight = rv[ri];
+      if (ri == nPre) {
+        ImGui::SetNextItemWidth(-1);
+        ImGui::DragFloat("##spriterefc", &spriteRefHeight, 4.0f, 120.0f, 4320.0f, "%.0f px");
+      }
+    }
+    ImGui::TextDisabled("Height the sprite sizes are calibrated at. Sprites then keep the\n"
+                        "same FRACTION of the frame at any resolution.");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Brightness here comes from sprites OVERLAPPING, so a size fixed in\n"
+                        "absolute pixels means a taller render has smaller sprites relative\n"
+                        "to the frame, and therefore less overlap: thinner dust lanes, weaker\n"
+                        "haze, a darker and streakier image. Measured on a galaxy + hole,\n"
+                        "720p vs 1440p: mean luminance 33.3 vs 13.6 - the SAME scene rendered\n"
+                        "2.5x darker at double the height. Calibrated, the two match to 0.3%%.\n"
+                        "Set this to the height a project's look was tuned at. Off restores\n"
+                        "the old absolute-pixel behaviour exactly.\n"
+                        "\n"
+                        "It is also a DENSITY dial: sprite size scales as height/reference,\n"
+                        "so a LOWER reference draws bigger sprites at the same resolution -\n"
+                        "more overlap, thicker dust, a milkier haze - and a higher one draws\n"
+                        "smaller, sparser, sharper ones. 540p renders a 1080p frame with\n"
+                        "sprites at 2x, 4K renders it at 0.5x.");
 
     ImGui::Spacing();
     ImGui::Text("Nebula Pass");

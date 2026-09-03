@@ -203,6 +203,7 @@
   "spikeLength": 0.27000001072883606,
   "spikeSecondary": 0.7200000286102295,
   "spikeStrength": 0.45,
+  "spriteRefHeight": 720.0,
   "starBudget": 80000,
   "starSize": 1.0,
   "unresolvedSize": 79.20999908447266,

@@ -948,9 +948,10 @@ dark gap in galaxy scenes. That is the real problem; a depth model does not
 touch it. Any future attempt must show a full-resolution side-by-side against
 THIS lens and list what got worse before claiming anything.
 
-Harness: the raster capture is 1600x900 by default (`CMP_W/CMP_H` override;
+Harness: the raster capture is **1280x720** by default (`CMP_W/CMP_H` override;
 RT stays 640x360), so the old milky_way mean (29.16 at 360p) no longer applies
-— byte-compare against a same-sitting control instead.
+— byte-compare against a same-sitting control instead. See "**The harness must
+render at the USER'S height**" below for why that size and not another.
 
 ## The raster lens is FORWARD: each source is bent by its own position
 
@@ -1146,6 +1147,13 @@ What that means for optimising it:
   537 731 pixels. The harness prints the compile error to STDERR and the runs
   were discarding it. Always `2>` a file and grep for `error` after touching a
   shader, and treat any large speed-up with a changed image as a broken build.
+- **A "regression" on a scene the change cannot reach is the machine, not the
+  code.** universe.json measured 7.81 / 8.57 / 8.72 s against a 3.5 s baseline,
+  three consecutive runs, right after a lens change — and universe contains
+  **zero** black holes (`schwarzschildRadius > 0`: none), so the lens path never
+  executes there at all. Same binary, minutes later: 3.74 / 3.48 / 3.50 / 3.49.
+  Before believing a regression, ask whether the changed code can even run in
+  that scene; if it cannot, stop measuring and re-measure later.
 - **Never trust a single timing sample on this machine.** Chasing the dust fix
   produced readings of 861-939 ms/frame that looked like a 5x regression; a
   repeat showed lens-OFF also reading 899 ms once, which is impossible, and the
@@ -1160,6 +1168,133 @@ What that means for optimising it:
   candidate back to back. The first run after a reboot is also an outlier
   (958 ms against a 430 ms steady state) — discard it, as with the raster
   baseline.
+
+### Sprite sizes are a FRACTION OF RENDER HEIGHT, not absolute pixels
+
+Brightness in this renderer comes from sprites OVERLAPPING (see "Light falls off
+because objects get SMALLER"). Every sprite size was therefore a look decision
+expressed in absolute pixels — the haze lobe a fixed `clamp(..., 8, 160)`, the
+dust puff and gas puff perspective-sized but clamped to `3..160` / `6..150`, the
+star core a fixed `2..9`. Double the render height and all of them stay the same
+pixel size, i.e. HALF the size relative to the frame, so they overlap less.
+
+Measured on a galaxy + a large hole, the SAME scene, 720p vs 1440p:
+**mean luminance 33.32 vs 13.60** — 2.5x darker at double the height, with
+thinner dust lanes and a weak, streaky haze. Scaling dust/gas/haze alone only
+got the ratio from 0.41 to 0.56; the star cores are the other half of it.
+With all four scaled: **19.06 vs 19.12, a ratio of 1.003** (mean |diff| across
+the resized pair 20.35 -> 1.62).
+
+`uSpriteRefH` (setting `spriteRefHeight`, Quality & Speed -> **Sprite
+Calibration**) is the height the sizes are calibrated at; everything above is
+multiplied by `uViewportH / uSpriteRefH`. 0 = off, which reproduces the old
+absolute-pixel behaviour exactly.
+
+**The default is 720, signed off by the user, and written explicitly into all
+nine bundled projects.** At a 1080p render that is a 1.5x sprite scale — denser
+than the pre-calibration look, which is the point: it is the overlap that makes
+the dust thick and the haze milky. It is a DENSITY dial as much as a
+calibration, since a lower reference draws bigger sprites at any resolution.
+
+New harness baseline: milky_way at the default **1280x720** reads **27.704**.
+milky_way holds 27.70 / 28.09 / 28.33 / 28.80 from 720p to 4K — a 4% spread,
+against a 2.5x collapse before.
+
+### The harness must render at the USER'S height
+
+The `--compare` raster capture defaults to **1280x720** because that is the
+user's viewport size and the height every project's look is calibrated at
+(`spriteRefHeight` = 720). At that size the sprite scale is exactly 1, so a
+harness capture and what the user sees in the live app are **the same image**.
+
+This is not a cosmetic preference. Sprite sizes scale with render height, and
+overlap is most of the look, so a capture at a different height genuinely shows
+a different picture — thinner dust, weaker haze, less coverage. The old default
+was 1600x900, i.e. every capture was judged at 1.25x the user's height, and
+before that 640x360 at 0.5x.
+
+**This is a likely root cause of a whole class of "it looks fine in the harness"
+mistakes**, including several in this file: the lens experiments whose artefacts
+"the 360p harness captures hid every one of", and blocks around a large hole
+that the user could see plainly in a screenshot while a harness capture of the
+same scene looked acceptable. If a user reports an artefact that a harness image
+does not show, **check the capture height before doubting the report.**
+
+Corollary: changing CMP_H changes the look, so an A/B must hold it fixed, and a
+control captured at one height cannot be compared against a candidate at
+another.
+
+- With reference == render height the scale is exactly 1 and the image is
+  byte-identical to the pre-calibration build (verified at 1080p against a
+  same-sitting control, with the reference set to 1080). At the shipped 720
+  default EVERY resolution changes deliberately. That is not a regression; it is
+  the point. Rebaseline rather than bisect it.
+- This is NOT what `uCinePixelScale` does. That compensates SSAA, where the
+  buffer grows but the target height does not; this is about the target height
+  itself changing.
+- The 1 px floor on a star core stays absolute — below one pixel there is
+  nothing to draw.
+- A project's saved `spriteRefHeight` should be the height its look was tuned
+  at. Old projects load the 1080 default, which is right for anything tuned on
+  a 1080p-class viewport and wrong for anything tuned elsewhere.
+
+### A footprint smaller than its own source draws a SOLID BLOCK
+
+The lens sizes a sprite to hold its stretched image, then measures how much
+source that footprint actually reaches and GROWS it to cover. That growth was
+capped at 1.6x in one shot. Near the shadow the map compresses by orders of
+magnitude more, so the footprint stayed smaller than the source it was drawing —
+and a footprint smaller than its source never reaches the source-disc test
+(`dot(pc,pc) > 1.0`), so nothing is discarded and the sprite paints its whole
+square with a slowly-varying sample of the puff. That is the block around a big
+hole. `gLfEdgeFade` softens only its border, which is why it reads as a BLURRY
+rectangle rather than a hard-edged one, and why more fading never removed it.
+
+Now iterated: four rounds of at most 4x reach 256x. **It costs nothing** —
+1004 ms/frame before, 1003 after on the scene that shows the artifact worst —
+because it only enlarges sprites that were under-covering, and leaves every
+sprite that already covered its source exactly as it was.
+
+**milky_way is byte-identical at 1600x900 but NOT at 1920x1080**: whether a hole
+is resolvable depends on `pxPerRad`, so Sagittarius A* passes the displacement
+gate at the taller render and not at the shorter one. The 1080p change is 67839
+px, max 48, mean 27.5481 -> 27.5377 (0.04%) and is visually indistinguishable —
+but "milky_way has no resolvable hole" is FALSE above some resolution, and any
+claim of byte-identity on this project has to name the size it was checked at.
+
+**Growing the footprint is the look-safe direction; shrinking the source is
+not.** Shrinking removes matter — it is what once left arcs blue-white while the
+geodesic showed them full of dark red dust.
+
+### Arc ribbons: geometrically right, visually WRONG (2026-09-03, reverted)
+
+Preserved in `lens_arc_ribbons.patch`. The idea was sound and the measurements
+were real: the map is radial, so a source's image is an annular sector known in
+closed form, and a point sprite bounding it wastes its area by the arc's aspect
+ratio. A fragment-invocation counter showed **508M invocations/frame on bh_ref,
+346M of them the empty corners** — 68% of all fragment work. Ribbons cut that to
+248M, deleted the per-pixel map entirely (each vertex carries its own source
+coordinate, so the rasteriser interpolates it), and roughly halved the lens's
+cost at equal quality.
+
+**The user rejected it on sight, and was right.** A fat square sprite OVERLAPS
+its neighbours, and that overlap is what builds the milky density, the saturated
+dust and the opacity that covers the hole. Replacing each square with its
+geometrically exact thin arc conserved flux (+3.1%, which is why the flux check
+passed) while destroying the overlap: dust went dark and desaturated, lanes
+thinned into concentric streaks, and the foreground stopped covering the hole.
+
+**Flux is not the look here.** A test that only checks total light and dusty-pixel
+share cannot see an overlap change, and both passed while the image got worse.
+This is the same lesson as the rejected `uSampleWeight`, from the other side:
+making a sampled thing physically exact is not the same as making it right.
+
+Also learned, and still true: `GL_SAMPLES_PASSED` cannot measure this pipeline —
+it counts only fragments that SURVIVE (88.7M unlensed vs 91.8M lensed, while the
+true invocation counts were 128M and 508M). And `projects/lens_test_sphere.json`
+is a **bad** coverage test: the hole sits outside the sphere, so nothing in that
+scene ever tests whether foreground matter covers the shadow — which is exactly
+what ribbons broke.
 
 ### Test scenes for context-independence
 

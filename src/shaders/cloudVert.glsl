@@ -69,6 +69,10 @@ uniform float uStarSize;       // artistic scale on resolved star cores (1 = leg
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
 uniform float uUnresolvedSize;     // star-haze spread (RT parity)
 uniform float uViewportH;          // framebuffer height (px) → perspective dust sizing
+// Render height the sprite sizes below are calibrated at. Sizes and their
+// clamps are multiplied by uViewportH/uSpriteRefH so a sprite keeps the same
+// FRACTION of the frame at any resolution. 0 = absolute pixels (old behaviour).
+uniform float uSpriteRefH;
 uniform float uResolvedCut;        // only stars brighter than this draw as sharp cores
 uniform float uGasStrength;        // glowing-gas emission near hot stars (0 = off)
 
@@ -225,6 +229,13 @@ void main() {
   }
 
   float ps = (uCinePixelScale > 0.0) ? uCinePixelScale : 1.0;  // SSAA point-size scale
+  // RESOLUTION SCALE. Brightness in this renderer comes from sprites
+  // OVERLAPPING, so a size fixed in absolute pixels means a 4K render has half
+  // the relative sprite size — and therefore less overlap — than a 1080p one:
+  // thinner dust lanes, weaker haze, a darker and streakier image that no
+  // slider recovers. Note this is NOT what ps does: ps compensates SSAA, where
+  // the buffer grows but the TARGET does not.
+  float rs = (uSpriteRefH > 0.0) ? (uViewportH / uSpriteRefH) : 1.0;
   float sizeBoost = 1.0;
   if (uSizeRefOn == 1) {
     vec3  Pp    = center + offset;
@@ -243,7 +254,13 @@ void main() {
     // Core sprites are up to 9 px. In a packed galaxy they overlap into
     // texture; standing inside a sparse catalogue each one reads as a ball
     // instead of a star, so the scale is exposed rather than hard-coded.
-    else gl_PointSize = max(clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps * uStarSize, 1.0);
+    // Star cores scale with the frame too. They are the one pass where a fixed
+    // pixel size is defensible (a resolved star IS a point source), but the look
+    // is the contract and a field of 2-9 px cores contributes HALF as much light
+    // relative to the frame at double the resolution — which is most of why the
+    // same scene rendered darker at 4K. The 1 px floor stays absolute: below one
+    // pixel there is nothing to draw.
+    else gl_PointSize = max(clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps * uStarSize * rs, 1.0);
   } else if (uCloudPass == 4) {
     // Glowing gas: only hot young stars seed emission nebulosity. Large soft
     // sprite (perspective-sized like dust), FBM-carved into filaments in the frag,
@@ -257,7 +274,7 @@ void main() {
       float px = (uSizeRefOn == 1)
           ? worldR * uSizeRefFy / max(length(center + offset - uSizeRefRel), 1e-4) * (uSizeRefH * 0.5)
           : worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
-      gl_PointSize = clamp(px, 6.0, 150.0) * ps;
+      gl_PointSize = clamp(px, 6.0 * rs, 150.0 * rs) * ps;
     } else {
       gl_PointSize = 0.0;
     }
@@ -281,7 +298,7 @@ void main() {
       float px = (uSizeRefOn == 1)
           ? worldR * uSizeRefFy / max(length(center + offset - uSizeRefRel), 1e-4) * (uSizeRefH * 0.5)
           : worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
-      gl_PointSize = clamp(px * (0.7 + 0.5 * lane), 3.0, 160.0) * ps;
+      gl_PointSize = clamp(px * (0.7 + 0.5 * lane), 3.0 * rs, 160.0 * rs) * ps;
     } else {
       gl_PointSize = 0.0;   // not in a dust lane / behind camera
     }
@@ -290,7 +307,7 @@ void main() {
     // dim lobe; thousands overlap into a density-driven volumetric glow. Spread
     // from uUnresolvedSize (like RT's su = 0.0013*uUnresolvedSize).
     float spread = 0.3 + uUnresolvedSize * 0.03;   // default 32.4 → ~1.27
-    float sz = clamp(20.0 * (0.6 + 0.7 * vMag) * spread, 8.0, 160.0) * ps;
+    float sz = clamp(20.0 * (0.6 + 0.7 * vMag) * spread, 8.0, 160.0) * ps * rs;
     // The lobe is a fixed SCREEN size, so a galaxy only a few pixels across was
     // still drawn as a stack of 8px+ lobes — a saturated ball far bigger than the
     // galaxy itself, nothing like a distant galaxy. Cap the lobe by how much
@@ -388,11 +405,28 @@ void main() {
     // it. Lensing conserves surface brightness, so the arc must read exactly as
     // dark as the unlensed lane; it may only cover more sky.
     {
-        float bEdge  = lfBeta(gLfThetaS + halfA, gLfGeom.x, gLfGeom.y, gLfGeom.z);
-        float reachR = abs(bEdge - gLfBetaS);
-        float reachT = abs(gLfBetaS) * (halfA / max(gLfThetaS, 1e-9));
-        float reach  = max(min(reachR, reachT), 1e-30);
-        if (reach < srcUse) halfA = min(halfA * min(srcUse / reach, 1.6), maxHalfA);
+        // ITERATED. One correction capped at 1.6x is not enough: near the
+        // shadow the map compresses by orders of magnitude more than that, so
+        // the footprint stays SMALLER than the source it is drawing — and a
+        // footprint smaller than its own source never reaches the source-disc
+        // test, so nothing is discarded and the sprite paints its whole square
+        // with a slowly-varying sample. That is the block. The edge fade only
+        // softens its border, which is why it reads as a BLURRY rectangle
+        // rather than a hard one, and why no amount of extra fading removes it.
+        // Four rounds of at most 4x reach 256x, which covers the near-shadow
+        // range. Growing is the look-safe direction: it only ever makes an
+        // under-covering sprite big enough to carve itself, and leaves every
+        // sprite that already covered its source exactly as it was.
+        for (int it = 0; it < 4; ++it) {
+            float bEdge  = lfBeta(gLfThetaS + halfA, gLfGeom.x, gLfGeom.y, gLfGeom.z);
+            float reachR = abs(bEdge - gLfBetaS);
+            float reachT = abs(gLfBetaS) * (halfA / max(gLfThetaS, 1e-9));
+            float reach  = max(min(reachR, reachT), 1e-30);
+            if (reach >= srcUse) break;
+            float grown = min(halfA * min(srcUse / reach, 4.0), maxHalfA);
+            if (grown <= halfA * 1.0001) break;      // at the budget: cannot grow further
+            halfA = grown;
+        }
     }
     gl_PointSize   = halfA * uProj[1][1] * max(uViewportH, 1.0);
     halfS          = srcUse * uProj[1][1];                   // what the frag clips against

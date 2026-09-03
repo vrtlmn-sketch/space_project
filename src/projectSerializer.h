@@ -189,6 +189,10 @@ struct SceneSettings {
   float spikeChroma{0.65f};
   // Unresolved-star haze + resolved-point density
   float unresolvedStrength{3.4f};
+  // Sprite sizes are calibrated at THIS render height and scale with it, so a
+  // scene looks the same at any resolution. 0 = off (absolute pixels, the
+  // pre-2026-09-03 behaviour). See renderer.h for why this exists.
+  float spriteRefHeight{720.0f};
   float unresolvedSize{45.55f};
   float resolvedCut{0.0f};
   float gasStrength{0.5f};
