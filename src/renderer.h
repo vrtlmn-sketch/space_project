@@ -1043,7 +1043,7 @@ public:
   float    lensMaxSprite  = 0.25f;   // largest lensed sprite as a fraction of viewport height.
                                      // Measured on bh_ref: 0.35 -> 423 ms/frame, 0.15 -> 244.
                                      // Lower truncates the longest arcs and buys a lot of speed.
-  float    lensMaxStretch = 12.0f;   // how many times its own size a sprite may be stretched into
+  float    lensMaxStretch = 2.3f;    // how many times its own size a sprite may be stretched into
                                      // an arc; spent by shrinking the source, never the footprint
   unsigned lensLutTex     = 0;       // RG32F deflection table (built once, from the geodesic)
   void     EnsureLensLut();

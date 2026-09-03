@@ -1,0 +1,775 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 83dd42e..559ddb1 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -430,6 +430,8 @@ int main(int argc, char** argv) {
+ 
+   // A/B the foreground-dust image warp (reddening bends through the lens while stars
+   // cover): LENS_DUST_WARP=0 for the old flat dust, LENS_DUST_ATTEN tunes wrap strength.
++  if (std::getenv("LENS_PERF"))      renderer.lensPerfOn = true;
++  if (std::getenv("LENS_FRAGCOUNT")) { renderer.lensPerfOn = true; renderer.lensFragOn = true; }
+   if (const char* dw = std::getenv("LENS_DUST_WARP")) renderer.lensDustWarp = std::atoi(dw);
+   if (const char* sl = std::getenv("LENS_SLABS"))     renderer.lensSlabs   = std::max(1, std::atoi(sl));
+   if (const char* at = std::getenv("LENS_DUST_ATTEN"))renderer.lensFgAtten = (float)std::atof(at);
+@@ -1334,9 +1336,21 @@ int main(int argc, char** argv) {
+         gLfPxPerRad = (float)pxPerRad;
+         gLfFy       = (float)(1.0 / std::tan((double)renderer.zoom * 0.5 * kPI / 180.0));
+         gLfMaxMu    = renderer.lensMaxStretch;
++        // The UI owns these; the env vars are harness overrides so an A/B can be
++        // driven headlessly without editing a project.
++        if (const char* e = std::getenv("LF_RIBBON")) gLfRibbons = (std::atoi(e) != 0);
++        // Segments follow the ARC BUDGET, because that is what sets how long the
++        // longest arc can be, and a longer arc needs more of them to stay smooth
++        // (chord sagitta grows as the square of the segment's angle). Tying them
++        // together means raising Max arc size buys the segments its longer arcs
++        // need, instead of quietly turning them into polygons.
+         if (const char* e = std::getenv("LF_MAXMU")) gLfMaxMu = (float)std::atof(e);
+         gLfMaxSprite = renderer.lensMaxSprite;
+         if (const char* e = std::getenv("LF_MAXSPRITE")) gLfMaxSprite = (float)std::atof(e);
++        gLfRibSegs = (renderer.lensArcSegs > 0)
++                   ? renderer.lensArcSegs
++                   : std::clamp((int)std::lround(8.0 + 20.0 * (double)gLfMaxSprite), 8, 40);
++        if (const char* e = std::getenv("LF_RIBSEGS")) gLfRibSegs = std::max(1, std::atoi(e));
+         // One extra pass per hole draws that hole's SECONDARY image (the arc
+         // inside the Einstein ring). It is not a second model — the same map,
+         // the same sprites, a different root of the same equation — and the two
+@@ -2018,6 +2032,12 @@ int main(int argc, char** argv) {
+       if (const char* eo = std::getenv("EDIT_TEMP_OUT"); eo && cmpFrame == 2)
+         for (auto& c : clouds) if (c && !c->universeMember)
+           c->temperature = (float)std::atof(eo);
++      // The harness reports the same numbers the live panel shows.
++      if (renderer.lensPerfOn && cmpFrame == cmpWait) {
++        std::printf("[PERF] median=%.1f ms  invoc=%.0f\n",
++                    renderer.lensPerfMs, renderer.lensPerfFrag);
++        std::fflush(stdout);
++      }
+       if (cmpFrame == cmpWait) {   // let buffers/scene settle first
+         // RT captures stay 360p (the compute path is slow); the RASTER capture is
+         // 1600x900 by default — it is judged by eye, and 360p hid the lens's
+diff --git a/src/renderedObject.cpp b/src/renderedObject.cpp
+index 13a8683..5c66b44 100644
+--- a/src/renderedObject.cpp
++++ b/src/renderedObject.cpp
+@@ -51,12 +51,21 @@ float    gLfMaxMu           = 24.0f;
+ float    gLfMaxSprite       = 0.35f;
+ int      gLfImages          = 1;
+ unsigned gLfLutTex          = 0;
++bool     gLfRibbons         = true;
++int      gLfRibSegs         = 32;
++int      gLfFragCount       = 0;   // diagnostic: count fragment invocations (LENS_FRAGCOUNT)
++unsigned gLfFragCountSsbo   = 0;
+ 
+ void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz)
+ {
+   GLint l = glGetUniformLocation((GLuint)program, "uLfCount");
+   if (l < 0) return;                      // shader has no lens (lines, RT, post)
+   glUniform1i(l, gLfCount);
++  if ((l = glGetUniformLocation((GLuint)program, "uLfFragCount")) >= 0) {
++    glUniform1i(l, gLfFragCount);
++    if (gLfFragCount && gLfFragCountSsbo)
++      glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, (GLuint)gLfFragCountSsbo);
++  }
+   if (gLfCount <= 0) return;
+   if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDirV")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirV);
+   if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDirW")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirW);
+@@ -1098,6 +1107,92 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
+   uploadLensForwardUniforms(program, ox, oy, oz);
+ }
+ 
++// ONE owner of every cloud-particle draw.
++//
++// Issues the ordinary point-sprite pass and, where the forward lens stretches a
++// source into a genuine arc, a second pass of ARC RIBBONS that draws the
++// annular sector itself instead of a square bounding it. The two passes
++// PARTITION the particles — the point pass holds an arc back, the ribbon pass
++// skips everything that is not one — from the same muT/muR test, so nothing is
++// drawn twice (multiplicative dust would darken those pixels twice) and nothing
++// is dropped.
++//
++// Every site that used to call glDrawArraysInstanced(GL_POINTS, ...) goes
++// through here. A site that forgot the ribbon pass would silently lose every
++// lensed particle, which is exactly the failure the two-phase dust split
++// already produced once.
++void RenderedObject::drawCloudParticles(unsigned program, int first, int count)
++{
++  if (count <= 0) return;
++  const GLint locRib = glGetUniformLocation((GLuint)program, "uLfRibbon");
++  const bool  ribbons = gLfRibbons && gLfCount > 0 && locRib >= 0;
++  if (!ribbons) {
++    if (locRib >= 0) glUniform1i(locRib, 0);
++    glDrawArraysInstanced(GL_POINTS, first, count, gLfImages);
++    return;
++  }
++
++  // The record buffer is indexed by absolute particle index, so it is sized to
++  // the whole cloud even when a chunk of it is being drawn.
++  // One record per (particle, IMAGE): the point pass runs once per image and
++  // each pass places a different arc for the same particle.
++  const int kLfMaxImages = 1 + 4;               // direct + one secondary per hole
++  const int need = first + count;
++  if (ribbonRecCap < need) {
++    if (!ribbonRecSsbo) { GLuint b = 0; glGenBuffers(1, &b); ribbonRecSsbo = b; }
++    glBindBuffer(GL_SHADER_STORAGE_BUFFER, (GLuint)ribbonRecSsbo);
++    glBufferData(GL_SHADER_STORAGE_BUFFER,
++                 (GLsizeiptr)need * kLfMaxImages * 7 * 4 * sizeof(float),
++                 nullptr, GL_DYNAMIC_COPY);
++    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
++    ribbonRecCap = need;
++  }
++  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, (GLuint)ribbonRecSsbo);
++  GLint l0;
++
++  if ((l0 = glGetUniformLocation((GLuint)program, "uLfImages")) >= 0) glUniform1i(l0, kLfMaxImages);
++  // BOTH directions need a barrier, and forgetting the first one is a race that
++  // looks like nothing: every cloud pass (haze, gas, cores, dust) reuses these
++  // records, so this pass's point draw OVERWRITES what the previous pass's
++  // ribbon draw may still be reading. Write-after-read is not ordered for us.
++  // The symptom was a 38x72 patch on the photon ring that changed between two
++  // otherwise byte-identical runs — small enough to read as noise, and the one
++  // thing this harness is supposed to guarantee is that reruns are identical.
++  glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
++  glUniform1i(locRib, 1);                       // points, arcs held back
++  glDrawArraysInstanced(GL_POINTS, first, count, gLfImages);
++  // ...and read-after-write, for the draw below.
++  glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
++
++  glUniform1i(locRib, 2);                       // the arcs
++  GLint l;
++  if ((l = glGetUniformLocation((GLuint)program, "uLfRibSegs"))  >= 0) glUniform1i(l, gLfRibSegs);
++  if ((l = glGetUniformLocation((GLuint)program, "uLfRibFirst")) >= 0) glUniform1i(l, first);
++  if ((l = glGetUniformLocation((GLuint)program, "uLfImages"))   >= 0) glUniform1i(l, kLfMaxImages);
++  const GLint locImg = glGetUniformLocation((GLuint)program, "uLfImage");
++  // The particle becomes the INSTANCE and gl_VertexID a corner of the strip, so
++  // the per-particle attributes have to advance once per instance instead of
++  // once per vertex. Restored below: the VAO is shared with every other pass.
++  glVertexAttribDivisor(0, 1);
++  glVertexAttribDivisor(2, 1);
++  glVertexAttribDivisor(3, 1);
++  const GLboolean hadCull = glIsEnabled(GL_CULL_FACE);
++  if (hadCull) glDisable(GL_CULL_FACE);         // a ribbon's winding flips around the hole
++  const GLsizei verts = (GLsizei)(2 * (gLfRibSegs + 1));
++  // One draw per image rather than folding the image into gl_InstanceID: with a
++  // divisor the instance index IS the attribute index, so it cannot also carry
++  // a second field.
++  for (int img = 0; img < gLfImages; ++img) {
++    if (locImg >= 0) glUniform1i(locImg, img);
++    glDrawArraysInstancedBaseInstance(GL_TRIANGLE_STRIP, 0, verts, count, (GLuint)first);
++  }
++  if (hadCull) glEnable(GL_CULL_FACE);
++  glVertexAttribDivisor(0, 0);
++  glVertexAttribDivisor(2, 0);
++  glVertexAttribDivisor(3, 0);
++  glUniform1i(locRib, 0);
++}
++
+ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],
+                                             float fovDeg, int fbWidth, int fbHeight)
+ {
+@@ -1123,7 +1218,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
+   // 7.29 -> 9.14 inside a galaxy). That is a LOOK change, and the look is the
+   // contract — it needs explicit sign-off, not a drive-by fix. Keep this call
+   // byte-identical to the signed-off behaviour until then.
+-  glDrawArraysInstanced(GL_POINTS, 0, bufferSize, gLfImages);
++  drawCloudParticles(program, 0, bufferSize);
+   glEnable(GL_DEPTH_TEST);
+   // The post chain (bloom/tonemap) relies on overwrite semantics — leaking
+   // additive blending here makes every later pass ACCUMULATE frame over frame
+@@ -3015,19 +3110,19 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
+       glBlendFunc(GL_ONE, GL_ONE);
+       if (passLoc >= 0) glUniform1i(passLoc, 0);
+       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+-      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
++      else             drawCloudParticles(program, 0, nStars);
+ 
+       // 2. Glowing gas — emission nebulosity near hot young stars (additive).
+       if (cineGasStrength > 0.0f) {
+         if (passLoc >= 0) glUniform1i(passLoc, 4);
+         if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+-        else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
++        else             drawCloudParticles(program, 0, nStars);
+       }
+ 
+       // 3. Star cores — the resolved (bright) individual stars only.
+       if (passLoc >= 0) glUniform1i(passLoc, 1);
+       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+-      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
++      else             drawCloudParticles(program, 0, nStars);
+     }
+ 
+     // 4. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
+@@ -3039,7 +3134,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
+       glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+       if (passLoc >= 0) glUniform1i(passLoc, 3);
+       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+-      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
++      else             drawCloudParticles(program, 0, nStars);
+     }
+ 
+     glDisable(GL_BLEND);
+@@ -3063,7 +3158,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
+   }
+ 
+   if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
+-  else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
++  else             drawCloudParticles(program, 0, nStars);
+ 
+   // Dark matter: gray dots, debug view only. A separate draw of the tail with
+   // uDMDraw on so the shader ignores the star hash/colour and paints them gray.
+diff --git a/src/renderedObject.h b/src/renderedObject.h
+index 49e69d1..7b27ff7 100644
+--- a/src/renderedObject.h
++++ b/src/renderedObject.h
+@@ -90,6 +90,10 @@ extern float  gLfFy;             // uProj[1][1]: screen space is tan-space times
+ extern float  gLfPxPerRad;       // pixels per radian: the "too small to matter" gate
+ extern float  gLfMaxMu;          // stretch cap (fill-rate guard)
+ extern float  gLfMaxSprite;      // largest lensed sprite, fraction of viewport height
++extern bool   gLfRibbons;        // draw stretched sources as arc ribbons instead of square sprites
++extern int    gLfRibSegs;        // max segments per ribbon (strip = 2*(segs+1) vertices)
++extern int      gLfFragCount;      // diagnostic: 1 = cloudFrag counts its invocations
++extern unsigned gLfFragCountSsbo;  // the counter buffer (binding 9)
+ extern int    gLfImages;         // draw instances: 1 (direct) + one secondary image per hole
+ extern unsigned gLfLutTex;       // RG32F deflection table, built by lensfwd::DeflectionLutRG()
+ 
+@@ -403,6 +407,15 @@ public:
+   // Draw ONLY the dust pass, additively, writing raw density — the screen-space
+   // rim-light map. Reuses this frame's cloud program/VBO state; vpH = density
+   // target height so sprite sizes match the smaller buffer.
++  // ONE owner of every cloud-particle draw: the point pass and, where the lens
++  // stretches sources into arcs, the ribbon pass that draws them.
++  void drawCloudParticles(unsigned program, int first, int count);
++  // Per-particle arc records, written by the point pass and read by the ribbon
++  // pass. Sized to the particle count, allocated only for a cloud that is
++  // actually being lensed.
++  unsigned ribbonRecSsbo = 0;
++  int      ribbonRecCap  = 0;
++
+   void renderCloudDustDensity(const double cameraTranslate[3], const float viewRot[9],
+                               float fovDeg, int fbWidth, int fbHeight);
+   void renderGrid(const double cameraTranslate[3], const float viewRot[9], float fovDeg = 45.f, int fbWidth = 800, int fbHeight = 600);
+diff --git a/src/renderer.cpp b/src/renderer.cpp
+index 8ffc013..b79da7c 100644
+--- a/src/renderer.cpp
++++ b/src/renderer.cpp
+@@ -479,8 +479,54 @@ void Renderer::ApplyTheme(const char* name) {
+ // ─────────────────────────────────────────────────────────────────────────────
+ // BeginFrame
+ // ─────────────────────────────────────────────────────────────────────────────
++// Live cost readout for the lens work. Sampled here because BeginFrame is the
++// one point every frame passes through, live and headless alike, so the live
++// panel and the --compare harness report the same number.
++void Renderer::SampleLensPerf() {
++  gLfFragCount = lensFragOn ? 1 : 0;
++  if (!lensPerfOn && !lensFragOn) { lensPerfPrev = 0.0; lensPerfHist.clear(); lensFragHist.clear(); return; }
++  auto median = [](std::vector<double> v) {
++    if (v.empty()) return 0.0;
++    std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
++    return v[v.size() / 2];
++  };
++  if (lensPerfOn) {
++    // A fence, not a wall-clock delta. Without it the reading is whatever the
++    // driver has queued, which on this pipeline swung 45-112 ms for the SAME
++    // scene and is what made the old slope method unusable.
++    glFinish();
++    const double now = glfwGetTime();
++    if (lensPerfPrev > 0.0) {
++      lensPerfHist.push_back((now - lensPerfPrev) * 1000.0);
++      if (lensPerfHist.size() > 60) lensPerfHist.erase(lensPerfHist.begin());
++      lensPerfMs = (float)median(lensPerfHist);
++    }
++    lensPerfPrev = glfwGetTime();
++  }
++  if (lensFragOn && gLfFragCountSsbo) {
++    glBindBuffer(GL_SHADER_STORAGE_BUFFER, (GLuint)gLfFragCountSsbo);
++    if (GLuint* m = (GLuint*)glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_READ_ONLY)) {
++      lensFragHist.push_back((double)*m);
++      if (lensFragHist.size() > 60) lensFragHist.erase(lensFragHist.begin());
++      lensPerfFrag = median(lensFragHist);
++      glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
++    }
++    const GLuint zero = 0;
++    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint), &zero);
++    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
++  } else if (lensFragOn) {
++    GLuint b = 0; glGenBuffers(1, &b);
++    glBindBuffer(GL_SHADER_STORAGE_BUFFER, b);
++    const GLuint zero = 0;
++    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLuint), &zero, GL_DYNAMIC_READ);
++    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
++    gLfFragCountSsbo = b;
++  }
++}
++
+ bool Renderer::BeginFrame() {
+   frameStartTP = std::chrono::steady_clock::now();
++  SampleLensPerf();
+ 
+   glfwPollEvents();
+   int fbw = 0, fbh = 0;
+@@ -3953,6 +3999,17 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
+       ImGui::SetTooltip("Draw the inner image each hole makes as well as the direct one:\n"
+                         "the arc INSIDE the Einstein ring, on the opposite side.\n"
+                         "One extra draw per hole. Off is cheaper and loses the inner arc.");
++    ImGui::Checkbox("Arc ribbons", &gLfRibbons);
++    if (ImGui::IsItemHovered())
++      ImGui::SetTooltip("Draw a stretched source as the ARC it actually is, instead of a\n"
++                        "square sprite big enough to bound that arc.\n"
++                        "The map is radial, so the image of a round source is an annular\n"
++                        "sector - known exactly, no bounding box needed. A square wastes its\n"
++                        "area by the arc's aspect ratio, and every wasted pixel still runs\n"
++                        "the lens map before it is discarded.\n"
++                        "Off = the old square sprites. The two dials below then apply again;\n"
++                        "with ribbons on, arcs are never truncated, so they mostly do not.");
++    ImGui::BeginDisabled(gLfRibbons);
+     ImGui::SliderFloat("Stretch", &lensMaxStretch, 1.0f, 12.0f, "%.1fx");
+     if (ImGui::IsItemHovered())
+       ImGui::SetTooltip("How far a magnified sprite may stretch into an arc, as a multiple of\n"
+@@ -3960,7 +4017,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
+                         "1 moves matter without stretching it.\n"
+                         "It is spent by drawing a smaller piece of the source, so the profile\n"
+                         "always runs out inside the sprite - never a hard-edged square.");
+-    ImGui::SliderFloat("Max arc size", &lensMaxSprite, 0.08f, 0.50f, "%.2f x height");
++    ImGui::SliderFloat("Max arc size", &lensMaxSprite, 0.08f, 1.20f, "%.2f x height");
+     if (ImGui::IsItemHovered())
+       ImGui::SetTooltip("The strongest SPEED dial. Caps how large a single magnified\n"
+                         "sprite may be drawn; cost is dominated by a few very big ones\n"
+@@ -3968,6 +4025,39 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
+                         "Measured on a galaxy + hole: 0.35 -> 423 ms/frame, 0.15 -> 244.\n"
+                         "Lower truncates the longest arcs; it never changes brightness.");
+     ImGui::EndDisabled();
++    if (gLfRibbons) {
++      ImGui::TextDisabled("Ribbons draw the whole arc; Stretch no longer truncates it.");
++      ImGui::SliderInt("Arc detail", &lensArcSegs, 0, 40,
++                       lensArcSegs == 0 ? "Auto" : "%d segments");
++      if (ImGui::IsItemHovered())
++        ImGui::SetTooltip("Segments each arc may be built from. A longer arc needs more of\n"
++                          "them to stay smooth - chord error grows as the square of a\n"
++                          "segment's angle - so Auto follows Max arc size.\n"
++                          "Costs about 1 ms per segment on a galaxy + hole at 1200x675.");
++    }
++    ImGui::Separator();
++    ImGui::Checkbox("Show cost", &lensPerfOn);
++    if (ImGui::IsItemHovered())
++      ImGui::SetTooltip("Live frame time, measured with a GPU fence.\n"
++                        "The fence is the point: without it the reading is whatever the\n"
++                        "driver has queued, which swung 45-112 ms for the SAME scene.\n"
++                        "It also SLOWS the app slightly by serialising each frame, so this\n"
++                        "is a measurement tool, not a HUD. Leave it off while flying.");
++    if (lensPerfOn) {
++      ImGui::Text("Frame %.1f ms  (%.0f fps)", lensPerfMs,
++                  lensPerfMs > 0.001f ? 1000.0f / lensPerfMs : 0.0f);
++      ImGui::Checkbox("Count fragments", &lensFragOn);
++      if (ImGui::IsItemHovered())
++        ImGui::SetTooltip("Fragment-shader invocations per frame, counted BEFORE any discard.\n"
++                          "This is the number the arc work is about: a square sprite bounding\n"
++                          "an arc rasterises its empty corners, runs the lens map on every one\n"
++                          "and throws them away. Measured on a galaxy + hole: 508 M/frame with\n"
++                          "square sprites, 346 M of them discarded; 248 M with ribbons.\n"
++                          "An occlusion query CANNOT see this - it counts only what survives.");
++      if (lensFragOn)
++        ImGui::Text("Fragments %.1f M/frame", lensPerfFrag / 1.0e6);
++    }
++    ImGui::EndDisabled();
+     ImGui::TextDisabled("Every source is bent by its own position. There is no\n"
+                         "foreground/background split, so nothing pops as you fly.");
+   }
+diff --git a/src/renderer.h b/src/renderer.h
+index dd7ae75..404364e 100644
+--- a/src/renderer.h
++++ b/src/renderer.h
+@@ -1025,6 +1025,20 @@ public:
+   // the secondary images, and that is the whole cost.
+   bool     lensForward    = true;
+   bool     lensSecondary  = true;    // draw the inner (secondary) image of each hole
++  // Arc ribbons: how many segments a ribbon may use. 0 = follow Max arc size,
++  // which is what sets how long the longest arc can be.
++  int      lensArcSegs    = 0;
++  // Live cost readout. Both cost something to measure and are OFF by default:
++  // the timer forces a glFinish every frame, and the fragment count adds an
++  // atomic to every cloud fragment. They are measurement tools, not a HUD.
++  bool     lensPerfOn     = false;
++  bool     lensFragOn     = false;
++  float    lensPerfMs     = 0.0f;    // median frame time over the sample window
++  double   lensPerfFrag   = 0.0;     // median fragment invocations per frame
++  void     SampleLensPerf();         // called once per frame from BeginFrame
++  std::vector<double> lensPerfHist;
++  std::vector<double> lensFragHist;
++  double   lensPerfPrev   = 0.0;
+   float    lensMaxSprite  = 0.35f;   // largest lensed sprite as a fraction of viewport height.
+                                      // Measured on bh_ref: 0.35 -> 423 ms/frame, 0.15 -> 244.
+                                      // Lower truncates the longest arcs and buys a lot of speed.
+diff --git a/src/shaders/cloudFrag.glsl b/src/shaders/cloudFrag.glsl
+index ed79353..5d1cfd8 100644
+--- a/src/shaders/cloudFrag.glsl
++++ b/src/shaders/cloudFrag.glsl
+@@ -99,7 +99,17 @@ vec3 blackbody(float T) {
+ // where a magnified arc runs off the square sprite that bounds it.
+ float gLfEdgeFade = 1.0;
+ 
++// Ribbon pass: every corner of the arc carried its own exact source position,
++// so the rasteriser has already interpolated this pixel's. The 40 lines below —
++// rebuilding the ray, fetching the deflection table, running the map — exist
++// only to answer this same question one pixel at a time. On the ribbon path
++// they do not run at all.
++in vec2 vLfCoord;
++in float vLfFade;
++uniform int uLfRibbon;
++
+ vec2 lfSourceCoord() {
++    if (uLfRibbon == 2) { gLfEdgeFade = vLfFade; return vLfCoord; }
+     gLfEdgeFade = 1.0;
+     if (vLfSrcRad <= 0.0) return gl_PointCoord;
+     // This pixel's own view direction, reconstructed exactly from where it sits
+@@ -146,7 +156,16 @@ vec2 lfSourceCoord() {
+     return pc * 0.5 + 0.5;                          // profile and its FBM read the same way as unlensed
+ }
+ 
++// Diagnostic only (LENS_FRAGCOUNT=1): exact fragment-shader invocations, taken
++// BEFORE any discard. GL_SAMPLES_PASSED cannot see this — it counts only
++// fragments that survive — and the lens's whole cost is fragments that are
++// rasterised, mapped, and then discarded. Uniform branch, so it costs nothing
++// when off.
++layout(std430, binding = 9) buffer LfFragCount { uint lfFragInvocations; };
++uniform int uLfFragCount;
++
+ void main() {
++    if (uLfFragCount == 1) atomicAdd(lfFragInvocations, 1u);
+     vec2 lfCoord = lfSourceCoord();
+     // ── Dark-matter debug dots ──
+     // Flat gray, round, faint. Only the debug view draws these (the pretty and
+diff --git a/src/shaders/cloudVert.glsl b/src/shaders/cloudVert.glsl
+index b5a3570..2432c46 100644
+--- a/src/shaders/cloudVert.glsl
++++ b/src/shaders/cloudVert.glsl
+@@ -102,6 +102,41 @@ flat out vec3  vLfHoleN;   // owner hole's unit direction, view space
+ flat out vec3  vLfGeom;    // (delta, Dl, rs) of the hole that owns this image
+ flat out float vLfBetaS;   // signed source angle at the sprite centre (+ direct, - secondary)
+ 
++// ── Arc ribbons ──────────────────────────────────────────────────────────────
++// uLfRibbon: 0 = point sprites only (no hole is bending anything — byte-for-byte
++// the pre-ribbon path), 1 = the ordinary point pass, with the particles the
++// ribbon pass will draw held back, 2 = the ribbon pass itself.
++// Held back rather than drawn twice: a stretched source must appear once, and
++// the dust pass is MULTIPLICATIVE, so drawing it in both passes would darken
++// those pixels twice.
++uniform int uLfRibbon;
++uniform int uLfImage;     // ribbon pass: which image this draw places (lfPlace's `image`)
++uniform int uLfRibFirst;  // ribbon pass: buffer index of instance 0
++uniform int uLfRibSegs;   // ribbon pass: max segments; the strip is 2*(segs+1) vertices
++uniform int uLfImages;    // images drawn per particle; a record belongs to ONE of them
++// The source coordinate, INTERPOLATED. This is the whole point of the ribbon:
++// each vertex knows exactly where its own source is, so the rasteriser supplies
++// every pixel's source position for free and the fragment shader's per-pixel
++// solve of the map is not needed at all.
++out vec2 vLfCoord;
++out float vLfFade;   // 1, except where a truncated arc is being faded out
++
++// PER-PARTICLE WORK HAPPENS ONCE.
++//
++// A ribbon is 2*(segs+1) vertices, and running the whole vertex shader — a
++// 24-step bisection through the deflection table, the star hashes, the dust
++// field — once per CORNER is what made the first arc attempt cost twice what
++// square sprites did. Measured: frame time was linear in segment count while
++// the fragment count saturated at 4 segments, i.e. every segment past the
++// fourth bought nothing but vertex work.
++//
++// So the POINT pass, which already evaluates every particle, writes what it
++// found here, and the ribbon pass reads it back and does nothing but place
++// corners. There is no second copy of the maths — the one vertex shader plays
++// both parts.
++layout(std430, binding = 10) buffer LfRibbonRec { vec4 lfRec[]; };
++const int LF_REC = 7;   // vec4s per particle
++
+ // Volumetric dust (opt-in per cloud): the dust FIELD moved to dust_common.glsl
+ // so the sprite path, the per-star transmission below and the screen march
+ // (dustVolFrag.glsl) read the SAME lanes. Aliases keep the star-identity
+@@ -134,6 +169,80 @@ vec3 blackbody(float T) {
+ void main() {
+   vLfSrcRad = 0.0; vLfSrcS = vec2(0.0); vLfCenterS = vec2(0.0); vLfHalfS = 0.0;
+   vLfHoleN  = vec3(0.0, 0.0, -1.0); vLfGeom = vec3(0.0); vLfBetaS = 0.0;
++  vLfCoord  = vec2(0.5); vLfFade = 1.0;
++  // Under ribbons the particle is the INSTANCE and gl_VertexID is a corner of
++  // the strip, so every id must come from the instance. Reading gl_VertexID
++  // here instead gave every dust puff in the galaxy the same vSeed — one FBM
++  // shape repeated, which reads as parallel streaks across the whole cloud.
++  int lfPid   = (uLfRibbon == 2) ? (uLfRibFirst + gl_InstanceID) : gl_VertexID;
++  int lfImage = (uLfRibbon == 2) ? uLfImage : gl_InstanceID;
++
++  if (uLfRibbon == 2) {
++    int    base = (lfPid * max(uLfImages, 1) + lfImage) * LF_REC;
++    vec4   r0 = lfRec[base + 0];      // z, w, thetaC, betaS
++    // w <= 0 marks "this particle is not an arc". The point pass stamps that on
++    // every particle before it does anything else, so a record can never be a
++    // leftover from an earlier frame or an earlier pass.
++    if (r0.y <= 0.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
++    vec4   r1 = lfRec[base + 1];      // srcS.xy, srcUse, delta
++    vec4   r2 = lfRec[base + 2];      // dphi, rad, Dl, rs
++    vec4   r3 = lfRec[base + 3];      // colour.rgb, mag
++    vec4   r4 = lfRec[base + 4];      // dust, seed, hot, rim
++    vec4   r5 = lfRec[base + 5];      // slabW, holeN.xyz
++    float  dphiTrue = lfRec[base + 6].x;
++    vColor = r3.rgb; vMag = r3.a;
++    vDust  = r4.x; vSeed = r4.y; vHot = r4.z; vRim = r4.w;
++    vSlabW = r5.x;
++
++    float thetaC = r0.z, betaS = r0.w;
++    vec2  srcS   = r1.xy;
++    float srcUse = r1.z, delta = r1.w;
++    float dphi   = r2.x, rad = r2.y, Dl = r2.z, rs = r2.w;
++    vec3  n      = r5.yzw;
++    // The source's own direction rebuilds the azimuth basis, so phi_c is 0 by
++    // construction and no atan is needed anywhere.
++    vec3  sdir = normalize(vec3(srcS / uProj[1][1], -1.0));
++    vec3  tv   = sdir - n * dot(sdir, n);
++    float tl   = length(tv);
++    vec3  e1   = (tl > 1e-20) ? tv / tl
++                              : normalize(cross(n, abs(n.x) < 0.9 ? vec3(1,0,0) : vec3(0,1,0)));
++    vec3  e2   = cross(n, e1);
++    float thMin = lfShadowTheta(delta, Dl, rs);
++    // Enough segments that each chord stays within about half a pixel of the
++    // true arc: sagitta = R*dphi^2/8, so dphi_seg < sqrt(4/R_px).
++    float Rpx  = max(thetaC * uProj[1][1] * uViewportH * 0.5, 1.0);
++    int   segs = clamp(int(ceil(dphi * sqrt(Rpx))), 1, max(uLfRibSegs, 1));
++    int   col  = gl_VertexID >> 1;
++    int   side = gl_VertexID & 1;
++    // Columns past this arc's own segment count fold onto its end, so the
++    // strip's spare quads are degenerate and rasterise nothing.
++    float u    = float(min(col, segs)) / float(segs);
++    float phi  = (u * 2.0 - 1.0) * dphi;
++    float th   = max(thetaC + (side == 1 ? rad : -rad), thMin);
++    // Fade the cut, and ONLY where there is one. Where an arc runs to its own
++    // natural end the source-disc test already ends it, and fading there would
++    // dim every arc in the frame.
++    vLfFade = (dphi < dphiTrue * 0.999)
++            ? smoothstep(1.0, 0.72, abs(phi) / max(dphi, 1e-20)) : 1.0;
++    vec3 imgDir, srcDir;
++    lfRibbonDirs(n, e1, e2, th, phi, delta, Dl, rs, imgDir, srcDir);
++    if (-imgDir.z <= 1e-6 || -srcDir.z <= 1e-6) {
++      gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return;
++    }
++    // Depth is the particle's own, untouched, so a lensed arc keeps its true
++    // distance and solids still occlude it.
++    vec2 Ti = imgDir.xy / (-imgDir.z);
++    gl_Position = vec4(Ti.x * uProj[0][0] * r0.y, Ti.y * uProj[1][1] * r0.y, r0.x, r0.y);
++    // THE SOURCE COORDINATE, EXACTLY, AT EVERY CORNER — the thing that lets the
++    // fragment shader read a varying instead of solving the map per pixel.
++    vec2 sS = (srcDir.xy / (-srcDir.z)) * uProj[1][1];
++    vec2 pc = (sS - srcS) / max(srcUse * uProj[1][1], 1e-20);
++    vLfCoord = vec2(pc.x, -pc.y) * 0.5 + 0.5;   // gl_PointCoord's orientation
++    return;
++  }
++  // Every particle starts as "not an arc"; the sizing code below promotes the
++  // ones that are. Stamped here, before any early return can skip it.
++  if (uLfRibbon == 1) lfRec[(lfPid * max(uLfImages, 1) + lfImage) * LF_REC].y = 0.0;
+   // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
+   // Starfield chunks arrive ALREADY camera-relative (the big subtraction was
+   // done in double on the CPU), so they must not be offset again.
+@@ -180,7 +289,7 @@ void main() {
+   float lfSrcRad = 0.0;      // the sprite's UNLENSED angular radius (0 = not lensed)
+   {
+     vec4 lensed = gl_Position;
+-    if (!lfPlace(lensed, offset, uProj[0][0], uProj[1][1], gl_InstanceID)) {
++    if (!lfPlace(lensed, offset, uProj[0][0], uProj[1][1], lfImage)) {
+       gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // no image here → discarded
+       gl_PointSize = 0.0;
+       return;
+@@ -191,7 +300,7 @@ void main() {
+   vSlabW = 1.0;
+ 
+   vRim = aRim;
+-  float id = float(gl_VertexID);
++  float id = float(lfPid);
+   // Star attributes hashed on a galaxy-local POSITION (not the vertex index): the
+   // chunk path uses aLocal, so a star keeps its colour across LOD rungs; the
+   // particle path uses the FROZEN aHashPos with the frozen scale, so a star keeps
+@@ -365,6 +474,101 @@ void main() {
+     float srcUse   = srcAng;
+     float tangA    = srcUse * muT;                           // along the arc
+     float radlA    = srcUse * gLfMuR;                        // across it
++
++    // ── ARC RIBBON ───────────────────────────────────────────────────────
++    // Once a source is stretched into a genuine arc, a square sprite is the
++    // wrong primitive: it has to bound the arc's LENGTH in both axes, so its
++    // area exceeds the arc's by the aspect ratio and the rest is rasterised,
++    // mapped per pixel and discarded. Draw the annular sector instead.
++    // The partition is computed from muT/muR, which both passes derive
++    // identically, so every particle is drawn exactly once — never twice
++    // (which multiplicative dust would darken twice) and never zero times.
++    //
++    // The test is NOT "is this a long arc". Near the photon ring a source is
++    // magnified mostly RADIALLY, so an aspect-ratio test calls it round, leaves
++    // it on the square path, and the cap truncates it into a hard-edged block
++    // sitting on the ring — the artifact this work exists to remove, reappearing
++    // from the one case the first test did not cover. The rule is instead: take
++    // the ribbon whenever the square would be TRUNCATED (so truncation can never
++    // happen at all), or whenever the image is enough bigger than its source
++    // that the square would waste real area.
++    // EVERY lensed source takes the ribbon. Not "every long arc": the square
++    // path truncates in two separate places — the footprint cap, and the
++    // grow-to-cover step that is limited to 1.6x — and near the photon ring the
++    // second one bites on sources that are magnified RADIALLY, which no
++    // aspect-ratio test calls an arc. Each leaves the source disc larger than
++    // its own footprint, so no pixel is ever discarded and the sprite draws as a
++    // filled hard-edged square: the block sitting on the ring.
++    // A source the lens barely moves never reaches here (lfPlace's displacement
++    // gate drops it), and where the magnification is ~1 the ribbon degenerates
++    // to a patch the size of the source, so this is also the cheap case.
++    bool wantRibbon = (uLfRibbon != 0);
++    if (wantRibbon) {
++      float thetaC = gLfThetaS;
++      // AZIMUTHAL EXTENT, EXACTLY. The map preserves azimuth, so the image
++      // spans the same azimuth the source does: srcRadius / its angle from the
++      // axis. Deriving it from the CAPPED magnification instead (muT is limited
++      // to theta/srcAng) cut the arc dead at +/-1 rad, and because the ribbon
++      // was then SMALLER than the source disc, nothing was discarded at the cut
++      // — a hard-edged patch bounded by one constant-theta and one constant-phi
++      // line, which sits on the ring looking exactly like a rectangle.
++      // A source overlapping the axis saturates at pi: that is a full Einstein
++      // ring, which is what it physically is.
++      // asin, not srcUse/beta: the two agree far from the axis and the ratio
++      // badly underestimates as the source approaches it (at beta = srcUse the
++      // source's own edge touches the axis, which is half a turn of azimuth, not
++      // one radian). A source that overlaps the axis saturates at pi — a full
++      // Einstein ring, which is what it physically is.
++      float dphiTrue = (abs(gLfBetaS) > srcUse)
++                     ? asin(clamp(srcUse / abs(gLfBetaS), 0.0, 1.0))
++                     : 3.14159265;
++      // MAX ARC SIZE, in the one place it belongs. A source near the axis makes
++      // an arc that sweeps most of the ring, and its cost grows with that sweep,
++      // so this is the speed dial — but it TRUNCATES the image and fades the
++      // cut. It must never shrink the source instead: a ribbon smaller than the
++      // source it is drawing discards nothing and comes out as a solid patch.
++      float Rpx0     = max(gLfThetaS * uProj[1][1] * uViewportH * 0.5, 1.0);
++      float arcCap   = (uLfMaxSprite > 0.0)
++                     ? max(uLfMaxSprite * uViewportH / (2.0 * Rpx0), 0.02)
++                     : 3.14159265;
++      float dphi     = min(dphiTrue, arcCap);
++      float thMin  = lfShadowTheta(gLfGeom.x, gLfGeom.y, gLfGeom.z);
++      // Radial half-width, corrected against the MAP. mu_r at the arc's centre
++      // underestimates how much source the ribbon reaches near the shadow, and
++      // an under-wide ribbon clips the arc's own dust instead of empty corners
++      // — the failure that once left arcs blue-white while the geodesic showed
++      // them full of dark red dust.
++      // ITERATED, and against BOTH edges. mu_r at the arc's centre can under-
++      // estimate the radial extent by orders of magnitude near the shadow, so a
++      // single correction capped at 4x still leaves the ribbon smaller than the
++      // source it is drawing — and a ribbon smaller than its own source discards
++      // nothing, so it draws as a solid hard-edged patch instead of the carved
++      // shape. Four rounds of at most 4x reach 256x, which covers it.
++      // min() of the two edges, not max(): BOTH have to reach the source, and
++      // the inner one stops at the shadow where it cannot grow any further.
++      float rad = max(radlA, 1e-20);
++      for (int it = 0; it < 4; ++it) {
++        float tIn  = max(thetaC - rad, thMin);
++        float rOut = abs(lfBeta(thetaC + rad, gLfGeom.x, gLfGeom.y, gLfGeom.z) - gLfBetaS);
++        float rIn  = (tIn > thMin * 1.0001)
++                   ? abs(lfBeta(tIn, gLfGeom.x, gLfGeom.y, gLfGeom.z) - gLfBetaS)
++                   : srcUse;                       // clamped at the shadow: cannot grow inward
++        float reach = min(rOut, rIn);
++        if (reach >= srcUse * 0.99 || reach <= 1e-30) break;
++        rad = min(rad * min(srcUse / reach, 4.0), thetaC * 0.95);
++      }
++      int base = (lfPid * max(uLfImages, 1) + lfImage) * LF_REC;
++      lfRec[base + 0] = vec4(gl_Position.z, gl_Position.w, thetaC, gLfBetaS);
++      lfRec[base + 1] = vec4(gLfSrcS, srcUse, gLfGeom.x);
++      lfRec[base + 2] = vec4(dphi, rad, gLfGeom.y, gLfGeom.z);
++      lfRec[base + 5] = vec4(vSlabW, gLfHoleN);
++      lfRec[base + 6] = vec4(dphiTrue, 0.0, 0.0, 0.0);
++      lfRec[base + 3] = vec4(vColor, vMag);
++      lfRec[base + 4] = vec4(vDust, vSeed, vHot, vRim);
++      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);   // the ribbon pass draws this one
++      gl_PointSize = 0.0;
++      return;
++    }
+     // A square sprite has to bound a BENT shape, so allow for the arc's sagitta.
+     float sagA     = (gLfThetaS > 1e-12) ? (tangA * tangA) / (2.0 * gLfThetaS) : 0.0;
+     float halfA    = max(radlA + sagA, tangA);
+@@ -405,4 +609,8 @@ void main() {
+     vLfGeom    = gLfGeom;
+     vLfBetaS   = gLfBetaS;
+   }
++  // The ribbon pass draws ARCS ONLY. Everything else — unlensed, sub-pixel,
++  // culled, or bent too little to be worth a ribbon — belongs to the point
++  // pass, which is drawing it.
++  if (uLfRibbon == 2) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; }
+ }
+diff --git a/src/shaders/lens_forward.glsl b/src/shaders/lens_forward.glsl
+index 4a5322d..593936d 100644
+--- a/src/shaders/lens_forward.glsl
++++ b/src/shaders/lens_forward.glsl
+@@ -231,6 +231,7 @@ vec3  gLfHoleN;     // owner hole's unit direction, view space
+ vec3  gLfGeom;      // (delta, Dl, rs) of the hole that owns this image
+ float gLfMuT;       // tangential magnification (the stretch along the arc)
+ float gLfMuR;       // radial magnification
++vec3  gLfSrcDir;    // the source's UNLENSED view direction (the arc's azimuth basis)
+ 
+ // Rotate d away from nHat by dTheta, in the plane the two of them span. Exact —
+ // no small-angle assumption — so an off-axis hole and a wide FOV are handled
+@@ -249,12 +250,14 @@ vec3 lfRotateAway(vec3 d, vec3 nHat, float dTheta) {
+ // which case the caller must drop the vertex.
+ bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy, int image) {
+     gLfActive = false;
++    gLfSrcDir = vec3(0.0, 0.0, -1.0);
+     gLfThetaS = 0.0; gLfBetaS = 0.0; gLfSrcS = vec2(0.0); gLfCenterS = vec2(0.0);
+     gLfHoleN  = vec3(0.0, 0.0, -1.0); gLfGeom = vec3(0.0); gLfMuT = 1.0; gLfMuR = 1.0;
+     if (uLfCount <= 0 || clipPos.w <= 0.0) return image == 0;
+ 
+     vec2 T0 = vec2(clipPos.x / clipPos.w / fx, clipPos.y / clipPos.w / fy);  // tan-space
+     vec3 d  = normalize(vec3(T0, -1.0));                                     // view-space direction
++    gLfSrcDir = d;
+     vec3 dOut = d;
+     bool  haveOwner = false;
+     int   ownerIdx  = 0;
+@@ -393,3 +396,53 @@ bool lfSourceDir(vec3 d, vec3 n, float c, float st, vec3 tHat,
+     primary  = (D <= 3.14159265) && (c < cd);
+     return true;
+ }
++
++
++// ---------------------------------------------------------------------------
++// ARC RIBBONS — draw the image, not a box around it.
++//
++// The map is RADIAL: it changes the angle from the hole and leaves the azimuth
++// alone. So the image of a round source is not an awkward blob needing a
++// bounding square, it is an ANNULAR SECTOR whose extent is known in closed
++// form: theta_c +/- radlA across, phi_c +/- dphi along. A point sprite has to
++// bound that sector's LENGTH in both axes, so a 5:1 arc is drawn inside a
++// square 5x its own area and the empty part is rasterised, mapped per pixel,
++// and discarded. Measured on bh_ref: 346M of 508M fragments per frame.
++//
++// A ribbon of a few quads following the arc replaces that. Two consequences:
++//   - the fill is the arc, so nothing has to be truncated to keep it affordable
++//     (the truncation is what left hard-edged blocks around a big hole), and
++//   - the per-pixel map DISAPPEARS. Each vertex knows its own source position
++//     exactly, so the rasteriser interpolates the source coordinate for free
++//     and the fragment shader reads a varying instead of solving anything.
++//
++// The basis is built from the source's own direction, so phi_c is 0 by
++// construction and no atan is ever needed:
++//     e1 = normalised perpendicular part of the source direction
++//     e2 = n x e1
++//     d(theta, phi) = n cos(theta) + (e1 cos(phi) + e2 sin(phi)) sin(theta)
++// which reduces to the lensed direction at (theta_c, 0) — the same point
++// lfPlace already computed, so the ribbon and the old sprite centre agree.
++// ---------------------------------------------------------------------------
++
++// Source-plane and image-plane directions for one ribbon corner. beta carries
++// its SIGN, so the secondary image (beta < 0) mirrors the azimuth through the
++// axis on its own — no branch, no special case.
++void lfRibbonDirs(vec3 n, vec3 e1, vec3 e2, float theta, float phi,
++                  float delta, float Dl, float rs,
++                  out vec3 imgDir, out vec3 srcDir)
++{
++    vec3 ehat = e1 * cos(phi) + e2 * sin(phi);
++    imgDir = n * cos(theta) + ehat * sin(theta);
++    float beta = lfBeta(theta, delta, Dl, rs);
++    srcDir = n * cos(beta) + ehat * sin(beta);
++}
++
++// The smallest image angle that is not inside the shadow. Sources BEHIND the
++// hole only: one in front is reached before closest approach, so its image may
++// legitimately sit anywhere, including over the shadow — which is exactly how
++// foreground matter covers the hole.
++float lfShadowTheta(float delta, float Dl, float rs) {
++    if (delta <= 0.0 || Dl <= 0.0) return 0.0;
++    return asin(min(1.0, LF_BCRIT * rs / Dl)) * 1.0001;
++}

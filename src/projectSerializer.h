@@ -196,7 +196,7 @@ struct SceneSettings {
   // the loader falls back to, a project that omits a key gets exactly this.
   bool  lensingEnabled{true};
   bool  lensSecondary{false};
-  float lensMaxStretch{12.0f};
+  float lensMaxStretch{2.3f};
   float lensMaxSprite{0.25f};
   float lensHazeArc{1.0f};
   float spriteRefHeight{720.0f};

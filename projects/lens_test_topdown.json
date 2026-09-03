@@ -167,6 +167,7 @@
   "gasStrength": 0.5,
   "haloMergeStrength": 1.0,
   "keypoints": [],
+  "lensMaxStretch": 2.3,
   "nebulaDetail": 0.0,
   "playbackSpeed": 0.20000000298023224,
   "ramBudgetGB": 1.0,

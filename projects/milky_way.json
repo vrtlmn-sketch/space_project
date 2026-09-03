@@ -558,6 +558,7 @@
     "farFalloff": 0.07999999821186066,
     "gasStrength": 0.5,
     "keypoints": [],
+    "lensMaxStretch": 2.3,
     "nebulaDetail": 0.0,
     "playbackSpeed": 1.0,
     "ramBudgetGB": 1.0,

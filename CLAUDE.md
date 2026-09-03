@@ -1233,6 +1233,36 @@ from the other side - Stretch 12 with Max arc size 0.25 caps the footprint
 tightly enough that the smears never get long. Keep the dial; it is the lever if
 a scene ever needs the two separated again.
 
+### A LOW Stretch is a FALSE ECONOMY — it costs more, not less
+
+"Stretch" caps how far a sprite may be magnified, so it reads like a cost dial.
+It is not. Measured on blackhole.json, 1024x576, same binary, nothing else
+changed:
+
+| Stretch | ms/frame |
+|---|---|
+| 2.3 | 57 |
+| 6 | 59 |
+| **12** | **10** |
+
+A HIGHER cap is ~6x cheaper. The reason is the same mechanism as the blocks: a
+footprint capped below the size its source needs never reaches the source-disc
+test, so **nothing is discarded** and every fragment it rasterises survives to
+be shaded and blended. Uncapped, the sprite covers its source, the profile runs
+out inside the footprint, and most fragments discard early and cost almost
+nothing. Discarded fragments are cheap; surviving ones are not.
+
+So the two caps pull in opposite directions and must not be reasoned about as
+one "quality vs speed" axis:
+- **Max arc size** genuinely is a speed dial — it truncates the sweep and fades
+  the cut, and fewer fragments are rasterised.
+- **Stretch** is a LOOK dial. Lowering it shortens arcs, and it makes the frame
+  slower. Reach for Max arc size when you want speed.
+
+The visual difference between Stretch 2.3 and 12 on that scene is small (2.3 is
+slightly tighter round the hole), so this is nearly 6x of frame time for a
+subtle look change. Worth knowing before treating it as an optimisation.
+
 ### Sprite Density: the reference runs BACKWARDS from how it reads
 
 The control is named by density now (Densest .. Sparsest, each labelled with its

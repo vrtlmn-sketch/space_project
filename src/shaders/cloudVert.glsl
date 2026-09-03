@@ -354,8 +354,25 @@ void main() {
     // hit the fill-rate cap, and then covered its ENTIRE square with source —
     // the hard-edged rectangle across the frame. Capping the pixels without
     // capping the magnification is what turns an arc into a box.
-    float muT     = min(gLfMuT, gLfThetaS / max(srcAng, 1e-30));
-    float muMax   = max(muT, gLfMuR);
+    // AZIMUTHAL EXTENT, EXACTLY — this is what decides how far an arc sweeps.
+    // The map is RADIAL: it changes the angle from the hole and preserves the
+    // azimuth, so the image spans exactly the azimuth the SOURCE spans, seen
+    // from the hole: asin(srcRad/|beta|). A source that overlaps the axis
+    // (srcRad >= |beta|) spans all of it — a full Einstein ring, which is what
+    // it physically is.
+    //
+    // It used to come from the finite-source cap on the tangential stretch,
+    // mu_t <= theta/srcRad, which makes tangA <= theta and therefore
+    // dphi <= 1 RADIAN. That is a hard 57 degree ceiling on the half-sweep of
+    // every arc in the scene, whatever the dials say, and it is why arcs did
+    // not wrap round the hole: measured, it under-reads the true extent by up
+    // to 3.14x, exactly when the source is near the axis and the arc should be
+    // longest. The finite-source limit itself is real — it is the reason images
+    // are bright arcs and not infinitely thin infinitely long ones — but asin
+    // already encodes it, and encodes it correctly.
+    float dphi    = (abs(gLfBetaS) > srcAng)
+                  ? asin(clamp(srcAng / max(abs(gLfBetaS), 1e-30), 0.0, 1.0))
+                  : 3.14159265;
     // A BUDGET ON HOW FAR A SPRITE MAY BE STRETCHED — and it has to be spent by
     // shrinking the SOURCE, never by shrinking the footprint. Sizing the
     // footprint from a capped magnification while the fragment shader still maps
@@ -390,11 +407,20 @@ void main() {
     // Lensing conserves surface brightness; the arc has to read exactly as dark
     // as the unlensed lane, and may only cover more sky.
     float srcUse   = srcAng;
-    float tangA    = srcUse * muT;                           // along the arc
-    float radlA    = srcUse * gLfMuR;                        // across it
-    // A square sprite has to bound a BENT shape, so allow for the arc's sagitta.
-    float sagA     = (gLfThetaS > 1e-12) ? (tangA * tangA) / (2.0 * gLfThetaS) : 0.0;
-    float halfA    = max(radlA + sagA, tangA);
+    float radlA    = srcUse * gLfMuR;                        // across the arc
+    // Bound the ANNULAR SECTOR, not a straight streak. The sector runs
+    // +/- dphi in azimuth about the hole over radii thetaC +/- radlA, and the
+    // sprite is centred on the arc at thetaC — so the square has to reach
+    // thetaC*(1-cos dphi) back toward the hole and (thetaC+radlA)*sin dphi
+    // across. Past a quarter turn the sector wraps the hole and the across term
+    // saturates at the full radius. For a short arc this reduces to
+    // max(radlA, thetaC*dphi), which is what the old sagitta form gave, so
+    // nothing changes for the many sprites the lens barely bends.
+    float cd       = cos(min(dphi, 3.14159265));
+    float sd       = (dphi >= 1.5707963) ? 1.0 : sin(dphi);
+    float dxA      = max(radlA, gLfThetaS * (1.0 - cd) + radlA);
+    float dyA      = (gLfThetaS + radlA) * sd;
+    float halfA    = max(dxA, dyA);
     // Final consistency: if the sagitta pushed the footprint over budget, shrink
     // the source to match. The image extent falls at least as fast as the source
     // does, so the profile still runs out inside the footprint.

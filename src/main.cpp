@@ -1343,6 +1343,19 @@ int main(int argc, char** argv) {
                              ? (2.598f * po.schwarzschildRadius / vr) : 1.0f;
           }
         }
+        // LF_HOLEPOS=1: print where the LENS thinks each hole is, in pixels.
+        // Ground truth for "are the arcs concentric with the drawn shadow" —
+        // pixel-hunting the dark blob is unreliable once dust intrudes on it.
+        if (std::getenv("LF_HOLEPOS")) {
+          const float fyv = (float)(1.0 / std::tan((double)renderer.zoom * 0.5 * kPI / 180.0));
+          for (int k = 0; k < gLfCount; ++k) {
+            const float dvx = gLfHoleDirV[k*3+0], dvy = gLfHoleDirV[k*3+1], dvz = gLfHoleDirV[k*3+2];
+            const float sx = (dvx / -dvz) * fyv, sy = (dvy / -dvz) * fyv;   // aspect-corrected NDC
+            std::printf("[HOLEPOS] hole %d  screenS=(%.4f, %.4f)  dist=%.3f rs=%.4f\n",
+                        k, sx, sy, gLfHoleDist[k], gLfHoleRs[k]);
+            std::fflush(stdout);
+          }
+        }
         gLfPxPerRad = (float)pxPerRad;
         gLfFy       = (float)(1.0 / std::tan((double)renderer.zoom * 0.5 * kPI / 180.0));
         gLfMaxMu    = renderer.lensMaxStretch;
