@@ -3968,6 +3968,17 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "and their area grows as the square, so lowering this buys a lot.\n"
                         "Measured on a galaxy + hole: 0.35 -> 423 ms/frame, 0.15 -> 244.\n"
                         "Lower truncates the longest arcs; it never changes brightness.");
+    ImGui::SliderFloat("Haze arc", &lensHazeArc, 0.05f, 1.0f, "%.2f x");
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How far the HAZE may stretch, as a share of Max arc size.\n"
+                        "A star core is a small crisp sprite: stretched it draws the thin\n"
+                        "bright streak. The haze is a wide soft glow, and stretching it makes\n"
+                        "a long soft smear - so at a high budget the smears overlap and fill\n"
+                        "the DARK GAPS between the streaks. That is the grey murk round the\n"
+                        "shadow: the streaks are unchanged, the space between them brightens.\n"
+                        "Lower keeps the gaps open AND is cheaper, because the haze sprites\n"
+                        "are the big ones. Measured: arc 0.5 costs 4.29 s at 1.0 and 3.20 s\n"
+                        "at 0.12, which is what arc 0.08 costs - with much longer arcs.");
     ImGui::EndDisabled();
     ImGui::TextDisabled("Every source is bent by its own position. There is no\n"
                         "foreground/background split, so nothing pops as you fly.");
@@ -4092,15 +4103,22 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "takes its width from the view's aspect.");
 
     ImGui::Spacing();
-    ImGui::Text("Sprite Calibration");
+    ImGui::Text("Sprite Density");
     ImGui::SetNextItemWidth(-1);
     {
       // 0 = off, else a reference height. A LOWER reference makes every sprite
       // bigger at the same render height, so this is also a density dial, not
       // only a calibration — see the tooltip.
+      // Named by what it DOES, densest first. Labelled by resolution alone it
+      // read as a quality ladder — "4K" sounds like the best setting when it in
+      // fact draws the SMALLEST sprites, because the scale is height/reference.
       static const char* rl[] = { "Off (absolute pixels)",
-                                  "240p", "360p", "480p", "540p", "720p",
-                                  "900p", "1080p", "1440p", "4K", "Custom" };
+                                  "Densest  (240p ref)", "Denser  (360p ref)",
+                                  "Dense  (480p ref)",   "Rich  (540p ref)",
+                                  "Standard  (720p ref)",
+                                  "Lighter  (900p ref)", "Light  (1080p ref)",
+                                  "Sparse  (1440p ref)", "Sparsest  (4K ref)",
+                                  "Custom" };
       static const float rv[] = { 0.0f,
                                   240.0f, 360.0f, 480.0f, 540.0f, 720.0f,
                                   900.0f, 1080.0f, 1440.0f, 2160.0f, -1.0f };
@@ -4118,8 +4136,8 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
         ImGui::DragFloat("##spriterefc", &spriteRefHeight, 4.0f, 120.0f, 4320.0f, "%.0f px");
       }
     }
-    ImGui::TextDisabled("Height the sprite sizes are calibrated at. Sprites then keep the\n"
-                        "same FRACTION of the frame at any resolution.");
+    ImGui::TextDisabled("How big sprites are drawn, as a fraction of the frame - so a scene\n"
+                        "looks the same at any resolution. Denser = bigger sprites.");
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Brightness here comes from sprites OVERLAPPING, so a size fixed in\n"
                         "absolute pixels means a taller render has smaller sprites relative\n"
@@ -4130,11 +4148,13 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "Set this to the height a project's look was tuned at. Off restores\n"
                         "the old absolute-pixel behaviour exactly.\n"
                         "\n"
-                        "It is also a DENSITY dial: sprite size scales as height/reference,\n"
-                        "so a LOWER reference draws bigger sprites at the same resolution -\n"
-                        "more overlap, thicker dust, a milkier haze - and a higher one draws\n"
-                        "smaller, sparser, sharper ones. 540p renders a 1080p frame with\n"
-                        "sprites at 2x, 4K renders it at 0.5x.");
+                        "The reference is a SIZE dial, and it runs backwards from how the\n"
+                        "numbers read: scale is render height / reference, so a LOWER\n"
+                        "reference draws BIGGER sprites - more overlap, thicker dust, a\n"
+                        "milkier haze - and a higher one draws smaller, sparser, sharper\n"
+                        "ones that also cost far less to fill. Measured at a 720p render:\n"
+                        "480p ref = 1.5x sprites and 7.70 s / 30 frames; 4K ref = 0.33x and\n"
+                        "4.36 s. Standard (720p) is what the bundled projects are tuned at.");
 
     ImGui::Spacing();
     ImGui::Text("Nebula Pass");

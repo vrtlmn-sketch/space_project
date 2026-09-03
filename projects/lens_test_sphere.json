@@ -2,10 +2,10 @@
  "clouds": [
   {
    "computeMethod": 1,
-   "count": 20000,
+   "count": 10000,
    "dataFile": "",
    "enabled": true,
-   "formationFile": "lens_test_sphere_20k.json",
+   "formationFile": "lens_test_sphere_10k.json",
    "haloRCore": 172.8192596435547,
    "haloVFlat": 67.07815551757812,
    "keyframes": [],

@@ -192,6 +192,13 @@ struct SceneSettings {
   // Sprite sizes are calibrated at THIS render height and scale with it, so a
   // scene looks the same at any resolution. 0 = off (absolute pixels, the
   // pre-2026-09-03 behaviour). See renderer.h for why this exists.
+  // Lens look. These are the shipped defaults and, because SceneSettings is what
+  // the loader falls back to, a project that omits a key gets exactly this.
+  bool  lensingEnabled{true};
+  bool  lensSecondary{false};
+  float lensMaxStretch{12.0f};
+  float lensMaxSprite{0.25f};
+  float lensHazeArc{1.0f};
   float spriteRefHeight{720.0f};
   float unresolvedSize{45.55f};
   float resolvedCut{0.0f};

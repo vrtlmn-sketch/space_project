@@ -1035,11 +1035,15 @@ public:
   // foreground slabs, no per-pixel compute march. One extra draw per hole for
   // the secondary images, and that is the whole cost.
   bool     lensForward    = true;
-  bool     lensSecondary  = true;    // draw the inner (secondary) image of each hole
-  float    lensMaxSprite  = 0.35f;   // largest lensed sprite as a fraction of viewport height.
+  bool     lensSecondary  = false;   // draw the inner (secondary) image of each hole
+  // The haze pass's share of the arc budget. Star cores stretch into the thin
+  // bright streaks; the haze is a soft glow whose stretched smears fill the dark
+  // gaps between them. 1 = no separate limit.
+  float    lensHazeArc    = 1.0f;
+  float    lensMaxSprite  = 0.25f;   // largest lensed sprite as a fraction of viewport height.
                                      // Measured on bh_ref: 0.35 -> 423 ms/frame, 0.15 -> 244.
                                      // Lower truncates the longest arcs and buys a lot of speed.
-  float    lensMaxStretch = 2.5f;    // how many times its own size a sprite may be stretched into
+  float    lensMaxStretch = 12.0f;   // how many times its own size a sprite may be stretched into
                                      // an arc; spent by shrinking the source, never the footprint
   unsigned lensLutTex     = 0;       // RG32F deflection table (built once, from the geodesic)
   void     EnsureLensLut();

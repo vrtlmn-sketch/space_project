@@ -2,8 +2,8 @@
  "clouds": [
   {
    "computeMethod": 1,
-   "count": 58800,
-   "dataFile": "blackhole.data/cloud_0.pcl",
+   "count": 10000,
+   "dataFile": "blackhole_10k.data/cloud_0.pcl",
    "enabled": true,
    "formationFile": "",
    "haloRCore": 172.8192596435547,

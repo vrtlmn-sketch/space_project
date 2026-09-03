@@ -801,6 +801,11 @@ int main(int argc, char** argv) {
     renderer.spikeSecondary     = s.spikeSecondary;
     renderer.spikeChroma        = s.spikeChroma;
     renderer.unresolvedStrength = s.unresolvedStrength;
+    renderer.lensingEnabled    = s.lensingEnabled;
+    renderer.lensSecondary     = s.lensSecondary;
+    renderer.lensMaxStretch    = s.lensMaxStretch;
+    renderer.lensMaxSprite     = s.lensMaxSprite;
+    renderer.lensHazeArc       = s.lensHazeArc;
     renderer.spriteRefHeight    = s.spriteRefHeight;
     renderer.unresolvedSize     = s.unresolvedSize;
     renderer.resolvedCut        = s.resolvedCut;
@@ -1006,6 +1011,11 @@ int main(int argc, char** argv) {
     s.spikeSecondary     = renderer.spikeSecondary;
     s.spikeChroma        = renderer.spikeChroma;
     s.unresolvedStrength = renderer.unresolvedStrength;
+    s.lensingEnabled     = renderer.lensingEnabled;
+    s.lensSecondary      = renderer.lensSecondary;
+    s.lensMaxStretch     = renderer.lensMaxStretch;
+    s.lensMaxSprite      = renderer.lensMaxSprite;
+    s.lensHazeArc        = renderer.lensHazeArc;
     s.spriteRefHeight    = renderer.spriteRefHeight;
     s.unresolvedSize     = renderer.unresolvedSize;
     s.resolvedCut        = renderer.resolvedCut;
@@ -1339,6 +1349,8 @@ int main(int argc, char** argv) {
         if (const char* e = std::getenv("LF_MAXMU")) gLfMaxMu = (float)std::atof(e);
         gLfMaxSprite = renderer.lensMaxSprite;
         if (const char* e = std::getenv("LF_MAXSPRITE")) gLfMaxSprite = (float)std::atof(e);
+        gLfHazeArc = renderer.lensHazeArc;
+        if (const char* e = std::getenv("LF_HAZEARC")) gLfHazeArc = (float)std::atof(e);
         // One extra pass per hole draws that hole's SECONDARY image (the arc
         // inside the Einstein ring). It is not a second model — the same map,
         // the same sprites, a different root of the same equation — and the two

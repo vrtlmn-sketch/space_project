@@ -213,6 +213,7 @@ uniform float uLfHoleDist[4];    // Dl (AU)
 uniform float uLfHoleRs[4];      // rs (AU)
 uniform float uLfDelta0[4];      // PER OBJECT: (object centre - hole) . holeDir, in double on the CPU
 uniform float uLfMaxMu;          // cap on how far a sprite may be stretched (fill-rate guard)
+uniform float uLfHazeArc;        // separate arc budget for the HAZE pass (x uLfMaxSprite)
 uniform float uLfMaxSprite;      // largest lensed sprite, as a fraction of viewport height.
                                  // The single strongest speed dial: cost is dominated by a few
                                  // very large magnified sprites and their area is quadratic,

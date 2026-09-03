@@ -369,7 +369,17 @@ void main() {
     // source. Clamping gl_PointSize on its own afterwards is what put the boxes
     // back: a clamped footprint with an unclamped source leaves every pixel
     // inside the source disc again.
-    float pxCap    = uViewportH * uLfMaxSprite;              // largest sprite we will draw
+    // THE HAZE GETS ITS OWN, SMALLER ARC BUDGET.
+    // A star core is a small crisp sprite: stretched, it draws the thin bright
+    // streak the geodesic shows. The haze lobe is a wide SOFT glow standing in
+    // for unresolved stars, and stretching it produces a long soft smear — so as
+    // the budget rises the smears lengthen, overlap, and fill the DARK GAPS
+    // between the streaks. That is the grey murk: measured as a diff between two
+    // budgets, the streaks themselves are unchanged and it is the space between
+    // them that brightens. Capping the haze keeps the gaps open, and it is also
+    // where the fill cost is, because haze sprites are the big ones.
+    float passCap  = (uCloudPass == 0) ? max(uLfHazeArc, 0.001) : 1.0;
+    float pxCap    = uViewportH * uLfMaxSprite * passCap;    // largest sprite we will draw
     float maxHalfA = min(uLfMaxMu * srcAng,
                          pxCap / (uProj[1][1] * max(uViewportH, 1.0)));
     // ALWAYS DRAW THE WHOLE SOURCE. The budget below is spent by truncating the

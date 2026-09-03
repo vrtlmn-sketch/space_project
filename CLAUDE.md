@@ -1154,6 +1154,12 @@ What that means for optimising it:
   executes there at all. Same binary, minutes later: 3.74 / 3.48 / 3.50 / 3.49.
   Before believing a regression, ask whether the changed code can even run in
   that scene; if it cannot, stop measuring and re-measure later.
+- **Exactly 1000 ms/frame means VSYNC, not slowness.** With the user's live app
+  holding the display every harness render came back at precisely 1.0 s/frame -
+  5 frames 6 s, 25 frames 26 s, two different scenes identical - which made a
+  10k cloud and a 58 800 one measure the same. Renders stay byte-correct under
+  contention, so IMAGES are still valid; only timings are junk. Check for a
+  running `blackholesim` before timing, and never `pkill` a bare one.
 - **Never trust a single timing sample on this machine.** Chasing the dust fix
   produced readings of 861-939 ms/frame that looked like a 5x regression; a
   repeat showed lens-OFF also reading 899 ms once, which is impossible, and the
@@ -1199,6 +1205,76 @@ calibration, since a lower reference draws bigger sprites at any resolution.
 New harness baseline: milky_way at the default **1280x720** reads **27.704**.
 milky_way holds 27.70 / 28.09 / 28.33 / 28.80 from 720p to 4K — a 4% spread,
 against a 2.5x collapse before.
+
+### The grey murk round a hole is the GAPS FILLING IN, not the shadow
+
+At a high Max arc size a dirty grey band appears between the bright arcs and the
+black shadow, and the shadow reads as smaller and blobby. Four plausible causes
+were tested and all four are innocent: bloom (off - unchanged), dust (off -
+unchanged), the footprint edge-fade width (made fixed-width in pixels - 172.3 ->
+173.7, i.e. nothing), and radial spill from the square footprint (clipped to the
+true annular sector - discarded not one fragment).
+
+**What settled it was a DIFFERENCE MAP, and it should have been the first move.**
+Subtracting the two arc sizes shows the star streaks as *unchanged* and the space
+BETWEEN them lighting up. The arcs are fine; the dark gaps are filling in.
+
+The cause is that a star core and the haze are not the same kind of sprite. A
+core is small and crisp: stretched, it draws the thin bright streak the geodesic
+shows. The haze lobe is a wide SOFT glow standing in for unresolved stars, and
+stretching it makes a long soft smear - so as the budget rises the smears overlap
+and drown the gaps. One dial was stretching both.
+
+`lensHazeArc` (Lens -> **Haze arc**, the haze's share of the arc budget) exists
+for this. Measured on bh_disk at arc 0.5: 1.0 -> 4.29 s/30 frames and murky,
+0.12 -> 3.20 s and crisp, which is what arc 0.08 costs with much longer arcs.
+**The shipped default is 1.0, i.e. off**, because the user found a better answer
+from the other side - Stretch 12 with Max arc size 0.25 caps the footprint
+tightly enough that the smears never get long. Keep the dial; it is the lever if
+a scene ever needs the two separated again.
+
+### Sprite Density: the reference runs BACKWARDS from how it reads
+
+The control is named by density now (Densest .. Sparsest, each labelled with its
+reference height) because the resolution labels read as a quality ladder: "4K"
+sounds like the best setting when it in fact draws the SMALLEST sprites. Scale is
+`render height / reference`, so a LOWER reference means BIGGER sprites - more
+overlap, thicker dust, and far more fill. Measured at a 720p render, bh_disk,
+30 frames: 480p ref = 1.5x sprites = 7.70 s; 720p = 1.00x = 6.95 s; 1080p =
+0.67x = 5.92 s; 4K = 0.33x = 4.36 s. That, and not the lens, is why a scene can
+be much faster at a "higher" setting.
+
+### Fewer particles is NOT a smaller version of the same picture
+
+The black-hole test scenes were decimated to 10k (bh_ref/blackhole/topdown/
+twoholes from a 58 800-particle sidecar, bh_disk and lens_test_sphere from their
+formations). Every source is a NEW file - `blackhole_10k.data`, the `*_10k.json`
+formations - sampled with a fixed seed and with the per-particle mass scaled up
+so the TOTAL mass, and therefore the physics and the halo fit, are unchanged.
+
+**It is a large look change and no setting recovers it.** bh_ref mean 27.79 ->
+41.48: the image gets much brighter and the dark dust lanes largely vanish,
+because dust is multiplicative and 5.9x fewer puffs darken 5.9x less. Sprite
+Density pushes the wrong way - 480p ref 63.5, 360p 78.6, 300p 86.7 - since
+bigger sprites add more light than they add darkening. Dust lanes need MANY
+SMALL sprites, never a few big ones. So the 10k scenes are right for geometry,
+arcs and artefact hunting, and misleading for anything about dust or the cloud
+look. milky_way (20k) and universe (procedural) were deliberately left alone.
+
+### Lens settings live in SceneSettings, like every other look setting
+
+`lensingEnabled`, `lensSecondary`, `lensMaxStretch`, `lensMaxSprite` and
+`lensHazeArc` used to be Renderer-only members, so editing one in the app and
+saving the project silently lost it. All five are now in `SceneSettings` (the
+one place defaults live), serialised, and applied through
+`applySettingsToRenderer` - which is the same function `cb.newProject` calls, so
+a NEW project inherits them too. Shipped: lensing on, secondary images OFF,
+Stretch 12.0, Max arc size 0.25, Haze arc 1.0.
+
+Verified the way this file prescribes: a project with the keys spelled out
+renders BYTE-IDENTICALLY to one that omits them, so there is no second diverging
+copy. A project with an EMPTY settings block round-trips to exactly these values,
+which is the same fallback path a new project takes.
 
 ### The harness must render at the USER'S height
 

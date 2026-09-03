@@ -308,6 +308,11 @@ bool ProjectSerializer::Save(const std::string& path,
     s["spikeSecondary"]    = settings.spikeSecondary;
     s["spikeChroma"]       = settings.spikeChroma;
     s["unresolvedStrength"] = settings.unresolvedStrength;
+    s["lensingEnabled"]    = settings.lensingEnabled;
+    s["lensSecondary"]     = settings.lensSecondary;
+    s["lensMaxStretch"]    = settings.lensMaxStretch;
+    s["lensMaxSprite"]     = settings.lensMaxSprite;
+    s["lensHazeArc"]       = settings.lensHazeArc;
     s["spriteRefHeight"]   = settings.spriteRefHeight;
     s["unresolvedSize"]    = settings.unresolvedSize;
     s["resolvedCut"]       = settings.resolvedCut;
@@ -656,6 +661,11 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.spikeSecondary     = s.value("spikeSecondary",     0.72f);
     st.spikeChroma        = s.value("spikeChroma",        0.65f);
     st.unresolvedStrength = s.value("unresolvedStrength", SceneSettings{}.unresolvedStrength);
+    st.lensingEnabled     = s.value("lensingEnabled",     SceneSettings{}.lensingEnabled);
+    st.lensSecondary      = s.value("lensSecondary",      SceneSettings{}.lensSecondary);
+    st.lensMaxStretch     = s.value("lensMaxStretch",     SceneSettings{}.lensMaxStretch);
+    st.lensMaxSprite      = s.value("lensMaxSprite",      SceneSettings{}.lensMaxSprite);
+    st.lensHazeArc        = s.value("lensHazeArc",        SceneSettings{}.lensHazeArc);
     st.spriteRefHeight    = s.value("spriteRefHeight",    SceneSettings{}.spriteRefHeight);
     st.unresolvedSize     = s.value("unresolvedSize",     SceneSettings{}.unresolvedSize);
     st.resolvedCut        = s.value("resolvedCut",        SceneSettings{}.resolvedCut);

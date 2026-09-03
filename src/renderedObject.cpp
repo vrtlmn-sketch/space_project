@@ -49,6 +49,7 @@ float    gLfFy              = 1.0f;
 float    gLfPxPerRad        = 1.0f;
 float    gLfMaxMu           = 24.0f;
 float    gLfMaxSprite       = 0.35f;
+float    gLfHazeArc         = 1.0f;
 float    gSpriteRefHeight   = 720.0f;
 int      gLfImages          = 1;
 unsigned gLfLutTex          = 0;
@@ -66,6 +67,7 @@ void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz
   if ((l = glGetUniformLocation((GLuint)program, "uLfPxPerRad")) >= 0) glUniform1f(l, gLfPxPerRad);
   if ((l = glGetUniformLocation((GLuint)program, "uLfMaxMu"))    >= 0) glUniform1f(l, gLfMaxMu);
   if ((l = glGetUniformLocation((GLuint)program, "uLfMaxSprite")) >= 0) glUniform1f(l, gLfMaxSprite);
+  if ((l = glGetUniformLocation((GLuint)program, "uLfHazeArc")) >= 0) glUniform1f(l, gLfHazeArc);
   if ((l = glGetUniformLocation((GLuint)program, "uLfFy"))       >= 0) glUniform1f(l, gLfFy);
   // delta0: how far THIS object's centre sits behind each hole, along that
   // hole's line of sight. Differenced in DOUBLE here so the shader only ever

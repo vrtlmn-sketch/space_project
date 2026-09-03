@@ -94,6 +94,7 @@ extern float  gLfMaxSprite;      // largest lensed sprite, fraction of viewport 
 // old behaviour). Global for the same reason gLf* are: every cloud draw needs
 // it and it is a property of the FRAME, not of an object.
 extern float  gSpriteRefHeight;
+extern float  gLfHazeArc;        // haze pass's share of the arc budget
 extern int    gLfImages;         // draw instances: 1 (direct) + one secondary image per hole
 extern unsigned gLfLutTex;       // RG32F deflection table, built by lensfwd::DeflectionLutRG()
 
