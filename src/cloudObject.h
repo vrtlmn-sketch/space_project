@@ -74,7 +74,6 @@ private:
   // making galaxy-galaxy attraction and mergers emerge from one force law.
   // No-op if there is no halo, no stars, or DM already exists. They live in the
   // tail of cloudParticles and render only in the debug view (see renderCloud).
-  void ensureDarkMatter();
   // Drop the dark-matter tail (physics off / rebuilding chunks); regenerated
   // from the halo params next time the cloud simulates.
   void stripDarkMatter();

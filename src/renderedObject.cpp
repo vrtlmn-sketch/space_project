@@ -20,24 +20,7 @@
 float RenderedObject::sZNear = 0.001f;
 double gCamAnchor[3] = {0.0, 0.0, 0.0};
 double gViewRotD[9]  = {1,0,0, 0,1,0, 0,0,1};   // row-major double view rotation
-int    gLensCull = 0;
-float  gLensBHDirCam[3] = {0,0,1};
-float  gLensBHDist = 1e30f;
-float  gLensBHSplitDist = 1e30f;
-float  gLensBHShadowR = 0.0f;
-float  gLensCullCos = 2.0f;   // cos > 1 → never culls when disabled
-float  gLensBHScreen[2] = {0,0};
-float  gLensEinsteinR = 0.0f;
-float  gLensBendStrength = 1.0f;
-float  gLensBendReach = 1e30f;
-int    gLensDustLayer = 0;
 int    gLensDustToBuffer = 0;
-int    gLensSizeRefOn = 0;
-float  gLensSizeRefRel[3] = {0, 0, 0}, gLensSizeRefFy = 1.0f, gLensSizeRefH = 720.0f;
-float  gLensBHRsAU = 0.0f;
-float  gLensSlabMin = 0.0f;
-float  gLensSlabMax = 0.0f;
-float  gLensSlabFade = 0.0f;
 
 int      gLfCount = 0;
 float    gLfHoleDirV[4 * 3] = {0};
@@ -51,7 +34,6 @@ float    gLfMaxMu           = 24.0f;
 float    gLfMaxSprite       = 0.35f;
 float    gLfHazeArc         = 1.0f;
 float    gSpriteRefHeight   = 720.0f;
-int      gLfImages          = 1;
 unsigned gLfLutTex          = 0;
 
 void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz)
@@ -1059,43 +1041,7 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
   GLint lr = glGetUniformLocation(program, "uCloudRot");
   if (lr >= 0) glUniformMatrix3fv(lr, 1, GL_TRUE, rm);   // rm is row-major
 
-  // Volumetric dust: per-object flag + volume, re-sent every call because the
-  // program is SHARED — a sprite cloud drawn after a volumetric one must see 0.
-  {
-    GLint vl = glGetUniformLocation(program, "uDustVolOn");
-    const bool volOn = volumetricDust && !isStarfield && dustVolTex != 0;
-    if (vl >= 0) glUniform1i(vl, volOn ? 1 : 0);
-    if (volOn) {
-      glActiveTexture(GL_TEXTURE6);
-      glBindTexture(GL_TEXTURE_3D, dustVolTex);
-      glActiveTexture(GL_TEXTURE0);
-      if ((vl = glGetUniformLocation(program, "uDustVol"))   >= 0) glUniform1i(vl, 6);
-      if ((vl = glGetUniformLocation(program, "uDustVolLo")) >= 0) glUniform3f(vl, dustVolLo.x, dustVolLo.y, dustVolLo.z);
-      if ((vl = glGetUniformLocation(program, "uDustVolHi")) >= 0) glUniform3f(vl, dustVolHi.x, dustVolHi.y, dustVolHi.z);
-    }
-  }
 
-  // Black-hole front/back cull + cosmetic front-particle bend.
-  GLint lc;
-  if ((lc = glGetUniformLocation(program, "uBHCull"))      >= 0) glUniform1i(lc, gLensCull);
-  if ((lc = glGetUniformLocation(program, "uBHDirCam"))    >= 0) glUniform3f(lc, gLensBHDirCam[0], gLensBHDirCam[1], gLensBHDirCam[2]);
-  if ((lc = glGetUniformLocation(program, "uBHDist"))      >= 0) glUniform1f(lc, gLensBHDist);
-  if ((lc = glGetUniformLocation(program, "uBHSplitDist")) >= 0) glUniform1f(lc, gLensBHSplitDist);
-  if ((lc = glGetUniformLocation(program, "uBHShadowR"))   >= 0) glUniform1f(lc, gLensBHShadowR);
-  if ((lc = glGetUniformLocation(program, "uBHCullCos"))   >= 0) glUniform1f(lc, gLensCullCos);
-  if ((lc = glGetUniformLocation(program, "uBHScreen"))    >= 0) glUniform2f(lc, gLensBHScreen[0], gLensBHScreen[1]);
-  if ((lc = glGetUniformLocation(program, "uBHEinsteinR")) >= 0) glUniform1f(lc, gLensEinsteinR);
-  if ((lc = glGetUniformLocation(program, "uBHBendStr"))   >= 0) glUniform1f(lc, gLensBendStrength);
-  if ((lc = glGetUniformLocation(program, "uBHBendReach")) >= 0) glUniform1f(lc, gLensBendReach);
-  if ((lc = glGetUniformLocation(program, "uBHDustLayer")) >= 0) glUniform1i(lc, gLensDustLayer);
-  if ((lc = glGetUniformLocation(program, "uSizeRefOn"))  >= 0) glUniform1i(lc, gLensSizeRefOn);
-  if ((lc = glGetUniformLocation(program, "uSizeRefRel")) >= 0) glUniform3fv(lc, 1, gLensSizeRefRel);
-  if ((lc = glGetUniformLocation(program, "uSizeRefFy"))  >= 0) glUniform1f(lc, gLensSizeRefFy);
-  if ((lc = glGetUniformLocation(program, "uSizeRefH"))   >= 0) glUniform1f(lc, gLensSizeRefH);
-  if ((lc = glGetUniformLocation(program, "uLensRs"))      >= 0) glUniform1f(lc, gLensBHRsAU);
-  if ((lc = glGetUniformLocation(program, "uBHSlabMin"))   >= 0) glUniform1f(lc, gLensSlabMin);
-  if ((lc = glGetUniformLocation(program, "uBHSlabMax"))   >= 0) glUniform1f(lc, gLensSlabMax);
-  if ((lc = glGetUniformLocation(program, "uBHSlabFade"))  >= 0) glUniform1f(lc, gLensSlabFade);
 
   // Forward lens: this cloud's own offset from each hole, in double.
   uploadLensForwardUniforms(program, ox, oy, oz);
@@ -1127,7 +1073,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   // 7.29 -> 9.14 inside a galaxy). That is a LOOK change, and the look is the
   // contract — it needs explicit sign-off, not a drive-by fix. Keep this call
   // byte-identical to the signed-off behaviour until then.
-  glDrawArraysInstanced(GL_POINTS, 0, bufferSize, gLfImages);
+  glDrawArrays(GL_POINTS, 0, bufferSize);
   glEnable(GL_DEPTH_TEST);
   // The post chain (bloom/tonemap) relies on overwrite semantics — leaking
   // additive blending here makes every later pass ACCUMULATE frame over frame
@@ -1948,7 +1894,7 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     if (le >= 0) glUniform1f(le, sc.extent);
     if (lp >= 0) glUniform1f(lp, vis[k].screenPx);
     if (ld >= 0) glUniform1f(ld, FarFieldDim(vis[k].want, n, cineFarFalloff));
-    glDrawArraysInstanced(GL_POINTS, sc.first, n, gLfImages);
+    glDrawArrays(GL_POINTS, sc.first, n);
     vis[k].drew = n;
     drawn += n;
   }
@@ -2137,118 +2083,8 @@ void RenderedObject::releaseCloudGlObjects()
   if (hashVbo)       { glDeleteBuffers(1, &hashVbo); hashVbo = 0; }
   if (ssboParticles) { glDeleteBuffers(1, &ssboParticles); ssboParticles = 0; }
   if (ssboObjects)   { glDeleteBuffers(1, &ssboObjects); ssboObjects = 0; }
-  if (dustVolTex)    { glDeleteTextures(1, &dustVolTex); dustVolTex = 0; dustVolN = 0; }
-  dustVolDirty = true;
   hasBeenRendered = false;
   hashDirty = true;
-}
-
-// Splat the particles into the cloud-local dust volume (the ENVELOPE — the fine
-// lane structure is multiplied on at sample time by dust_common's dustLane, so
-// the lanes stay world-anchored and pixel-fine at any voxel resolution, and the
-// dust-shape sliders retune live with no rebake). Same pattern as
-// SplatNebulaSource: CPU trilinear deposit, sqrt-normalised, one glTexImage3D.
-// Keyed on cloudGpuDirty — call BEFORE renderCloud clears it.
-void RenderedObject::updateDustVolume(float clumpScale, float coverage, float contrast)
-{
-  if (!volumetricDust || isStarfield) return;
-  const size_t n = cloudParticles.size();
-  if (n < 16) return;
-  // Lane-slider fingerprint: the lane is BAKED per particle, so a shape-slider
-  // change must re-splat (CPU, a few ms, only on change — tuning stays live).
-  unsigned long long key = (unsigned long long)n;
-  auto mixf = [&key](float v){ unsigned int b; std::memcpy(&b, &v, 4); key = key * 1000003ull + b; };
-  mixf(clumpScale); mixf(coverage); mixf(contrast);
-  if (dustVolTex && !dustVolDirty && !cloudGpuDirty && key == dustVolKey) return;
-  dustVolKey = key;
-
-  vec3 lo{ 1e30f, 1e30f, 1e30f}, hi{-1e30f,-1e30f,-1e30f};
-  double cx = 0, cy = 0, cz = 0;
-  for (const auto& p : cloudParticles) {
-    lo.x = std::min(lo.x, p.position.x); hi.x = std::max(hi.x, p.position.x);
-    lo.y = std::min(lo.y, p.position.y); hi.y = std::max(hi.y, p.position.y);
-    lo.z = std::min(lo.z, p.position.z); hi.z = std::max(hi.z, p.position.z);
-    cx += p.position.x; cy += p.position.y; cz += p.position.z;
-  }
-  cx /= (double)n; cy /= (double)n; cz /= (double)n;
-  for (int a = 0; a < 3; ++a) {
-    float& l = (&lo.x)[a]; float& h = (&hi.x)[a];
-    float pad = std::max((h - l) * 0.05f, 1e-6f);   // 5% pad so edge dust isn't clipped
-    l -= pad; h += pad;
-  }
-
-  // The lane scale the sprites use (hashScale = 2xRMS * 0.04) — computed here
-  // from the particles because the splat can run before renderCloud has set it.
-  double r2sum = 0;
-  for (const auto& p : cloudParticles) {
-    const double dx = p.position.x - cx, dy = p.position.y - cy, dz = p.position.z - cz;
-    r2sum += dx*dx + dy*dy + dz*dz;
-  }
-  const float laneScale = std::max(2.0f * (float)std::sqrt(r2sum / (double)n) * 0.04f, 1e-6f);
-
-  const int N = 96;
-  static std::vector<float> grid;                    // reused across clouds
-  grid.assign((size_t)N * N * N, 0.0f);
-  float mx = 0.0f;
-  const vec3 span{ hi.x - lo.x, hi.y - lo.y, hi.z - lo.z };
-  for (const auto& p : cloudParticles) {
-    // NUMBER density x the particle's own lane sample — the same statement the
-    // sprite system makes ("density comes from the star particles carrying it"),
-    // deposited into a volume instead of drawn as a billboard. Mass is ignored:
-    // one heavy particle would own the normalisation and crush the field.
-    const float m = rtDustLane(p.position.x, p.position.y, p.position.z,
-                               laneScale, clumpScale, coverage, contrast);
-    if (m <= 0.001f) continue;
-    const float ux = (p.position.x - lo.x) / span.x;
-    const float uy = (p.position.y - lo.y) / span.y;
-    const float uz = (p.position.z - lo.z) / span.z;
-    const float fx = ux * N - 0.5f, fy = uy * N - 0.5f, fz = uz * N - 0.5f;
-    const int ix = (int)std::floor(fx), iy = (int)std::floor(fy), iz = (int)std::floor(fz);
-    const float tx = fx - ix, ty = fy - iy, tz = fz - iz;
-    for (int dz = 0; dz < 2; dz++)
-      for (int dy = 0; dy < 2; dy++)
-        for (int dx = 0; dx < 2; dx++) {
-          const int x = ix + dx, y = iy + dy, z = iz + dz;
-          if (x < 0 || y < 0 || z < 0 || x >= N || y >= N || z >= N) continue;
-          const float w = (dx ? tx : 1.0f - tx) * (dy ? ty : 1.0f - ty) * (dz ? tz : 1.0f - tz) * m;
-          float& g = grid[((size_t)z * N + y) * N + x];
-          g += w; mx = std::max(mx, g);
-        }
-  }
-  if (mx <= 0.0f) return;
-  // Normalise by the MEAN nonzero voxel, LINEAR, no clamp: density contrast is
-  // the structure. (Max-normalising crushed the disc to ~0 under the dense
-  // core; percentile-clamping flattened lane and gap to the same value — one
-  // uniform fog. A lane 5x denser than the mean must extinct 5x harder.)
-  {
-    double sum = 0; size_t cnt = 0;
-    for (float g : grid) if (g > 0.0f) { sum += g; ++cnt; }
-    if (!cnt || sum <= 0.0) return;
-    const float ref = (float)(sum / (double)cnt);
-    for (float& g : grid) g /= ref;
-  }
-
-  if (!dustVolTex) glGenTextures(1, &dustVolTex);
-  glBindTexture(GL_TEXTURE_3D, dustVolTex);
-  if (dustVolN != N)
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_R16F, N, N, N, 0, GL_RED, GL_FLOAT, grid.data());
-  else
-    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, N, N, N, GL_RED, GL_FLOAT, grid.data());
-  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-  glBindTexture(GL_TEXTURE_3D, 0);
-  dustVolN = N;
-  dustVolLo = lo; dustVolHi = hi;
-  dustVolDirty = false;
-  if (std::getenv("DUST_DEBUG")) {
-    double sum = 0; for (float g : grid) sum += g;
-    std::cerr << "[dustVol] splat n=" << n << " N=" << N
-              << " box=(" << lo.x << "," << lo.y << "," << lo.z << ")..(" << hi.x << "," << hi.y << "," << hi.z << ")"
-              << " meanVox=" << sum / grid.size() << " laneScale=" << hashScale << "\n";
-  }
 }
 
 void RenderedObject::BuildStarfieldFromParticles()
@@ -3020,19 +2856,19 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       glBlendFunc(GL_ONE, GL_ONE);
       if (passLoc >= 0) glUniform1i(passLoc, 0);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
+      else             glDrawArrays(GL_POINTS, 0, nStars);
 
       // 2. Glowing gas — emission nebulosity near hot young stars (additive).
       if (cineGasStrength > 0.0f) {
         if (passLoc >= 0) glUniform1i(passLoc, 4);
         if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-        else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
+        else             glDrawArrays(GL_POINTS, 0, nStars);
       }
 
       // 3. Star cores — the resolved (bright) individual stars only.
       if (passLoc >= 0) glUniform1i(passLoc, 1);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
+      else             glDrawArrays(GL_POINTS, 0, nStars);
     }
 
     // 4. Dust — drawn LAST (multiplicative) so it genuinely COVERS the stars and
@@ -3044,7 +2880,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       glBlendFunc(GL_ZERO, GL_SRC_COLOR);
       if (passLoc >= 0) glUniform1i(passLoc, 3);
       if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-      else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
+      else             glDrawArrays(GL_POINTS, 0, nStars);
     }
 
     glDisable(GL_BLEND);
@@ -3068,7 +2904,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   }
 
   if (isStarfield) drawStarfieldChunks(viewRot, fovDeg, fbWidth, fbHeight, cameraTranslate);
-  else             glDrawArraysInstanced(GL_POINTS, 0, nStars, gLfImages);
+  else             glDrawArrays(GL_POINTS, 0, nStars);
 
   // Dark matter: gray dots, debug view only. A separate draw of the tail with
   // uDMDraw on so the shader ignores the star hash/colour and paints them gray.

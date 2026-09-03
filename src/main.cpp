@@ -62,12 +62,6 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
   cloud->nebulaScatterScale = cd.nebulaScatterScale;
   cloud->particleSizeSpread = cd.particleSizeSpread;
   cloud->scale              = cd.scale;
-  // Volumetric dust flag lives on the RenderedObject (like the halo params).
-  // DUST_VOL=1 forces it on for every loaded cloud — the harness A/B gate.
-  {
-    static const bool forceVol = std::getenv("DUST_VOL") != nullptr;
-    cloud->renderedObject.volumetricDust = forceVol || cd.volumetricDust;
-  }
   if (cd.haloSet) {
     cloud->renderedObject.haloVFlat = cd.haloVFlat;
     cloud->renderedObject.haloRCore = cd.haloRCore;
@@ -430,10 +424,6 @@ int main(int argc, char** argv) {
 
   // A/B the foreground-dust image warp (reddening bends through the lens while stars
   // cover): LENS_DUST_WARP=0 for the old flat dust, LENS_DUST_ATTEN tunes wrap strength.
-  if (const char* dw = std::getenv("LENS_DUST_WARP")) renderer.lensDustWarp = std::atoi(dw);
-  if (const char* sl = std::getenv("LENS_SLABS"))     renderer.lensSlabs   = std::max(1, std::atoi(sl));
-  if (const char* at = std::getenv("LENS_DUST_ATTEN"))renderer.lensFgAtten = (float)std::atof(at);
-  if (const char* bd = std::getenv("LENS_DEPTH_BAND"))renderer.lensFgBand  = (float)std::atof(bd);
 
   // --template flag: skip startup modal and load solar system template directly
   // --compare flag: load the template, render BOTH the Performant (raster) and
@@ -537,7 +527,6 @@ int main(int argc, char** argv) {
     cd.nebulaScatterScale = cf.nebulaScatterScale;
     cd.particleSizeSpread = cf.particleSizeSpread;
     cd.scale = cf.scale;
-    cd.volumetricDust = cf.volumetricDust;
     return cd;
   };
 
@@ -802,7 +791,6 @@ int main(int argc, char** argv) {
     renderer.spikeChroma        = s.spikeChroma;
     renderer.unresolvedStrength = s.unresolvedStrength;
     renderer.lensingEnabled    = s.lensingEnabled;
-    renderer.lensSecondary     = s.lensSecondary;
     renderer.lensMaxStretch    = s.lensMaxStretch;
     renderer.lensMaxSprite     = s.lensMaxSprite;
     renderer.lensHazeArc       = s.lensHazeArc;
@@ -884,7 +872,6 @@ int main(int argc, char** argv) {
       cd.nebulaScatterScale = c->nebulaScatterScale;
       cd.particleSizeSpread = c->particleSizeSpread;
       cd.scale = c->scale;
-      cd.volumetricDust = c->renderedObject.volumetricDust;
       cd.haloVFlat = c->renderedObject.haloVFlat;
       cd.haloRCore = c->renderedObject.haloRCore;
       cd.haloSet   = true;
@@ -1012,7 +999,6 @@ int main(int argc, char** argv) {
     s.spikeChroma        = renderer.spikeChroma;
     s.unresolvedStrength = renderer.unresolvedStrength;
     s.lensingEnabled     = renderer.lensingEnabled;
-    s.lensSecondary      = renderer.lensSecondary;
     s.lensMaxStretch     = renderer.lensMaxStretch;
     s.lensMaxSprite      = renderer.lensMaxSprite;
     s.lensHazeArc        = renderer.lensHazeArc;
@@ -1258,16 +1244,7 @@ int main(int argc, char** argv) {
     // it — otherwise the cull/slab/screen math uses the main camera and the recording
     // drops the front matter and looks wrong. renderH drives the sub-pixel resolve gate.
     auto computeLensFraming = [&](int renderH){
-      renderer.lensBHActive = false;
-      renderer.lensBHStrong = false;
-      renderer.lensBHIndex  = -1;
-      gLensBHRsAU = 0.0f;
-      renderer.lensHoles.clear();
-      renderer.lensDustVolRO = nullptr;   // re-picked below; never stale across frames
-      renderer.lensPlaneRO   = nullptr;
-      gLensCull = 0;
       gLfCount  = 0;
-      gLfImages = 1;                      // one draw per particle until a hole says otherwise
       static const bool lensOff = std::getenv("LENS_OFF") != nullptr;   // harness A/B gate
       if (lensOff) return;
       if (!(renderer.lensingEnabled && renderer.realisticRasterView)) return;
@@ -1281,7 +1258,6 @@ int main(int argc, char** argv) {
       std::vector<std::pair<double,int>> holes;   // (shadow angle, physicsObjects index)
       for (int i = 0; i < (int)physicsObjects.size(); ++i) {
         if (physicsObjects[i].shaderType != ObjectType::BlackHole) continue;
-        physicsObjects[i].renderedObject.lensSkipMesh  = false;   // re-decided below
         physicsObjects[i].renderedObject.lensMeshScale = 1.0f;
         const dvec3 bh = physicsObjects[i].data.position;
         const double dx = bh.x - camPos.x, dy = bh.y - camPos.y, dz = bh.z - camPos.z;
@@ -1314,8 +1290,7 @@ int main(int argc, char** argv) {
       // what is NOT here: no dominant cloud, no disc plane, no split distance.
       // That absence is the point — it is why a sphere, a disc seen face-on, two
       // colliding galaxies and empty space all behave the same.
-      static const bool legacyLens = std::getenv("LENS_LEGACY") != nullptr;   // A/B against the old lens
-      if (renderer.lensForward && !legacyLens) {
+      {
         renderer.EnsureLensLut();
         const double* RV = gViewRotD;
         gLfCount = (int)holes.size();
@@ -1368,100 +1343,6 @@ int main(int argc, char** argv) {
         // inside the Einstein ring). It is not a second model — the same map,
         // the same sprites, a different root of the same equation — and the two
         // images never share a pixel, so the multiplicative dust stays correct.
-        bool wantSecondary = renderer.lensSecondary;
-        if (const char* e = std::getenv("LF_SECONDARY")) wantSecondary = (std::atoi(e) != 0);
-        gLfImages   = wantSecondary ? (1 + gLfCount) : 1;
-        // The old two-pass lens must stay switched off: it is the thing being
-        // replaced, and lensBHActive is what gates every one of its passes.
-        return;
-      }
-
-      const int bestBH = holes.front().second;
-      for (const auto& hp : holes)
-        renderer.lensHoles.push_back({ physicsObjects[hp.second].data.position,
-                                       physicsObjects[hp.second].schwarzschildRadius });
-      renderer.lensBHActive = true;
-      renderer.lensBHStrong = 2.0 * holes.front().first * pxPerRad >= 2.0;   // shadow resolvable → winding zone visible
-      renderer.lensBHIndex  = bestBH;
-      renderer.lensBHWorld  = physicsObjects[bestBH].data.position;
-      renderer.lensBHRs     = physicsObjects[bestBH].schwarzschildRadius;
-      // The lens paints this hole's shadow; its horizon mesh must not draw in
-      // the raster path (it pastes un-lensed over the front pass — the puck).
-      physicsObjects[bestBH].renderedObject.lensSkipMesh = true;
-      const dvec3  hole = renderer.lensBHWorld;
-      const double rsAU = (double)renderer.lensBHRs;
-      const double rx = hole.x - camPos.x, ry = hole.y - camPos.y, rz = hole.z - camPos.z;
-      const double rl = std::sqrt(rx*rx + ry*ry + rz*rz);
-      if (rl <= 1e-9) return;
-      const double dxd = rx/rl, dyd = ry/rl, dzd = rz/rl;   // unit dir camera→hole (world)
-      gLensBHDirCam[0] = (float)dxd; gLensBHDirCam[1] = (float)dyd; gLensBHDirCam[2] = (float)dzd;
-      gLensBHDist  = (float)rl;
-      const double th2 = std::asin(std::min(1.0, 2.6 * rsAU / std::max(rl, rsAU*1.001)));
-      // The cull cone is the SHADOW's silhouette (slightly padded): it only decides
-      // which near-behind shell matter must stay in the lensed field so it cannot
-      // paint over the black disc. The front/back split itself is a half-space.
-      gLensCullCos = (float)std::cos(std::min(1.0, 1.6 * th2));
-      const double vzz = gViewRotD[6]*dxd + gViewRotD[7]*dyd + gViewRotD[8]*dzd;   // view-space z
-      const double f   = 1.0 / std::tan((double)renderer.zoom * 0.5 * kPI/180.0);
-      if (vzz < -1e-9) {
-        const double vxx = gViewRotD[0]*dxd + gViewRotD[1]*dyd + gViewRotD[2]*dzd;
-        const double vyy = gViewRotD[3]*dxd + gViewRotD[4]*dyd + gViewRotD[5]*dzd;
-        gLensBHScreen[0] = (float)(vxx/(-vzz)*f);
-        gLensBHScreen[1] = (float)(vyy/(-vzz)*f);
-      } else { gLensBHScreen[0] = 1e9f; gLensBHScreen[1] = 1e9f; }
-      const double thE = std::sqrt(2.0 * rsAU / std::max(rl, rsAU*1.001));
-      gLensEinsteinR    = (float)(std::tan(std::min(thE, 1.4)) * f);
-      gLensBendStrength = 1.0f;
-      // Split stays AT the hole (the anchor look: everything behind rides the
-      // image remap). A far split was tried (LENS_SPLIT_K) and gutted the ring:
-      // the arch IS the near-behind band under the remap, and per-particle
-      // primary displacement cannot rebuild a wrap-around image. The foreground
-      // blend is done on the FRONT side instead (transition shell in cloudVert).
-      static const double kSplit = [](){ const char* e = std::getenv("LENS_SPLIT_K");
-                                         return e ? std::atof(e) : 1.0; }();
-      gLensBHSplitDist = (float)(kSplit * rl);   // provisional; re-anchored to the CLOUD PLANE below
-      gLensBHShadowR   = (float)(std::tan(std::asin(std::min(1.0,
-                             2.598 * rsAU / std::max(rl, rsAU*1.001)))) * f);
-      gLensBHRsAU      = (float)rsAU;
-      static const double reachMul = [](){ const char* e = std::getenv("LENS_BEND_REACH");
-                                           return e ? std::atof(e) : 1.0; }();
-      gLensBendReach    = (float)(reachMul * std::sqrt(2.0 * rsAU * std::max(rl, rsAU)));
-      // Dominant volumetric-dust cloud: its splat volume rides the lens march
-      // (front dust occludes/reddens the ring along the bent path). Also derive
-      // the finite-source distance: the band the lens images lives at ~the hole
-      // distance plus the biggest cloud's diameter, not at infinity.
-      {
-        float best = -1.0f, bestAny = -1.0f;
-        for (auto& c : clouds) {
-          auto& cro = c->renderedObject;
-          if (cro.rmsRadius() > bestAny) { bestAny = cro.rmsRadius(); renderer.lensPlaneRO = &cro; }
-          if (cro.volumetricDust && !cro.isStarfield && cro.dustVolTex != 0 && cro.rmsRadius() > best) {
-            best = cro.rmsRadius();
-            renderer.lensDustVolRO = &cro;
-          }
-        }
-        renderer.lensSrcDistAU = (bestAny > 0.0f) ? (float)(rl + 2.0 * (double)bestAny) : 0.0f;
-        // The front/back split lives where the SPLIT IN THE MATTER is: the
-        // dominant cloud's plane, measured along the camera->hole line. With
-        // the hole inside the cloud's plane (the disc scenes) this is the hole
-        // distance, as before. With the hole in FRONT of the cloud it moves
-        // back to the plane — the matter between hole and plane is then drawn
-        // in the foreground pass with its own per-particle thin-lens map
-        // (cloudVert), whose displacement matches the crossing model exactly
-        // at the plane: the regimes join with no seam, no torn band.
-        if (renderer.lensPlaneRO) {
-          double R[9] = {1,0,0, 0,1,0, 0,0,1};
-          const vec3 rot = renderer.lensPlaneRO->rotationDeg;
-          if (rot.x != 0.0f || rot.y != 0.0f || rot.z != 0.0f) EulerDegToMat3d(rot, R);
-          const dvec3 n{ R[1], R[4], R[7] };
-          const dvec3 c0 = renderer.lensPlaneRO->coordinates;
-          const double denom = dxd * n.x + dyd * n.y + dzd * n.z;   // hole direction . plane normal
-          const double num   = (c0.x - camPos.x) * n.x + (c0.y - camPos.y) * n.y + (c0.z - camPos.z) * n.z;
-          double dPlane = (std::abs(denom) > 1e-6) ? num / denom : rl;
-          const double dMax = rl + 2.0 * std::max((double)bestAny, 0.0);
-          dPlane = std::min(std::max(dPlane, rl), dMax);
-          gLensBHSplitDist = (float)(kSplit * dPlane);
-        }
       }
     };
     computeLensFraming(renderer.GetFbHeight());
@@ -1601,7 +1482,6 @@ int main(int argc, char** argv) {
     BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cloudDrawOrder);
     // Pass 1 of the two-pass lens: hold FRONT-of-hole particles back (they draw in
     // pass 2, on top of the lensed result); draw the back field now.
-    gLensCull = renderer.lensBHActive ? 2 : 0;
     for (int ci : cloudDrawOrder)
       clouds[ci]->Update(renderer, physData);
     // Phase 2: every cloud's dust over every cloud's light. Order-independent
@@ -1665,126 +1545,7 @@ int main(int argc, char** argv) {
     }
     renderer.EndNebulaPass();
 
-    // Wide-FOV back-field pass: the same clouds once more at ~3x the frustum, into
-    // the lens's fallback buffer. Bent rays whose escape direction leaves the main
-    // frame sample THIS instead of starving to background — it is what makes the
-    // arcs and the photon rim continuous. Runs per lens site, right before the
-    // dispatch that consumes it, always with the site's own camera.
-    auto renderLensWideBack = [&](const std::vector<int>& order){
-      if (!renderer.lensBHActive || !renderer.lensingEnabled) return;
-      auto drawBackField = [&](int cull = 2){
-        const int savedCull = gLensCull;
-        gLensCull = cull;                              // 2: back field only (same as pass 1); 0: everything (apex vantage)
-        for (int ci : order) {
-          auto& c = clouds[ci];
-          c->renderedObject.uploadTemperature(c->temperature);
-          c->renderedObject.uploadRenderMode(c->renderMode);
-          c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
-                                             renderer.dustCoverage, renderer.dustClumpScale,
-                                             c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                             renderer.dustContrast);
-          renderer.Draw(c->renderedObject);
-        }
-        for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-        gLensCull = savedCull;
-      };
-      // Full-sphere cube (6 small faces): what the deep windings see. Only worth
-      // rendering when the strong-field zone is resolvable (lensBHStrong) — the
-      // weak-field regime never sends a ray to the cube rung.
-      if (renderer.lensBHStrong)
-        for (int face = 0; face < 6; ++face) {
-          if (!renderer.LensBeginFaceCam(face, 512)) break;
-          drawBackField();
-          renderer.LensEndFaceCam(face);
-        }
-      // Wide planar buffer: mid-res tier for near-frame escape directions.
-      if (renderer.LensBeginWide()) {
-        drawBackField();
-        renderer.LensEndWide();
-      }
-      // Apex cubes: the back field from a few Rs above and below the hole on the
-      // dominant cloud's plane normal — what a ray that went over (under) the
-      // hole sees when it lands on the far side. The disc-crossing sample reads
-      // these instead of the camera's image, so the lensed far side shows its
-      // surface from the same vantage whatever the camera's direction.
-      if (renderer.lensPlaneRO && renderer.lensBHStrong) {
-        double R[9] = {1,0,0, 0,1,0, 0,0,1};
-        const vec3 rot = renderer.lensPlaneRO->rotationDeg;
-        if (rot.x != 0.0f || rot.y != 0.0f || rot.z != 0.0f) EulerDegToMat3d(rot, R);
-        dvec3 n{ R[1], R[4], R[7] };                        // plane normal = local +Y in world
-        const dvec3 camPosW{ gCamAnchor[0] - renderer.cameraTranslate[0],
-                             gCamAnchor[1] - renderer.cameraTranslate[1],
-                             gCamAnchor[2] - renderer.cameraTranslate[2] };
-        const dvec3 toCam{ camPosW.x - renderer.lensBHWorld.x, camPosW.y - renderer.lensBHWorld.y, camPosW.z - renderer.lensBHWorld.z };
-        if (toCam.x * n.x + toCam.y * n.y + toCam.z * n.z < 0.0) { n.x = -n.x; n.y = -n.y; n.z = -n.z; }   // side 0 = the camera's side
-        const double h = 3.5 * (double)renderer.lensBHRs;    // the apex of a ray that lands on the near-behind disc
-        renderer.lensApexPos[0] = dvec3{ renderer.lensBHWorld.x + n.x * h, renderer.lensBHWorld.y + n.y * h, renderer.lensBHWorld.z + n.z * h };
-        renderer.lensApexPos[1] = dvec3{ renderer.lensBHWorld.x - n.x * h, renderer.lensBHWorld.y - n.y * h, renderer.lensBHWorld.z - n.z * h };
-        static const int apexFS = [](){ const char* e = std::getenv("LENS_APEX");
-                                        return e ? std::max(128, std::atoi(e)) : 512; }();
-        for (int which = 0; which < 2; ++which)
-          for (int face = 0; face < 6; ++face) {
-            if (!renderer.LensBeginFaceAt(face, apexFS, renderer.lensApexPos[which])) break;
-            // EVERYTHING, no membership cull: the apex cube is a radiance ORACLE
-            // for crossing samples, not part of the pass-1/pass-2 partition. The
-            // partition holds only what the REMAP must stretch; a crossing can
-            // land on matter of ANY magnification (the wings beside the hole),
-            // and culling it left the cube black there — the empty dome.
-            drawBackField(0);
-            renderer.LensEndFaceAt(face, which);
-          }
-      }
-    };
-
     // ── Two-pass black-hole lensing (viewport): the back field is now in the cine
-    // buffer; lens it, then draw ONLY the front-of-hole particles on top so the
-    // galaxy covers the hole (our clouds, additively, no new pipeline).
-    renderLensWideBack(cloudDrawOrder);
-    if (renderer.LensBackFieldAndPrepareFront()) {
-      gLensCull = 1;                                 // keep only FRONT-of-hole particles
-      auto uploadCloud = [&](int ci){
-        auto& c = clouds[ci];
-        c->renderedObject.uploadTemperature(c->temperature);
-        c->renderedObject.uploadRenderMode(c->renderMode);
-        c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
-                                           renderer.dustCoverage, renderer.dustClumpScale,
-                                           c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                           renderer.dustContrast);
-      };
-      // The foreground is a semi-transparent VOLUME, so it is drawn in DEPTH SLABS by
-      // distance to the hole and composited back-to-front: the near-hole slab is remapped
-      // at full strength (round wrap into the ring), each farther slab weaker until the
-      // near-camera slab is flat and covers — and through its gaps the bent slabs behind
-      // show. Each slab is one smooth remap, so there are no waves; the depth response
-      // comes from the slabs. No vertex bend (points can't stretch).
-      if (renderer.BeginForeground()) {
-        const float savedBend = gLensBendStrength;
-        gLensBendStrength = 0.0f;
-        const int   N         = std::max(1, renderer.lensSlabs);
-        const float attenFull = renderer.lensFgAtten;             // near-hole slab strength (Foreground Bend slider)
-        const float band      = renderer.lensFgBand * std::max(gLensBendReach, 1e-6f);   // where the bend starts (Bend Depth slider)
-        for (int s = 0; s < N; s++) {                              // s=0 near hole (behind) → s=N-1 near camera (front)
-          gLensSlabMin  = (s == 0)     ? -1e30f : (float)s / N * band;   // slab 0: no low fade (innermost full)
-          gLensSlabMax  = (s == N - 1) ?  1e30f : (float)(s + 1) / N * band;
-          gLensSlabFade = (band / (float)N) * 0.4f;   // cross-fade with neighbours → no slab popping
-          const float strength = attenFull * (N > 1 ? 1.0f - (float)s / (N - 1) : 1.0f);
-          renderer.FgBindLight();                                  // stars (additive) → fgLight
-          for (int ci : cloudDrawOrder) { uploadCloud(ci); renderer.Draw(clouds[ci]->renderedObject); }
-          for (int ci : cloudDrawOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);   // dust darkens the stars in front
-          renderer.FgBindExt();                                    // dust extinction → fgExt (for the background)
-          for (int ci : cloudDrawOrder) { clouds[ci]->renderedObject.cloudLightDrawn = true;
-                                          renderer.DrawCloudDust(clouds[ci]->renderedObject); }
-          renderer.CompositeForegroundSlab(strength);
-        }
-        gLensSlabMin = 0.0f; gLensSlabMax = 0.0f; gLensSlabFade = 0.0f;
-        renderer.EndForeground();
-        gLensBendStrength = savedBend;
-      } else {
-        for (int ci : cloudDrawOrder) { uploadCloud(ci); renderer.Draw(clouds[ci]->renderedObject); }
-        for (int ci : cloudDrawOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-      }
-    }
-    gLensCull = 0;
 
     if (recOverridePause) renderer.paused = savedPaused;
 
@@ -1850,41 +1611,6 @@ int main(int argc, char** argv) {
                                          c->renderedObject.ownDustInfluence(renderer.dustInfluence),
                                          renderer.dustContrast);
     };
-    auto lensForegroundCapture = [&](std::vector<int>& order){
-      renderLensWideBack(order);   // fresh wide back field for THIS capture camera
-      if (!renderer.LensBackFieldAndPrepareFront()) { gLensCull = 0; return; }
-      if (std::getenv("LENS_NOFRONT")) { gLensCull = 0; return; }   // diagnostic: lens output alone, no pass-2 front
-      const float savedBend = gLensBendStrength;
-      gLensBendStrength = 0.0f;
-      gLensCull = 1;
-      if (renderer.BeginForeground()) {
-        const int   N         = std::max(1, renderer.lensSlabs);
-        const float attenFull = renderer.lensFgAtten;
-        const float band      = renderer.lensFgBand * std::max(gLensBendReach, 1e-6f);
-        for (int s = 0; s < N; s++) {
-          gLensSlabMin  = (s == 0)     ? -1e30f : (float)s / N * band;   // slab 0: no low fade (innermost full)
-          gLensSlabMax  = (s == N - 1) ?  1e30f : (float)(s + 1) / N * band;
-          gLensSlabFade = (band / (float)N) * 0.4f;   // cross-fade with neighbours → no slab popping
-          const float strength = attenFull * (N > 1 ? 1.0f - (float)s / (N - 1) : 1.0f);
-          renderer.FgBindLight();
-          for (int ci : order) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
-          for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-          renderer.FgBindExt();
-          for (int ci : order) { clouds[ci]->renderedObject.cloudLightDrawn = true;
-                                 renderer.DrawCloudDust(clouds[ci]->renderedObject); }
-          renderer.CompositeForegroundSlab(strength);
-        }
-        gLensSlabMin = 0.0f; gLensSlabMax = 0.0f; gLensSlabFade = 0.0f;
-        renderer.EndForeground();
-      } else {
-        // Default path: ALL clouds drawn once, per-particle lens displacement in the
-        // vertex shader (exact in depth) — pass 1 drew no cloud particles at all.
-        for (int ci : order) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
-        for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-      }
-      gLensBendStrength = savedBend;
-      gLensCull = 0;
-    };
 
     // ── Recording: capture the SECONDARY-view camera (freecam or a spawned
     // camera) as an RT frame, independent of the primary view. Re-accumulate
@@ -1912,10 +1638,8 @@ int main(int argc, char** argv) {
         // the RECORD camera (BeginRecordCamera swaps it in).
         static std::vector<int> recOrder;
         BuildCloudDrawOrder(clouds, renderer.cameraTranslate, recOrder);
-        gLensCull = renderer.lensBHActive ? 2 : 0;   // pass 1: back field (front held for the lens)
         for (int ci : recOrder) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
         for (int ci : recOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-        gLensCull = 0;
         for (auto& obj : physicsObjects) {
           renderer.DrawAtmosphere(obj);
           renderer.DrawRings(obj);
@@ -1929,9 +1653,6 @@ int main(int argc, char** argv) {
                               ok ? &clouds[sc]->rotationDeg : nullptr);
         }
         renderer.EndNebulaPass();
-        { const bool lvd = renderer.lensViewportDone;   // capture must not clobber the viewport's resolve flag
-          lensForegroundCapture(recOrder);              // lens the hole + foreground into the record buffer
-          renderer.lensViewportDone = lvd; }
         renderer.CaptureRecordRasterVideo(rw, rh);
         renderer.EndRecordRaster();
       } else {
@@ -1979,10 +1700,8 @@ int main(int argc, char** argv) {
       // Same far-to-near order as the live view and recordings (see above).
       static std::vector<int> snapOrder;
       BuildCloudDrawOrder(clouds, renderer.cameraTranslate, snapOrder);
-      gLensCull = renderer.lensBHActive ? 2 : 0;   // pass 1: back field (front held for the lens)
       for (int ci : snapOrder) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
       for (int ci : snapOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-      gLensCull = 0;
       for (auto& obj : physicsObjects) {
         renderer.DrawAtmosphere(obj);
         renderer.DrawRings(obj);
@@ -1996,9 +1715,6 @@ int main(int argc, char** argv) {
                             ok ? &clouds[sc]->rotationDeg : nullptr);
       }
       renderer.EndNebulaPass();
-      { const bool lvd = renderer.lensViewportDone;   // capture must not clobber the viewport's resolve flag
-        lensForegroundCapture(snapOrder);            // lens the hole + foreground into the snap buffer
-        renderer.lensViewportDone = lvd; }
       renderer.CaptureRecordRasterImage(rw, rh);
       renderer.EndRecordRaster();
       renderer.rayTracerView = sRt; renderer.realisticRasterView = sRR;
@@ -2070,127 +1786,6 @@ int main(int argc, char** argv) {
           renderer.cameraTranslate[1] += std::atof(argv[3]);
           renderer.cameraTranslate[2] += std::atof(argv[4]);
         }
-        // ── Raster lensing Phase 1: bake the far field into a cube map from the
-        // black hole's viewpoint and dump the 6 faces. Far field ONLY (empty sky +
-        // clouds/galaxies); no planets, rings, atmospheres or nebulae. No visible
-        // change to any normal render — this path only runs under LENS_DEBUG.
-        if (std::getenv("LENS_DEBUG")) {
-          dvec3 bh{0,0,0}; bool hasBH = false;
-          for (auto& o : physicsObjects)
-            if (o.shaderType == ObjectType::BlackHole) { bh = o.data.position; hasBH = true; break; }
-          if (!hasBH) { std::cout << "[lens] no black hole in scene; nothing to bake\n"; std::exit(0); }
-          const int FS = std::getenv("LENS_FACE") ? std::atoi(std::getenv("LENS_FACE")) : 512;
-          renderer.rayTracerView = false; renderer.realisticRasterView = true;
-          const char* faceName[6] = { "posx", "negx", "posy", "negy", "posz", "negz" };
-          for (int f = 0; f < 6; ++f) {
-            renderer.LensBeginFace(f, bh, FS);
-            renderer.DrawSkybox(skybox);
-            std::vector<int> order;
-            BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
-            for (int ci : order) {
-              auto& c = clouds[ci];
-              c->renderedObject.uploadTemperature(c->temperature);
-              c->renderedObject.uploadRenderMode(c->renderMode);
-              c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
-                                                 renderer.dustCoverage, renderer.dustClumpScale,
-                                                 c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                                 renderer.dustContrast);
-              renderer.Draw(c->renderedObject);
-            }
-            for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-            char path[128];
-            std::snprintf(path, sizeof(path), "/tmp/lens_%s.png", faceName[f]);
-            renderer.SetImagePath(path);
-            renderer.CaptureRecordRasterImage(FS, FS);
-            renderer.LensEndFace(f);
-          }
-          std::cout << "[lens] baked 6 far-field faces ("<< FS <<"px) to "
-                       "/tmp/lens_{posx,negx,posy,negy,posz,negz}.png from BH at "
-                    << bh.x << ", " << bh.y << ", " << bh.z << "\n";
-          std::exit(0);
-        }
-        // ── Raster lensing Phase 2: park the camera near the black hole, bake the
-        // far field, then bend every camera ray around the hole and sample the
-        // cube — a rasterized black hole (shadow + lensed starfield). Headless
-        // test (LENS_TEST). LENS_DIST (Rs, default 20), LENS_FOV (deg, default 50),
-        // LENS_STEPS (default 1500), LENS_FACE (bake px, default 1024) tune it.
-        if (std::getenv("LENS_TEST")) {
-          dvec3 bh{0,0,0}; double rs = 0.05; bool hasBH = false;
-          for (auto& o : physicsObjects)
-            if (o.shaderType == ObjectType::BlackHole) {
-              bh = o.data.position; rs = (double)o.schwarzschildRadius; hasBH = true; break;
-            }
-          if (!hasBH) { std::cout << "[lens] no black hole in scene\n"; std::exit(0); }
-          if (std::getenv("LENS_RS_MULT")) rs *= std::atof(std::getenv("LENS_RS_MULT"));  // inflate the hole to test far/huge scaling
-          const int LW = std::getenv("LENS_W") ? std::atoi(std::getenv("LENS_W")) : 1280;
-          const int LH = std::getenv("LENS_H") ? std::atoi(std::getenv("LENS_H")) : 720;
-          const double distRs = std::getenv("LENS_DIST") ? std::atof(std::getenv("LENS_DIST")) : 20.0;
-          const double D  = distRs * rs;
-          const int    FS = std::getenv("LENS_FACE") ? std::atoi(std::getenv("LENS_FACE")) : 1024;
-
-          // Park the camera at bh + (0,0,D) looking toward -Z (straight at the hole).
-          float idm[9] = { 1,0,0, 0,1,0, 0,0,1 };
-          renderer.SetCameraMatrix(idm);
-          renderer.cameraTranslate[0] = gCamAnchor[0] - bh.x;
-          renderer.cameraTranslate[1] = gCamAnchor[1] - bh.y;
-          renderer.cameraTranslate[2] = gCamAnchor[2] - (bh.z + D);
-          renderer.zoom = std::getenv("LENS_FOV") ? (float)std::atof(std::getenv("LENS_FOV")) : 50.0f;
-          renderer.rayTracerView = false; renderer.realisticRasterView = true;
-
-          // 1) Bake the far-field cube (LensBegin/EndFace save + restore our camera).
-          glFinish();
-          auto _tBake = std::chrono::high_resolution_clock::now();
-          const bool darkBg = std::getenv("LENS_DARK") != nullptr;   // dark cube to isolate the disk
-          for (int f = 0; f < 6; ++f) {
-            renderer.LensBeginFace(f, bh, FS);
-            renderer.DrawSkybox(skybox);
-            if (!darkBg) {
-              std::vector<int> order;
-              BuildCloudDrawOrder(clouds, renderer.cameraTranslate, order);
-              for (int ci : order) {
-                auto& c = clouds[ci];
-                c->renderedObject.uploadTemperature(c->temperature);
-                c->renderedObject.uploadRenderMode(c->renderMode);
-                c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
-                                                   renderer.dustCoverage, renderer.dustClumpScale,
-                                                   c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                                   renderer.dustContrast);
-                renderer.Draw(c->renderedObject);
-              }
-              for (int ci : order) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-            }
-            renderer.LensEndFace(f);
-          }
-          glFinish();
-          double bakeMs = std::chrono::duration<double, std::milli>(
-              std::chrono::high_resolution_clock::now() - _tBake).count();
-
-          // 2) Bend the rays and sample the cube into the record FBO, then post + save.
-          vec3 camRelBH{ (float)((gCamAnchor[0] - renderer.cameraTranslate[0]) - bh.x),
-                         (float)((gCamAnchor[1] - renderer.cameraTranslate[1]) - bh.y),
-                         (float)((gCamAnchor[2] - renderer.cameraTranslate[2]) - bh.z) };
-          const int steps = std::getenv("LENS_STEPS") ? std::atoi(std::getenv("LENS_STEPS")) : 1000;
-          const int bench = std::getenv("LENS_BENCH") ? std::atoi(std::getenv("LENS_BENCH")) : 1;
-          renderer.BeginRecordRaster(LW, LH);
-          renderer.DispatchRasterLens(LW, LH, camRelBH, (float)rs, steps);   // warm up
-          glFinish();
-          auto _tLens = std::chrono::high_resolution_clock::now();
-          for (int i = 0; i < bench; ++i)
-            renderer.DispatchRasterLens(LW, LH, camRelBH, (float)rs, steps);
-          glFinish();
-          double lensMs = std::chrono::duration<double, std::milli>(
-              std::chrono::high_resolution_clock::now() - _tLens).count() / std::max(bench, 1);
-          renderer.SetImagePath("/tmp/lens_bh.png");
-          renderer.CaptureRecordRasterImage(LW, LH);
-          renderer.EndRecordRaster();
-          std::cout << "[lens] wrote /tmp/lens_bh.png (rs=" << rs << " AU, camera "
-                    << distRs << " Rs = " << D << " AU out)\n";
-          std::cout << "[lens] " << LW << "x" << LH << ": bake(6x" << FS << "px)=" << bakeMs
-                    << "ms ; lens pass=" << lensMs << " ms/frame ("
-                    << (lensMs > 0 ? 1000.0 / lensMs : 0.0) << " fps if lens-bound), "
-                    << steps << " max steps\n";
-          std::exit(0);
-        }
         // 1) Realistic (RT): accumulate RT objects, dispatch to snapshot, capture.
         renderer.rayTracerView = true;
         renderer.rayTracedObjects.clear(); renderer.rtDopplerObjects.clear();
@@ -2230,10 +1825,8 @@ int main(int argc, char** argv) {
                                      RtObjectType(o.shaderType), o.data.velocity, o.data.color);
         std::vector<int> cmpOrder;
         BuildCloudDrawOrder(clouds, renderer.cameraTranslate, cmpOrder);
-        gLensCull = renderer.lensBHActive ? 2 : 0;   // pass 1: back field (front held for the lens)
         for (int ci : cmpOrder) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
         for (int ci : cmpOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-        gLensCull = 0;
         for (auto& obj : physicsObjects) {
           renderer.DrawAtmosphere(obj);
           renderer.DrawRings(obj);
@@ -2247,8 +1840,6 @@ int main(int argc, char** argv) {
                               ok ? &clouds[sc]->rotationDeg : nullptr);
         }
         renderer.EndNebulaPass();
-        if (!std::getenv("LENS_PASS1"))        // LENS_PASS1=1: capture the RAW back-field image (diagnostic)
-          lensForegroundCapture(cmpOrder);     // lens the hole + flat front into the capture
         renderer.SetImagePath("/tmp/cmp_raster.png");
         renderer.CaptureRecordRasterImage(RW, RH);
         renderer.EndRecordRaster();
@@ -2326,10 +1917,8 @@ int main(int argc, char** argv) {
       grid->Update(renderer, physData);
     static std::vector<int> secOrder;
     BuildCloudDrawOrder(clouds, renderer.cameraTranslate, secOrder);
-    gLensCull = renderer.lensBHActive ? 2 : 0;   // pass 1: back field (front held for the lens)
     for (int ci : secOrder) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
     for (int ci : secOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
-    gLensCull = 0;
     for (auto& obj : physicsObjects) {
       renderer.DrawAtmosphere(obj);
       renderer.DrawRings(obj);
@@ -2343,7 +1932,6 @@ int main(int argc, char** argv) {
                           ok ? &clouds[sc]->rotationDeg : nullptr);
     }
     renderer.EndNebulaPass();
-    lensForegroundCapture(secOrder);              // lens the hole + foreground into the cinematic view
     background.Update(renderer);
 
     // If secondary view is raytraced, dispatch compute + blit into the PiP FBO

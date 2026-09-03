@@ -77,7 +77,6 @@ struct CloudData {
   float particleSizeSpread{0.0f};
   float scale{1.0f};
   bool  simulatePhysics{true};
-  bool  volumetricDust{false}; // dust as a marched 3D medium instead of sprites (opt-in)
   // Dark-matter halo (see RenderedObject::haloVFlat). haloSet = the file had
   // the keys; absent = fit from the particles' velocities at load.
   float haloVFlat{0.0f}, haloRCore{0.0f};
@@ -195,8 +194,7 @@ struct SceneSettings {
   // Lens look. These are the shipped defaults and, because SceneSettings is what
   // the loader falls back to, a project that omits a key gets exactly this.
   bool  lensingEnabled{true};
-  bool  lensSecondary{false};
-  float lensMaxStretch{2.3f};
+  float lensMaxStretch{1.0f};
   float lensMaxSprite{0.25f};
   float lensHazeArc{1.0f};
   float spriteRefHeight{720.0f};

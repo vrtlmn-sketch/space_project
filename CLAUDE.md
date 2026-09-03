@@ -108,36 +108,25 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 
 ## Regression baseline
 
-`RASTER_ONLY=1 ./bin/blackholesim --compare` on `projects/milky_way.json` gives a
-raster mean luminance of **29.161** (29.150 seen later the same day — see the
-hard-edge drift note in the harness traps). Back-to-back reruns are
-byte-identical (`cmp`), so on this scene a byte compare against a control built
-from the committed source, captured in the same sitting, is the right test, not
-a mean. Check it after any shared-shader or cloud-pipeline change.
+`RASTER_ONLY=1 SKIP_GEO=1 ./bin/blackholesim --compare` on
+`projects/milky_way.json` gives a raster mean luminance of **27.704** at the
+harness default of **1280x720**. Back-to-back reruns are byte-identical (`cmp`),
+so the right test is a BYTE COMPARE against a control built from the committed
+source in the same sitting — not a mean, which hides a large local change.
 
-The same scene's other two renderers, for changes that touch the compute path:
-**RT 26.255** (`/tmp/cmp_rt.png`) and **geodesic 25.498** (`/tmp/cmp_geo.png`).
-Note this scene as committed HAS Saturn's rings in frame (camera parked on the
-planet), so it is a valid control for ring work and a weak one for far-field
-galaxy work — see the UNIVERSE_TEST recipe above for that.
+**The capture height is part of the baseline.** Sprite sizes scale with render
+height (see "Sprite sizes are a FRACTION OF RENDER HEIGHT"), so a capture at a
+different height is a different picture: thinner dust, weaker haze. 1280x720 is
+the user's viewport and the height every project is calibrated at, so a harness
+capture and what the user sees are the same image. Changing `CMP_H` changes the
+look; an A/B must hold it fixed.
 
-**The number tracks the PROJECT FILE, not just the code.** History: 60.95 for a
-long stretch, ~61.61 after the float->double position work, then 46.68 when the
-user retuned milky_way.json (resolvedCut 0.6->0.0, unresolvedStrength
-6.83->3.4, dustDetail 200->14000, softer bloom/edge light, RT as the main
-view), then 48.63 when the empty sky stopped being pure black (a near-black
-blue background adds a floor to every pixel: `lit` jumps 51.6% -> 88.9% while
-`sat` is unchanged). Before calling a mean shift a regression, check
-`git diff projects/milky_way.json` — a retune is not a bug. Latest step:
-48.63 -> 29.16 (RT 21.65 -> 26.26, geodesic 29.50 -> 25.50) when the user parked
-the camera on Saturn and rings landed in all renderers (project change at
-524e55b + the ring ports), then the two rim-light fixes (planets finally
-populate `rimOccluders`; snap/record passes keep their own rim lists — every
-harness raster capture before that ran the dust-density pass TWICE).
+**The number tracks the PROJECT FILE, not just the code.** Before calling a mean
+shift a regression, check `git diff projects/milky_way.json` — a retune is not a
+bug. The same applies to `projects/universe.json`, which the user re-saves from
+the live app: its camera, keyframes and look settings change under you.
 
-The same applies to `projects/universe.json`, which the user re-saves from the
-live app: its camera, keyframes and look settings change under you. It is not a
-fixed baseline.
+`projects/universe.json` is the cost check: ~710 MB peak, ~3.5 s for 3 frames.
 
 ## Pointing the camera from a script
 
@@ -439,8 +428,9 @@ is back to **0.5** (was briefly 1.5 for speed — that is what caused it), the
 inspector slider caps at 1.0, and the dispatch **clamps uTheta to 1.0** so an
 older project storing a large theta still can't grid.
 
-**Why NOT real DM particles** (the rejected experiment; scaffolding still exists,
-`ensureDarkMatter`/`stripDarkMatter`, but is **not called**): a spherical
+**Why NOT real DM particles** (the rejected experiment; `ensureDarkMatter` was
+deleted in the 2026-09-03 cleanup, `stripDarkMatter` is kept as a defensive
+call): a spherical
 population of heavy invisible particles in the tail of `cloudParticles` is the
 physically "universal" model, and it half-worked — but at galaxy scale a few DM
 particles integrated to **inf/NaN**, and because they live in the SHARED octree
@@ -913,526 +903,151 @@ one is drawn.
 status, known bugs, and the agreed next step. Read it before touching universe
 generation.
 
-## Lens experiments that FAILED (2026-08-23) — read before touching the lens again
-
-One day, four redesigns, all reverted to the lens below; the work is in
-`lens_onerule_experiment.patch` (applies on bb06d0e). What was tried and why
-each looked worse than the committed lens — judged at full resolution, which is
-the only way to judge it (the 360p harness captures hid every one of these):
-
-- **Volumetric emissivity** (bent ray integrates `rho * I(dir)/C(dir)` from a
-  density volume; exact identity for unbent rays). Every star became a RADIAL
-  streak: a star's light is spread over its whole column, every bent ray
-  crossing that column anywhere in depth picks up a piece, and the locus of
-  those rays is a radial line. Tube over the shadow, horizontal cut.
-- **Density-quartile depth sheets** per pixel: each star became 4 displaced
-  dots; the far disc quantised into rings.
-- **Depth slabs** (particles binned by camera distance, per-pixel mean depth):
-  a pixel's column through an edge-on disc is hundreds of AU deep, so every
-  slab collapses to one depth per pixel — concentric rings on the disc, onion
-  layers on a galaxy. Finer slabs only make more rings.
-- **Flat front + per-cloud plane for the far side** (= the committed lens's
-  geometry, per cloud, all crossings summed): the far side is still the sprite
-  HAZE stretched into a flat opaque sheet with a hard edge against the 3D
-  sprite field, no photon-ring/gap structure in galaxy scenes, and with the
-  extra passes (per-cloud slabs on three rungs, column pass, dust passes) it
-  ran at a few fps. Worse than the committed lens on every axis.
-
-What the committed lens gets right and every redesign lost: the far field is
-sampled at the cloud's PLANE CROSSING (exact for a thin disc, a fair proxy
-otherwise) and the front is drawn FLAT (physically right: light from matter in
-front of the hole never passes the hole). What it still gets wrong, unsolved:
-the bent zone is the sprite haze remapped — flat, opaque, brighter with
-glow/spread, a hard edge against the unbent sprites; no secondary arch or
-dark gap in galaxy scenes. That is the real problem; a depth model does not
-touch it. Any future attempt must show a full-resolution side-by-side against
-THIS lens and list what got worse before claiming anything.
-
-Harness: the raster capture is **1280x720** by default (`CMP_W/CMP_H` override;
-RT stays 640x360), so the old milky_way mean (29.16 at 360p) no longer applies
-— byte-compare against a same-sitting control instead. See "**The harness must
-render at the USER'S height**" below for why that size and not another.
-
-## The raster lens is FORWARD: each source is bent by its own position
-
-**This replaced the two-pass image remap** (`lensRaster.glsl` and everything
-around it) on 2026-09-02. Read the failure log above first — it is the record of
-why the old one could not be fixed.
-
-The old lens was BACKWARD: per pixel, bend a ray, then ask "what is out there?"
-But the raster pipeline has no scene to ask — only rendered PICTURES of it — so
-it had to guess the depth of whatever it sampled. Every scene assumption grew out
-of that one gap: a dominant disc plane to find the crossing, a source sphere when
-the plane missed, apex cubes because an image is only valid from its own vantage,
-and a front/back particle split so the sampled image would not contain the
-foreground. That split is the "seam in space", and the plane is why a top-down
-view made the hole vanish, why a spherical cloud had nothing to key on, and why
-two colliding clouds picked one plane and got the other wrong.
-
-Turn it around. The renderer DOES have the scene — particles with exact
-positions — so ask each SOURCE where its light lands. One rule, `lfPlace` in
-`src/shaders/lens_forward.glsl`, applied to every particle, dust puff and star
-alike:
-
-```
-beta = theta - alpha(b) * 0.5 * [ h + (Dl*delta - b^2)/hl ] / Ds
-b = Dl*sin(theta),  h = sqrt(b^2+delta^2),  hl = sqrt(b^2+Dl^2),  Ds = Dl+delta
-```
-
-`delta` is the source's position along the camera->hole axis measured FROM THE
-HOLE, positive behind it. That is the whole input. **No plane, no split, no
-reach, no falloff, no dominant cloud** — the absence is the point, and it is why
-a sphere, a disc seen face-on, two holes and empty space all behave the same.
-
-- `delta -> +inf` gives `D_ls/D_s`, the textbook thin lens.
-- `delta = 0` gives `b/(2 Dl)`: **half** the bend. A source level with the hole
-  only gets the outgoing half of the encounter. The thin lens says ZERO here,
-  which is exactly why it cannot draw an accretion disc at 3-20 rs.
-- `delta -> -inf` gives 0. Light from in front never passes the hole, so it does
-  not bend **and it covers the shadow**. That is physics, not a rule.
-
-Measured, front to back through a hole, 20000 steps: the image moves 412
-rs-angles with a largest single step of 0.014% of the travel. There is no jump
-anywhere because there is no boundary anywhere.
-
-**The dust needed no second system.** Dust is `uCloudPass == 3` in the same
-`cloudVert.glsl` — same VBO, same draw. So it bends by the same rule for free,
-and because the FRAGMENT shader runs the map's explicit direction per pixel
-(`lfSourceCoord`, replacing `gl_PointCoord`), the FBM that carves a puff into a
-wisp is evaluated in SOURCE space: a lane stretches into a real arc with its
-internal structure stretched too, not a stretched disc with unstretched noise
-painted inside. Optical depth is carried across unchanged, so bent dust is
-neither brighter nor darker than unbent dust.
-
-- `src/lensForward.cpp` is the C++ MIRROR of the shader — same formulas, same
-  constants. It exists so the map can be PROVEN on the CPU (monotonicity, solver
-  convergence, identity at rs=0, depth-continuity, cull rate) instead of debugged
-  through a framebuffer. `LENS_LUT_TEST=1` prints the whole suite. **Change both
-  together.**
-- `alpha(b)` is a 1024-tap table built at first use by integrating the SAME null
-  geodesic the ray tracer marches, so the raster ring and the geodesic ring agree
-  by construction. Uniform in `q = -ln(1 - b_c/b)`, where alpha is nearly linear
-  even at the photon sphere: worst interpolation error 8e-7 rad. Costs ~155 ms,
-  once, and only when a hole is actually resolvable.
-- Two images per hole: `gl_InstanceID` 0 is the direct image, 1..N the secondary
-  of hole N-1. They occupy **disjoint** regions of the screen (the sign of beta
-  selects the branch), which is what lets the multiplicative dust be drawn twice
-  and still never darken a pixel twice.
-- Cost on bh_ref: **+1.0 s** against +9.4 s for the old lens, and +3 MB against
-  ~145 MB of FBOs. A scene with no resolvable hole measures no cost at all
-  (milky_way 2.61 s vs 2.68 s lens-off), and milky_way stays byte-identical.
-
-### Traps this cost real time to find
-
-- **`gl_PointCoord`'s origin is UPPER-LEFT — its t axis runs DOWN, screen y runs
-  UP.** The fragment map builds each sprite's footprint in screen space, so
-  without a flip every footprint is mirrored top-to-bottom and **every arc curves
-  the wrong way**: the arch over the hole is drawn as a hammock under it. One
-  sign, and it is nearly invisible in the obvious test — a round sprite is
-  unchanged by a mirror, and so is a symmetric Einstein ring, so the sphere scene
-  passed while the disc was inverted. Measured before/after with a structure
-  tensor: streak-vs-tangential alignment 0.62 -> 0.74 (the geodesic scores 0.77),
-  and the best-fit arc centre moved from 140 px above the hole to the hole. Flip
-  on the way in and back on the way out, so the profile's FBM still reads the
-  same way as an unlensed sprite.
-- **A LENS MUST NEVER DELETE MATTER.** Reporting slow solver convergence as "no
-  image" culled 8.9% of the direct images — thousands of particles blinking out
-  around the hole. The only honest absence is the betaMin test. The direct image
-  now always stands.
-- **A STRETCH BUDGET MUST TRUNCATE THE IMAGE, NEVER SHRINK THE SOURCE.** Spending
-  it by drawing a smaller piece of each source keeps the footprint small and
-  deletes matter: at the default budget a dust puff was drawn at 42% of its
-  radius — under a fifth of its area — so every arc came out blue-white while the
-  dust stayed behind in the unlensed band. The geodesic shows those rings FULL of
-  dark red dust, which is what caught it. Lensing conserves surface brightness:
-  an arc must read exactly as dark as the unlensed lane and may only cover more
-  sky. Draw the whole source, clip the arc at the footprint, and fade the cut.
-  Measured: arc dust share 14.0% -> 35.7%, at no cost in frame time.
-- **Size the footprint from the MAP, not from the centre's Jacobian.** The
-  magnification at a sprite's centre badly underestimates how hard the map
-  compresses further out near the shadow; the whole square then lands inside the
-  source disc, nothing is discarded, and the sprite draws as a hard-edged
-  rectangle. Those are the blocks that appear around a big hole. Measure how much
-  source the footprint actually reaches (the forward map, explicit, no solve) and
-  grow it to cover.
-- **Draw the hole's silhouette at the SHADOW radius (2.598 rs), not the horizon.**
-  No image can land inside 2.598 rs, so a disc drawn at rs leaves an annulus of
-  plain background between it and the ring — which reads as the ring being
-  detached from a small dot. Measured on one scene: drawn disc 29 px, true shadow
-  229 px. `RenderedObject::lensMeshScale` carries the factor.
-- **The solver is BISECTION, not Newton.** This is a Born-profile model and in
-  the deep near-field it can FOLD (measured on bh_disk: 15 of 600 source depths,
-  worst 0.88 px). Where it folds there are several roots and each is a legitimate
-  image, but a fold breaks the bracket invariant a Newton safeguard relies on and
-  returned roots tens of pixels wrong. 24 halvings is 0.007 px worst, nothing
-  culled. The direct image is additionally bracketed at `theta > beta`, which is
-  exact (alpha*g > 0 always) and steps over the fold entirely.
-- **Capture applies only to sources BEHIND the hole.** A source in front is
-  reached before closest approach, so its image may sit anywhere, including
-  inside the shadow disc — which is precisely how foreground matter covers the
-  hole. An unconditional capture test deleted every particle directly in front of
-  the hole and punched the foreground open.
-- **`theta` must stay below pi/2.** Past it `b = Dl*sin(theta)` turns over, every
-  evaluation returns the capture sentinel, and the bracket-doubling loop walks off
-  to hundreds of radians. That is what threw particles near the hole's axis across
-  the screen as radial streaks.
-- **`inf * 0 = NaN`, and NaN fails every discard test.** A fragment exactly on the
-  hole's screen position has `b = 0`, where `2rs/b` is infinite while the Born
-  factor goes as `b^2`. The NaN then passed `dot(pc,pc) > 1.0` (all NaN
-  comparisons are false) and the sprite drew its ENTIRE square: dark red boxes
-  stacked over the hole. `b` is floored, and the test is written negated so a NaN
-  discards.
-- **A stretch budget must be spent by shrinking the SOURCE, never the footprint.**
-  Sizing a sprite from a capped magnification while the fragment shader still maps
-  pixels through the TRUE one leaves every pixel inside the source disc — the same
-  filled squares, from a different cause. Both budgets (the stretch limit and the
-  pixel cap) now feed one source-shrink, so the profile always runs out inside the
-  footprint.
-- **The early-out must not use the thin-lens Einstein angle.** It is proportional
-  to `delta` and therefore ~0 for matter level with the hole — exactly where the
-  Born term is large. A thin-lens gate skipped every particle of an accretion disc
-  and left the disc unbent while distant matter moved. Gate on the actual
-  displacement instead: one table fetch.
-- **Finite-source limit.** `theta/beta` diverges as a source nears the axis, but a
-  source of angular radius R can never be closer to the axis than R, so its
-  stretch is bounded by `theta/R`. This is the physical reason lensed images are
-  bright arcs rather than infinitely thin infinitely long ones.
-- **`delta` needs DOUBLE.** Forming (axial distance - Dl) in float32 at 1e6 AU
-  leaves nothing of the near-hole term. The object's offset from each hole
-  (`uLfDelta0`) is differenced on the CPU in double and the shader only ever adds
-  a small per-particle offset. Starfield chunks upload it again per CHUNK, because
-  that is what the vertex shader offsets from.
-
-### Performance: the lens is FILL-bound, not ALU-bound
-
-Measured on `projects/bh_ref.json` (58 800-particle cloud + hole, 1200x675), per
-frame, by the slope between `COMPARE_FRAMES=3` and `=13`:
-
-| | ms/frame |
-|---|---|
-| lens off | 87 |
-| lens on | ~400 |
-| lens on, no sprite enlargement (`LF_MAXMU=1`) | 227 |
-| lens on, enlarged sprites but the fragment map ABLATED to `gl_PointCoord` | 214 |
-
-Read the last two together: with a trivial fragment shader the enlarged sprites
-still cost 119 ms over baseline. **The cost is the number of fragments
-rasterised, not the work per fragment**, and the base cloud path is already
-fill-bound (87 ms for one instance of dust/haze sprites up to 160 px).
-
-What that means for optimising it:
-- Arithmetic savings are worth little. Removing an `atan`, two transcendentals
-  and an unused derivative from the per-pixel map bought ~8%.
-- A "skip the map where the sprite is barely distorted" fast path made it
-  SLOWER (415 vs 392): the branch is divergent, so the GPU runs both sides.
-- A cheap reject before the expensive map (an exact cosine band around the arc)
-  also made it slower — the compare and its two varyings cost more than the
-  rejects saved.
-- What does work is drawing fewer/smaller fragments. **Max arc size**
-  (`lensMaxSprite`, Lens UI) caps the largest lensed sprite as a fraction of
-  viewport height: 0.35 -> 423 ms, 0.15 -> 244 ms. It truncates the longest arcs
-  and never changes brightness. Cost is dominated by a handful of very large
-  magnified sprites whose area grows as the square.
-- The untried structural fix is to stop rasterising the square: a point sprite
-  bounding a 5:1 arc is ~85% empty. Splitting a long arc into several smaller
-  sprites along it (extra `gl_InstanceID` segments, no VAO change) or oriented
-  quads would cut that area several-fold. Estimated ~30% more, at real risk to
-  the approved look.
-
-### Two traps that wasted real time measuring this
-
-- **A shader that fails to compile draws NOTHING and looks FAST.** A uniform
-  declared below its first use in `lens_forward.glsl` failed the whole cloud
-  program; the frame time "improved" from 176 ms to 17 ms and the diff was
-  537 731 pixels. The harness prints the compile error to STDERR and the runs
-  were discarding it. Always `2>` a file and grep for `error` after touching a
-  shader, and treat any large speed-up with a changed image as a broken build.
-- **A "regression" on a scene the change cannot reach is the machine, not the
-  code.** universe.json measured 7.81 / 8.57 / 8.72 s against a 3.5 s baseline,
-  three consecutive runs, right after a lens change — and universe contains
-  **zero** black holes (`schwarzschildRadius > 0`: none), so the lens path never
-  executes there at all. Same binary, minutes later: 3.74 / 3.48 / 3.50 / 3.49.
-  Before believing a regression, ask whether the changed code can even run in
-  that scene; if it cannot, stop measuring and re-measure later.
-- **Exactly 1000 ms/frame means VSYNC, not slowness.** With the user's live app
-  holding the display every harness render came back at precisely 1.0 s/frame -
-  5 frames 6 s, 25 frames 26 s, two different scenes identical - which made a
-  10k cloud and a 58 800 one measure the same. Renders stay byte-correct under
-  contention, so IMAGES are still valid; only timings are junk. Check for a
-  running `blackholesim` before timing, and never `pkill` a bare one.
-- **Never trust a single timing sample on this machine.** Chasing the dust fix
-  produced readings of 861-939 ms/frame that looked like a 5x regression; a
-  repeat showed lens-OFF also reading 899 ms once, which is impossible, and the
-  true medians were 36 ms (off) and 182 ms (on). Take the median of three, and
-  treat any reading that implies an impossible conclusion as an outlier before
-  reporting it.
-- **Timings are only comparable within one power state.** This machine on
-  battery clocks the iGPU to 400 MHz of 1800 (`pp_dpm_sclk`) with the CPU
-  governor at `powersave`; the same scene measured 176 ms/frame on AC and
-  ~400 ms on battery. Check `/sys/class/drm/card*/device/pp_dpm_sclk` before
-  comparing against a number written down earlier, and take control and
-  candidate back to back. The first run after a reboot is also an outlier
-  (958 ms against a 430 ms steady state) — discard it, as with the raster
-  baseline.
-
-### Sprite sizes are a FRACTION OF RENDER HEIGHT, not absolute pixels
+## Sprite sizes are a FRACTION OF RENDER HEIGHT, not absolute pixels
 
 Brightness in this renderer comes from sprites OVERLAPPING (see "Light falls off
 because objects get SMALLER"). Every sprite size was therefore a look decision
 expressed in absolute pixels — the haze lobe a fixed `clamp(..., 8, 160)`, the
-dust puff and gas puff perspective-sized but clamped to `3..160` / `6..150`, the
-star core a fixed `2..9`. Double the render height and all of them stay the same
-pixel size, i.e. HALF the size relative to the frame, so they overlap less.
+dust and gas puffs perspective-sized but clamped to absolute pixels, the star
+core a fixed `2..9`. Double the render height and all of them stay the same
+PIXEL size, i.e. HALF the size relative to the frame, so they overlap less.
 
-Measured on a galaxy + a large hole, the SAME scene, 720p vs 1440p:
-**mean luminance 33.32 vs 13.60** — 2.5x darker at double the height, with
-thinner dust lanes and a weak, streaky haze. Scaling dust/gas/haze alone only
-got the ratio from 0.41 to 0.56; the star cores are the other half of it.
-With all four scaled: **19.06 vs 19.12, a ratio of 1.003** (mean |diff| across
-the resized pair 20.35 -> 1.62).
+Measured on a galaxy + a large hole, the SAME scene, 720p vs 1440p: mean
+luminance **33.32 vs 13.60** — 2.5x darker at double the height, with thin dust
+and a weak, streaky haze. Scaling dust/gas/haze alone only got the ratio from
+0.41 to 0.56; the star cores are the other half. With all four scaled:
+**19.06 vs 19.12, a ratio of 1.003**.
 
-`uSpriteRefH` (setting `spriteRefHeight`, Quality & Speed -> **Sprite
-Calibration**) is the height the sizes are calibrated at; everything above is
-multiplied by `uViewportH / uSpriteRefH`. 0 = off, which reproduces the old
-absolute-pixel behaviour exactly.
+`uSpriteRefH` (setting `spriteRefHeight`, Quality & Speed -> **Sprite Density**,
+default **720**) is the height sizes are calibrated at; everything is multiplied
+by `uViewportH / uSpriteRefH`. 0 = off (absolute pixels, the old behaviour).
 
-**The default is 720, signed off by the user, and written explicitly into all
-nine bundled projects.** At a 1080p render that is a 1.5x sprite scale — denser
-than the pre-calibration look, which is the point: it is the overlap that makes
-the dust thick and the haze milky. It is a DENSITY dial as much as a
-calibration, since a lower reference draws bigger sprites at any resolution.
-
-New harness baseline: milky_way at the default **1280x720** reads **27.704**.
-milky_way holds 27.70 / 28.09 / 28.33 / 28.80 from 720p to 4K — a 4% spread,
-against a 2.5x collapse before.
-
-### The grey murk round a hole is the GAPS FILLING IN, not the shadow
-
-At a high Max arc size a dirty grey band appears between the bright arcs and the
-black shadow, and the shadow reads as smaller and blobby. Four plausible causes
-were tested and all four are innocent: bloom (off - unchanged), dust (off -
-unchanged), the footprint edge-fade width (made fixed-width in pixels - 172.3 ->
-173.7, i.e. nothing), and radial spill from the square footprint (clipped to the
-true annular sector - discarded not one fragment).
-
-**What settled it was a DIFFERENCE MAP, and it should have been the first move.**
-Subtracting the two arc sizes shows the star streaks as *unchanged* and the space
-BETWEEN them lighting up. The arcs are fine; the dark gaps are filling in.
-
-The cause is that a star core and the haze are not the same kind of sprite. A
-core is small and crisp: stretched, it draws the thin bright streak the geodesic
-shows. The haze lobe is a wide SOFT glow standing in for unresolved stars, and
-stretching it makes a long soft smear - so as the budget rises the smears overlap
-and drown the gaps. One dial was stretching both.
-
-`lensHazeArc` (Lens -> **Haze arc**, the haze's share of the arc budget) exists
-for this. Measured on bh_disk at arc 0.5: 1.0 -> 4.29 s/30 frames and murky,
-0.12 -> 3.20 s and crisp, which is what arc 0.08 costs with much longer arcs.
-**The shipped default is 1.0, i.e. off**, because the user found a better answer
-from the other side - Stretch 12 with Max arc size 0.25 caps the footprint
-tightly enough that the smears never get long. Keep the dial; it is the lever if
-a scene ever needs the two separated again.
-
-### A LOW Stretch is a FALSE ECONOMY — it costs more, not less
-
-"Stretch" caps how far a sprite may be magnified, so it reads like a cost dial.
-It is not. Measured on blackhole.json, 1024x576, same binary, nothing else
-changed:
-
-| Stretch | ms/frame |
-|---|---|
-| 2.3 | 57 |
-| 6 | 59 |
-| **12** | **10** |
-
-A HIGHER cap is ~6x cheaper. The reason is the same mechanism as the blocks: a
-footprint capped below the size its source needs never reaches the source-disc
-test, so **nothing is discarded** and every fragment it rasterises survives to
-be shaded and blended. Uncapped, the sprite covers its source, the profile runs
-out inside the footprint, and most fragments discard early and cost almost
-nothing. Discarded fragments are cheap; surviving ones are not.
-
-So the two caps pull in opposite directions and must not be reasoned about as
-one "quality vs speed" axis:
-- **Max arc size** genuinely is a speed dial — it truncates the sweep and fades
-  the cut, and fewer fragments are rasterised.
-- **Stretch** is a LOOK dial. Lowering it shortens arcs, and it makes the frame
-  slower. Reach for Max arc size when you want speed.
-
-The visual difference between Stretch 2.3 and 12 on that scene is small (2.3 is
-slightly tighter round the hole), so this is nearly 6x of frame time for a
-subtle look change. Worth knowing before treating it as an optimisation.
-
-### Sprite Density: the reference runs BACKWARDS from how it reads
-
-The control is named by density now (Densest .. Sparsest, each labelled with its
-reference height) because the resolution labels read as a quality ladder: "4K"
-sounds like the best setting when it in fact draws the SMALLEST sprites. Scale is
-`render height / reference`, so a LOWER reference means BIGGER sprites - more
-overlap, thicker dust, and far more fill. Measured at a 720p render, bh_disk,
-30 frames: 480p ref = 1.5x sprites = 7.70 s; 720p = 1.00x = 6.95 s; 1080p =
-0.67x = 5.92 s; 4K = 0.33x = 4.36 s. That, and not the lens, is why a scene can
-be much faster at a "higher" setting.
-
-### Fewer particles is NOT a smaller version of the same picture
-
-The black-hole test scenes were decimated to 10k (bh_ref/blackhole/topdown/
-twoholes from a 58 800-particle sidecar, bh_disk and lens_test_sphere from their
-formations). Every source is a NEW file - `blackhole_10k.data`, the `*_10k.json`
-formations - sampled with a fixed seed and with the per-particle mass scaled up
-so the TOTAL mass, and therefore the physics and the halo fit, are unchanged.
-
-**It is a large look change and no setting recovers it.** bh_ref mean 27.79 ->
-41.48: the image gets much brighter and the dark dust lanes largely vanish,
-because dust is multiplicative and 5.9x fewer puffs darken 5.9x less. Sprite
-Density pushes the wrong way - 480p ref 63.5, 360p 78.6, 300p 86.7 - since
-bigger sprites add more light than they add darkening. Dust lanes need MANY
-SMALL sprites, never a few big ones. So the 10k scenes are right for geometry,
-arcs and artefact hunting, and misleading for anything about dust or the cloud
-look. milky_way (20k) and universe (procedural) were deliberately left alone.
-
-### Lens settings live in SceneSettings, like every other look setting
-
-`lensingEnabled`, `lensSecondary`, `lensMaxStretch`, `lensMaxSprite` and
-`lensHazeArc` used to be Renderer-only members, so editing one in the app and
-saving the project silently lost it. All five are now in `SceneSettings` (the
-one place defaults live), serialised, and applied through
-`applySettingsToRenderer` - which is the same function `cb.newProject` calls, so
-a NEW project inherits them too. Shipped: lensing on, secondary images OFF,
-Stretch 12.0, Max arc size 0.25, Haze arc 1.0.
-
-Verified the way this file prescribes: a project with the keys spelled out
-renders BYTE-IDENTICALLY to one that omits them, so there is no second diverging
-copy. A project with an EMPTY settings block round-trips to exactly these values,
-which is the same fallback path a new project takes.
-
-### The harness must render at the USER'S height
-
-The `--compare` raster capture defaults to **1280x720** because that is the
-user's viewport size and the height every project's look is calibrated at
-(`spriteRefHeight` = 720). At that size the sprite scale is exactly 1, so a
-harness capture and what the user sees in the live app are **the same image**.
-
-This is not a cosmetic preference. Sprite sizes scale with render height, and
-overlap is most of the look, so a capture at a different height genuinely shows
-a different picture — thinner dust, weaker haze, less coverage. The old default
-was 1600x900, i.e. every capture was judged at 1.25x the user's height, and
-before that 640x360 at 0.5x.
-
-**This is a likely root cause of a whole class of "it looks fine in the harness"
-mistakes**, including several in this file: the lens experiments whose artefacts
-"the 360p harness captures hid every one of", and blocks around a large hole
-that the user could see plainly in a screenshot while a harness capture of the
-same scene looked acceptable. If a user reports an artefact that a harness image
-does not show, **check the capture height before doubting the report.**
-
-Corollary: changing CMP_H changes the look, so an A/B must hold it fixed, and a
-control captured at one height cannot be compared against a candidate at
-another.
-
-- With reference == render height the scale is exactly 1 and the image is
-  byte-identical to the pre-calibration build (verified at 1080p against a
-  same-sitting control, with the reference set to 1080). At the shipped 720
-  default EVERY resolution changes deliberately. That is not a regression; it is
-  the point. Rebaseline rather than bisect it.
+- **The reference runs BACKWARDS from how it reads.** Scale is height/reference,
+  so a LOWER reference draws BIGGER sprites — more overlap, thicker dust, and
+  far more fill. At a 720p render: 480p ref = 1.5x sprites and 7.70 s/30 frames;
+  4K ref = 0.33x and 4.36 s. That, not the lens, is why a scene can be much
+  faster on the "better"-sounding setting. The UI is named by density for this
+  reason.
 - This is NOT what `uCinePixelScale` does. That compensates SSAA, where the
-  buffer grows but the target height does not; this is about the target height
-  itself changing.
-- The 1 px floor on a star core stays absolute — below one pixel there is
-  nothing to draw.
-- A project's saved `spriteRefHeight` should be the height its look was tuned
-  at. Old projects load the 1080 default, which is right for anything tuned on
-  a 1080p-class viewport and wrong for anything tuned elsewhere.
+  buffer grows but the TARGET height does not.
+- A project's `spriteRefHeight` should be the height its look was tuned at.
 
-### A footprint smaller than its own source draws a SOLID BLOCK
+## Fewer particles is NOT a smaller version of the same picture
 
-The lens sizes a sprite to hold its stretched image, then measures how much
-source that footprint actually reaches and GROWS it to cover. That growth was
-capped at 1.6x in one shot. Near the shadow the map compresses by orders of
-magnitude more, so the footprint stayed smaller than the source it was drawing —
-and a footprint smaller than its source never reaches the source-disc test
-(`dot(pc,pc) > 1.0`), so nothing is discarded and the sprite paints its whole
-square with a slowly-varying sample of the puff. That is the block around a big
-hole. `gLfEdgeFade` softens only its border, which is why it reads as a BLURRY
-rectangle rather than a hard-edged one, and why more fading never removed it.
+Decimating a cloud does not scale the image down, it changes what the image IS.
+bh_ref at 58 800 -> 10 000 particles: mean **27.79 -> 41.48**. The picture gets
+much BRIGHTER and the dark dust lanes largely vanish, because dust is
+multiplicative and 5.9x fewer puffs darken 5.9x less. Sprite Density cannot
+compensate — it pushes the wrong way (480p ref 63.5, 360p 78.6, 300p 86.7),
+since bigger sprites add more light than they add darkening. **Dust lanes need
+MANY SMALL sprites, never a few big ones.** Lensed arcs need the density too:
+at 10k they read as separate strokes instead of merging into rings.
 
-Now iterated: four rounds of at most 4x reach 256x. **It costs nothing** —
-1004 ms/frame before, 1003 after on the scene that shows the artifact worst —
-because it only enlarges sprites that were under-covering, and leaves every
-sprite that already covered its source exactly as it was.
+The black-hole test scenes are 10k (fast: ~15 ms/frame against ~54 ms at 58.8k)
+and are right for geometry and artefact hunting, misleading for anything about
+dust or the cloud look. milky_way (20k) and universe (procedural) are full size.
 
-**milky_way is byte-identical at 1600x900 but NOT at 1920x1080**: whether a hole
-is resolvable depends on `pxPerRad`, so Sagittarius A* passes the displacement
-gate at the taller render and not at the shorter one. The 1080p change is 67839
-px, max 48, mean 27.5481 -> 27.5377 (0.04%) and is visually indistinguishable —
-but "milky_way has no resolvable hole" is FALSE above some resolution, and any
-claim of byte-identity on this project has to name the size it was checked at.
+## The raster black-hole lens is FORWARD: each source is bent by its own position
 
-**Growing the footprint is the look-safe direction; shrinking the source is
-not.** Shrinking removes matter — it is what once left arcs blue-white while the
-geodesic showed them full of dark red dust.
+Per source, not per pixel: `lfPlace` in `src/shaders/lens_forward.glsl` asks each
+particle where its light lands. One rule, applied to every star and dust puff:
 
-### Arc ribbons: geometrically right, visually WRONG (2026-09-03, reverted)
+```
+beta = theta - alpha(b) * 0.5 * [ h + (Dl*delta - b^2)/hl ] / Ds
+```
 
-Preserved in `lens_arc_ribbons.patch`. The idea was sound and the measurements
-were real: the map is radial, so a source's image is an annular sector known in
-closed form, and a point sprite bounding it wastes its area by the arc's aspect
-ratio. A fragment-invocation counter showed **508M invocations/frame on bh_ref,
-346M of them the empty corners** — 68% of all fragment work. Ribbons cut that to
-248M, deleted the per-pixel map entirely (each vertex carries its own source
-coordinate, so the rasteriser interpolates it), and roughly halved the lens's
-cost at equal quality.
+`delta` is the source's position along the camera->hole axis measured FROM THE
+HOLE, positive behind it. **No plane, no front/back split, no dominant cloud** —
+the absence is the point, and it is why a sphere, a disc face-on, two holes and
+empty space all behave the same. `delta -> +inf` gives the textbook thin lens;
+`delta = 0` gives HALF the bend (which is why a thin lens cannot draw an
+accretion disc); `delta -> -inf` gives 0, so foreground matter covers the shadow.
 
-**The user rejected it on sight, and was right.** A fat square sprite OVERLAPS
-its neighbours, and that overlap is what builds the milky density, the saturated
-dust and the opacity that covers the hole. Replacing each square with its
-geometrically exact thin arc conserved flux (+3.1%, which is why the flux check
-passed) while destroying the overlap: dust went dark and desaturated, lanes
-thinned into concentric streaks, and the foreground stopped covering the hole.
+`src/lensForward.cpp` is the C++ MIRROR of the shader — same formulas, so the map
+can be PROVEN on the CPU (`LENS_LUT_TEST=1`) instead of debugged through a
+framebuffer. **Change both together.** `alpha(b)` is a 1024-tap table built by
+integrating the same null geodesic the ray tracer marches, so the raster ring and
+the geodesic ring agree by construction.
 
-**Flux is not the look here.** A test that only checks total light and dusty-pixel
-share cannot see an overlap change, and both passed while the image got worse.
-This is the same lesson as the rejected `uSampleWeight`, from the other side:
-making a sampled thing physically exact is not the same as making it right.
+### The traps that cost real time
 
-Also learned, and still true: `GL_SAMPLES_PASSED` cannot measure this pipeline —
-it counts only fragments that SURVIVE (88.7M unlensed vs 91.8M lensed, while the
-true invocation counts were 128M and 508M). And `projects/lens_test_sphere.json`
-is a **bad** coverage test: the hole sits outside the sphere, so nothing in that
-scene ever tests whether foreground matter covers the shadow — which is exactly
-what ribbons broke.
+- **A LENS MUST NEVER DELETE MATTER.** Reporting slow solver convergence as "no
+  image" culled 8.9% of images — particles blinking out around the hole.
+- **A footprint smaller than its own source draws a SOLID BLOCK.** If the sprite
+  cannot grow to cover the source it is drawing, nothing ever reaches the
+  source-disc test, so nothing is discarded and the square fills with a
+  slowly-varying sample. The edge fade only softens its border, which is why it
+  reads as a BLURRY rectangle and why more fading never removes it. The
+  grow-to-cover step iterates for this reason (four rounds of at most 4x).
+- **A LOW Stretch is a FALSE ECONOMY.** It reads like a cost dial and is not:
+  57 ms/frame at 2.3 against 10 ms at 12 on blackhole.json, ~6x slower for a
+  small look change — because a capped footprint discards nothing and every
+  fragment it draws survives to be shaded. **Max arc size** is the speed dial;
+  Stretch is a look dial that happens to cost.
+- **Azimuthal extent is `asin(srcRad/|beta|)`, saturating at pi.** Deriving it
+  from the finite-source cap on tangential stretch forces `tangA <= theta`, a
+  hard **57 degree** ceiling on every arc's half-sweep in every scene — under by
+  up to 3.14x exactly where the arc should be longest, which is why arcs did not
+  wrap round the hole.
+- **`gl_PointCoord`'s origin is UPPER-LEFT** — its t axis runs DOWN, screen y
+  runs UP. Without the flip every arc curves the wrong way, and a round sprite
+  and a symmetric ring both hide it completely.
+- **`inf * 0 = NaN`, and NaN fails every discard test.** `b` is floored and the
+  disc test is written negated so a NaN discards.
+- **`delta` needs DOUBLE.** The object's offset from each hole is differenced on
+  the CPU; the shader only adds a small per-particle offset.
+- **The solver is BISECTION, not Newton** — the Born profile can FOLD in the deep
+  near field, which breaks the bracket invariant a Newton safeguard relies on.
 
-### Test scenes for context-independence
+### The map is NOT off centre — measure before believing it is
 
-`projects/lens_test_sphere.json` (a uniform SPHERE — no plane exists, so any
-plane-based lens has nothing to key on), `lens_test_topdown.json` (bh_ref seen
-from straight above the galaxy plane, the view where the old lens showed nothing
-at all), `lens_test_twoholes.json`. Verified on the sphere: evacuated centre,
-ring of tangential arcs, and pixels change ONLY within r=322 px — the map
-converges to the identity on its own, with no fade to tune.
+On `lens_test_sphere` the ring fits a circle to **0.59 px rms**, centred within
+**1 px** of the drawn hole (two independent estimators). `lfRotateAway` displaces
+every image strictly radially from the hole, so a ring of equal-deflection
+sources is concentric by construction and no term could shift it.
 
-**The ground truth for GEOMETRY is still `SKIP_RASTER=1 PROJECT=... --compare`**
-(`/tmp/cmp_geo.png`). Verified on bh_disk that sprite CENTRES form the same arch
-the geodesic does (peak directly over the hole, dropping at the sides).
+An eyeball estimate on a disc scene gave "126 px above the hole"; that was a
+structure-tensor fit biased by the disc's own horizontal lanes. Against the
+lens's real screen position (`LF_HOLEPOS=1` prints it) the figure was 13 px, and
+that is the arch's asymmetry, not a centring error.
 
-### Known gaps
+**What the raster genuinely lacks** is the higher-order photon windings: it draws
+the direct image only, while the geodesic resolves light that orbits the hole
+two or more times. Those windings are the concentric rings the ray tracer shows
+and the raster does not. A cube map baked from the hole, backward-traced over an
+annulus just outside the shadow, is the sketched fix — not yet built.
 
-- The drawn black disc is the HORIZON (rs); the true shadow is 2.598 rs. No image
-  lands in the annulus between them, so it renders as empty sky — invisible on a
-  dark background, wrong on a bright one.
-- Meshes (planets), nebula volumes and the skybox are NOT bent yet. The map is
-  written to drop into `defaultVert.glsl` the same way; the skybox wants the
-  per-pixel backward form, which is exact for sources at infinity.
-- bh_disk parks the camera 23.5 rs from the hole, deep in the strong field where
-  the Born-profile factorisation is weakest. Galaxy-scale scenes are far-field,
-  where it is exact.
+### Test scenes and known gaps
 
-### Accretion disk = a cloud
+`projects/lens_test_sphere.json` (uniform sphere — no plane to key on),
+`lens_test_topdown.json`, `lens_test_twoholes.json`, `bh_disk.json` (accretion
+disc, camera 23.5 rs out, deep in the strong field where the Born factorisation
+is weakest). **`lens_test_sphere` is a poor COVERAGE test** — the hole sits
+outside the sphere, so nothing there tests whether foreground matter covers the
+shadow.
 
-`templates/formations/accretion_disk_30k.json`: thin Keplerian disc scaled
-to the 4.15e6 Msun hole (3-20 Rs, H/R 1.5%, denser inward, orbital
-velocities). Gargantua's look is what the lens does to a ring of matter
-around the hole — a galaxy alone can never produce it, there is no matter at
-3-20 Rs to make the cross. Known remaining gap vs the geodesic: it resolves
-several discrete wound ring echoes; the raster shows the primary image filled
-and averages deeper windings.
+Ground truth for GEOMETRY is `SKIP_RASTER=1 PROJECT=... --compare`
+(`/tmp/cmp_geo.png`). Not bent yet: meshes, nebula volumes, the skybox.
+
+### Deleted (2026-09-03) — do not go looking for these
+
+The old BACKWARD lens and everything around it: `lensRaster.glsl`, the cube bake
+and apex vantages, the wide back-field pass, the two-pass front/back split, the
+foreground dust-warp slabs, and every `uBH*`/`uSizeRef*` uniform on the cloud
+path. Also **volumetric dust** (its draw call had no callers — ticking the box
+built a 3D texture nothing ever marched), **secondary images**, and
+`ensureDarkMatter()`. ~2 300 lines; every reference scene byte-identical after.
+
+**Flux is not the look.** Arc ribbons (drawing each image as the annular sector
+it truly is) cut fragment work 508M -> 248M and conserved flux to +3.1%, and were
+still rejected on sight: thin exact arcs lost the OVERLAP between fat sprites
+that makes dust saturated and the foreground opaque. A test that checks total
+light cannot see an overlap change. Same lesson as the rejected `uSampleWeight`.
+
+## Accretion disk = a cloud
+
+`templates/formations/accretion_disk_10k.json`: thin Keplerian disc scaled to the
+4.15e6 Msun hole (3-20 Rs, H/R 1.5%, denser inward, orbital velocities).
+Gargantua's look is what the lens does to a ring of matter around the hole — a
+galaxy alone can never produce it, there is no matter at 3-20 Rs to make the
+cross.

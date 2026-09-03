@@ -245,14 +245,14 @@ vec3 lfRotateAway(vec3 d, vec3 nHat, float dTheta) {
     return nHat * cos(th) + (t / st) * sin(th);
 }
 
-// image: 0 = primary (every hole bends it), 1..uLfCount = the secondary image of
-// hole (image-1). Returns false when this source produces no image here, in
-// which case the caller must drop the vertex.
-bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy, int image) {
+// Returns false when this source produces no image, in which case the caller
+// must drop the vertex. Only the DIRECT image is drawn: the secondary (the arc
+// inside the Einstein ring) was removed as unused.
+bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy) {
     gLfActive = false;
     gLfThetaS = 0.0; gLfBetaS = 0.0; gLfSrcS = vec2(0.0); gLfCenterS = vec2(0.0);
     gLfHoleN  = vec3(0.0, 0.0, -1.0); gLfGeom = vec3(0.0); gLfMuT = 1.0; gLfMuR = 1.0;
-    if (uLfCount <= 0 || clipPos.w <= 0.0) return image == 0;
+    if (uLfCount <= 0 || clipPos.w <= 0.0) return true;
 
     vec2 T0 = vec2(clipPos.x / clipPos.w / fx, clipPos.y / clipPos.w / fy);  // tan-space
     vec3 d  = normalize(vec3(T0, -1.0));                                     // view-space direction
@@ -276,45 +276,26 @@ bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy, int image) {
         // exactly the near-hole term an accretion disc depends on.
         float delta = uLfDelta0[h] + dot(offW, uLfHoleDirW[h]);
 
-        bool wantSecondary = (image == h + 1);
         // Skip the work where it cannot show: the largest displacement this hole
         // can produce for this source is bounded, and below a fraction of a
         // pixel the map IS the identity. This is what keeps a galaxy with a
         // distant hole at full speed.
-        if (!wantSecondary) {
-            // The displacement this hole would actually produce, to first order:
-            // evaluate the map AT the source's own angle. One table fetch.
-            //
-            // This must NOT use the thin-lens Einstein angle. That is
-            // proportional to delta and therefore ~0 for matter level with the
-            // hole — which is exactly where the Born term is large, so a
-            // thin-lens gate skipped every particle of an accretion disc and
-            // left the disc unbent while distant matter moved.
-            float disp = abs(beta - lfBeta(beta, delta, Dl, rs));
-            if (disp * uLfPxPerRad < 0.05) continue;
-        } else {
-            // The secondary image of a source well outside the Einstein radius
-            // sits at ~thetaE^2/beta, hard against the photon ring, and is
-            // demagnified as (thetaE/beta)^4. Below half a pixel it is inside
-            // the shadow and contributes nothing, so do not pay 24 bisection
-            // steps to place it — this is most of the second pass's cost in any
-            // scene where the hole is small on screen.
-            float dls = max(delta, 0.0);
-            float ds  = max(Dl + delta, 1e-30);
-            float tE2 = 2.0 * rs * dls / (Dl * ds);
-            if ((tE2 / max(beta, 1e-20)) * uLfPxPerRad < 0.5) return false;
-        }
+        //
+        // This must NOT use the thin-lens Einstein angle. That is proportional
+        // to delta and therefore ~0 for matter level with the hole — which is
+        // exactly where the Born term is large, so a thin-lens gate skipped
+        // every particle of an accretion disc and left the disc unbent while
+        // distant matter moved.
+        float disp = abs(beta - lfBeta(beta, delta, Dl, rs));
+        if (disp * uLfPxPerRad < 0.05) continue;
 
         float theta;
-        if (!lfSolve(beta, delta, Dl, rs, wantSecondary ? 1 : 0, theta)) {
-            if (wantSecondary) return false;                       // culled: photon-ring image
-            continue;
-        }
+        if (!lfSolve(beta, delta, Dl, rs, 0, theta)) continue;
         dOut = lfRotateAway(dOut, nH, theta - beta);
         // The hole that bends this source the most owns the fragment-level map.
         // A source is essentially never near two Einstein rings at once, so the
         // others only need to displace the sprite, not reshape it.
-        if (!haveOwner || abs(theta - beta) > ownerBend || wantSecondary) {
+        if (!haveOwner || abs(theta - beta) > ownerBend) {
             haveOwner = true;
             ownerIdx  = h;
             ownerBend = abs(theta - beta);
@@ -330,9 +311,7 @@ bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy, int image) {
             gLfMuT    = (abs(gLfBetaS) > 1e-20) ? abs(theta / gLfBetaS) : 1e6;
             gLfMuR    = (abs(dbdt)     > 1e-20) ? abs(1.0 / dbdt)       : 1e6;
         }
-        if (wantSecondary) break;
     }
-    if (image != 0 && !haveOwner) return false;                    // no secondary for this source
     if (!haveOwner) return true;                                   // nothing bent it: unchanged
 
     // Project the bent direction back to clip space. Depth (z, w) is untouched,

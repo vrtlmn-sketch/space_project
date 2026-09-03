@@ -155,7 +155,6 @@ struct CloudFormState {
   float nebulaScatterScale = 0.4f;
   float particleSizeSpread = 0.0f;
   float scale = 1.0f;
-  bool  volumetricDust = false; // dust as a marched 3D medium (opt-in per cloud)
 };
 
 // ---- Callbacks from Renderer back to main ----
@@ -381,8 +380,6 @@ private:
   // Volumetric dust march (dustVolFrag.glsl): mode 0 = extinction over the
   // scene (runs inside Draw, BEFORE the cloud's light), mode 1 = rim density
   // into the half-res RG16F map (replaces renderCloudDustDensity per cloud).
-  GLuint dustVolProgram{0};
-  void   DrawCloudDustVolumetric(RenderedObject& ro, int mode, int w, int h);
   GLint  blitLocTexture{-1};
 
   // ── HDR post-process (RT views): bloom + ACES tonemap ──
@@ -562,10 +559,6 @@ private:
   // The HDR target the lens two-pass operates on: the live cine buffer for the
   // viewport, or the record buffer for a Snap/recording. Set it before running the
   // lens so captures get the lensed black hole too, not just the live view.
-  GLuint lensFBO{0}, lensColorTex{0}, lensDepthTex{0};
-  int    lensW{0}, lensH{0};
-  void   SetLensTarget(GLuint fbo, GLuint colorTex, GLuint depthTex, int w, int h) {
-           lensFBO = fbo; lensColorTex = colorTex; lensDepthTex = depthTex; lensW = w; lensH = h; }
   GLint  recSavedDrawFBO{0};
   int    recSavedVp[4]{0, 0, 0, 0};
   void   EnsureRecRasterFBO(int w, int h);
@@ -997,12 +990,6 @@ public:
   // Six 90° raster renders of ONLY the far field (empty sky + clouds/galaxies),
   // taken from the black hole's position, into a GL_TEXTURE_CUBE_MAP. Phase 2 will
   // bend camera rays and sample this instead of re-testing every star per step.
-  GLuint lensCubeTex  = 0;        // GL_TEXTURE_CUBE_MAP, RGBA16F HDR (0 = not built)
-  int    lensCubeFace = 0;        // face size in px (0 = not built)
-  float  lensSavedCam[9]   = {1,0,0,0,1,0,0,0,1};   // camera state parked during a bake
-  double lensSavedTrans[3] = {0,0,0};
-  float  lensSavedZoom     = 45.0f;
-  void   EnsureLensCubemap(int faceSize);
   // Point the camera at cube face `face` (0..5 = +X,-X,+Y,-Y,+Z,-Z) from bhPos at
   // 90° FOV and begin an offscreen far-field pass into the record FBO. Draw the
   // skybox + clouds between this and LensEndFace; draw NOTHING near-field.
@@ -1035,7 +1022,6 @@ public:
   // foreground slabs, no per-pixel compute march. One extra draw per hole for
   // the secondary images, and that is the whole cost.
   bool     lensForward    = true;
-  bool     lensSecondary  = false;   // draw the inner (secondary) image of each hole
   // The haze pass's share of the arc budget. Star cores stretch into the thin
   // bright streaks; the haze is a soft glow whose stretched smears fill the dark
   // gaps between them. 1 = no separate limit.
@@ -1043,19 +1029,13 @@ public:
   float    lensMaxSprite  = 0.25f;   // largest lensed sprite as a fraction of viewport height.
                                      // Measured on bh_ref: 0.35 -> 423 ms/frame, 0.15 -> 244.
                                      // Lower truncates the longest arcs and buys a lot of speed.
-  float    lensMaxStretch = 2.3f;    // how many times its own size a sprite may be stretched into
+  float    lensMaxStretch = 1.0f;    // how many times its own size a sprite may be stretched into
                                      // an arc; spent by shrinking the source, never the footprint
   unsigned lensLutTex     = 0;       // RG32F deflection table (built once, from the geodesic)
   void     EnsureLensLut();
 
   bool   lensingEnabled = true;      // master toggle
-  int    lensDustWarp   = 1;         // foreground slab pass ON; with Bend 0 it is the flat cover (the signed-off look)
                                      // is the RT-like pair (the remap evacuated the plane and dug gaps at the feet)
-  bool   lensBHActive   = false;     // a hole's lensing is visible on screen this frame (Einstein angle ~px)
-  bool   lensBHStrong   = false;     // the dominant hole's SHADOW is also resolvable (strong-field zone visible)
-  int    lensBHIndex    = -1;        // physicsObjects index of the DOMINANT hole (skip its horizon mesh)
-  dvec3  lensBHWorld{0,0,0};         // dominant hole world position (reference length L = its Rs)
-  float  lensBHRs       = 0.05f;     // dominant hole Schwarzschild radius
   // Every resolvable hole this frame (dominant first), filled by main.cpp. All of
   // them bend the light together; the shared geodesic integrates in units of the
   // dominant hole's Rs so multiple holes at any scale never overflow float.
@@ -1065,14 +1045,11 @@ public:
   // Dominant volumetric-dust cloud this frame (main.cpp's computeLensFraming
   // picks it; nulled every frame): its splat volume is sampled by the lens
   // march so front dust occludes/reddens the ring along the bent path.
-  RenderedObject* lensDustVolRO = nullptr;
   // Finite-source distance for the lens's primary sample (AU): hole distance +
   // the largest cloud's diameter — where the lensed band actually lives.
   // 0 = no cloud found; the dispatch falls back to 2.5x the hole distance.
-  float lensSrcDistAU = 0.0f;
   // Largest cloud this frame — its PLANE is the lens's disc-crossing source
   // (see uHasDiscPlane in lensRaster.glsl). Nulled every frame with lensDustVolRO.
-  RenderedObject* lensPlaneRO = nullptr;
   // Per-dispatch uniform arrays (ApplyLiveLens fills from lensHoles; LensDispatch uploads).
   int    lensUHoleCount = 0;
   vec3   lensUHolePos[kLensMaxHoles];
@@ -1080,18 +1057,15 @@ public:
   vec3   lensUHoleDir[kLensMaxHoles];
   float  lensUHoleCosInner[kLensMaxHoles];
   float  lensUHoleCosOuter[kLensMaxHoles];
-  bool   lensCubeValid  = false;     // cube baked and usable
   dvec3  lensBuiltForBH { 1e300, 0, 0 };  // hole position the cube was built for
   float  lensBuiltRs    = -1.0f;     // hole Rs the cube was built for (rebuild when resized)
   GLuint cineLensTex = 0; int cineLensW = 0, cineLensH = 0;
   void   EnsureCineLensTex(int w, int h);
   // Run the live lens over cineColorTex → cineLensTex; returns the texture the
   // post chain should tonemap (cineLensTex when it ran, else cineColorTex).
-  GLuint ApplyLiveLens();
   // Copy a texture into the cine HDR buffer (used to write the lensed back-field
   // back before the front-particle pass draws on top). Upscales if smaller.
   void   BlitToCine(GLuint srcTex, bool blendByAlpha = false);
-  bool   lensViewportDone = false;   // viewport ran the two-pass lens → CineResolve skips its post-lens
   // Lens the back field now in the cine buffer and write it back; returns true if
   // it ran (then the caller draws the FRONT-of-hole particles on top).
   bool   LensBackFieldAndPrepareFront();
@@ -1150,7 +1124,6 @@ public:
   GLuint lensApexTex[2] = {0, 0}; int lensApexSize = 0;
   bool   lensApexValid = false;
   bool   lensFaceApexPass = false;               // LensEndFaceCam: do not copy into the camera cube
-  dvec3  lensApexPos[2];                           // world positions of the two vantages
   double lensApexSavedTrans[3] = {0, 0, 0};
   void   EnsureLensApexCubes(int faceSize);
   bool   LensBeginFaceAt(int face, int faceSize, const dvec3& pos);   // rotate to face, camera AT pos
@@ -1162,22 +1135,9 @@ public:
   // and dust is multiplicative extinction, so they need two buffers: fgLight (stars
   // already darkened by the dust in front of them) and fgExt (dust extinction for the
   // background). Composite: cine = cine * remap(fgExt) + remap(fgLight).
-  GLuint fgLightFBO = 0, fgLightTex = 0;
-  GLuint fgExtFBO   = 0, fgExtTex   = 0;
-  int    fgBufW = 0, fgBufH = 0;
-  GLint  fgSavedFBO = 0; int fgSavedVp[4] = {0, 0, 0, 0};
-  bool   fgActive = false;
-  GLuint fgDustWarpProgram = 0;
   int    fgDustLocTex = -1, fgDustLocHole = -1, fgDustLocRE = -1, fgDustLocAspect = -1, fgDustLocAtten = -1;
-  int    lensSlabs   = 1;        // foreground depth slabs (near-hole full bend → far flat), composited back-to-front
-  float  lensFgAtten = 0.0f;     // near-hole foreground remap strength (0 = flat cover, the signed-off look)
-  float  lensFgBand  = 0.3f;     // depth (× reach) over which the bend fades to flat — where the bend starts
-  void   EnsureFgBuffers(int w, int h);
-  bool   BeginForeground();      // save target + ensure buffers. true → draw the slabs.
   void   FgBindLight();          // bind fgLight (cleared black) for the additive star + dust draw
   void   FgBindExt();            // bind fgExt (cleared white) for the multiplicative dust draw
-  void   CompositeForegroundSlab(float strength);  // remap this slab at `strength` and composite over cineColorTex
-  void   EndForeground();        // restore the saved target + GL state after the last slab
 
   // A/B compare harness (--compare): capture the RT view at WxH to an image file.
   void CaptureRTImageTo(int w, int h, const char* path) {

@@ -31,13 +31,6 @@ uniform int  uHasViewCentre;  // 1 = use it (deep zoom); 0 = float rotate here
 // cannot sort a galaxy across ~1 AU..1e10 AU). Two-pass lensing uses this: pass 1
 // holds the front particles back (draw the back field, then lens it); pass 2 draws
 // only the front particles on top, covering the lens.
-uniform int   uBHCull;      // 0 = off, 1 = keep FRONT (cull behind), 2 = keep BACK (cull in front)
-uniform vec3  uBHDirCam;    // normalized camera->hole (camera-relative, world axes)
-uniform float uBHDist;      // camera->hole distance
-uniform float uBHSplitDist; // two-pass split (~4x hole distance): remap beyond, particles nearer
-uniform float uBHShadowR;   // photon-capture radius, aspect-corrected NDC
-uniform float uBHCullCos;   // cos of the cull cone half-angle
-uniform float uLensRs;      // dominant hole's Schwarzschild radius (AU) — per-particle magnification
 // Apex-cube photometry (the lens's off-camera vantages). Lensing conserves
 // SURFACE BRIGHTNESS, so a patch of cloud must read equally bright per
 // steradian from the vantage and from the real camera. Rule: size every
@@ -46,19 +39,7 @@ uniform float uLensRs;      // dominant hole's Schwarzschild radius (AU) — per
 // reduce to their own formula; fixed-pixel sprites (star cores, haze) grow
 // for matter near the vantage — without this the inner region read as sparse
 // dots over darkness (the fake "gap" above the shadow).
-uniform int   uSizeRefOn;
-uniform vec3  uSizeRefRel;     // real camera position relative to THIS pass's camera
-uniform float uSizeRefFy;      // main camera's 1/tan(fov/2)
-uniform float uSizeRefH;       // main frame height (px)
 // Cosmetic single-image thin-lens bend of the FRONT particles (front pass only).
-uniform vec2  uBHScreen;    // hole position in aspect-corrected NDC
-uniform float uBHEinsteinR; // Einstein radius in aspect-corrected NDC (0 = no bend)
-uniform float uBHBendStr;   // 0 = none, 1 = full
-uniform float uBHBendReach; // 3D distance (AU) over which the bend fades out — far matter covers, not bends
-uniform int   uBHDustLayer; // dust pass split: 0 = all, 1 = near-hole (warp buffer), 2 = far (flat, covers)
-uniform float uBHSlabMin;   // depth-slab split: this front particle's weight ramps in over
-uniform float uBHSlabMax;   // [min,max] of its 3D distance to the hole. 0/0 = no slab split.
-uniform float uBHSlabFade;  // half-width of the cross-fade at each slab edge (soft, no popping)
 
 uniform int   uRealistic;    // 0 = nav look, 1 = Cinematic Performant (RT-like)
 uniform int   uRenderMode;   // 0 = Point, 1 = Nebula
@@ -110,10 +91,6 @@ flat out float vLfBetaS;   // signed source angle at the sprite centre (+ direct
 // so the sprite path, the per-star transmission below and the screen march
 // (dustVolFrag.glsl) read the SAME lanes. Aliases keep the star-identity
 // hashes bit-identical to the pre-include code.
-uniform int       uDustVolOn;   // 1 = this cloud's dust is the marched volume
-uniform sampler3D uDustVol;     // splat density (R16F), cloud-local box
-uniform vec3      uDustVolLo;   // volume box, cloud-local
-uniform vec3      uDustVolHi;
 
 #include "dust_common.glsl"
 #include "lens_forward.glsl"
@@ -177,14 +154,11 @@ void main() {
   // no front/back pass, no plane, no split: a source in front of the hole gets a
   // deflection of exactly zero and therefore covers the shadow, one level with
   // the hole gets half the bend, one behind gets all of it, continuously.
-  // gl_InstanceID selects which image this draw is placing (0 = the direct
-  // image, 1..N = the secondary image around hole N-1); the two occupy disjoint
-  // regions of the screen, so the multiplicative dust can never darken a pixel
-  // twice.
+  // Only the DIRECT image is drawn.
   float lfSrcRad = 0.0;      // the sprite's UNLENSED angular radius (0 = not lensed)
   {
     vec4 lensed = gl_Position;
-    if (!lfPlace(lensed, offset, uProj[0][0], uProj[1][1], gl_InstanceID)) {
+    if (!lfPlace(lensed, offset, uProj[0][0], uProj[1][1])) {
       gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);   // no image here → discarded
       gl_PointSize = 0.0;
       return;
@@ -236,13 +210,6 @@ void main() {
   // slider recovers. Note this is NOT what ps does: ps compensates SSAA, where
   // the buffer grows but the TARGET does not.
   float rs = (uSpriteRefH > 0.0) ? (uViewportH / uSpriteRefH) : 1.0;
-  float sizeBoost = 1.0;
-  if (uSizeRefOn == 1) {
-    vec3  Pp    = center + offset;
-    float dRef  = length(Pp - uSizeRefRel);
-    float dHere = max(length(Pp), 1e-4);
-    sizeBoost   = clamp(dRef / dHere, 0.25, 16.0);
-  }
 
   if (uCloudPass == 1) {
     // Core pass: ONLY resolved (bright) stars draw as sharp points; the faint
@@ -271,9 +238,7 @@ void main() {
     if (uGasStrength > 0.0 && vHot > 0.22 && vMag > 0.40 && gl_Position.w > 1e-4) {
       vSeed = hash11(id * 12.3 + 5.0) * 20.0;
       float worldR = uDustInfluence * 2.0;
-      float px = (uSizeRefOn == 1)
-          ? worldR * uSizeRefFy / max(length(center + offset - uSizeRefRel), 1e-4) * (uSizeRefH * 0.5)
-          : worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
+      float px = worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
       gl_PointSize = clamp(px, 6.0 * rs, 150.0 * rs) * ps;
     } else {
       gl_PointSize = 0.0;
@@ -295,9 +260,7 @@ void main() {
       // far away, no giant discs up close. (uProj[1][1] = 1/tan(fov/2). Note
       // uDustInfluence is ~0.04× the galaxy radius, so the factor is >1.)
       float worldR = uDustInfluence * 1.5;
-      float px = (uSizeRefOn == 1)
-          ? worldR * uSizeRefFy / max(length(center + offset - uSizeRefRel), 1e-4) * (uSizeRefH * 0.5)
-          : worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
+      float px = worldR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
       gl_PointSize = clamp(px * (0.7 + 0.5 * lane), 3.0 * rs, 160.0 * rs) * ps;
     } else {
       gl_PointSize = 0.0;   // not in a dust lane / behind camera
@@ -325,8 +288,6 @@ void main() {
     if (uChunkScreenPx > 0.0) sz = min(sz, max(uChunkScreenPx, 1.0));
     gl_PointSize = sz;
   }
-  gl_PointSize *= sizeBoost;   // apex-vantage surface-brightness parity (1.0 everywhere else)
-  if (uSizeRefOn == 1) gl_PointSize = min(gl_PointSize, uViewportH * 0.6);   // fill-rate guard
 
   // ── Lensed sprite footprint ──────────────────────────────────────────────
   // A point sprite has no extent to stretch, so give it the extent its image

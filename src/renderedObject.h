@@ -44,10 +44,6 @@ extern double gViewRotD[9];
 // Black-hole occlusion cull for the cloud pass (set by the renderer when a hole is
 // lensing): particles behind the hole and inside its silhouette are discarded, so
 // the galaxy sorts around the hole instead of drawing over it.
-extern int    gLensCull;        // 0 off, 1 = keep FRONT (+bend), 2 = keep BACK
-extern float  gLensBHDirCam[3]; // normalized camera->hole (camera-relative, world axes)
-extern float  gLensBHDist;      // camera->hole distance
-extern float  gLensCullCos;     // cos of the cull cone half-angle
 // Depth-continuous lensing shell: the image remap treats its sources as at
 // infinity, which is only honest for matter FAR behind the hole. The two-pass
 // split therefore sits at gLensBHSplitDist (~4x the hole distance); everything
@@ -55,22 +51,9 @@ extern float  gLensCullCos;     // cos of the cull cone half-angle
 // thetaE^2(d) = thetaE^2(inf) * (d-D)/d — zero in front, growing smoothly
 // behind, meeting the remap's strength at the split. Matter whose primary
 // image would form inside the photon sphere (gLensBHShadowR) is swallowed.
-extern float  gLensBHSplitDist; // far split: image remap beyond, particles nearer
-extern float  gLensBHShadowR;
-extern float  gLensBHRsAU;      // dominant hole Rs (AU) for the per-particle magnification split
-extern int    gLensSizeRefOn;     // apex passes: size perspective sprites by the REAL camera's distance
 extern float  gLensSizeRefRel[3], gLensSizeRefFy, gLensSizeRefH;   // shadow (photon-capture) radius, aspect-corrected NDC
 // Cosmetic single-image thin-lens bend of the FRONT particles (front pass only),
 // so they agree with the lensed background. The realism comes from the baked cube.
-extern float  gLensBHScreen[2]; // hole position in aspect-corrected NDC
-extern float  gLensEinsteinR;   // Einstein radius in aspect-corrected NDC (0 = no bend)
-extern float  gLensBendStrength;// 0 = none, 1 = full thin-lens
-extern float  gLensBendReach;   // 3D distance (AU) over which the bend fades — far matter covers
-extern int    gLensDustLayer;   // foreground dust pass split: 0 = all, 1 = near-hole, 2 = far (covers)
-extern int    gLensDustToBuffer;// 1 = dust drawn into the fg extinction buffer: alpha carries the bend weight (MAX-blended)
-extern float  gLensSlabMin;     // foreground depth-slab cross-fade band [min,max] in hole-distance
-extern float  gLensSlabMax;     // 0/0 = no slab split
-extern float  gLensSlabFade;    // half-width of the cross-fade at each slab edge
 
 // ── Forward lens (src/shaders/lens_forward.glsl, src/lensForward.cpp) ────────
 // The state the per-source lens map needs. Every one of these is derived from
@@ -95,7 +78,6 @@ extern float  gLfMaxSprite;      // largest lensed sprite, fraction of viewport 
 // it and it is a property of the FRAME, not of an object.
 extern float  gSpriteRefHeight;
 extern float  gLfHazeArc;        // haze pass's share of the arc budget
-extern int    gLfImages;         // draw instances: 1 (direct) + one secondary image per hole
 extern unsigned gLfLutTex;       // RG32F deflection table, built by lensfwd::DeflectionLutRG()
 
 // Uploads the whole lens block for `program`, including this object's own
@@ -530,17 +512,10 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // the front pass (the "dark puck" at the band waist).
   bool         lensSkipMesh{false};
   float        lensMeshScale{1.0f};   // silhouette drawn at the SHADOW radius (2.598 rs), not the horizon
-  bool         volumetricDust{false};
-  unsigned int dustVolTex{0};
-  int          dustVolN{0};
-  bool         dustVolDirty{true};   // re-splat requested (particle set changed)
-  unsigned long long dustVolKey{0};  // lane-slider fingerprint → re-splat on change
-  vec3         dustVolLo{0,0,0}, dustVolHi{0,0,0};   // cloud-local splat box
   // Splat density × LANE into the volume (lane evaluated per particle on the
   // CPU — the 5 AU lane field is hopelessly undersampled by any march, and the
   // sprite system never resolved it either: it sampled at particles and drew
   // ~30 AU billboards, which is exactly what a lane-weighted splat reproduces).
-  void  updateDustVolume(float clumpScale, float coverage, float contrast);
   float dustLaneScale() const { return hashScale; }  // frozen lane scale, for the march
   // Plummer softening^2 for this cloud's gravity: a quarter of the mean
   // inter-particle spacing, floored at the historic constant 0.001 AU^2 so a

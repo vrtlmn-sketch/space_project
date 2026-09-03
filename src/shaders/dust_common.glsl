@@ -59,12 +59,3 @@ float dustLane(vec3 p, float baseScale) {
 // and a 26 kly galaxy tune with the same sliders. Calibrated so a full lane
 // crossing lands at tau ~4 (sprite dust compounds per overlapping sprite;
 // one integral needs the compounding folded into the coefficient).
-const float DUST_VOL_GAIN = 20.0;
-
-// Reddening-dominant extinction — same vector the sprite dust uses (cloudFrag):
-// red passes most, blue least; the floor keeps the densest lane a deep
-// red-brown instead of a pure-black hole.
-vec3 dustVolTransmit(float tau, float reddening) {
-  vec3 dExt = vec3(1.0, 1.0 + 1.0 * reddening, 1.0 + 2.6 * reddening);
-  return max(exp(-tau * dExt), vec3(0.10, 0.035, 0.02));
-}
