@@ -935,7 +935,7 @@ by `uViewportH / uSpriteRefH`. 0 = off (absolute pixels, the old behaviour).
 ## Fewer particles is NOT a smaller version of the same picture
 
 Decimating a cloud does not scale the image down, it changes what the image IS.
-bh_ref at 58 800 -> 10 000 particles: mean **27.79 -> 41.48**. The picture gets
+A 58 800 -> 10 000 particle cloud: mean **27.79 -> 41.48**. The picture gets
 much BRIGHTER and the dark dust lanes largely vanish, because dust is
 multiplicative and 5.9x fewer puffs darken 5.9x less. Sprite Density cannot
 compensate — it pushes the wrong way (480p ref 63.5, 360p 78.6, 300p 86.7),
@@ -943,9 +943,11 @@ since bigger sprites add more light than they add darkening. **Dust lanes need
 MANY SMALL sprites, never a few big ones.** Lensed arcs need the density too:
 at 10k they read as separate strokes instead of merging into rings.
 
-The black-hole test scenes are 10k (fast: ~15 ms/frame against ~54 ms at 58.8k)
-and are right for geometry and artefact hunting, misleading for anything about
-dust or the cloud look. milky_way (20k) and universe (procedural) are full size.
+`blackhole.json` runs at 10k for speed (~15 ms/frame against ~54 ms at 58.8k),
+which is right for geometry and artefact hunting and misleading for anything
+about dust or the cloud look — its original 58 800-particle sidecar is still on
+disk as `projects/blackhole.data/` if the full look is ever needed. milky_way
+(20k) and universe (procedural) are full size.
 
 ## The raster black-hole lens is FORWARD: each source is bent by its own position
 
@@ -1006,7 +1008,7 @@ the geodesic ring agree by construction.
 
 ### The map is NOT off centre — measure before believing it is
 
-On `lens_test_sphere` the ring fits a circle to **0.59 px rms**, centred within
+On a uniform-sphere scene the ring fits a circle to **0.59 px rms**, centred within
 **1 px** of the drawn hole (two independent estimators). `lfRotateAway` displaces
 every image strictly radially from the hole, so a ring of equal-deflection
 sources is concentric by construction and no term could shift it.
@@ -1024,12 +1026,12 @@ annulus just outside the shadow, is the sketched fix — not yet built.
 
 ### Test scenes and known gaps
 
-`projects/lens_test_sphere.json` (uniform sphere — no plane to key on),
-`lens_test_topdown.json`, `lens_test_twoholes.json`, `bh_disk.json` (accretion
-disc, camera 23.5 rs out, deep in the strong field where the Born factorisation
-is weakest). **`lens_test_sphere` is a poor COVERAGE test** — the hole sits
-outside the sphere, so nothing there tests whether foreground matter covers the
-shadow.
+There are **three projects**, and that is deliberate: `blackhole.json` (a hole
+inside a galaxy — the lens scene), `milky_way.json` (planets, rings, Saturn in
+frame — the raster baseline) and `universe.json` (procedural galaxies — the cost
+check). The lens test scenes were deleted in the same cleanup; if a lens question
+needs a uniform sphere or two holes again, build the scene rather than assume one
+is lying around.
 
 Ground truth for GEOMETRY is `SKIP_RASTER=1 PROJECT=... --compare`
 (`/tmp/cmp_geo.png`). Not bent yet: meshes, nebula volumes, the skybox.
@@ -1042,6 +1044,8 @@ foreground dust-warp slabs, and every `uBH*`/`uSizeRef*` uniform on the cloud
 path. Also **volumetric dust** (its draw call had no callers — ticking the box
 built a 3D texture nothing ever marched), **secondary images**, and
 `ensureDarkMatter()`. ~2 300 lines; every reference scene byte-identical after.
+Then the lens test PROJECTS (`bh_ref`, `bh_disk`, `bh_out`, `lens_test_*`) and
+the formations that only fed them.
 
 **Flux is not the look.** Arc ribbons (drawing each image as the annular sector
 it truly is) cut fragment work 508M -> 248M and conserved flux to +3.1%, and were
@@ -1051,8 +1055,9 @@ light cannot see an overlap change. Same lesson as the rejected `uSampleWeight`.
 
 ## Accretion disk = a cloud
 
-`templates/formations/accretion_disk_10k.json`: thin Keplerian disc scaled to the
-4.15e6 Msun hole (3-20 Rs, H/R 1.5%, denser inward, orbital velocities).
+`templates/formations/accretion_disk_30k.json` (spawn it onto a hole): thin
+Keplerian disc scaled to the 4.15e6 Msun hole (3-20 Rs, H/R 1.5%, denser inward,
+orbital velocities).
 Gargantua's look is what the lens does to a ring of matter around the hole — a
 galaxy alone can never produce it, there is no matter at 3-20 Rs to make the
 cross.
