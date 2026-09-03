@@ -76,10 +76,10 @@ void SelfTest();
 double BetaOfTheta(double theta, double delta, double Dl, double rs);
 double BetaOfThetaD(double theta, double delta, double Dl, double rs, double& dBetaDTheta);
 
-// Source angle -> image angle. branch 0 = primary (beta > 0), 1 = secondary.
-// Returns false when this source produces no image on that branch.
+// Source angle -> image angle, for the DIRECT image (the only one drawn).
+// Returns false when this source produces no image.
 bool SolveTheta(double betaTrue, double delta, double Dl, double rs,
-                int branch, double& theta, int iterations = 24);
+                double& theta, int iterations = 24);
 
 // Tangential and radial magnification of the image at `theta`.
 void Magnification(double theta, double delta, double Dl, double rs,

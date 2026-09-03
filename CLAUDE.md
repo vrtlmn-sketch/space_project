@@ -998,6 +998,11 @@ the geodesic ring agree by construction.
   the CPU; the shader only adds a small per-particle offset.
 - **The solver is BISECTION, not Newton** — the Born profile can FOLD in the deep
   near field, which breaks the bracket invariant a Newton safeguard relies on.
+- **The shader and `lensForward.cpp` are NOT byte-equivalent, deliberately.** The
+  C++ brackets the root at `theta > beta` (exact, since `alpha*g > 0` always,
+  and it steps over the fold); the shader does not. Same root either way — the
+  shader just searches a wider interval — but do not "sync" them without
+  re-checking the image, and do not assume a CPU number transfers exactly.
 
 ### The map is NOT off centre — measure before believing it is
 

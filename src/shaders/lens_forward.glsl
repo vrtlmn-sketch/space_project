@@ -136,28 +136,28 @@ float lfBeta(float theta, float delta, float Dl, float rs) {
 
 // Weak-field closed form — the solver's starting point, and already exact
 // wherever the field is weak (which is most of any scene).
-float lfWeakGuess(float betaTrue, float delta, float Dl, float rs, int branch) {
+float lfWeakGuess(float betaTrue, float delta, float Dl, float rs) {
     float dls = max(delta, 0.0);
     float ds  = max(Dl + delta, 1e-30);
     float tE  = sqrt(max(2.0 * rs * dls / (Dl * ds), 0.0));
     float d   = sqrt(betaTrue * betaTrue + 4.0 * tE * tE);
-    return (branch == 0) ? 0.5 * (betaTrue + d) : 0.5 * (d - betaTrue);
+    return 0.5 * (betaTrue + d);
 }
 
-// Source angle -> image angle. branch 0 = primary, 1 = secondary.
-// Returns false when this source has NO image on that branch: beta(theta) does
+// Source angle -> image angle, for the DIRECT image (the only one drawn).
+// Returns false when this source has NO image: beta(theta) does
 // not run to -infinity at the photon angle (the table stops a little past one
 // winding), so a source close behind a hole can want a deeper image than is
 // modelled. Those sit within a hair of the photon ring and are demagnified far
 // below a pixel — culling them is right, and returning a bogus root is what the
 // first version did.
-bool lfSolve(float betaTrue, float delta, float Dl, float rs, int branch, out float theta) {
+bool lfSolve(float betaTrue, float delta, float Dl, float rs, out float theta) {
     theta = betaTrue;
     if (rs <= 0.0 || Dl <= 0.0) return true;
     // asin, not the small-angle b_c*rs/Dl: lfBeta uses b = Dl*sin(theta), and a
     // small-angle photon angle sits just INSIDE the capture radius.
     float thPh   = asin(min(1.0, LF_BCRIT * rs / Dl));
-    float target = (branch == 0) ? betaTrue : -betaTrue;
+    float target = betaTrue;
     // Behind the hole: no image inside the photon angle. In front: any angle.
     float lo     = (delta > 0.0) ? (thPh * (1.0 + 1e-7) + 1e-30) : 0.0;
     // strict: target == betaMin is a source dead in front of the hole, which
@@ -171,14 +171,14 @@ bool lfSolve(float betaTrue, float delta, float Dl, float rs, int branch, out fl
     // across the screen as radial streaks.
     const float LF_HIMAX = 1.5533;   // ~89 degrees
     float hi = min(LF_HIMAX, max(betaTrue, 0.0)
-             + 8.0 * max(lfWeakGuess(betaTrue, delta, Dl, rs, 0), thPh) + 20.0 * thPh);
+             + 8.0 * max(lfWeakGuess(betaTrue, delta, Dl, rs), thPh) + 20.0 * thPh);
     for (int i = 0; i < 24; ++i) {
         if (lfBeta(hi, delta, Dl, rs) >= target) break;
         if (hi >= LF_HIMAX) { theta = betaTrue; return false; }   // leave it unlensed
         hi = min(hi * 2.0, LF_HIMAX);
     }
     {
-        float tw = lfWeakGuess(betaTrue, delta, Dl, rs, branch);
+        float tw = lfWeakGuess(betaTrue, delta, Dl, rs);
         if (delta > 0.0) tw = max(tw, thPh * (1.0 + 1e-6));
         if (tw > lo && tw < hi
             && abs(lfBeta(tw, delta, Dl, rs) - target) * uLfPxPerRad < 0.02) { theta = tw; return true; }
@@ -290,7 +290,7 @@ bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy) {
         if (disp * uLfPxPerRad < 0.05) continue;
 
         float theta;
-        if (!lfSolve(beta, delta, Dl, rs, 0, theta)) continue;
+        if (!lfSolve(beta, delta, Dl, rs, theta)) continue;
         dOut = lfRotateAway(dOut, nH, theta - beta);
         // The hole that bends this source the most owns the fragment-level map.
         // A source is essentially never near two Einstein rings at once, so the

@@ -263,25 +263,25 @@ double BetaOfThetaD(double theta, double delta, double Dl, double rs, double& dB
 namespace {
 // Weak-field closed form, used as the solver's starting point. Exact when
 // alpha = 2rs/b and the source is far behind, which is most of any scene.
-double weakGuess(double betaTrue, double delta, double Dl, double rs, int branch) {
+double weakGuess(double betaTrue, double delta, double Dl, double rs) {
   const double dls = std::max(delta, 0.0);
   const double ds  = std::max(Dl + delta, 1e-30);
   const double tE2 = 2.0 * rs * dls / (Dl * ds);
   const double tE  = std::sqrt(std::max(tE2, 0.0));
   const double d   = std::sqrt(betaTrue * betaTrue + 4.0 * tE * tE);
-  return (branch == 0) ? 0.5 * (betaTrue + d) : 0.5 * (d - betaTrue);
+  return 0.5 * (betaTrue + d);
 }
 }  // namespace
 
 bool SolveTheta(double betaTrue, double delta, double Dl, double rs,
-                int branch, double& theta, int iterations) {
+                double& theta, int iterations) {
   if (rs <= 0.0) { theta = betaTrue; return true; }
   // asin, NOT the small-angle b_c*rs/Dl: BetaOfTheta uses b = Dl*sin(theta), so
   // a small-angle photon angle sits just INSIDE the capture radius and every
   // sample there returns the "captured" sentinel. (That one mismatch produced
   // 4122 bogus monotonicity failures.)
   const double thPh   = std::asin(std::min(1.0, kBCritOverRs * rs / Dl));
-  const double target = (branch == 0) ? betaTrue : -betaTrue;
+  const double target = betaTrue;
   // A source BEHIND the hole cannot be imaged inside the photon angle; one in
   // FRONT can be imaged anywhere, so its domain starts at zero.
   double lo = (delta > 0.0) ? (thPh * (1.0 + 1e-7) + 1e-30) : 0.0;
@@ -292,7 +292,7 @@ bool SolveTheta(double betaTrue, double delta, double Dl, double rs,
   // worst 0.88 px, all at radii inside the disc's inner edge). A folded interval
   // breaks the bracket invariant, which is how a "converged" root came back tens
   // of pixels wrong.
-  if (branch == 0) lo = std::max(lo, betaTrue * (1.0 - 1e-9));
+  lo = std::max(lo, betaTrue * (1.0 - 1e-9));
   // beta(theta) does NOT run to -infinity at the photon angle: the table stops
   // at alpha ~ 7.6 rad (a bit over one full winding), so beta bottoms out at a
   // finite betaMin. A target below that belongs to an image that needs MORE
@@ -313,7 +313,7 @@ bool SolveTheta(double betaTrue, double delta, double Dl, double rs,
   // across the screen as radial streaks.
   const double kHiMax = 1.5533;   // ~89 degrees
   double hi = std::min(kHiMax, std::max(betaTrue, 0.0)
-            + 8.0 * std::max(weakGuess(betaTrue, delta, Dl, rs, 0), thPh) + 20.0 * thPh);
+            + 8.0 * std::max(weakGuess(betaTrue, delta, Dl, rs), thPh) + 20.0 * thPh);
   for (int i = 0; i < 60 && BetaOfTheta(hi, delta, Dl, rs) < target; ++i) {
     if (hi >= kHiMax) { theta = betaTrue; return false; }   // unreachable: leave it unlensed
     hi = std::min(hi * 2.0, kHiMax);
@@ -386,15 +386,15 @@ void SolverTest() {
       for (int i = 0; i < 60; ++i) {
         const double betaTrue = thPh * std::pow(1.35, (double)i);
         if (betaTrue > 0.4) break;
-        for (int branch = 0; branch < 2; ++branch) {
+        {
           double th;
           cases++;
           // A solve that reports failure is an image we CULL (deeper in the
           // photon ring than the table models, demagnified below a pixel), so
           // it is not an accuracy failure — count it and move on.
-          if (!SolveTheta(betaTrue, dRel * rs, Dl, rs, branch, th)) { fails++; continue; }
+          if (!SolveTheta(betaTrue, dRel * rs, Dl, rs, th)) { fails++; continue; }
           const double got  = BetaOfTheta(th, dRel * rs, Dl, rs);
-          const double want = (branch == 0) ? betaTrue : -betaTrue;
+          const double want = betaTrue;
           worstRel = std::max(worstRel, std::fabs(got - want) / betaTrue);
         }
       }
@@ -409,7 +409,7 @@ void SolverTest() {
   for (int i = 1; i < 50; ++i) {
     const double beta = 1e-4 * std::pow(1.2, (double)i);
     double th = 0.0;
-    SolveTheta(beta, 1.0e9, 1.0e9, 0.0 /* rs = 0 */, 0, th);
+    SolveTheta(beta, 1.0e9, 1.0e9, 0.0 /* rs = 0 */, th);
     idErr = std::max(idErr, std::fabs(th - beta) / beta);
   }
   std::printf("[lensfwd] identity with rs = 0: worst relative deviation = %.3e\n", idErr);
@@ -429,10 +429,10 @@ void SolverTest() {
       const double b = Dl * beta;                       // impact parameter, in rs
       double th = 0.0;
       // Far in front: delta = -1000 * b, so the source is nowhere near the hole.
-      if (SolveTheta(beta, -1000.0 * b, Dl, rs, 0, th))
+      if (SolveTheta(beta, -1000.0 * b, Dl, rs, th))
         farErr = std::max(farErr, std::fabs(th - beta) / beta);
       // Just in front: delta = -0.1 * b, still inside the encounter.
-      if (SolveTheta(beta, -0.1 * b, Dl, rs, 0, th))
+      if (SolveTheta(beta, -0.1 * b, Dl, rs, th))
         nearMax = std::max(nearMax, std::fabs(th - beta) / beta);
     }
     std::printf("[lensfwd] foreground far in front (|delta| = 1000 b): worst shift = %.3e of beta"
@@ -455,7 +455,7 @@ void SolverTest() {
       const double x     = -1.0 + 2.0 * (double)i / (double)N;
       const double delta = std::copysign(std::pow(std::fabs(x), 3.0) * 1.0e5, x);
       double th = 0.0;
-      SolveTheta(beta, delta, Dl, rs, 0, th);
+      SolveTheta(beta, delta, Dl, rs, th);
       if (i == 0) { first = th; prev = th; continue; }
       maxStep = std::max(maxStep, std::fabs(th - prev));
       total  += std::fabs(th - prev);
@@ -473,7 +473,7 @@ void SolverTest() {
     const double Dl = 1.0e6, delta = 0.0;
     double th = 0.0;
     const double beta = 20.0 / Dl;                    // source 20 rs off the axis
-    SolveTheta(beta, delta, Dl, rs, 0, th);
+    SolveTheta(beta, delta, Dl, rs, th);
     std::printf("[lensfwd] source level with the hole (b = 20 rs): image moved out by "
                 "%.4f rs-angles (thin lens would say 0.0000)\n", (th - beta) * Dl);
   }
@@ -488,9 +488,9 @@ void SolverTest() {
     for (int i = 0; i < 200; ++i) {
       const double beta = thPh * std::pow(1.1, (double)i);
       if (beta > 0.2) break;
-      for (int branch = 0; branch < 2; ++branch) {
+      {
         double th;
-        if (SolveTheta(beta, delta, Dl, rs, branch, th)) minTheta = std::min(minTheta, th);
+        if (SolveTheta(beta, delta, Dl, rs, th)) minTheta = std::min(minTheta, th);
       }
     }
     const double tE = std::sqrt(2.0 * rs * delta / (Dl * (Dl + delta)));
