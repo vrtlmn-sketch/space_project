@@ -105,6 +105,13 @@ bool ProjectSerializer::Save(const std::string& path,
     o["temperature"] = obj.temperature;
     o["rotation"]    = vec3ToJson(obj.rotationDeg);
     o["schwarzschildRadius"] = obj.schwarzschildRadius;
+    {
+      o["starContrast"] = obj.starSurface.contrast;
+      o["starScale"]    = obj.starSurface.scale;
+      o["starEvolve"]   = obj.starSurface.evolve;
+      o["starSpots"]    = obj.starSurface.spots;
+      o["starWarp"]     = obj.starSurface.warp;
+    }
     o["color"]        = vec3ToJson(obj.data.color);
     o["texturePath"]  = obj.texturePath;
     o["visualRadius"] = obj.visualRadius;
@@ -444,6 +451,12 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.rotation    = o.contains("rotation") ? jsonToVec3(o["rotation"]) : vec3{0,0,0};
       pod.schwarzschildRadius = o.value("schwarzschildRadius",
                                          (float)(units::kRsAUPerMsun * pod.mass));
+      // Absent = off, so a project that predates the star surface is unchanged.
+      pod.starContrast = o.value("starContrast", 1.0f);
+      pod.starScale    = o.value("starScale",    55.0f);
+      pod.starEvolve   = o.value("starEvolve",   0.05f);
+      pod.starSpots    = o.value("starSpots",    0.35f);
+      pod.starWarp     = o.value("starWarp",     1.0f);
       pod.color       = o.contains("color") ? jsonToVec3(o["color"]) : vec3{0.55f, 0.25f, 0.15f};
       pod.texturePath  = o.value("texturePath", std::string{});
       pod.visualRadius = o.value("visualRadius", 0.0f);

@@ -247,6 +247,19 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
 
   float objectType = RtObjectType(shaderType);
 
+  // Forward the star surface. The time phase is computed here so a contrast of
+  // 0 leaves it at 0 and the RT snapshot is unchanged frame to frame.
+  if (shaderType == ObjectType::Star && starSurface.contrast > 0.0f) {
+    renderedObject.starP0 = vec4{starSurface.scale, starSurface.contrast, starSurface.evolve, 0.0f};
+    renderedObject.starP1 = vec4{starSurface.spots, starSurface.warp, 0.0f, 0.0f};
+    renderedObject.starTime = (starSurface.evolve != 0.0f)
+                            ? starSurface.evolve * (float)glfwGetTime() : 0.0f;
+  } else {
+    renderedObject.starP0 = vec4{0, 0, 0, 0};
+    renderedObject.starP1 = vec4{0, 0, 0, 0};
+    renderedObject.starTime = 0.0f;
+  }
+
   // Forward the cloud-layer params (both views read the same packing). Drift
   // phase is computed here so a zero drift keeps the RT snapshot unchanged.
   if (shaderType == ObjectType::Planet && cloudsEnabled) {

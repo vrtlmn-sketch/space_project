@@ -504,6 +504,13 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // physicsObjects individually is how rimOccluders and the cloud dust phase
   // rotted.
   bool  inert{false};
+  // Procedural star surface (star_common.glsl). p0.y = 0 means off, and the
+  // star shader then takes exactly the path it always did. p0.w is filled in
+  // per draw with the star's apparent radius in PIXELS, which is what gates
+  // how many noise layers run.
+  vec4  starP0{0.0f, 0.0f, 0.0f, 0.0f};
+  vec4  starP1{0.0f, 0.0f, 0.0f, 0.0f};
+  float starTime{0.0f};
   bool  isNebulaVolume{false};
   float nebEmission{1.0f}, nebExcitation{0.25f}, nebDust{0.6f}, nebDetail{1.0f}, nebDensity{1.0f};
   int   nebPalette{1}, nebSteps{40};

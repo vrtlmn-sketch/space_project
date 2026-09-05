@@ -196,6 +196,20 @@ public:
   float cloudWhiteness{1.0f};   // 1 = white clouds; 0 = tinted by planet colour (bands)
   float cloudDrift{0.0f};       // drift speed (0 = static → RT stays cacheable)
 
+  // ---- Procedural surface (stars only) ----
+  // Granulation, convection and a slow evolution, drawn in the RASTER view
+  // only: RayTracerObject is a fixed 96 bytes with every spare lane already
+  // taken, and a time-varying uniform would make rtDirty's memcmp differ every
+  // frame and re-render the raytracer continuously. Contrast 0 = off, and the
+  // star shader then takes exactly the path it always did.
+  struct StarSurface {
+    float contrast{1.0f};     // 0 = off
+    float scale{55.0f};       // granules across the star (higher = finer)
+    float evolve{0.05f};      // how fast the pattern churns
+    float spots{0.35f};       // darker, cooler patches in the quiet regions
+    float warp{1.0f};         // domain warp on the convection layer
+  } starSurface;
+
   // ---- Procedural rings (planets only) ----
   // One shared proxy mesh drawn once per ring; every ring's geometry is built
   // from its own uniforms in ringVert, so adding a ring costs a draw call and

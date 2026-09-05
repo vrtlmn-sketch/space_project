@@ -42,6 +42,10 @@ struct PhysicsObjectData {
   float cloudAltitude{0.02f};
   float cloudWhiteness{1.0f};
   float cloudDrift{0.0f};
+  // Procedural star surface; contrast 0 = off (and absent = off, so a project
+  // that predates it renders exactly as before).
+  float starContrast{1.0f};
+  float starScale{55.0f}, starEvolve{0.05f}, starSpots{0.35f}, starWarp{1.0f};
   std::vector<PlanetRing> rings;   // absent in the file = no rings
   // Nebula (shaderType 4): the recipe (see PhysicsObject::NebulaParams)
   unsigned nebulaSeed{7};

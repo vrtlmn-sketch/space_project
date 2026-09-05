@@ -1357,6 +1357,28 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     }
   }
 
+  // Star surface params. The apparent radius in pixels rides in p0.w, and every
+  // layer of the surface is gated on it, so a distant star costs nothing. Only
+  // uploaded when the surface is actually on, so a plain star is untouched.
+  if (starP0.y > 0.0f) {
+    GLint l0 = glGetUniformLocation(program, "uStarP0");
+    if (l0 >= 0) {
+      float px = 0.0f;
+      const double rx = (coordinates.x - gCamAnchor[0]) + cameraTranslate[0] + localOffset.x;
+      const double ry = (coordinates.y - gCamAnchor[1]) + cameraTranslate[1] + localOffset.y;
+      const double rz = (coordinates.z - gCamAnchor[2]) + cameraTranslate[2] + localOffset.z;
+      const double depth = -((double)viewRot[6]*rx + (double)viewRot[7]*ry + (double)viewRot[8]*rz);
+      const double tanV  = std::tan((double)fovDeg * 3.14159265358979 / 180.0 * 0.5);
+      if (depth > 1e-12 && tanV > 1e-12)
+        px = (float)((double)radius / (tanV * depth) * 0.5 * (double)fbHeight);
+      glUniform4f(l0, starP0.x, starP0.y, starP0.z, px);
+      GLint l1 = glGetUniformLocation(program, "uStarP1");
+      if (l1 >= 0) glUniform4f(l1, starP1.x, starP1.y, starP1.z, starP1.w);
+      GLint lt = glGetUniformLocation(program, "uStarTime");
+      if (lt >= 0) glUniform1f(lt, starTime);
+    }
+  }
+
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   if (isNebulaVolume) {
     // The sphere is only the bounds of a ray-march (nebulaFrag.glsl). The

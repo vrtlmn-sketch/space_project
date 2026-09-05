@@ -1247,7 +1247,9 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
     // Disc mean of (0.4 + 0.6·cosθ) + 0.6·cosθ^8 weighted by projected area
     // (∫2μ·… dμ) = 0.8 + 0.12. The ×6 is that shader's own HDR emissive lift.
     const vec3 bb = ImpostorBlackbody(temperature > 0.0f ? temperature : 5778.0f);
-    const float k = 0.92f * (realisticRasterView ? 6.0f : 1.0f);
+    // Must match brightStartFragShader's level, or a star jumps in brightness
+    // as the mesh takes over from the point sprite.
+    const float k = 0.92f * (realisticRasterView ? 1.45f : 1.0f);
     S = vec3{bb.x * k, bb.y * k, bb.z * k};
   } else if (type == 3) {                            // Black hole
     // A black hole emits NOTHING — blackHoleFrag writes pure black — so there
@@ -6289,6 +6291,33 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     }
     else if (obj.shaderType == ObjectType::Star) {
       temperatureEditor();
+      ImGui::Spacing();
+      if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto& ss = obj.starSurface;
+        bool on = ss.contrast > 0.0f;
+        if (ImGui::Checkbox("Granulation##ssOn", &on))
+          ss.contrast = on ? 1.0f : 0.0f;
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("Convection cells, dark lanes and slow churn, drawn on the\n"
+                            "surface. RASTER only - the raytraced view keeps the flat\n"
+                            "star. It costs nothing until the star is more than a few\n"
+                            "pixels across, and each layer fades in as you approach.");
+        if (on) {
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##ssamt", &ss.contrast, 0.05f, 2.0f, "Strength %.2f");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##sssc", &ss.scale, 8.0f, 160.0f, "Granules %.0f");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##ssev", &ss.evolve, 0.0f, 0.5f, "Evolve %.3f");
+          if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Each layer drifts along its own direction, so the pattern\n"
+                              "churns instead of scrolling as a sheet. 0 freezes it.");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##ssspot", &ss.spots, 0.0f, 1.0f, "Spots %.2f");
+          ImGui::SetNextItemWidth(-1);
+          ImGui::SliderFloat("##sswarp", &ss.warp, 0.0f, 3.0f, "Warp %.2f");
+        }
+      }
     }
     else { // Planet
       temperatureEditor();

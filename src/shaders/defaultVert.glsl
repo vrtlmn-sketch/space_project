@@ -5,6 +5,11 @@ layout (location = 2) in vec2 aTexCoord;
 
 out vec3 vPos;
 out vec3 vNormal;
+// Object-space normal, interpolated. Anything sampling a 3D field ON the
+// surface must use THIS, not a direction rebuilt from vTexCoord: the sphere
+// is 32x32, so a UV reconstruction is piecewise-linear and the facets show
+// through as a square grid with concentric rings.
+out vec3 vObjNormal;
 out vec2 vTexCoord;
 out vec3 uCameraPos;
 
@@ -39,5 +44,6 @@ void main(){
   // Rotate the normal by the object's rotation (upper-left 3x3 of uWorld).
   // Identity for unrotated objects, so lighting is unchanged in that case.
   vNormal    = normalize(mat3(uWorld) * aNormal);
+  vObjNormal = aNormal;
   vTexCoord  = aTexCoord;
 }

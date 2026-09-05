@@ -128,6 +128,8 @@ static void buildScene(
     if (pod.schwarzschildRadius > 0.0f)
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
     physicsObjects.back().localOffset = pod.localOffset;
+    physicsObjects.back().starSurface = {pod.starContrast, pod.starScale,
+                                         pod.starEvolve, pod.starSpots, pod.starWarp};
     physicsObjects.back().data.color = pod.color;
     physicsObjects.back().rotationDeg = pod.rotation;
     physicsObjects.back().simulatePhysics = pod.simulatePhysics;
