@@ -41,6 +41,10 @@ Env gates:
 | `UNIVERSE_TEMP=<K>` | recolour every generated galaxy at creation |
 | `UNIVERSE_PHYS=<n>` | enable physics on the first n galaxies (promote path) |
 | `UNIVERSE_DEMOTE=1` | drop physics again at frame 2 (promote->demote round-trip) |
+| `UNIVERSE_CONTENTS=1` | pool occupancy per frame: holes / nebulae / stars / planets, nearest body, edits |
+| `UNIVERSE_BODY=star:<AU>` or `planet:<AU>` | park the camera that far from the galaxy's first notable star, or its first planet |
+| `UNIVERSE_MOVE=1` | nudge the nearest generated body at frame 6 (exercises the edit-and-remember path) |
+| `IMPOSTOR_DEBUG=1` | log each far-object point sprite: screen size, sprite size, fade, colour |
 | `EDIT_TEMP=<K>` | set every cloud's temperature MID-SESSION at frame 2 (live-edit test) |
 | `EDIT_TEMP_OUT=<K>` | same, but only clouds outside the universe |
 | `CAM_ANCHOR=0` | freeze the camera anchor at 0 (pre-anchor absolute-double camera) |
@@ -202,6 +206,67 @@ one does not overshoot.
   yet"; the value is kept and takes effect once a key exists past it.
 - The bundled font (DejaVuSansMono, default glyph range) has no arrow glyphs
   — UTF-8 arrows in a tooltip render as `?`. Use words.
+
+## NEVER add a small offset to a large absolute position
+
+This is the single trap that cost most of a day. Past ~1e14 AU a double's step
+is bigger than the thing you are adding, so **the small part vanishes and no
+error is raised**:
+
+```
+frame origin      2319000000000000.000000
++ orbit 0.417  -> 2319000000000000.500000     (ULP here is 0.5 AU)
+round-trip error           0.083 AU
+```
+
+Every symptom below was the SAME line of arithmetic wearing a different coat:
+
+- A planet stored as one absolute position had **two positions in its entire
+  orbit** at 46 Gly. Hence per-object frames (below).
+- `LocateCamera` framed a body with `target + direction * standoff`. At 2e15 AU
+  a 0.0002 AU standoff rounded away entirely, so the camera landed INSIDE the
+  planet — back faces culled, nothing on screen. Stars survived because they
+  are a hundred times larger than their own standoff, which is exactly the kind
+  of partial success that hides a bug.
+- `PhysicsObject::truePosition()` (origin + offset) collapses the split back
+  into one absolute double. It was on every geometry path — locate, picking,
+  the selection ring, the name/distance readout, camera focus — and each one
+  silently lost half an AU. **It is for DISPLAY ONLY.** For geometry use
+  `Renderer::CameraRelative(origin, offset)`, which differences the origin
+  first and adds the exact offset after.
+- The `--compare` harness parked its camera by putting the whole 2e15 into
+  `cameraTranslate` with the anchor at 0. `UpdateInputs` never runs headless, so
+  the rebase never happened and **every deep-universe measurement was quantised
+  to 0.5 AU** — including ones that had been reported as verified.
+- The debug logging had the same disease: it used `truePosition()`, so it
+  disagreed with the renderer and sent the investigation round in circles for
+  several rounds. **If a measurement contradicts itself, suspect the
+  instrument.**
+
+The shape to grep for is any `bigAbsolute + smallThing`. The fix is always the
+same: difference against an anchor FIRST, add the small part after.
+
+**And verify by LOOKING.** A "236 px planet" was reported from arithmetic while
+the rendered frame was empty space. The number described what should have
+drawn, not what did. Scan the actual image for a contiguous bright run.
+
+## Per-object local frames
+
+`RenderedObject::localOffset` / `PhysicsObject::localOffset`: `coordinates` is
+the frame ORIGIN and this is an exact small offset inside it. Zero for
+everything the user makes, so that path is unchanged.
+
+A star shares its origin with its planets, so the origin carries the coarse
+position (the whole system sits half an AU from where the seed said, which
+nothing can tell) while a planet's place inside it stays exact. Measured on a
+real system at 2.3e15 AU: an orbit of 0.41 AU came out at 0.50 AU as a single
+double, a 21% error that would jump as the planet moved.
+
+Every world->camera difference for a framed body is
+`(coordinates - gCamAnchor) + cameraTranslate + localOffset`, in that order.
+`transformPerspectiveMesh` does it once for the mesh path; the impostor, scene
+scale, picking and the overlays each do it too. Saved as `localOffset` only
+when non-zero, so ordinary projects are byte-for-byte unchanged.
 
 ## Large-world coordinates
 
@@ -575,6 +640,37 @@ unless they are colliding, and far ones are LOD stand-ins anyway.
 - `CloudObject::Update` calls Draw itself; the primary loop's dust phase is a
   second loop over `cloudDrawOrder` after the Update loop.
 
+## A solid under a pixel is a POINT SOURCE, not a small sphere
+
+There is no MSAA, so a sub-pixel triangle only produces a fragment when a pixel
+centre lands inside it: Saturn from Earth is 0.027 px across and flickered in
+and out. Below the pixel floor an object draws as one flux-matched point sprite
+(`Renderer::DrawObjectImpostor`, `impostorVert/Frag.glsl`), gated inside
+`DrawPhysicsObject` — the ONE funnel every raster site already goes through.
+
+This is NOT the rejected `uSampleWeight`: that made 8 sampled stars impersonate
+50 000, a different look. One sphere collapsing to one point AT the resolution
+limit is the same object, and the handover is a fade.
+
+- **Flux is exact, then compressed by a POWER** (`kImpostorRange`), which is
+  order-preserving. Compressing the object's ANGULAR SIZE instead — the cloud
+  path's rule — squashes radius² to radius^0.1, so a body's own size stops
+  counting: Jupiter came out seven times DIMMER than Mars when it should be
+  forty times brighter.
+- **Only the luminance is compressed**, with all three channels scaled by the
+  same factor. Per channel washes the colour out of exactly the objects meant
+  to be recognisable.
+- **A textured planet's albedo is the TEXTURE's average**, area-weighted by
+  sin(theta) — an equirectangular map gives a pole as many rows as the equator.
+  Its `color` field is normally still the spawn default because the shader
+  never reads it, which is why every planet used to come out the same brown.
+- **Keep the dot SMALL and bright.** Apparent size comes from the post chain:
+  `spikeSourceFrag` keeps only what a pixel exceeds its neighbour six half-res
+  texels out, so a wide soft disc cancels itself and gets NO spikes — it just
+  sits there as a ball.
+- `screenPx` is divided back to `spriteRefHeight` before the flux, or peak
+  brightness scales with render height.
+
 ## Light falls off because objects get SMALLER — until the floors stop it
 
 Nothing in this renderer has a 1/d² term. A sprite is a fixed screen size and a
@@ -922,6 +1018,44 @@ Each cloud now derives its own scale (`RenderedObject::ownDustInfluence`) from
 its own chunk extent or RMS radius. Any new shared render parameter must be
 per-object the same way; one object must never be able to define how another
 one is drawn.
+
+## A universe generates bodies, and only a few are ever real
+
+Each galaxy DESCRIBES a central black hole (M-sigma off its own rotation curve
+— use vFlat/2 for the bulge dispersion, `vFlat/sqrt(2)` overshoots Sgr A*
+twelvefold), nebulae out in the disc, and star systems. All from the galaxy's
+own seed, so nothing is stored and a universe stays a few bytes.
+
+**Systems sit on the galaxy's OWN stars.** A short prefix of the star field is
+cheap to generate, and star `i` is the same star at any count (the generator
+draws its cluster knots with a fixed count BEFORE the star loop, which is what
+preserves the prefix property) — so what you fly at is what materialises, and a
+system keeps its identity as the LOD ladder climbs. Gating systems on being
+inside a galaxy was circular: you could not find a star until you were at one.
+
+**The pool is allocated once and recycled IN PLACE, never erased.** Same shape
+as a galaxy promoting. Erasing would leak — `deleteObject` frees no GL handles
+— and would shift every later index under `selectedIdx`, `hoverIdx`,
+`dynParent` and `nebula.sourceCloud`, all of which are bounds-checked and would
+silently retarget. `reserve(256)` on `physicsObjects` is a PHANTOM: no
+destructor touches GL and the move is noexcept, so reallocation is a correct
+relocation.
+
+- **Choose by apparent size, not distance.** By distance the budget went to
+  planets far too small to see. But a star is 0.005 AU and a planet 4e-5, so on
+  size alone they lose to every nebula in the sky for ever — hence a reserved
+  share for WHOLE systems (a planet without its star reads as a bug).
+- **Throttle by COST, not count.** Only a nebula is expensive (it rebakes a
+  volume). A flat few-per-frame cap meant a 256-slot pool took 64 frames and the
+  body you had just flown to was still not live.
+- **A nebula's volume is 7.1 MB at the stock 96³** — 300 MB for 42 of them, for
+  something 33 px across. Generated ones use `nebulaVolumeRes` (48 = 0.88 MB).
+- Edits are remembered against a body's stable `key` (derived from its star's
+  index), detected by comparing against where the pool PUT it — so the gizmo,
+  the inspector and bring-to-me all work without knowing this exists.
+- **Absent keys mean OFF.** A universe saved before contents existed must not
+  grow them, so the loader's fallbacks and the struct defaults are deliberately
+  DIFFERENT numbers — same split as keyframe smoothing. Do not unify them.
 
 ## Cost traps
 
