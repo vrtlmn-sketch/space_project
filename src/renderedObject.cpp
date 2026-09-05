@@ -2677,9 +2677,13 @@ void RenderedObject::perspective(float fovyRadians, float aspect, float zNear, f
 
   out[0]  = f / aspect;
   out[5]  = f;
-  out[10] = (zFar + zNear) / (zNear - zFar);
+  // Reversed-Z with clip z in [0, w] (glClipControl ZERO_TO_ONE at init):
+  // near -> 1, far -> 0, so window depth is n/d. The far plane stays finite so
+  // far clipping and GL_DEPTH_CLAMP behave exactly as before; only the mapping
+  // of distance to depth changed.
+  out[10] = zNear / (zFar - zNear);
   out[11] = -1.0f;
-  out[14] = (2.0f * zFar * zNear) / (zNear - zFar);
+  out[14] = (zFar * zNear) / (zFar - zNear);
 }
 
 void RenderedObject::GenerateMeshLine(vec3&& origin){
@@ -2869,7 +2873,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     // CORES (individual stars).
     glEnable(GL_PROGRAM_POINT_SIZE);
     glEnable(GL_DEPTH_CLAMP);   // clamp instead of clip at the far plane
-    glDepthFunc(GL_LEQUAL);     // far stars sit at depth ~1.0 == cleared depth; LEQUAL lets them pass
+    glDepthFunc(GL_GEQUAL);     // reversed-Z: far stars sit at depth ~0 == cleared depth; GEQUAL lets them pass
     glEnable(GL_BLEND);
     glDepthMask(GL_FALSE);
     GLint passLoc = glGetUniformLocation(program, "uCloudPass");
@@ -2913,14 +2917,14 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glDepthMask(GL_TRUE);
     glDisable(GL_PROGRAM_POINT_SIZE);
     glDisable(GL_DEPTH_CLAMP);
-    glDepthFunc(GL_LESS);
+    glDepthFunc(GL_GREATER);   // reversed-Z default
     hasBeenRendered = true;
     return;
   }
 
   if (cloudDrawPhase == CloudDrawPhase::Dust) { hasBeenRendered = true; return; }   // nav path has no dust phase
   glEnable(GL_DEPTH_CLAMP);   // same far-plane fix for the nav point cloud
-  glDepthFunc(GL_LEQUAL);
+  glDepthFunc(GL_GEQUAL);    // reversed-Z
   if (curRenderMode == 1) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE); // additive blending for nebula glow
@@ -2945,7 +2949,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glDisable(GL_BLEND);
   }
   glDisable(GL_DEPTH_CLAMP);
-  glDepthFunc(GL_LESS);
+  glDepthFunc(GL_GREATER);   // reversed-Z default
   hasBeenRendered=true;
 }
 

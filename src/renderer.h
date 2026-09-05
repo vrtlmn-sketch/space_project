@@ -406,6 +406,7 @@ private:
   bool   impostorInitFailed{false}; // compile failed once — do not retry every frame
   GLuint nebFBO{0}, nebColorTex{0}, nebDepthRBO{0};
   int    nebFboW{0}, nebFboH{0};
+  unsigned nebFboDepthFmt{0};   // matches the SOURCE it blits scene depth from
   bool   nebPassActive{false};
   GLint  nebSavedFBO{0}, nebSavedVp[4]{0,0,0,0};
   int    nebulaQuality{2};          // resolution divisor of the nebula pass (1..4)

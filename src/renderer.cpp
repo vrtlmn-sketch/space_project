@@ -62,6 +62,23 @@ bool Renderer::InitWindow(
   int fbw, fbh;
   glfwGetFramebufferSize(window, &fbw, &fbh);
   glViewport(0, 0, fbw, fbh);
+  // ── Depth is REVERSED-Z in a 32-bit FLOAT buffer ──
+  // A 24-bit fixed buffer with the classic z = 1 - n/d mapping resolves
+  // d^2/(n*2^24). With the near plane following the NEAREST surface, a planet
+  // being looked at from further away lands in ONE depth bucket: its far side
+  // z-fights through its near side, and a ring depth-tested against it leaks
+  // through the body in triangle-shaped patches. No near-plane rule fixes that
+  // (n = d/10 still gives one bucket at 10 AU), so the MAPPING changed: depth
+  // is n/d, near -> 1, far -> 0, in a float buffer, which holds ~1e-7 RELATIVE
+  // precision at any distance, independent of the near plane.
+  // Everything that touches the convention must agree: the two projection
+  // builders (RenderedObject::perspective, ProceduralGenWindow::buildProj),
+  // the depth funcs (GREATER/GEQUAL, never LESS/LEQUAL), clear depth 0, and
+  // GL_DEPTH_COMPONENT32F on every depth attachment. The ray tracers are
+  // compute shaders reading only uProj[0][0]/[1][1], so they are unaffected.
+  glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+  glClearDepth(0.0);
+  glDepthFunc(GL_GREATER);
   glEnable(GL_DEPTH_TEST);
 
   // ── ImGui setup ──
@@ -692,7 +709,32 @@ static GLuint compileShaderFromFile(const std::string& path, GLenum type);   // 
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::EnsureNebulaTarget(int w, int h) {
   w = std::max(1, w); h = std::max(1, h);
-  if (nebFBO && w == nebFboW && h == nebFboH) return;
+  // The depth format must MATCH the framebuffer this will blit scene depth
+  // from: glBlitFramebuffer refuses a depth copy between different formats,
+  // and the failure is SILENT (a warning, then nebulae stop being occluded).
+  // Scene targets are 32F under reversed-Z, but the default framebuffer is
+  // whatever GLFW gave us (24-bit normalised) and the scene is sometimes drawn
+  // straight into it, so this cannot be a constant.
+  // The attachment ENUM differs by target: the default framebuffer names its
+  // depth GL_DEPTH, a real FBO names it GL_DEPTH_ATTACHMENT. Asking the wrong
+  // one is an INVALID_ENUM that returns zeros, which reads exactly like "this
+  // target has no depth" — that mistake cost a diagnosis here already.
+  GLint srcFbo = 0;
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &srcFbo);
+  const GLenum att = (srcFbo == 0) ? GL_DEPTH : GL_DEPTH_ATTACHMENT;
+  while (glGetError() != GL_NO_ERROR) {}
+  GLint srcBits = 0, srcType = 0;
+  glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, att,
+      GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &srcBits);
+  glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, att,
+      GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &srcType);
+  while (glGetError() != GL_NO_ERROR) {}
+  const unsigned wantFmt = (srcType == GL_FLOAT) ? GL_DEPTH_COMPONENT32F
+                         : (srcBits >= 32)       ? GL_DEPTH_COMPONENT32
+                         : (srcBits >  0)        ? GL_DEPTH_COMPONENT24
+                                                 : GL_DEPTH_COMPONENT32F;
+  if (nebFBO && w == nebFboW && h == nebFboH && wantFmt == nebFboDepthFmt) return;
+  nebFboDepthFmt = wantFmt;
   if (!nebFBO) glGenFramebuffers(1, &nebFBO);
   if (!nebColorTex) glGenTextures(1, &nebColorTex);
   glBindTexture(GL_TEXTURE_2D, nebColorTex);
@@ -703,7 +745,7 @@ void Renderer::EnsureNebulaTarget(int w, int h) {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   if (!nebDepthRBO) glGenRenderbuffers(1, &nebDepthRBO);
   glBindRenderbuffer(GL_RENDERBUFFER, nebDepthRBO);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glRenderbufferStorage(GL_RENDERBUFFER, nebFboDepthFmt, w, h);
   glBindFramebuffer(GL_FRAMEBUFFER, nebFBO);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, nebColorTex, 0);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, nebDepthRBO);
@@ -818,7 +860,7 @@ void Renderer::BeginNebulaPass() {
   glViewport(0, 0, w, h);
   glDepthMask(GL_TRUE);
   glClearColor(0.f, 0.f, 0.f, 1.f);            // no emission, full transmittance
-  glClearDepth(1.0);
+  glClearDepth(0.0);          // reversed-Z: 0 is FAR
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   while (glGetError() != GL_NO_ERROR) {}        // drop stale errors so the check below is ours
   glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)nebSavedFBO);
@@ -1329,9 +1371,14 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   // nearestSurface x 1e5, so anything genuinely distant projects past it and
   // would be clipped away. Clouds solve this with GL_DEPTH_CLAMP; doing the
   // clamp arithmetically here is the same fix without the state change.
+  // REVERSED-Z (see InitWindow): depth is n/d, near -> 1, far -> 0, clip z in
+  // [0, w]. This must match RenderedObject::perspective exactly. The floor is
+  // strictly ABOVE zero because the buffer is cleared to 0 and the test is
+  // GL_GREATER: a dot sitting exactly at the cleared value would be rejected,
+  // so everything past the far plane would silently vanish.
   const double n = (double)RenderedObject::sZNear, f = (double)RenderedObject::sZFar;
-  double ndcZ = (f + n) / (f - n) - (2.0 * f * n) / ((f - n) * depth);
-  ndcZ = std::clamp(ndcZ, -1.0, 0.999999);
+  double ndcZ = (n * f) / ((f - n) * depth) - n / (f - n);
+  ndcZ = std::clamp(ndcZ, 1e-7, 1.0);
   const double ndcX = vx / (tanV * aspect * depth);
   const double ndcY = vy / (tanV * depth);
   if (std::fabs(ndcX) > 1.05 || std::fabs(ndcY) > 1.05) return;   // off screen
@@ -6983,7 +7030,7 @@ void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
 
     glGenRenderbuffers(1, &previewDepthRBO);
     glBindRenderbuffer(GL_RENDERBUFFER, previewDepthRBO);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, PREVIEW_SIZE, PREVIEW_SIZE);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, PREVIEW_SIZE, PREVIEW_SIZE);
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, previewDepthRBO);
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -7082,7 +7129,7 @@ void Renderer::EnsurePipFBO(int w, int h) {
   // Depth attachment (renderbuffer)
   glGenRenderbuffers(1, &pipDepthRBO);
   glBindRenderbuffer(GL_RENDERBUFFER, pipDepthRBO);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, w, h);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, pipDepthRBO);
 
   GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -7122,7 +7169,7 @@ void Renderer::EnsureViewportFBO(int w, int h) {
 
   glGenRenderbuffers(1, &vpDepthRBO);
   glBindRenderbuffer(GL_RENDERBUFFER, vpDepthRBO);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, w, h);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, vpDepthRBO);
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -7164,7 +7211,7 @@ void Renderer::EnsureCineFBO(int w, int h) {
   // the scene render and the nebula depth blit.
   glGenTextures(1, &cineDepthTex);
   glBindTexture(GL_TEXTURE_2D, cineDepthTex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -8722,7 +8769,7 @@ void Renderer::EnsureRecRasterFBO(int w, int h) {
   // Depth as a TEXTURE (not an RBO) so the lens foreground gate can sample it.
   glGenTextures(1, &recRasterDepthTex);
   glBindTexture(GL_TEXTURE_2D, recRasterDepthTex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, w, h, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

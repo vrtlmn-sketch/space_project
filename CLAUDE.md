@@ -764,6 +764,54 @@ override in `StartRecording`, so the preview and the output cannot disagree.
   the regression baseline stays valid whatever the setting is. Verified
   byte-identical across the change.
 
+## Depth is REVERSED-Z in a 32-bit FLOAT buffer
+
+A 24-bit fixed buffer with the classic `z = 1 - n/d` mapping resolves
+`d^2/(n*2^24)`. The near plane follows the NEAREST surface, so parked on one
+planet and looking at another, the whole target lands in ONE depth bucket: its
+far side z-fights through its near side, and a ring — depth-TESTED against the
+planet but never depth-WRITTEN — leaks through the body in triangle-shaped
+patches. That is the "parts of the mesh are missing" Saturn. **No near-plane
+rule fixes it** (`n = d/10` still gives one bucket at 10 AU), so the MAPPING
+changed instead: `glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE)` at init, depth
+= `n/d` (near 1, far 0), `GL_DEPTH_COMPONENT32F` everywhere. Precision is
+~1e-7 RELATIVE at any distance, independent of the near plane.
+
+Everything that touches the convention, all of which must agree:
+- `RenderedObject::perspective` and `ProceduralGenWindow::buildProj` are the
+  ONLY rasterisation projection builders (`out[10] = n/(f-n)`,
+  `out[14] = fn/(f-n)`; far stays finite so far clipping and `GL_DEPTH_CLAMP`
+  are unchanged).
+- Depth funcs are `GL_GREATER` (set at init, restored after the cloud passes)
+  and `GL_GEQUAL` where `LEQUAL` was — far stars clamp to depth 0, which IS the
+  cleared value. `glClearDepth(0.0)`. **Never write `LESS`/`LEQUAL`/
+  `glClearDepth(1.0)` again.**
+- Every depth attachment is `GL_DEPTH_COMPONENT32F`.
+- Anything computing NDC depth by hand must use `n/d` in [0,1] and clamp just
+  ABOVE 0, never to 1 (`DrawObjectImpostor` does this). A dot sitting exactly
+  at 0 fails `GL_GREATER` against the cleared value and vanishes.
+
+**The nebula depth blit is the trap.** `BeginNebulaPass` blits scene depth into
+its own target and runs whether or not a nebula exists. `glBlitFramebuffer`
+refuses a depth copy between DIFFERENT formats, and it fails SILENTLY — one
+warning, then nebulae stop being occluded by solids for the rest of the
+session. Scene targets are 32F, but `glfwWindowHint(GLFW_DEPTH_BITS, 24)` means
+the default framebuffer is 24-bit normalised and the scene is sometimes drawn
+straight into it, so `EnsureNebulaTarget` matches its depth format to whatever
+is currently bound. When querying that: the default framebuffer names its depth
+`GL_DEPTH`, a real FBO names it `GL_DEPTH_ATTACHMENT` — asking the wrong one is
+an `INVALID_ENUM` returning zeros, which reads exactly like "no depth here".
+
+Verified against the commit before it: `universe.json` **byte-identical** (a
+galaxy never writes depth — `glDepthMask(GL_FALSE)`, additive, order-
+independent — so precision cannot reach it), a galaxy at 1e13 AU and at the
+1e10 pipeline switch byte-identical, the point-source impostors identical to
+1 px, milky_way different only along the ring/planet contact (882 px at max 20),
+and the deep-zoom Saturn 29 091 px — the chevrons gone. RT and the geodesic
+capture move only where a cloud is in frame, because the raster pass builds the
+dust-density map the tonemap consumes; with the galaxy removed they are
+byte-identical.
+
 ## The empty sky is ONE value, for both views
 
 `backgroundColor` x `backgroundLevel` (Background & Grid → Empty Sky) is what

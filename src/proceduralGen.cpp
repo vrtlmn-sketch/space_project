@@ -146,9 +146,9 @@ void ProceduralGenWindow::buildProj(float P[16]) const {
   std::memset(P, 0, 64);
   P[0]  = f / aspect;
   P[5]  = f;
-  P[10] = (zF + zN) / (zN - zF);
+  P[10] = zN / (zF - zN);          // reversed-Z [0,1], same convention as RenderedObject::perspective
   P[11] = -1.0f;
-  P[14] = 2.0f * zF * zN / (zN - zF);
+  P[14] = zF * zN / (zF - zN);
 }
 
 static void uploadCameraUniforms(GLuint prog,
@@ -502,7 +502,7 @@ void ProceduralGenWindow::ensureFBO() {
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glGenRenderbuffers(1, &depthRBO);
   glBindRenderbuffer(GL_RENDERBUFFER, depthRBO);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, TEX_W, TEX_H);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, TEX_W, TEX_H);
   glGenFramebuffers(1, &fbo);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
