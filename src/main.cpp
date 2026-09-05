@@ -127,6 +127,7 @@ static void buildScene(
       pod.mass, pod.name, st, pod.temperature);
     if (pod.schwarzschildRadius > 0.0f)
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
+    physicsObjects.back().localOffset = pod.localOffset;
     physicsObjects.back().data.color = pod.color;
     physicsObjects.back().rotationDeg = pod.rotation;
     physicsObjects.back().simulatePhysics = pod.simulatePhysics;
@@ -208,25 +209,60 @@ static void buildScene(
 // The rung is chosen from screen coverage alone. There is deliberately no user
 // control over it: how many stars an LOD has is an implementation detail, and
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Universe contents: a bounded pool of real objects, recycled in place
+// ─────────────────────────────────────────────────────────────────────────────
+// A universe DESCRIBES far more than it can hold. The descriptors are free — a
+// pure function of each galaxy's seed, recomputed on demand, never stored —
+// and what costs anything is being a real PhysicsObject, so a fixed budget of
+// them is handed to whatever is most worth having.
+//
+// The pool is allocated ONCE and recycled IN PLACE; slots are never erased.
+// That mirrors how a galaxy promotes (CloudObject swaps its representation and
+// the clouds vector never changes size) and it avoids two real problems:
+// deleteObject frees no GL handles, so churn would leak; and erasing shifts
+// every later index under selectedIdx, hoverIdx and dynParent.
+//
+// Star systems sit on the galaxy's OWN star field, not at invented spots, so
+// the star you fly at is the star you arrive at. A body's identity is its
+// `key`, which is derived from the star's index and survives the LOD ladder,
+// so an edit can be remembered against it.
+
+// One edited body. Generated content regenerates from the seed every session,
+// so an edit only survives if it is recorded against the body's stable key —
+// exactly how an edited galaxy is remembered (UniverseOverride).
+struct UniBodyEdit {
+  int   rec{-1}, gal{-1}, key{-1};
+  dvec3 origin{};      // where the user put it (frame origin)
+  dvec3 offset{};
+  bool  moved{false};
+};
+static std::vector<UniBodyEdit>* gUniEdits = nullptr;   // owned by main()
+
+static UniBodyEdit* FindUniEdit(int rec, int gal, int key) {
+  if (!gUniEdits) return nullptr;
+  for (auto& e : *gUniEdits)
+    if (e.rec == rec && e.gal == gal && e.key == key) return &e;
+  return nullptr;
+}
+
 // Point one pool slot at one piece of generated content. Only called when a
 // slot's identity actually CHANGES: this regenerates a mesh, and for a nebula
 // triggers a volume rebake, so a stable assignment is worth more than a tidy
 // one. Everything a previous tenant might have left set is cleared here — a
 // slot is reused across kinds.
-static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal, int idx,
-                                  const GalaxyContent& gc, const std::string& galaxyName,
-                                  float sizeExag, int nebRes)
+static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
+                                  const GalaxyContent& gc, float sizeExag, int nebRes)
 {
   o.uniRecord  = rec;
   o.uniGalaxy  = gal;
-  o.uniContent = idx;
-  o.uniParent  = gc.parentContent;
+  o.uniContent = gc.key;
   o.uniActive  = true;
   o.renderedObject.inert = false;
   o.simulatePhysics = false;          // a universe never simulates what it generates
-  // The frame: data.position is the ORIGIN (already world by this point) and
-  // localOffset the exact position inside it. A star and its planets share the
-  // origin, so their separations are exact however far away the system is.
+  // The frame: data.position is the ORIGIN and localOffset the exact position
+  // inside it. A star and its planets share the origin, so their separations
+  // are exact however far away the system is.
   o.data.position   = gc.origin;
   o.localOffset     = gc.offset;
   o.data.velocity   = dvec3{0,0,0};
@@ -236,8 +272,12 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal, int idx,
   o.keyframes.clear();
   o.clearRecording();
 
+  // A remembered edit wins over the recipe.
+  if (const UniBodyEdit* e = FindUniEdit(rec, gal, gc.key)) {
+    if (e->moved) { o.data.position = e->origin; o.localOffset = e->offset; }
+  }
+
   char nm[128];
-  (void)galaxyName;
   if (gc.kind == GalaxyContent::Kind::BlackHole) {
     snprintf(nm, sizeof(nm), "Black Hole");
     o.name        = nm;
@@ -248,7 +288,7 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal, int idx,
     o.visualRadius        = gc.radius;
     o.renderedObject.isNebulaVolume = false;
   } else if (gc.kind == GalaxyContent::Kind::Star) {
-    snprintf(nm, sizeof(nm), "Star %d", gc.sysIndex + 1);
+    snprintf(nm, sizeof(nm), "Star %d", gc.starIndex);
     o.name        = nm;
     o.shaderType  = ObjectType::Star;
     o.data.mass   = gc.mass;
@@ -256,12 +296,9 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal, int idx,
     o.visualRadius = gc.radius;
     o.renderedObject.isNebulaVolume = false;
   } else if (gc.kind == GalaxyContent::Kind::Planet) {
-    // Exoplanet convention: the star is "a", its planets b, c, d outward. The
-    // row nests under its star, so the star's name is not repeated.
-    // It must READ as a planet: "Star 2b" is the exoplanet convention and it is
-    // correct, but filtering to planets and getting a list of rows all starting
-    // with "Star" is simply wrong to look at.
-    snprintf(nm, sizeof(nm), "Planet %d%c", gc.sysIndex + 1,
+    // It has to READ as a planet: filtering to planets and getting rows that
+    // all begin "Star" is simply wrong to look at.
+    snprintf(nm, sizeof(nm), "Planet %d%c", gc.starIndex,
              (char)('b' + std::min(gc.orbitIndex, 23)));
     o.name        = nm;
     o.shaderType  = ObjectType::Planet;
@@ -271,7 +308,7 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal, int idx,
     o.visualRadius = gc.radius;
     o.renderedObject.isNebulaVolume = false;
   } else {
-    snprintf(nm, sizeof(nm), "Nebula %d", idx);
+    snprintf(nm, sizeof(nm), "Nebula %d", gc.key);
     o.name        = nm;
     o.shaderType  = ObjectType::Nebula;
     o.data.mass   = 1e-9;
@@ -287,40 +324,51 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal, int idx,
   ApplyShaderForType(o.renderedObject, o.shaderType);
   o.renderedObject.GenerateMeshSphere(o.visualRadius * sizeExag, 32, 32);
   o.renderedObject.coordinates = o.data.position;
+  o.renderedObject.localOffset = o.localOffset;
   if (o.shaderType == ObjectType::Nebula) o.SyncNebulaToRender();
+  // Remember where it was PUT, so a later difference is the user having moved it.
+  o.uniPlacedOrigin = o.data.position;
+  o.uniPlacedOffset = o.localOffset;
 }
-// ─────────────────────────────────────────────────────────────────────────────
-// Universe contents: a bounded pool of real objects, recycled in place
-// ─────────────────────────────────────────────────────────────────────────────
-// A universe DESCRIBES far more than it can hold: every galaxy has a central
-// black hole and a few nebulae, which at 3555 galaxies is thousands of bodies
-// and ~700 MB of sphere meshes. The descriptors are free (a pure function of
-// each galaxy's seed, recomputed on demand, never stored); what costs anything
-// is being a real PhysicsObject, so only a fixed budget of them exist at once
-// and they are handed to whichever galaxies are nearest.
-//
-// The pool is allocated ONCE and recycled IN PLACE — slots are never erased.
-// That mirrors how a galaxy promotes (CloudObject swaps its representation and
-// the clouds vector never changes size) and it sidesteps two real problems:
-// deleteObject releases no GL handles, so churn would leak steadily; and
-// erasing shifts every later index under selectedIdx, hoverIdx, dynParent and
-// nebula.sourceCloud, which are all bounds-checked but would silently retarget.
-//
-// Only black holes and nebulae, deliberately: both are large enough that the
-// 0.5 AU quantisation of a double at 46 Gly is invisible. Planets are not, and
-// need per-object local frames first (docs/universe.md).
+
+// A galaxy's own star positions, kept for the few galaxies near enough that
+// their stars can become systems. 15000 stars is 180 KB, and only a galaxy you
+// are inside needs one, so a two-entry cache covers flying between them.
+namespace {
+struct StarCache {
+  int rec{-1}, gal{-1}, count{0};
+  std::vector<vec3> pos;
+};
+StarCache gStarCache[2];
+int gStarCacheNext = 0;
+
+const std::vector<vec3>* GalaxyStarsFor(const CloudObject& c, int rec, int gal) {
+  for (auto& sc : gStarCache)
+    if (sc.rec == rec && sc.gal == gal && !sc.pos.empty()) return &sc.pos;
+  const RenderedObject& ro = c.renderedObject;
+  if (!ro.isGalaxy || ro.galaxyFullStars <= 0) return nullptr;
+  StarCache& sc = gStarCache[gStarCacheNext];
+  gStarCacheNext = (gStarCacheNext + 1) % 2;
+  // The FULL star list, not the LOD's current rung: a system must not appear
+  // or vanish because the galaxy's detail changed, and star i is the same star
+  // at any count (the generator's prefix property).
+  GenerateGalaxyStars(ro.galaxyDesc, ro.galaxyFullStars, sc.pos, nullptr);
+  sc.rec = rec; sc.gal = gal; sc.count = (int)sc.pos.size();
+  return &sc.pos;
+}
+} // namespace
+
 static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
                                    std::vector<LineObject>& lines,
                                    const std::vector<std::unique_ptr<CloudObject>>& clouds,
                                    const std::vector<UniverseRecord>& records,
                                    const double camT[3], float sizeExag)
 {
-  // Budget over every record (there may be more than one universe).
   int budget = 0;
   for (const auto& r : records)
-    if (r.centralBlackHoles || r.nebulaePerGalaxy > 0)
+    if (r.centralBlackHoles || r.nebulaePerGalaxy > 0 || r.planetsPerSystem > 0)
       budget += std::max(0, r.liveObjectBudget);
-  if (budget <= 0) return;          // nothing to hold: no pool, no cost
+  if (budget <= 0) return;
 
   // ── Grow the pool once, at the end of the list, so no user index ever moves ──
   int pool = 0;
@@ -328,16 +376,32 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
   while (pool < budget) {
     objects.emplace_back(dvec3{0,0,0}, dvec3{0,0,0}, 1e-9, "", ObjectType::Planet, 0.0f);
     PhysicsObject& po = objects.back();
-    po.uniRecord      = 0;             // marks it a slot; the owning record is set on assignment
+    po.uniRecord      = 0;
     po.uniActive      = false;
-    po.simulatePhysics = false;        // universes never simulate what they generate
+    po.simulatePhysics = false;
     po.renderedObject.inert = true;
-    lines.emplace_back(vec3{0,0,0});   // keep the index-parallel trail list in step
+    lines.emplace_back(vec3{0,0,0});
     ++pool;
   }
   if (pool == 0) return;
 
-  // ── Which galaxies are close enough to deserve their contents ──
+  // ── Record anything the user moved, before the pool can overwrite it ──
+  for (auto& o : objects) {
+    if (!o.isUniverseSlot() || !o.uniActive) continue;
+    auto differs = [](const dvec3& a, const dvec3& b) {
+      return a.x != b.x || a.y != b.y || a.z != b.z;
+    };
+    if (!differs(o.data.position, o.uniPlacedOrigin) &&
+        !differs(o.localOffset,   o.uniPlacedOffset)) continue;
+    if (!gUniEdits) continue;
+    UniBodyEdit* e = FindUniEdit(o.uniRecord, o.uniGalaxy, o.uniContent);
+    if (!e) { gUniEdits->push_back({o.uniRecord, o.uniGalaxy, o.uniContent}); e = &gUniEdits->back(); }
+    e->origin = o.data.position; e->offset = o.localOffset; e->moved = true;
+    o.uniPlacedOrigin = o.data.position;
+    o.uniPlacedOffset = o.localOffset;
+  }
+
+  // ── Galaxies worth looking at, nearest first ──
   struct Cand { double d2; int rec, gal; const CloudObject* c; };
   static std::vector<Cand> near;  near.clear();
   for (const auto& c : clouds) {
@@ -348,21 +412,18 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     const double dz = (c->position.z - gCamAnchor[2]) + camT[2];
     near.push_back({dx*dx + dy*dy + dz*dz, c->uniRecord, c->uniIndex, c.get()});
   }
-  std::sort(near.begin(), near.end(), [](const Cand& a, const Cand& b){ return a.d2 < b.d2; });
+  std::sort(near.begin(), near.end(), [](const Cand& a, const Cand& b) { return a.d2 < b.d2; });
 
-  // ── The set we WANT live, nearest first, until the budget runs out ──
-  struct Want { int rec, gal, idx; GalaxyContent content; const CloudObject* c; };
+  struct Want { int rec, gal; GalaxyContent content; const CloudObject* c; };
   static std::vector<Want> want;  want.clear();
   static std::vector<GalaxyContent> cbuf;
-  // Enumerate more galaxies than the budget can hold, then choose by each
-  // BODY's own distance rather than filling galaxy by galaxy. With systems in
-  // play one galaxy describes ~18 bodies, so the old order spent the whole
-  // budget on the first galaxy in the list and starved a nearer one - and it is
-  // the body you are next to that matters, not the galaxy it belongs to.
+
   constexpr int kGalaxiesScanned = 48;
-  // Share of the live budget held for whole star systems, so they always
-  // exist somewhere to be found rather than never winning on size.
+  // Share of the live budget held for whole star systems (see below).
   constexpr int kSystemBudgetPercent = 45;
+  // Stars every galaxy offers regardless of where you are, so the hierarchy
+  // always has somewhere to fly to. Cheap: a prefix of the star field.
+  constexpr int kNotableStarsPerGalaxy = 4;
   int scanned = 0;
   for (const Cand& cd : near) {
     if (scanned++ >= kGalaxiesScanned) break;
@@ -370,54 +431,109 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     UniverseParams up;
     up.centralBlackHoles = rec.centralBlackHoles;
     up.nebulaePerGalaxy  = rec.nebulaePerGalaxy;
-    up.nebulaVolumeRes   = rec.nebulaVolumeRes;
-    up.systemsPerGalaxy  = rec.systemsPerGalaxy;
     up.planetsPerSystem  = rec.planetsPerSystem;
     GenerateGalaxyContents(cd.c->renderedObject.galaxyDesc, up, cbuf);
+
     double rot[9]; const bool hasRot = (cd.c->rotationDeg.x != 0.0f ||
                                         cd.c->rotationDeg.y != 0.0f ||
                                         cd.c->rotationDeg.z != 0.0f);
     if (hasRot) EulerDegToMat3d(cd.c->rotationDeg, rot);
-    for (int k = 0; k < (int)cbuf.size(); ++k) {
-      GalaxyContent gc = cbuf[k];
-      dvec3 l = gc.origin;
-      if (hasRot) {
+    auto toWorld = [&](dvec3 l) {
+      if (hasRot)
         l = dvec3{ rot[0]*l.x + rot[1]*l.y + rot[2]*l.z,
                    rot[3]*l.x + rot[4]*l.y + rot[5]*l.z,
                    rot[6]*l.x + rot[7]*l.y + rot[8]*l.z };
+      return dvec3{ cd.c->position.x + l.x, cd.c->position.y + l.y, cd.c->position.z + l.z };
+    };
+    for (auto& gc : cbuf) { gc.origin = toWorld(gc.origin); want.push_back({cd.rec, cd.gal, gc, cd.c}); }
+
+    // ── Systems on this galaxy's OWN stars ────────────────────────────────
+    // EVERY galaxy always offers its first few stars, wherever you are. That
+    // is the whole point: in a hand-made project the planets simply exist, so
+    // they are in the list and you can fly to one. Gating systems on already
+    // being inside a galaxy was circular — you could not find a star until you
+    // were already at it, and the hierarchy said "nothing of that kind
+    // nearby" from everywhere else.
+    //
+    // A short PREFIX of the star field is cheap to generate, and because star
+    // i is the same star at any count these are real stars in the field, not
+    // invented spots. So a galaxy's notable stars are stable, nameable, always
+    // listed, and actually there when you arrive.
+    const RenderedObject& gro = cd.c->renderedObject;
+    const double galR = (double)gro.galaxyDesc.radius;
+    if (rec.planetsPerSystem < 0 || galR <= 0.0) continue;
+
+    static std::vector<vec3> headStars;
+    static std::vector<int>  chosenStars;
+    chosenStars.clear();
+    const int nHead = std::min(kNotableStarsPerGalaxy, std::max(gro.galaxyFullStars, 0));
+    if (nHead > 0) {
+      GenerateGalaxyStars(gro.galaxyDesc, nHead, headStars, nullptr);
+      for (int i = 0; i < (int)headStars.size(); ++i) chosenStars.push_back(i);
+    }
+    auto emitSystem = [&](int starIdx, const vec3& sp) {
+      cbuf.clear();
+      GenerateStarSystem(gro.galaxyDesc, starIdx,
+                         dvec3{(double)sp.x, (double)sp.y, (double)sp.z},
+                         rec.planetsPerSystem, cbuf);
+      for (auto& gc : cbuf) { gc.origin = toWorld(gc.origin); want.push_back({cd.rec, cd.gal, gc, cd.c}); }
+    };
+    for (int i : chosenStars) emitSystem(i, headStars[i]);
+
+    // Near enough to be flying through it: also offer the stars nearest the
+    // camera, so any star you can actually SEE can be flown at.
+    if (cd.d2 > (galR * 1.6) * (galR * 1.6)) continue;
+    const std::vector<vec3>* stars = GalaxyStarsFor(*cd.c, cd.rec, cd.gal);
+    if (!stars || stars->empty()) continue;
+    // Nearest stars to the camera, in galaxy-local space.
+    dvec3 camLocal{ (gCamAnchor[0] - camT[0]) - cd.c->position.x,
+                    (gCamAnchor[1] - camT[1]) - cd.c->position.y,
+                    (gCamAnchor[2] - camT[2]) - cd.c->position.z };
+    if (hasRot) {   // into the galaxy's own frame
+      camLocal = dvec3{ rot[0]*camLocal.x + rot[3]*camLocal.y + rot[6]*camLocal.z,
+                        rot[1]*camLocal.x + rot[4]*camLocal.y + rot[7]*camLocal.z,
+                        rot[2]*camLocal.x + rot[5]*camLocal.y + rot[8]*camLocal.z };
+    }
+    constexpr int kSystemsNearby = 12;
+    int best[kSystemsNearby]; double bestD[kSystemsNearby];
+    int nBest = 0;
+    for (int i = 0; i < (int)stars->size(); ++i) {
+      const vec3& sp = (*stars)[i];
+      const double dx = (double)sp.x - camLocal.x, dy = (double)sp.y - camLocal.y,
+                   dz = (double)sp.z - camLocal.z;
+      const double d2 = dx*dx + dy*dy + dz*dz;
+      if (nBest < kSystemsNearby) { best[nBest] = i; bestD[nBest] = d2; ++nBest; }
+      else {
+        int worst = 0;
+        for (int k = 1; k < nBest; ++k) if (bestD[k] > bestD[worst]) worst = k;
+        if (d2 < bestD[worst]) { best[worst] = i; bestD[worst] = d2; }
       }
-      gc.origin = dvec3{ cd.c->position.x + l.x,
-                         cd.c->position.y + l.y,
-                         cd.c->position.z + l.z };   // now WORLD
-      want.push_back({cd.rec, cd.gal, k, gc, cd.c});
+    }
+    for (int k = 0; k < nBest; ++k) {
+      if (best[k] < nHead) continue;             // already offered as a notable star
+      emitSystem(best[k], (*stars)[best[k]]);
     }
   }
-  // Biggest ON SCREEN first, not nearest. Distance alone spent the whole budget
-  // on planets 1e8 AU away - nearest, and far too small to see - while nebulae
-  // that actually covered pixels went without. Apparent size is the rule the
-  // rest of the renderer already decides LOD by, and it sorts itself out: a
-  // nebula wins from across a galaxy, a planet wins once you are in its system.
-  auto angularSize = [&](const Want& t) {
+
+  auto dist2 = [&](const Want& t) {
     const double x = (t.content.origin.x - gCamAnchor[0]) + camT[0] + t.content.offset.x;
     const double y = (t.content.origin.y - gCamAnchor[1]) + camT[1] + t.content.offset.y;
     const double z = (t.content.origin.z - gCamAnchor[2]) + camT[2] + t.content.offset.z;
-    const double d = std::sqrt(x*x + y*y + z*z);
-    // A black hole is a navigational marker for its galaxy's centre, not a
-    // 0.2 AU sphere you could ever resolve - rank it by the galaxy it anchors,
-    // or every core in the universe would lose to everything else forever.
+    return x*x + y*y + z*z;
+  };
+  // Biggest ON SCREEN first. Distance alone spends the budget on things far too
+  // small to see; apparent size is the rule the rest of the renderer uses.
+  auto angularSize = [&](const Want& t) {
     const double r = (t.content.kind == GalaxyContent::Kind::BlackHole)
                    ? (double)t.c->renderedObject.galaxyDesc.radius * 1e-3
                    : (double)t.content.radius;
-    return r / std::max(d, 1.0);
+    return r / std::max(std::sqrt(dist2(t)), 1.0);
   };
-  // ── Reserve part of the budget for whole star systems ────────────────────
-  // Apparent size alone can never choose a system: a star is 0.005 AU and a
-  // planet 4e-5, so from anywhere except inside one they lose to every nebula
-  // in the sky — and then "planets per system" generates bodies that can never
-  // be seen OR found, because you would have to fly blindly to within a few AU
-  // of one across a 1e9 AU disc. Keeping the nearest few systems always live
-  // makes the hierarchy the way you find them: filter to planets, pick one,
-  // fly to it. Whole systems only — a planet without its star reads as a bug.
+
+  // ── Whole systems get a reserved share ───────────────────────────────────
+  // A star is 0.005 AU and a planet 4e-5, so on apparent size alone they lose
+  // to every nebula in the sky and the planet dials produce nothing you can
+  // ever see. Whole systems only — a planet without its star reads as a bug.
   static std::vector<size_t> sysIdx, restIdx;
   sysIdx.clear(); restIdx.clear();
   for (size_t i = 0; i < want.size(); ++i) {
@@ -425,21 +541,14 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     if (k == GalaxyContent::Kind::Star || k == GalaxyContent::Kind::Planet) sysIdx.push_back(i);
     else                                                                    restIdx.push_back(i);
   }
-  auto dist2 = [&](const Want& t) {
-    const double x = (t.content.origin.x - gCamAnchor[0]) + camT[0] + t.content.offset.x;
-    const double y = (t.content.origin.y - gCamAnchor[1]) + camT[1] + t.content.offset.y;
-    const double z = (t.content.origin.z - gCamAnchor[2]) + camT[2] + t.content.offset.z;
-    return x*x + y*y + z*z;
-  };
-  // Group by (galaxy, system) and rank groups by their nearest member.
-  struct Grp { int gal, sys; double d2; std::vector<size_t> members; };
+  struct Grp { int gal, star; double d2; std::vector<size_t> members; };
   static std::vector<Grp> groups; groups.clear();
   for (size_t i : sysIdx) {
     const Want& t = want[i];
     Grp* g = nullptr;
     for (auto& q : groups)
-      if (q.gal == t.gal && q.sys == t.content.sysIndex) { g = &q; break; }
-    if (!g) { groups.push_back({t.gal, t.content.sysIndex, 1e300, {}}); g = &groups.back(); }
+      if (q.gal == t.gal && q.star == t.content.starIndex) { g = &q; break; }
+    if (!g) { groups.push_back({t.gal, t.content.starIndex, 1e300, {}}); g = &groups.back(); }
     g->members.push_back(i);
     g->d2 = std::min(g->d2, dist2(t));
   }
@@ -451,28 +560,25 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     if ((int)chosen.size() + (int)g.members.size() > reserved) break;
     for (size_t i : g.members) chosen.push_back(want[i]);
   }
-  // Everything else competes on apparent size for what is left.
   std::sort(restIdx.begin(), restIdx.end(),
             [&](size_t a, size_t b){ return angularSize(want[a]) > angularSize(want[b]); });
   for (size_t i : restIdx) {
     if ((int)chosen.size() >= pool) break;
     chosen.push_back(want[i]);
   }
-  // Any budget still spare goes back to further systems, whole groups first.
   for (const Grp& g : groups) {
     if ((int)chosen.size() >= pool) break;
     bool already = false;
     for (const auto& c : chosen)
-      if (c.gal == g.gal && c.content.sysIndex == g.sys) { already = true; break; }
+      if (c.gal == g.gal && c.content.starIndex == g.star) { already = true; break; }
     if (already) continue;
     if ((int)chosen.size() + (int)g.members.size() > pool) continue;
     for (size_t i : g.members) chosen.push_back(want[i]);
   }
   want.swap(chosen);
 
-  // ── Keep what is already correct; only reconfigure a slot whose identity
-  //    changed. Rebuilding a slot means a mesh regeneration (and, for a nebula,
-  //    a volume rebake), so a stable assignment matters more than a tidy one.
+  // ── Keep what is already correct; reconfigure only a slot whose identity
+  //    changed, since that means a mesh rebuild (and a nebula rebake).
   static std::vector<char> taken;
   taken.assign(want.size(), 0);
   for (auto& o : objects) {
@@ -481,10 +587,16 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     for (size_t w = 0; w < want.size(); ++w) {
       if (taken[w]) continue;
       if (want[w].rec == o.uniRecord && want[w].gal == o.uniGalaxy &&
-          want[w].idx == o.uniContent) {
+          want[w].content.key == o.uniContent) {
         taken[w] = 1; keep = true;
-        o.data.position = want[w].content.origin;     // the galaxy may have moved
-        o.localOffset   = want[w].content.offset;
+        // The galaxy may have moved; a user edit still wins.
+        if (const UniBodyEdit* e = FindUniEdit(o.uniRecord, o.uniGalaxy, o.uniContent);
+            !(e && e->moved)) {
+          o.data.position = want[w].content.origin;
+          o.localOffset   = want[w].content.offset;
+          o.uniPlacedOrigin = o.data.position;
+          o.uniPlacedOffset = o.localOffset;
+        }
         o.renderedObject.coordinates = o.data.position;
         o.renderedObject.localOffset = o.localOffset;
         break;
@@ -493,12 +605,10 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     if (!keep) { o.uniActive = false; o.renderedObject.inert = true; }
   }
 
-  // ── Fill free slots with whatever is still wanted ──
-  // Throttled by COST, not by count. A flat few-per-frame cap meant a 256-slot
-  // pool took 64 frames to fill and the body you had just flown to was still
-  // not live — which is the whole feature failing. Only a nebula is expensive
-  // (it rebakes a volume); a star, planet or black hole is a sphere-mesh
-  // regeneration, so those can fill as fast as they like.
+  // ── Fill free slots, throttled by COST ────────────────────────────────────
+  // Only a nebula is expensive (it rebakes a volume). A flat cap meant a large
+  // pool took dozens of frames to fill and the body you had just flown to was
+  // still not live.
   constexpr int kNebulaAssignPerFrame = 2;
   constexpr int kOtherAssignPerFrame  = 48;
   int nebAssigned = 0, otherAssigned = 0;
@@ -506,8 +616,6 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
   for (auto& o : objects) {
     if (!o.isUniverseSlot() || o.uniActive) continue;
     if (nebAssigned >= kNebulaAssignPerFrame && otherAssigned >= kOtherAssignPerFrame) break;
-    // Skip past anything already placed, and past nebulae once this frame's
-    // rebake budget is gone — so a cheap body behind them is not held up.
     while (w < want.size() &&
            (taken[w] || (want[w].content.kind == GalaxyContent::Kind::Nebula &&
                          nebAssigned >= kNebulaAssignPerFrame))) ++w;
@@ -515,8 +623,7 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     if (want[w].content.kind == GalaxyContent::Kind::Nebula) ++nebAssigned;
     else                                                     ++otherAssigned;
     const Want& t = want[w]; taken[w] = 1;
-    ConfigureUniverseSlot(o, t.rec, t.gal, t.idx, t.content, t.c->name, sizeExag,
-                          records[t.rec].nebulaVolumeRes);
+    ConfigureUniverseSlot(o, t.rec, t.gal, t.content, sizeExag, records[t.rec].nebulaVolumeRes);
   }
 
   if (std::getenv("UNIVERSE_CONTENTS")) {
@@ -533,74 +640,74 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
           case ObjectType::Star:      ++st;  break;
           default:                    ++pln; break;
         }
-        const double dx = (o.data.position.x - gCamAnchor[0]) + camT[0];
-        const double dy = (o.data.position.y - gCamAnchor[1]) + camT[1];
-        const double dz = (o.data.position.z - gCamAnchor[2]) + camT[2];
+        const double dx = (o.data.position.x - gCamAnchor[0]) + camT[0] + o.localOffset.x;
+        const double dy = (o.data.position.y - gCamAnchor[1]) + camT[1] + o.localOffset.y;
+        const double dz = (o.data.position.z - gCamAnchor[2]) + camT[2] + o.localOffset.z;
         nearestAU = std::min(nearestAU, std::sqrt(dx*dx + dy*dy + dz*dz));
       }
-      int baked = 0; double nearNebPx = -1.0;
-      for (const auto& o : objects) {
-        if (!o.isUniverseSlot() || !o.uniActive) continue;
-        if (o.shaderType != ObjectType::Nebula) continue;
-        if (o.renderedObject.nebVolumeN > 0) ++baked;
-        const double dx = (o.data.position.x - gCamAnchor[0]) + camT[0];
-        const double dy = (o.data.position.y - gCamAnchor[1]) + camT[1];
-        const double dz = (o.data.position.z - gCamAnchor[2]) + camT[2];
-        const double dd = std::sqrt(dx*dx + dy*dy + dz*dz);
-        const double px = (double)o.visualRadius / (0.4142 * std::max(dd,1.0)) * 0.5 * 720.0;
-        if (px > nearNebPx) nearNebPx = px;
-      }
-      std::cerr << "[contents] baked volumes " << baked
-                << "  biggest nebula on screen " << nearNebPx << " px\n";
-      // What the frame actually buys: the same body's camera-relative position
-      // computed with the split, against what ONE absolute double would give.
-      const PhysicsObject* pl = nullptr; double best = 1e300;
-      for (const auto& o : objects) {
-        if (!o.isUniverseSlot() || !o.uniActive) continue;
-        if (o.shaderType != ObjectType::Planet) continue;
-        const double x = (o.data.position.x - gCamAnchor[0]) + camT[0] + o.localOffset.x;
-        const double y = (o.data.position.y - gCamAnchor[1]) + camT[1] + o.localOffset.y;
-        const double z = (o.data.position.z - gCamAnchor[2]) + camT[2] + o.localOffset.z;
-        const double d = x*x + y*y + z*z;
-        if (d < best) { best = d; pl = &o; }
-      }
-      if (pl) {
-        const double orbit = std::sqrt(pl->localOffset.x*pl->localOffset.x +
-                                       pl->localOffset.y*pl->localOffset.y +
-                                       pl->localOffset.z*pl->localOffset.z);
-        const double sysR  = std::sqrt(pl->data.position.x*pl->data.position.x +
-                                       pl->data.position.y*pl->data.position.y +
-                                       pl->data.position.z*pl->data.position.z);
-        // Collapse the split into one double, the way it would have been stored
-        // without a frame, and see what survives of the orbit.
-        const dvec3 flat = pl->truePosition();
-        const double flatOrbit = std::sqrt(
-            (flat.x - pl->data.position.x)*(flat.x - pl->data.position.x) +
-            (flat.y - pl->data.position.y)*(flat.y - pl->data.position.y) +
-            (flat.z - pl->data.position.z)*(flat.z - pl->data.position.z));
-        std::cerr << "[frame] system at " << sysR << " AU   orbit radius: framed "
-                  << orbit << " AU, one absolute double " << flatOrbit
-                  << " AU  (error " << std::abs(flatOrbit - orbit) / std::max(orbit,1e-12) * 100.0
-                  << "%)\n";
-      }
-      double wantNear = 1e300; int wantNearKind = -1;
+      double wn = 1e300; int wk = -1; bool wLive = false;
       for (const auto& t : want) {
         const double x = (t.content.origin.x - gCamAnchor[0]) + camT[0] + t.content.offset.x;
         const double y = (t.content.origin.y - gCamAnchor[1]) + camT[1] + t.content.offset.y;
         const double z = (t.content.origin.z - gCamAnchor[2]) + camT[2] + t.content.offset.z;
         const double d = std::sqrt(x*x + y*y + z*z);
-        if (d < wantNear) { wantNear = d; wantNearKind = (int)t.content.kind; }
+        if (d < wn) {
+          wn = d; wk = t.content.key; wLive = false;
+          for (const auto& o : objects)
+            if (o.isUniverseSlot() && o.uniActive && o.uniGalaxy == t.gal &&
+                o.uniContent == t.content.key) { wLive = true; break; }
+        }
       }
-      std::cerr << "[contents] nearest WANTED " << wantNear << " AU (kind "
-                << wantNearKind << ")\n";
+      // The system around the nearest live STAR: what is actually there when
+      // you have flown to a star, which is the thing being complained about.
+      const PhysicsObject* nearStar = nullptr; double bs = 1e300;
+      for (const auto& o : objects) {
+        if (!o.isUniverseSlot() || !o.uniActive || o.shaderType != ObjectType::Star) continue;
+        const dvec3 t = o.truePosition();
+        const double dx = (t.x - gCamAnchor[0]) + camT[0];
+        const double dy = (t.y - gCamAnchor[1]) + camT[1];
+        const double dz = (t.z - gCamAnchor[2]) + camT[2];
+        const double d = dx*dx + dy*dy + dz*dz;
+        if (d < bs) { bs = d; nearStar = &o; }
+      }
+      if (nearStar) {
+        const int base = nearStar->uniContent;
+        std::cerr << "[system] nearest star " << nearStar->name << " at "
+                  << std::sqrt(bs) << " AU, key " << base << "\n";
+        int found = 0;
+        for (const auto& o : objects) {
+          if (!o.isUniverseSlot() || !o.uniActive) continue;
+          if (o.uniGalaxy != nearStar->uniGalaxy) continue;
+          if (o.uniContent <= base || o.uniContent > base + 31) continue;
+          const double dx = (o.data.position.x - gCamAnchor[0]) + camT[0] + o.localOffset.x;
+          const double dy = (o.data.position.y - gCamAnchor[1]) + camT[1] + o.localOffset.y;
+          const double dz = (o.data.position.z - gCamAnchor[2]) + camT[2] + o.localOffset.z;
+          const double d = std::sqrt(dx*dx + dy*dy + dz*dz);
+          const double px = (double)o.visualRadius / (0.4142 * std::max(d,1e-12)) * 0.5 * 720.0;
+          std::cerr << "[system]   " << o.name << "  " << d << " AU  "
+                    << px << " px\n";
+          ++found;
+        }
+        if (!found) std::cerr << "[system]   NO PLANETS LIVE for this star\n";
+      }
+      std::cerr << "[contents] nearest WANTED " << wn << " AU key " << wk
+                << (wLive ? "  LIVE" : "  NOT LIVE") << "\n";
       std::cerr << "[contents] pool " << pool << "  live " << live
                 << " (" << bh << " holes, " << neb << " nebulae, "
                 << st << " stars, " << pln << " planets)"
                 << "  wanted " << want.size()
-                << "  nearest " << nearestAU << " AU\n";
+                << "  nearest " << nearestAU << " AU"
+                << "  edits " << (gUniEdits ? gUniEdits->size() : 0) << "\n";
+      if (gUniEdits)
+        for (const auto& e : *gUniEdits)
+          for (const auto& o : objects)
+            if (o.isUniverseSlot() && o.uniActive && o.uniGalaxy == e.gal &&
+                o.uniContent == e.key)
+              std::cerr << "[edit] " << o.name << " placed at x " << o.data.position.x
+                        << "  edit says " << e.origin.x
+                        << (o.data.position.x == e.origin.x ? "  MATCH" : "  MISMATCH") << "\n";
     }
   }
-
 }
 
 // the only number anyone should have to think about is the galaxy's real size.
@@ -947,6 +1054,10 @@ int main(int argc, char** argv) {
   // its galaxies bit-identically; the project file persists records + sparse
   // overrides instead of generated content (docs/universe.md).
   std::vector<UniverseRecord> universeRecords;
+  // Edits to generated bodies, flat at runtime and distributed into the records
+  // on save. UpdateUniverseContents reads and writes this through gUniEdits.
+  std::vector<UniBodyEdit> universeBodyEdits;
+  gUniEdits = &universeBodyEdits;
 
   // Spawn one record's galaxies. ONE CLOUD PER GALAXY: a galaxy has to be
   // selectable, locatable and editable, so it must exist in the scene rather
@@ -966,7 +1077,6 @@ int main(int argc, char** argv) {
     up.centralBlackHoles = rec.centralBlackHoles;
     up.nebulaePerGalaxy  = rec.nebulaePerGalaxy;
     up.nebulaVolumeRes   = rec.nebulaVolumeRes;
-    up.systemsPerGalaxy  = rec.systemsPerGalaxy;
     up.planetsPerSystem  = rec.planetsPerSystem;
     up.liveObjectBudget  = rec.liveObjectBudget;
 
@@ -1093,7 +1203,6 @@ int main(int argc, char** argv) {
     rec.centralBlackHoles = uf.centralBlackHoles;
     rec.nebulaePerGalaxy  = uf.nebulaePerGalaxy;
     rec.nebulaVolumeRes   = uf.nebulaVolumeRes;
-    rec.systemsPerGalaxy  = uf.systemsPerGalaxy;
     rec.planetsPerSystem  = uf.planetsPerSystem;
     rec.liveObjectBudget  = uf.liveObjectBudget;
     universeRecords.push_back(rec);
@@ -1316,7 +1425,6 @@ int main(int argc, char** argv) {
       up.centralBlackHoles = rec.centralBlackHoles;
       up.nebulaePerGalaxy  = rec.nebulaePerGalaxy;
       up.nebulaVolumeRes   = rec.nebulaVolumeRes;
-      up.systemsPerGalaxy  = rec.systemsPerGalaxy;
       up.planetsPerSystem  = rec.planetsPerSystem;
       up.liveObjectBudget  = rec.liveObjectBudget;
       std::vector<GalaxyDesc> baseline;
@@ -1463,6 +1571,13 @@ int main(int argc, char** argv) {
     s.keypoints       = renderer.keypoints;
     s.cameraKeyframes = renderer.cameraKeyframes;
     s.sceneCameras    = renderer.sceneCameras;
+    // Fold the runtime edit list back into the records they belong to, so a
+    // moved planet is still where the user put it next time.
+    for (auto& r : universeRecords) r.bodyEdits.clear();
+    for (const auto& e : universeBodyEdits) {
+      if (e.rec < 0 || e.rec >= (int)universeRecords.size() || !e.moved) continue;
+      universeRecords[e.rec].bodyEdits.push_back({e.gal, e.key, e.origin, e.offset});
+    }
     ProjectSerializer::Save(path, physicsObjects, currentGrid, cloudDatas, s,
                             std::string(renderer.projectNameBuf),
                             std::string(renderer.projectImageBuf),
@@ -1494,6 +1609,11 @@ int main(int argc, char** argv) {
   // its seed and re-apply the sparse overrides (spawnUniverseRecord does both).
   auto applyLoadedUniverses = [&](const ProjectData& data, const std::string& projPath) {
     universeRecords = data.universes;
+    // Records hold their own edits; the runtime keeps one flat list.
+    universeBodyEdits.clear();
+    for (int r = 0; r < (int)universeRecords.size(); ++r)
+      for (const auto& be : universeRecords[r].bodyEdits)
+        universeBodyEdits.push_back({r, be.galaxy, be.key, be.origin, be.offset, true});
     std::string baseDir = std::filesystem::path(projPath).parent_path().string();
     for (int r = 0; r < (int)universeRecords.size(); ++r)
       spawnUniverseRecord(universeRecords[r], r, baseDir);
@@ -1848,6 +1968,30 @@ int main(int argc, char** argv) {
         src.haloRCore  = c->renderedObject.haloRCore;
         src.haloCenter = c->position;
         cloudSources.push_back(src);
+      }
+    }
+
+    // Harness gate: nudge the nearest generated body once, so the edit path
+    // (detect the move, record it against the key, keep it across regeneration)
+    // can be exercised without the GUI.
+    if (std::getenv("UNIVERSE_MOVE")) {
+      static int mvFrame = 0;
+      if (++mvFrame == 6) {
+        PhysicsObject* pick = nullptr; double best = 1e300;
+        for (auto& o : physicsObjects) {
+          if (!o.isUniverseSlot() || !o.uniActive) continue;
+          const dvec3 t = o.truePosition();
+          const double dx = (t.x - gCamAnchor[0]) + renderer.cameraTranslate[0];
+          const double dy = (t.y - gCamAnchor[1]) + renderer.cameraTranslate[1];
+          const double dz = (t.z - gCamAnchor[2]) + renderer.cameraTranslate[2];
+          const double d = dx*dx + dy*dy + dz*dz;
+          if (d < best) { best = d; pick = &o; }
+        }
+        if (pick) {
+          pick->data.position.x += 12345.0;      // the user dragging it
+          std::cerr << "[move] nudged " << pick->name << " key " << pick->uniContent
+                    << " in galaxy " << pick->uniGalaxy << "\n";
+        }
       }
     }
 
@@ -2319,37 +2463,46 @@ int main(int argc, char** argv) {
             // UNIVERSE_BODY=<kind>:<AU> parks the camera that far from this
             // galaxy's first body of that kind (star / planet), which is the
             // only way to inspect one headlessly.
+            // UNIVERSE_BODY=<star|planet>:<AU> parks the camera that far from
+            // this galaxy's FIRST notable star, or that star's first planet —
+            // the same bodies the hierarchy offers, so what is tested is what
+            // the user can actually reach.
             if (const char* bd = std::getenv("UNIVERSE_BODY")) {
               char kind[16] = {0}; double dist = 1.0;
               std::sscanf(bd, "%15[^:]:%lf", kind, &dist);
               const bool wantPlanet = (kind[0] == 'p');
-              UniverseParams cp;
-              cp.centralBlackHoles = true; cp.nebulaePerGalaxy = 2;
-              cp.systemsPerGalaxy = 3;     cp.planetsPerSystem = 4;
+              std::vector<vec3> hs;
+              GenerateGalaxyStars(gal.renderedObject.galaxyDesc, 1, hs, nullptr);
               std::vector<GalaxyContent> cc;
-              GenerateGalaxyContents(gal.renderedObject.galaxyDesc, cp, cc);
+              if (!hs.empty()) {
+                GenerateStarSystem(gal.renderedObject.galaxyDesc, 0,
+                                   dvec3{(double)hs[0].x, (double)hs[0].y, (double)hs[0].z},
+                                   4, cc);
+              }
               for (const auto& g : cc) {
                 const bool isP = (g.kind == GalaxyContent::Kind::Planet);
                 if (isP != wantPlanet) continue;
-                const dvec3 w{ gal.position.x + g.origin.x + g.offset.x,
-                               gal.position.y + g.origin.y + g.offset.y,
-                               gal.position.z + g.origin.z + g.offset.z };
-                gCamAnchor[0] = w.x; gCamAnchor[1] = w.y; gCamAnchor[2] = w.z;
-                renderer.cameraTranslate[0] = 0.0;
-                renderer.cameraTranslate[1] = 0.0;
-                renderer.cameraTranslate[2] = -dist;
+                // Anchor on the frame ORIGIN and keep the offset in the local
+                // part — never collapse them. Summing origin + offset at 2e15
+                // AU rounds to the nearest half AU, which is what made this
+                // test park half an AU from the planet and see nothing.
+                const dvec3 org{ gal.position.x + g.origin.x,
+                                 gal.position.y + g.origin.y,
+                                 gal.position.z + g.origin.z };
+                gCamAnchor[0] = org.x; gCamAnchor[1] = org.y; gCamAnchor[2] = org.z;
+                renderer.cameraTranslate[0] = -g.offset.x;
+                renderer.cameraTranslate[1] = -g.offset.y;
+                renderer.cameraTranslate[2] = -g.offset.z - dist;
                 std::cout << "[universe] parked " << dist << " AU from a "
                           << (wantPlanet ? "planet" : "star")
-                          << ", radius " << g.radius << " AU"
-                          << "  galaxy uniIndex " << gal.uniIndex
-                          << "  contents " << cc.size() << "\n";
+                          << ", radius " << g.radius << " AU\n";
                 break;
               }
             }
             if (const char* sd = std::getenv("UNIVERSE_SYSTEM")) {
               UniverseParams cp;
               cp.centralBlackHoles = true; cp.nebulaePerGalaxy = 2;
-              cp.systemsPerGalaxy = 3;     cp.planetsPerSystem = 4;
+cp.planetsPerSystem = 4;
               std::vector<GalaxyContent> cc;
               GenerateGalaxyContents(gal.renderedObject.galaxyDesc, cp, cc);
               for (const auto& g : cc) {

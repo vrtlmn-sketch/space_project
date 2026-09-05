@@ -129,7 +129,12 @@ public:
   int   uniRecord{-1};        // universe record that owns it; -1 = a user object
   int   uniGalaxy{-1};        // generation index of the galaxy it belongs to
   int   uniContent{-1};       // which of that galaxy's contents it is
-  int   uniParent{-1};        // content index of its star (planets), else -1
+  // Where the pool PUT this body. If the live position differs, the user moved
+  // it, and that is recorded as an edit against the body's stable key so it
+  // survives the content being regenerated. Catches every move path — gizmo,
+  // inspector, bring-to-me — without any of them having to know about it.
+  dvec3 uniPlacedOrigin{};
+  dvec3 uniPlacedOffset{};
   bool  uniActive{false};
   bool  isUniverseSlot() const { return uniRecord >= 0; }
   bool  inertSlot()      const { return uniRecord >= 0 && !uniActive; }

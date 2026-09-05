@@ -74,12 +74,23 @@ struct GalaxyContent {
   float    temperature{0.0f}; // K (stars)
   vec3     color{0.55f, 0.25f, 0.15f};
   uint32_t seed{0};
-  // For a planet: index of its star within this galaxy's content list, so
-  // the hierarchy can nest it under the right one. -1 for everything else.
-  int      parentContent{-1};
-  int      sysIndex{-1};      // which system in this galaxy (stars and planets)
-  int      orbitIndex{-1};    // 0-based orbit, named b, c, d... as exoplanets are
+  // Identity, stable for the life of the universe — a slot is matched to its
+  // content by this, and an edit is remembered against it. Recipe contents
+  // (the hole, the nebulae) are numbered from 0; a system's bodies are keyed
+  // by the STARFIELD STAR they belong to, which is what makes them the stars
+  // you can actually see rather than arbitrary spots in the disc.
+  int      key{0};
+  int      starIndex{-1};     // index into the galaxy's own star field, -1 if not a system body
+  int      orbitIndex{-1};    // 0-based orbit; named b, c, d... as exoplanets are
 };
+
+// Key layout. A galaxy has at most a few thousand recipe contents and up to
+// millions of stars, so systems start well above the recipe range and each
+// star owns a small block: the star itself, then its planets.
+inline constexpr int kUniRecipeKeys   = 1 << 12;   // hole + nebulae live below this
+inline constexpr int kUniOrbitsPerStar = 32;       // star + up to 31 planets
+inline int UniStarKey(int starIndex)             { return kUniRecipeKeys + starIndex * kUniOrbitsPerStar; }
+inline int UniPlanetKey(int starIndex, int orbit) { return UniStarKey(starIndex) + 1 + orbit; }
 
 struct UniverseParams {
   uint32_t seed{82947291u};
@@ -91,8 +102,7 @@ struct UniverseParams {
   // ── What a galaxy contains besides stars ──
   bool     centralBlackHoles{true};   // a supermassive hole at each galaxy's centre
   int      nebulaePerGalaxy{2};       // 0 = none
-  int      systemsPerGalaxy{3};       // notable star systems you can fly into
-  int      planetsPerSystem{4};
+  int      planetsPerSystem{4};       // 0 = stars have no planets
   // Baked volume resolution for a GENERATED nebula. The default 96 is meant
   // for a nebula you fly into; out here they are tens of pixels across, and
   // 96^3 RGBA16F is 7.1 MB of VRAM EACH — 42 of them is ~300 MB. 48 is 0.9 MB.
@@ -111,6 +121,15 @@ void GenerateUniverseGalaxies(const UniverseParams& p, std::vector<GalaxyDesc>& 
 // galaxy whenever needed rather than storing the result.
 void GenerateGalaxyContents(const GalaxyDesc& g, const UniverseParams& p,
                            std::vector<GalaxyContent>& out);
+
+// The system around ONE of a galaxy's own stars: the star itself plus its
+// planets, appended to `out`. `starLocal` is that star's position in
+// galaxy-local AU, straight out of the star field, so what you fly at is what
+// materialises. Deterministic from the galaxy seed and the star's index — the
+// star generator's prefix property guarantees star i is the same star at any
+// level of detail, so a system does not change identity as the LOD climbs.
+void GenerateStarSystem(const GalaxyDesc& g, int starIndex, const dvec3& starLocal,
+                        int planetsPerSystem, std::vector<GalaxyContent>& out);
 
 // Star positions for ONE galaxy, in galaxy-local AU. Deterministic in desc.seed,
 // and a proper PREFIX: the first N stars are identical at any count, which is

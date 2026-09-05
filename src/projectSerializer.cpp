@@ -97,6 +97,9 @@ bool ProjectSerializer::Save(const std::string& path,
     o["name"]        = obj.name;
     o["mass"]        = obj.data.mass;
     o["position"]    = dvec3ToJson(obj.data.position);
+    // Only written when it is actually used, so ordinary projects are unchanged.
+    if (obj.localOffset.x != 0.0 || obj.localOffset.y != 0.0 || obj.localOffset.z != 0.0)
+      o["localOffset"] = dvec3ToJson(obj.localOffset);
     o["velocity"]    = dvec3ToJson(obj.data.velocity);
     o["shaderType"]  = static_cast<int>(obj.shaderType);
     o["temperature"] = obj.temperature;
@@ -216,6 +219,11 @@ bool ProjectSerializer::Save(const std::string& path,
   if (!universes.empty()) {
     json uniArr = json::array();
     for (const auto& u : universes) {
+      json beArr = json::array();
+      for (const auto& be : u.bodyEdits)
+        beArr.push_back({{"galaxy", be.galaxy}, {"key", be.key},
+                         {"origin", dvec3ToJson(be.origin)},
+                         {"offset", dvec3ToJson(be.offset)}});
       json ovArr = json::array();
       for (const auto& ov : u.overrides) {
         json o = {
@@ -255,11 +263,11 @@ bool ProjectSerializer::Save(const std::string& path,
         {"popIrregular",   u.popIrregular},
         {"centralBlackHoles", u.centralBlackHoles},
         {"nebulaePerGalaxy",  u.nebulaePerGalaxy},
-        {"systemsPerGalaxy",  u.systemsPerGalaxy},
         {"planetsPerSystem",  u.planetsPerSystem},
         {"nebulaVolumeRes",   u.nebulaVolumeRes},
         {"liveObjectBudget",  u.liveObjectBudget},
-        {"overrides",      ovArr}
+        {"overrides",      ovArr},
+        {"bodyEdits",      beArr}
       });
     }
     root["universes"] = uniArr;
@@ -429,6 +437,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.name        = o.value("name",        "Object");
       pod.mass        = o.value("mass",         1.0);
       pod.position    = jsonToDVec3(o["position"]);
+      if (o.contains("localOffset")) pod.localOffset = jsonToDVec3(o["localOffset"]);
       pod.velocity    = jsonToDVec3(o["velocity"]);
       pod.shaderType  = o.value("shaderType",   0);
       pod.temperature = o.value("temperature",  0.0f);
@@ -586,10 +595,23 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       // be". Do not unify them.
       rec.centralBlackHoles = u.value("centralBlackHoles", false);
       rec.nebulaePerGalaxy  = u.value("nebulaePerGalaxy",  0);
-      rec.systemsPerGalaxy  = u.value("systemsPerGalaxy",  0);
-      rec.planetsPerSystem  = u.value("planetsPerSystem",  UniverseRecord{}.planetsPerSystem);
+      // Absent means OFF, as for the other content keys: a universe saved
+      // before systems existed must not grow them. -1 = no systems at all,
+      // which is NOT the struct default (that answers "what should a NEW
+      // universe be"). Do not unify the two.
+      rec.planetsPerSystem  = u.value("planetsPerSystem",  -1);
       rec.nebulaVolumeRes   = u.value("nebulaVolumeRes",   UniverseRecord{}.nebulaVolumeRes);
       rec.liveObjectBudget  = u.value("liveObjectBudget",  UniverseRecord{}.liveObjectBudget);
+      if (u.contains("bodyEdits") && u["bodyEdits"].is_array()) {
+        for (const auto& b : u["bodyEdits"]) {
+          UniverseBodyEdit be;
+          be.galaxy = b.value("galaxy", -1);
+          be.key    = b.value("key",    -1);
+          if (b.contains("origin")) be.origin = jsonToDVec3(b["origin"]);
+          if (b.contains("offset")) be.offset = jsonToDVec3(b["offset"]);
+          if (be.galaxy >= 0 && be.key >= 0) rec.bodyEdits.push_back(be);
+        }
+      }
       if (u.contains("overrides") && u["overrides"].is_array()) {
         for (const auto& o : u["overrides"]) {
           UniverseOverride ov;

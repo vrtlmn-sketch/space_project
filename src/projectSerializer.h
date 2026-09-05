@@ -11,7 +11,11 @@
 struct PhysicsObjectData {
   std::string name;
   double mass{};        // solar masses
-  dvec3  position{};    // AU
+  dvec3  position{};    // AU — the frame ORIGIN when localOffset is used
+  // Exact offset inside that frame. Non-zero only for something placed out
+  // where one absolute double cannot hold it (see RenderedObject::localOffset);
+  // written only when used, so ordinary projects are byte-for-byte unchanged.
+  dvec3  localOffset{};
   dvec3  velocity{};    // AU/yr
   int   shaderType{}; // 0=Planet, 1=Star, 2=BlackHole
   float temperature{0.0f}; // Kelvin
@@ -119,6 +123,16 @@ struct UniverseOverride {
   std::vector<CameraKeyframe> keyframes;
 };
 
+// One generated body the user moved. Generated content regenerates from the
+// seed every session, so an edit only survives if it is recorded against the
+// body's stable key — the same idea as UniverseOverride for an edited galaxy.
+struct UniverseBodyEdit {
+  int   galaxy{-1};
+  int   key{-1};
+  dvec3 origin{};
+  dvec3 offset{};
+};
+
 struct UniverseRecord {
   unsigned int seed{82947291u};
   float radiusGly{46.0f};
@@ -130,11 +144,11 @@ struct UniverseRecord {
   // objects at once (see UpdateUniverseContents).
   bool  centralBlackHoles{true};
   int   nebulaePerGalaxy{2};
-  int   systemsPerGalaxy{3};
   int   planetsPerSystem{4};
   int   nebulaVolumeRes{48};
   int   liveObjectBudget{256};
   std::vector<UniverseOverride> overrides;
+  std::vector<UniverseBodyEdit> bodyEdits;
 };
 
 // All non-scene renderer/camera state that is worth persisting per project

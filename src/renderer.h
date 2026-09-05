@@ -113,7 +113,6 @@ struct UniverseFormState {
   float popSpiral = 0.58f, popElliptical = 0.27f, popIrregular = 0.15f;
   bool  centralBlackHoles = true;   // a supermassive hole at each galaxy's centre
   int   nebulaePerGalaxy  = 2;
-  int   systemsPerGalaxy  = 3;   // notable star systems per galaxy
   int   planetsPerSystem  = 4;
   int   nebulaVolumeRes   = 48;    // baked volume per generated nebula (VRAM)
   int   liveObjectBudget  = 256;    // generated bodies that may be real objects at once
@@ -265,6 +264,16 @@ private:
     return dvec3{ (p.x - gCamAnchor[0]) + cameraTranslate[0],
                   (p.y - gCamAnchor[1]) + cameraTranslate[1],
                   (p.z - gCamAnchor[2]) + cameraTranslate[2] };
+  }
+  // A framed body: frame ORIGIN differenced first, exact offset added after.
+  // NEVER collapse the two into one absolute position and pass that here —
+  // `origin + offset` rounds to the nearest 0.5 AU at 2e15, which is thousands
+  // of times a planet's own radius. That is what PhysicsObject::truePosition()
+  // does, so it is for display only, never for geometry.
+  dvec3 CameraRelative(const dvec3& origin, const dvec3& offset) const {
+    return dvec3{ (origin.x - gCamAnchor[0]) + cameraTranslate[0] + offset.x,
+                  (origin.y - gCamAnchor[1]) + cameraTranslate[1] + offset.y,
+                  (origin.z - gCamAnchor[2]) + cameraTranslate[2] + offset.z };
   }
   void DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
                         std::vector<std::unique_ptr<CloudObject>>& clouds);
@@ -525,6 +534,9 @@ private:
 
   // Teleport the camera in front of a target, facing it (Locate button)
   void LocateCamera(dvec3 target, float effRadius);
+  // Frame a body given as frame origin + exact offset, never collapsing them
+  // into one absolute position (which rounds away at universe scale).
+  void LocateCameraOn(dvec3 origin, dvec3 offset, float effRadius);
 
   // ── Editor viewport FBO ──
   GLuint vpFBO{0};

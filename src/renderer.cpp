@@ -2573,6 +2573,9 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
   // object's surface so open-space flight speeds up with remoteness
   // (crossing the galaxy deselected is as fast as it would be focused).
   focusDistance = -1.0f;
+  auto focusRel = [&](const dvec3& r) {
+    focusDistance = (float)std::sqrt(r.x*r.x + r.y*r.y + r.z*r.z);
+  };
   auto focusFrom = [&](const dvec3& p) {
     double dx = (p.x - gCamAnchor[0]) + cameraTranslate[0];
     double dy = (p.y - gCamAnchor[1]) + cameraTranslate[1];
@@ -2582,7 +2585,8 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
   int camSel = SelectedCameraIndex();
   int cloudSel = (selectedIdx <= -2 && selectedIdx > -kCameraSelBase) ? -(selectedIdx + 2) : -1;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
-    focusFrom(physicsObjects[selectedIdx].truePosition());
+    focusRel(CameraRelative(physicsObjects[selectedIdx].data.position,
+                            physicsObjects[selectedIdx].localOffset));
   } else if (camSel >= 0 && camSel < (int)sceneCameras.size()) {
     focusFrom(sceneCameras[camSel].position);
   } else if (cloudSel >= 0 && cloudSel < (int)clouds.size()) {
@@ -3220,15 +3224,15 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
         // Viewport feedback: ring the object this row refers to (find-my-thing).
         if (hObj) {
           float sx, sy;
-          if (WorldToScreen(hObj->truePosition(), sx, sy)) {
+          if (RelToScreen(CameraRelative(hObj->data.position, hObj->localOffset), sx, sy)) {
             float effR = hObj->renderRadius() * activeSizeExag();
             if (hObj->shaderType == ObjectType::BlackHole)
               effR = std::max(effR, hObj->schwarzschildRadius * 2.6f);
             float projR = 8.0f, esx, esy;
-            const dvec3 hp = hObj->truePosition();
-            if (WorldToScreen({hp.x + camMatrix[0]*effR,
-                               hp.y + camMatrix[1]*effR,
-                               hp.z + camMatrix[2]*effR}, esx, esy)) {
+            const dvec3 hr = CameraRelative(hObj->data.position, hObj->localOffset);
+            if (RelToScreen({hr.x + camMatrix[0]*effR,
+                             hr.y + camMatrix[1]*effR,
+                             hr.z + camMatrix[2]*effR}, esx, esy)) {
               float ddx = esx - sx, ddy = esy - sy;
               projR = std::max(std::sqrt(ddx*ddx + ddy*ddy), 8.0f);
             }
@@ -3261,7 +3265,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
               float effR = hObj->renderRadius() * activeSizeExag();
               if (hObj->shaderType == ObjectType::BlackHole)
                 effR = std::max(effR, hObj->schwarzschildRadius * 2.6f);
-              LocateCamera(hObj->truePosition(), effR);
+              LocateCameraOn(hObj->data.position, hObj->localOffset, effR);
             } else {
               dvec3 cen; double rad = 1.0;
               hCloud->boundsEstimate(cen, rad);
@@ -3319,7 +3323,8 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
     for (int i = 0; i < (int)physicsObjects.size(); ++i) {
       if (physicsObjects[i].inertSlot()) continue;   // a free content slot is not pickable
       float sx, sy;
-      if (WorldToScreen(physicsObjects[i].truePosition(), sx, sy)) {
+      if (RelToScreen(CameraRelative(physicsObjects[i].data.position,
+                                     physicsObjects[i].localOffset), sx, sy)) {
         float dx = mx - sx, dy = my - sy;
         float d2 = dx*dx + dy*dy;
         if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
@@ -5278,14 +5283,11 @@ void Renderer::DrawUniversePanel() {
       ImGui::SetNextItemWidth(-1);
       ImGui::SliderInt("##unneb", &U.nebulaePerGalaxy, 0, 8, "Nebulae per galaxy %d");
       ImGui::SetNextItemWidth(-1);
-      ImGui::SliderInt("##unsys", &U.systemsPerGalaxy, 0, 8, "Star systems per galaxy %d");
-      ImGui::SetNextItemWidth(-1);
       ImGui::SliderInt("##unpl",  &U.planetsPerSystem, 0, 12, "Planets per system %d");
       if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("A star and its planets share one coordinate frame, so their\n"
-                          "orbits stay exact however far out the system is. Fly into a\n"
-                          "galaxy to find them - a system is only worth real objects when\n"
-                          "you are close to it.");
+        ImGui::SetTooltip("Every star in a galaxy can have planets - the systems sit on\n"
+                          "the galaxy's OWN stars, so the star you fly at is the star you\n"
+                          "arrive at. The nearest few become real objects as you approach.");
       ImGui::SetNextItemWidth(-1);
       ImGui::SliderInt("##unlive", &U.liveObjectBudget, 0, 512, "Live at once %d");
       ImGui::SetNextItemWidth(-1);
@@ -5302,8 +5304,7 @@ void Renderer::DrawUniversePanel() {
                           "real objects at any moment - the nearest galaxies win.\n"
                           "About %.0f MB at this setting.", U.liveObjectBudget * 0.192);
       {
-        const int per = (U.centralBlackHoles ? 1 : 0) + U.nebulaePerGalaxy
-                      + U.systemsPerGalaxy * (1 + U.planetsPerSystem);
+        const int per = (U.centralBlackHoles ? 1 : 0) + U.nebulaePerGalaxy;
         ImGui::TextDisabled("%d galaxies x %d = %.3g bodies described, %d real at once",
                             universeGalaxyCount, per,
                             (double)universeGalaxyCount * per, U.liveObjectBudget);
@@ -6029,7 +6030,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       float effR = obj.renderRadius() * activeSizeExag();
       if (obj.shaderType == ObjectType::BlackHole)
         effR = std::max(effR, obj.schwarzschildRadius * 2.6f); // shadow size
-      LocateCamera(obj.truePosition(), effR);
+      LocateCameraOn(obj.data.position, obj.localOffset, effR);
     }
     if (ImGui::Button("Bring to me##obring", ImVec2(-1, 0))) {
       BringToCamera(&obj, nullptr);
@@ -7071,9 +7072,9 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
   // The BODY, not its frame origin: a planet's origin is its star, so reading
   // data.position drew the planet's name and selection ring on top of the star
   // and reported the distance to the star.
-  dvec3 pos = obj.truePosition();
+  const dvec3 rel = CameraRelative(obj.data.position, obj.localOffset);
   float bx, by;
-  if (!WorldToScreen(pos, bx, by)) return;
+  if (!RelToScreen(rel, bx, by)) return;
 
   ImDrawList* dl = ImGui::GetForegroundDrawList();
 
@@ -7084,9 +7085,9 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
   // Screen radius: project a point one visual radius along camera-right
   float circR = 14.0f;
   float esx, esy;
-  if (WorldToScreen({pos.x + camMatrix[0]*effR,
-                     pos.y + camMatrix[1]*effR,
-                     pos.z + camMatrix[2]*effR}, esx, esy)) {
+  if (RelToScreen({rel.x + camMatrix[0]*effR,
+                   rel.y + camMatrix[1]*effR,
+                   rel.z + camMatrix[2]*effR}, esx, esy)) {
     float dx = esx - bx, dy = esy - by;
     circR = std::max(std::sqrt(dx*dx + dy*dy) + 6.0f, 14.0f);
   }
@@ -7094,10 +7095,7 @@ void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
 
   // Live camera distance (display scale: 1 world unit = 200,000 km,
   // which makes the default Earth ~5,600 km in radius)
-  double ddx = (pos.x - gCamAnchor[0]) + cameraTranslate[0];
-  double ddy = (pos.y - gCamAnchor[1]) + cameraTranslate[1];
-  double ddz = (pos.z - gCamAnchor[2]) + cameraTranslate[2];
-  double au  = std::sqrt(ddx*ddx + ddy*ddy + ddz*ddz);
+  const double au = std::sqrt(rel.x*rel.x + rel.y*rel.y + rel.z*rel.z);
 
   char label[160];
   snprintf(label, sizeof(label), "%s · %s", obj.name.c_str(),
@@ -7126,9 +7124,13 @@ dvec3 Renderer::CameraFramingPosition(double radius) const {
   // very problem this is meant to solve. The scene-scale rule re-derives the
   // near plane from whatever is nearest, so any distance settles correctly.
   const double dist = std::max(radius * 5.7, 1.0e-5);
-  return dvec3{ camPos.x + (double)f.x * dist,
-                camPos.y + (double)f.y * dist,
-                camPos.z + (double)f.z * dist };
+  // ANCHOR-RELATIVE. Adding the standoff to an absolute camera position rounds
+  // it away entirely out in a universe (0.5 AU per double step at 2e15 AU), so
+  // the caller gets the small local part and pairs it with gCamAnchor.
+  (void)camPos;
+  return dvec3{ -cameraTranslate[0] + (double)f.x * dist,
+                -cameraTranslate[1] + (double)f.y * dist,
+                -cameraTranslate[2] + (double)f.z * dist };
 }
 
 void Renderer::BringToCamera(PhysicsObject* obj, CloudObject* cloud) {
@@ -7136,20 +7138,27 @@ void Renderer::BringToCamera(PhysicsObject* obj, CloudObject* cloud) {
     float effR = obj->renderRadius() * activeSizeExag();
     if (obj->shaderType == ObjectType::BlackHole)
       effR = std::max(effR, obj->schwarzschildRadius * 2.6f);
-    const dvec3 p = CameraFramingPosition(effR);
-    // Frame the BODY: move its origin so truePosition() lands at p, keeping the
-    // local offset (a planet keeps its place in its system).
-    obj->data.position = dvec3{p.x - obj->localOffset.x,
-                               p.y - obj->localOffset.y,
-                               p.z - obj->localOffset.z};
+    // Put it in the CAMERA's frame: origin at the anchor, the exact standoff in
+    // the offset. Collapsing the two into one absolute double would quantise it
+    // to half an AU out in a universe — twelve thousand planet radii.
+    const dvec3 local = CameraFramingPosition(effR);
+    obj->data.position = dvec3{gCamAnchor[0], gCamAnchor[1], gCamAnchor[2]};
+    obj->localOffset   = local;
     obj->renderedObject.coordinates = obj->data.position;
+    obj->renderedObject.localOffset = obj->localOffset;
     ClampNearPlaneFor(effR);
   } else if (cloud) {
     // A cloud's origin is not necessarily its visual centre, so frame the
     // CENTRE and move the origin by the same delta.
     dvec3 cen; double rad = 1.0;
     cloud->boundsEstimate(cen, rad);
-    const dvec3 target = CameraFramingPosition(rad);
+    // CameraFramingPosition is anchor-relative, so rebuild the absolute target
+    // here. A cloud is millions of AU across; half an AU of rounding on its
+    // origin is nothing, unlike a planet.
+    const dvec3 local = CameraFramingPosition(rad);
+    const dvec3 target{ gCamAnchor[0] + local.x,
+                        gCamAnchor[1] + local.y,
+                        gCamAnchor[2] + local.z };
     cloud->position = dvec3{ cloud->position.x + (target.x - cen.x),
                              cloud->position.y + (target.y - cen.y),
                              cloud->position.z + (target.z - cen.z) };
@@ -7173,21 +7182,42 @@ void Renderer::ClampNearPlaneFor(double radius) {
 }
 
 void Renderer::LocateCamera(dvec3 target, float effRadius) {
+  LocateCameraOn(target, dvec3{0.0, 0.0, 0.0}, effRadius);
+}
+
+// Frame a body given as frame ORIGIN + exact local offset, never collapsed.
+//
+// Collapsing them into one absolute position is what made locating a planet
+// show empty space. `origin + offset` at 2e15 AU rounds to the nearest 0.5 AU,
+// so anchoring the camera on that value left the planet up to half an AU from
+// where the camera thought it was — two thousand times further than the
+// standoff — and it rendered off-screen. A star survived it only because it is
+// a hundred times larger than its own standoff.
+//
+// Everything below stays in small, exact quantities: the anchor lands on the
+// origin (a stored double, exact), and the offset plus the standoff go into the
+// local translate, where they keep full precision at any distance.
+void Renderer::LocateCameraOn(dvec3 origin, dvec3 offset, float effRadius) {
   invalidateZoomAnchor();   // camera teleported → re-anchor the reversible zoom
   double dist = std::max((double)effRadius * 5.7, 1e-4);
 
-  dvec3 camPos{gCamAnchor[0] - cameraTranslate[0],
-               gCamAnchor[1] - cameraTranslate[1],
-               gCamAnchor[2] - cameraTranslate[2]};
-  dvec3 back = camPos - target;                  // backward = target → camera
+  // Vector from the body to the camera, built without ever forming an absolute
+  // position: (anchor - origin) is a difference of two nearby large doubles,
+  // which is exact; everything else is small.
+  dvec3 back{ (gCamAnchor[0] - origin.x) - cameraTranslate[0] - offset.x,
+              (gCamAnchor[1] - origin.y) - cameraTranslate[1] - offset.y,
+              (gCamAnchor[2] - origin.z) - cameraTranslate[2] - offset.z };
   double blen = getLength(back);
   dvec3 b = (blen > 1e-9) ? dvec3{back.x/blen, back.y/blen, back.z/blen}
                           : dvec3{0, 0, 1};
 
-  dvec3 newCam = target + b * dist;
-  cameraTranslate[0] = gCamAnchor[0] - newCam.x;
-  cameraTranslate[1] = gCamAnchor[1] - newCam.y;
-  cameraTranslate[2] = gCamAnchor[2] - newCam.z;
+  // Anchor on the ORIGIN, and put the offset plus the standoff in the local
+  // part. The camera is then at origin + offset + b*dist, exactly, and every
+  // world->camera difference the renderer forms stays small.
+  gCamAnchor[0] = origin.x; gCamAnchor[1] = origin.y; gCamAnchor[2] = origin.z;
+  cameraTranslate[0] = -(offset.x + b.x * dist);
+  cameraTranslate[1] = -(offset.y + b.y * dist);
+  cameraTranslate[2] = -(offset.z + b.z * dist);
 
   // Invert this codebase's Euler convention (backward row with roll = 0 is
   // (-sin y, cos y·sin p, cos y·cos p)). Pick the branch with cos y matching
