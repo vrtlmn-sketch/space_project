@@ -31,7 +31,7 @@ Env gates:
 | `STARDEBUG2=1` | log the top LOD allocations |
 | `STARDEBUG3=1` | log draw counts for galaxies holding dynamic detail |
 | `PROJECT=<path>` | load a specific project |
-| `COMPARE_FRAMES=<n>` | capture at frame n instead of 3 (lets the LOD ladder settle) |
+| `COMPARE_FRAMES=<n>` | capture at frame n instead of 90 (90 is past the settling event — see the traps below) |
 | `SAVE_PROJECT=<path>` | save the scene as a project at compare-exit (round-trip tests) |
 | `CLOUD_DRAW_SORT=0` | keep list-order cloud draws (measure the far-to-near sort) |
 | `UNIVERSE_TEST=<n>` | build a procedural universe at startup |
@@ -81,14 +81,23 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 - **Reruns are byte-identical BACK-TO-BACK** (milky_way and UNIVERSE alike,
   verified with `cmp` on the same binary), so a byte compare against a control
   built from the committed source is the test — a mean can hide a large local
-  change. But capture control and candidate within the same few minutes: a
-  control from 20 minutes earlier once differed by ±1 along the two hardest
-  edges in the frame (Saturn's outer ring boundary and one ringlet, 11k px, a
-  tail to 41) while the galaxy and planet were untouched — and rebuilding that
-  control's exact source reproduced the NEW image, not the old. Something in
-  the environment moved (root cause not found; no wall-clock path reaches the
-  camera or the rings). If a diff is a thin line on a hard edge and nothing
-  else, rebuild the control from source before blaming the change.
+  change.
+- **The scene is NOT settled after three frames — capture at 90.** Something
+  flips ONCE at about frame 41 and then holds forever. A capture taken before
+  it and one taken after differ by **33 549 px on milky_way** (59 427 on
+  universe), concentrated on the softest edge in the frame: Saturn's ring
+  boundary. Frames 2–40 are identical to each other and frames 42+ are
+  identical to each other, so it is one discrete event, not drift. It is
+  FRAME-driven, not wall-clock — making frames four times slower does not move
+  it. This is what used to be blamed on "the environment moving" between a
+  control and a candidate captured 20 minutes apart: both were unsettled and
+  landed on different sides of frame 41. The harness default `COMPARE_FRAMES`
+  is now **90**, which is past it with margin at 720p and 1440p, and a settled
+  capture matches across directories, commits and hours. **The mechanism is
+  still unidentified** — the obvious suspect, `updateCloudRimFactors`, was
+  disproved (`rimConverged` is true from frame 2). Do not lower the default to
+  save time; the cost is ~1.2 s on milky_way and ~4.8 s on universe, and a
+  33k-pixel phantom is worth far more than that.
 - **A blocked run leaves the PREVIOUS run's `/tmp/cmp_raster.png` in place.**
   Renders can block on vsync while the user's live app holds the display; a
   `cp` after that grabs stale data and fabricates a result. `rm -f` the capture
@@ -113,10 +122,12 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 ## Regression baseline
 
 `RASTER_ONLY=1 SKIP_GEO=1 ./bin/blackholesim --compare` on
-`projects/milky_way.json` gives a raster mean luminance of **27.704** at the
-harness default of **1280x720**. Back-to-back reruns are byte-identical (`cmp`),
-so the right test is a BYTE COMPARE against a control built from the committed
-source in the same sitting — not a mean, which hides a large local change.
+`projects/milky_way.json` gives a raster mean luminance of **25.545** at the
+harness default of **1280x720**, captured at the default frame **90** (at the
+old frame-3 default the same scene read 27.704 — see the settling trap
+above). Back-to-back reruns are byte-identical (`cmp`), so the right test is a
+BYTE COMPARE against a control built from the committed source — not a mean,
+which hides a large local change.
 
 **The capture height is part of the baseline.** Sprite sizes scale with render
 height (see "Sprite sizes are a FRACTION OF RENDER HEIGHT"), so a capture at a
@@ -130,7 +141,7 @@ shift a regression, check `git diff projects/milky_way.json` — a retune is not
 bug. The same applies to `projects/universe.json`, which the user re-saves from
 the live app: its camera, keyframes and look settings change under you.
 
-`projects/universe.json` is the cost check: ~710 MB peak, ~3.5 s for 3 frames.
+`projects/universe.json` is the cost check: ~710 MB peak, ~8.0 s to frame 90.
 
 ## Pointing the camera from a script
 

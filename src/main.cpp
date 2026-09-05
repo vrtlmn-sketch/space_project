@@ -2295,7 +2295,17 @@ int main(int argc, char** argv) {
     // ── A/B compare harness (--compare): render both renderers to PNGs, exit ──
     if (compareMode) {
       static int cmpFrame = 0;
-      static int cmpWait = std::getenv("COMPARE_FRAMES") ? std::atoi(std::getenv("COMPARE_FRAMES")) : 3;
+      // 90, not 3. The scene is NOT settled after three frames: something
+      // flips once at about frame 41 and then holds, and a capture taken
+      // before it disagrees with one taken after by 33 549 px on milky_way
+      // (59 427 on universe), concentrated on the softest edge in the frame —
+      // Saturn's ring boundary. That is large enough to hide a real regression
+      // or invent one, and it is exactly the "control drift" that had been
+      // blamed on the environment. It is frame-driven, not wall-clock: making
+      // frames four times slower does not move it. 90 is past it with margin
+      // at every resolution tested, and a settled capture then matches across
+      // directories, commits and hours.
+      static int cmpWait = std::getenv("COMPARE_FRAMES") ? std::atoi(std::getenv("COMPARE_FRAMES")) : 90;
       ++cmpFrame;
       // Harness gate: PLAY=1 unpauses at frame 1 so physics actually steps
       // between captures (pair COMPARE_FRAMES=n with n+1 to measure temporal
