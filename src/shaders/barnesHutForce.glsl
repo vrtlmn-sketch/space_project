@@ -124,9 +124,13 @@ void main() {
       float rawD2 = dot(r, r);
       if (node.particleCount == 1 && rawD2 < SELF_DIST2) continue;
 
-      // Acceleration = G * M_other / d^2  (Newton's law: F/m = GM/r²)
-      float accel = uG * node.com.w / d2;
-      acc += normalize(r) * accel;
+      // Plummer: G M r / (d^2 + eps^2)^(3/2). NOT normalize(r) * GM/d2 —
+      // normalize divides by the RAW length, so a body sitting exactly on a
+      // particle gives 0/0 = NaN however well softened the division is. This
+      // form has no singularity: r = 0 yields zero force. It is also the
+      // consistent law (softening the magnitude but not the direction is not),
+      // and it is what the CPU cloud-source path already uses.
+      acc += r * (uG * node.com.w / (d2 * sqrt(d2)));
     } else {
       // Open the node: push non-empty children onto the stack.
       int pushed = 0;
@@ -140,7 +144,7 @@ void main() {
       // A depth-capped MULTI-particle leaf has no children (see octree.cpp): it
       // cannot be opened, so apply it as one COM point or its mass would vanish.
       if (pushed == 0) {
-        acc += normalize(r) * (uG * node.com.w / d2);
+        acc += r * (uG * node.com.w / (d2 * sqrt(d2)));
       }
     }
   }
@@ -149,9 +153,10 @@ void main() {
   for (int b = 0; b < uBigBodyCount; b++) {
     vec3 r = bigBodies[b].posM.xyz - pos;
     float d2 = dot(r, r) + uSoftening2;
-    // accel = G * bigMass / d^2  (F/m = GM/r²)
-    float accel = uG * bigBodies[b].posM.w / d2;
-    acc += normalize(r) * accel;
+    // A galaxy's own central black hole sits exactly on the stars at its
+    // centre, so r is genuinely zero here — this is the line that NaN'd a
+    // whole galaxy the moment physics was enabled on it.
+    acc += r * (uG * bigBodies[b].posM.w / (d2 * sqrt(d2)));
   }
 
   // ── Halo(s) (see the Halos buffer) ──

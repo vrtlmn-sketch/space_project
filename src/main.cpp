@@ -19,6 +19,7 @@
 #include "physicsObject.h"
 #include "renderer.h"
 #include "dynamics.h"
+#include "units.h"
 #include "planeObject.h"
 #include "lineObject.h"
 #include "cloudObject.h"
@@ -1093,6 +1094,11 @@ int main(int argc, char** argv) {
     // (chunks -> particles) path can be exercised headlessly.
     int testPhys = 0;
     if (const char* tp = std::getenv("UNIVERSE_PHYS")) testPhys = std::atoi(tp);
+    // Physics on ONE named galaxy: UNIVERSE_PHYS only ever reaches a prefix,
+    // and which galaxy it is matters — the one the camera is near has already
+    // been promoted by the LOD, which is a different starting state.
+    int testPhysIdx = -1;
+    if (const char* ti = std::getenv("UNIVERSE_PHYS_IDX")) testPhysIdx = std::atoi(ti);
     // Harness gate: recolour every galaxy, so property-edit persistence can be
     // exercised headlessly (simulates the user changing the temperature).
     float testTemp = 0.0f;
@@ -1112,7 +1118,7 @@ int main(int argc, char** argv) {
       cloud->renderedObject.galaxyFullStars = up.starsPerGalaxy;
       cloud->renderedObject.BuildGalaxyStarfield(g, std::min(up.starsPerGalaxy, 128));
       cloud->renderedObject.setupShaders("src/shaders/cloudVert.glsl", "src/shaders/cloudFrag.glsl");
-      cloud->simulatePhysics = (gi < testPhys); // universes never simulate by default
+      cloud->simulatePhysics = (gi < testPhys) || (gi == testPhysIdx); // universes never simulate by default
       cloud->rotationDeg = testRot;
       if (testTemp > 0.0f) cloud->temperature = testTemp;
       const char* kind = (g.type == GalaxyType::Spiral)     ? "Spiral"
@@ -2311,6 +2317,30 @@ int main(int argc, char** argv) {
       // between captures (pair COMPARE_FRAMES=n with n+1 to measure temporal
       // flicker: the per-pixel change between adjacent frames).
       if (std::getenv("PLAY") && cmpFrame == 1) { renderer.paused = false; renderer.playingForward = true; }
+      // Harness gates for the time step, which PLAY alone cannot reach: the
+      // step is a UI slider behind a Save modal, so a headless run was stuck at
+      // the project's saved dt and nothing ever moved far enough to see.
+      // SIM_SPEED=<x> sets it directly; SIM_AUTO=1 reproduces the user's flow
+      // (select the first simulated cloud, press Auto, Save). Frame 2, because
+      // dynT is only known once UpdateSceneDynamics has run.
+      if (const char* ss = std::getenv("SIM_SPEED"); ss && cmpFrame == 2) {
+        renderer.simSpeed = renderer.pendingSimSpeed =
+            (float)std::clamp(std::atof(ss), (double)Renderer::kSimSpeedMin, (double)Renderer::kSimSpeedMax);
+        if (cb.clearSimulation) cb.clearSimulation();
+        std::cout << "[sim] step " << renderer.simSpeed * units::kDtYears << " yr\n";
+      }
+      if (std::getenv("SIM_AUTO") && cmpFrame == 2) {
+        // No cloud is selected headlessly, so Auto falls through to "largest
+        // simulated cloud" — the same cloud the user had selected.
+        dyn::UpdateSceneDynamics(physicsObjects, clouds, renderer, objectOrder);
+        const double dt = renderer.dynAutoT / std::max(renderer.autoStepsPerOrbit, 10);
+        renderer.simSpeed = renderer.pendingSimSpeed =
+            (float)std::clamp(dt / units::kDtYears, (double)Renderer::kSimSpeedMin, (double)Renderer::kSimSpeedMax);
+        if (cb.clearSimulation) cb.clearSimulation();
+        std::cout << "[sim] auto: T " << renderer.dynAutoT << " yr / " << renderer.autoStepsPerOrbit
+                  << " -> step " << renderer.simSpeed * units::kDtYears << " yr (speed "
+                  << renderer.simSpeed << ")\n";
+      }
       // Harness gate: drop physics again at frame 2 so the full promote->demote
       // round-trip (chunks -> particles -> chunks-from-data) runs headlessly.
       if (std::getenv("UNIVERSE_DEMOTE") && cmpFrame == 2)
@@ -2469,6 +2499,13 @@ int main(int argc, char** argv) {
             renderer.cameraTranslate[2] = gCamAnchor[2] - (gal.position.z + ch[0].center.z) - back;
             std::cout << "[universe] camera parked at a galaxy, extent "
                       << ch[0].extent << " AU, dist " << back << " AU\n";
+            // UNIVERSE_PHYS enables physics on the FIRST galaxies, which the
+            // camera is never parked at — so an A/B of "what does enabling
+            // physics do to the picture" compared two frames that did not
+            // contain the promoted galaxy at all. This turns it on for the one
+            // in frame, after the spawn, exactly as ticking the box does.
+            if (std::getenv("UNIVERSE_PHYS_CAM"))
+              clouds.back()->simulatePhysics = true;
             // UNIVERSE_SYSTEM=<AU> parks the camera that far from this galaxy's
             // FIRST generated star system instead. Systems sit anywhere in a
             // 1e9 AU disc, so there is no other way to reach one headlessly.

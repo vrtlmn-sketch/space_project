@@ -39,7 +39,11 @@ Env gates:
 | `UNIVERSE_DETAIL=<n>` | dynamic star density: star count up close, 0 = freeze LOD |
 | `UNIVERSE_ROT=x,y,z` | rotate every generated galaxy (degrees) |
 | `UNIVERSE_TEMP=<K>` | recolour every generated galaxy at creation |
-| `UNIVERSE_PHYS=<n>` | enable physics on the first n galaxies (promote path) |
+| `UNIVERSE_PHYS=<n>` | enable physics on the first n galaxies (promote path). NOTE: the camera is never parked at those, so this cannot reproduce anything that needs materialised contents |
+| `UNIVERSE_PHYS_IDX=<gi>` | physics on ONE named galaxy (gi = the number in its name minus 1) |
+| `UNIVERSE_PHYS_CAM=1` | physics on the galaxy the camera was parked at |
+| `SIM_SPEED=<x>` | set the time step headlessly (it lives behind a UI slider and a Save modal, so PLAY alone could never move the clock) |
+| `SIM_AUTO=1` | press Auto: dt = the largest simulated cloud's T / autoStepsPerOrbit, then Save |
 | `UNIVERSE_DEMOTE=1` | drop physics again at frame 2 (promote->demote round-trip) |
 | `UNIVERSE_CONTENTS=1` | pool occupancy per frame: holes / nebulae / stars / planets, nearest body, edits |
 | `UNIVERSE_BODY=star:<AU>` or `planet:<AU>` | park the camera that far from the galaxy's first notable star, or its first planet |
@@ -526,6 +530,80 @@ analytic halo, which already gives stable collisions.
   as one COM point** (else its mass would vanish).
 - The DM plumbing (`dmParticleCount`, `starCount()`, the `[0,nStars)` draw split,
   `uDMDraw`) is inert while `dmParticleCount==0` — identical to pre-DM behaviour.
+
+## Softening the DIVISION does not soften `normalize()`
+
+`barnesHutForce.glsl` computed every gravity term as `normalize(r) * (G*m/d2)`
+with `d2 = dot(r,r) + uSoftening2`. That LOOKS protected — the division cannot
+blow up — but `normalize` divides by the RAW length on its own, so `r == 0`
+gives `0/0` = **NaN** no matter how large the softening is.
+
+`r` is genuinely zero in a universe: a galaxy's own central black hole is placed
+at the galaxy's origin, and the galaxy has stars at its origin too. So the
+moment you tick "Simulate physics" on the galaxy you are standing at, one
+particle goes NaN, the NaN poisons the shared octree bounds, and the whole
+cloud is gone within two frames — the same cascade the DM-particle experiment
+died of (above). Symptom as reported: "turned on physics, pressed play, it
+disappears instantly."
+
+All three force sites now use the Plummer form, which has no singularity
+(`r = 0` yields zero force) and is the consistent law — softening the magnitude
+while taking the direction from the unsoftened vector is not:
+
+```
+acc += r * (uG * mass / (d2 * sqrt(d2)));
+```
+
+- **Only ONE of the three sites had ever fired**; the octree-node and
+  depth-capped-leaf sites were the same bug waiting for any two coincident
+  particles. Fix all of a shape, not the instance that bit.
+- The CPU paths (`physicsObject.cpp`, `renderedObject.cpp`) were already safe —
+  they guard `if (d2 == 0) continue;` — and `physicsObject.cpp`'s cloud-source
+  loop already used Plummer, so the shader now matches what was there.
+- **Plummer is not free.** It differs from the old law by `r/sqrt(r^2+eps^2)`:
+  0.2% at milky_way's softening, but up to ~30% for nearest neighbours in a
+  SMALL formation where eps is comparable to the particle spacing. No rendered
+  frame moved (both reference scenes byte-identical, because they are paused),
+  but a small formation left simulating evolves slightly differently now.
+- **`UNIVERSE_PHYS=<n>` cannot reach this bug.** It enables physics on the FIRST
+  n galaxies, and the camera is never parked at those — a galaxy you are not at
+  has no materialised contents, so no black hole, so no coincident pair, and it
+  simulates perfectly for hundreds of frames. Four separate reproduction
+  attempts came back clean because of this. Use **`UNIVERSE_PHYS_IDX=<gi>`**
+  (physics on one named galaxy) or **`UNIVERSE_PHYS_CAM=1`** (the galaxy the
+  camera is parked at) instead.
+
+## OPEN BUG: the shared sim frame is anchored on sim[0]
+
+`CloudObject::SimulateSharedForward` sets `simOrigin = sim[0]->position` — the
+first simulating cloud — and hands every other cloud to the GPU as a float
+offset from it. That is right for the case it was written for (colliding
+galaxies near each other) and wrong whenever two simulating clouds are far
+apart, which a universe makes easy.
+
+Measured with a cloud at the origin and a galaxy at 2.5e15 AU: the galaxy's
+`uFrameOffset` is 2.5e15, whose float ULP is **268 million AU** against a galaxy
+radius of 1e9. `pos += vel * uDt` then does NOTHING — one step of motion is a
+hundred times smaller than the smallest representable change. Positions freeze
+BIT-FOR-BIT while velocities, computed locally, wind up without limit:
+
+| frame | positions identical to start | median speed | max speed |
+|---|---|---|---|
+| 12 | 15000/15000 | 46 | 109 |
+| 120 | 14102/15000 | 198 | 431 |
+| 300 | 14431/15000 | 480 | 1050 |
+
+Then stars start teleporting: every non-zero displacement measured was an exact
+multiple of 2^25 AU — the ULP, not motion. This is "NEVER add a small offset to
+a large absolute position" again, on the GPU, inside the physics shader.
+
+It needs two simulating clouds, so it is not what makes a single galaxy vanish —
+but **`projects/milky_way.json` ships a 20 000-particle cloud with
+`simulatePhysics: true`**, so starting from the template, generating a universe
+and enabling physics on a galaxy lands straight in it. Reproduce with
+`UNIVERSE_TEST=2000 UNIVERSE_STARS=15000 UNIVERSE_PHYS=1 SIM_AUTO=1 PLAY=1`.
+The fix is to stop anchoring on `sim[0]` and give clouds that are far apart
+their own frames; not yet done.
 
 ## Spiral arms TRAIL — spin is OPPOSITE to the winding
 
