@@ -724,12 +724,30 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
   // (thousands of them). Gate on the angle between the galaxy direction and the
   // camera forward: skip anything whose nearest edge is more than ~a FOV
   // off-axis. Generous margin (1.5×) so nothing visible near a screen edge is culled.
-  auto offScreen = [&](double dx, double dy, double dz, double d, double angDeg) -> bool {
+  // Does this object's DISC reach the view cone? NOT "is its centre in front of
+  // me". The old test returned early on cosA <= 0, i.e. it treated the object
+  // as a dot and called it off-screen the moment its CENTRE crossed behind the
+  // camera — never reaching the line below that subtracts its angular size.
+  // A galaxy you are parked inside has its centre behind you for half of every
+  // turn while it still fills the entire sky, so it lost nearPromoted and fell
+  // back to the sampled stand-in, then recovered when you turned back: the
+  // "galaxy phases in and out depending on which angle I look from" bug, worst
+  // exactly where it was reported — deep inside, at a star.
+  //
+  // Takes the RADIUS, not a precomputed angle: 2*atan2(extent, d) saturates at
+  // 180 degrees total, so it can never say "this thing is all around me", and
+  // that is the case that has to be stated outright.
+  auto offScreen = [&](double dx, double dy, double dz, double d, double radius) -> bool {
     if (!(d > 0.0)) return false;
+    if (d <= radius) return false;                     // inside it: it surrounds us
     const double cosA = (dx * fwd[0] + dy * fwd[1] + dz * fwd[2]) / d;
-    if (cosA <= 0.0) return true;                                   // behind the camera
-    const double angleToAxis = std::acos(std::min(1.0, cosA)) * 57.2957795;
-    return (angleToAxis - angDeg * 0.5) > (double)fovDeg * 1.5;
+    // Clamp BOTH ends. std::min alone left a rounding overshoot below -1 to
+    // make acos return NaN, and every comparison against NaN is false — which
+    // reads as "on screen" and hides the mistake.
+    const double cosC = (cosA < -1.0) ? -1.0 : (cosA > 1.0 ? 1.0 : cosA);
+    const double angleToAxis = std::acos(cosC) * 57.2957795;
+    const double angRadius   = std::asin(std::min(1.0, radius / d)) * 57.2957795;
+    return (angleToAxis - angRadius) > (double)fovDeg * 1.5;
   };
   // Harness gate: UNIVERSE_DETAIL=0 freezes every galaxy at its spawn rung so an
   // A/B can be measured headlessly.
@@ -766,7 +784,7 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     // the LOD blind to deep zoom, so a far galaxy's view share stayed tiny past 1°
     // FOV and it never climbed its star count or promoted ("only LODs load").
     float  frac = (float)(ang / (double)std::max(fovDeg, 1e-6f));   // share of the view
-    if (offScreen(dx, dy, dz, d, ang)) continue;                    // not in the view cone
+    if (offScreen(dx, dy, dz, d, (double)sc.extent)) continue;      // not in the view cone
 
     // How many stars are worth building: the disc it covers, at a few per pixel.
     double rpx  = 0.5 * (double)frac * (double)std::max(fbHeight, 1);
@@ -856,7 +874,7 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
     double d   = std::sqrt(dx*dx + dy*dy + dz*dz);
     double ang = 2.0 * std::atan2(extent, std::max(d, 1.0)) * 57.2957795;
     float  frac = (float)(ang / (double)std::max(fovDeg, 1e-6f));
-    if (offScreen(dx, dy, dz, d, ang)) continue;                    // not in the view cone
+    if (offScreen(dx, dy, dz, d, extent)) continue;                 // not in the view cone
     if (frac > bestPromoteFrac) { bestPromoteFrac = frac; promoteTarget = c.get(); }
   }
   for (auto& c : clouds) {

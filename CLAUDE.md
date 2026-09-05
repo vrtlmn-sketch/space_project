@@ -357,6 +357,33 @@ dustDetail 14000, farFalloff 0.08, background 0.005/0.005/0.030 at level 1.2).
 Verified: stripping those keys from a project renders the same image the
 explicit values do.
 
+## A view-cone test must subtract the object's SIZE, not treat it as a dot
+
+`offScreen` (main.cpp) decides which galaxy is "the one you are looking at", and
+that choice gates BOTH the LOD rebuild ladder and `nearPromoted` — whether a
+galaxy renders through the real particle pipeline or the sampled stand-in.
+
+It used to return early on `cosA <= 0` ("behind the camera"), which skipped the
+very line below it that subtracts the object's angular size. That is a dot test.
+A galaxy you are parked INSIDE has its centre behind you for half of every turn
+while it still fills the whole sky, so it lost `nearPromoted`, fell back to the
+stand-in, and recovered when you turned round: **"the galaxy phases in and out
+depending on which angle I look at it from"**, worst exactly where it was
+reported — deep inside, at a star.
+
+- **Pass the RADIUS, not a precomputed angle.** `2*atan2(extent, d)` saturates,
+  so it can never say "this thing is all around me". `d <= radius` says it.
+- **Clamp `acos` at BOTH ends.** It was clamped only above; a rounding overshoot
+  below -1 makes `acos` return NaN, and every comparison against NaN is false —
+  which reads as "on screen" and hides the mistake instead of raising it.
+- `drawStarfieldChunks`'s own frustum cull is CORRECT for comparison: it tests
+  `depth < -r` against the chunk's half-diagonal, so a chunk enclosing the
+  camera is kept.
+- Same shape still present in `considerForward` (renderer.cpp, the deep-zoom
+  forward target): `tc <= 0` skips a galaxy the camera is inside. Different
+  symptom — zoom targeting, not visibility — and fixing it changes camera feel,
+  so it was left alone deliberately.
+
 ## ONE rendering model
 
 A cloud is a cloud. Anything you can actually see — a hand-made formation, a
