@@ -1019,8 +1019,358 @@ void Renderer::DrawCloudDust(RenderedObject& ro) {
   ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::All;
 }
 
+// ── Impostor tuning (see DrawObjectImpostor) ──────────────────────────────────
+// Sizes are in pixels AT spriteRefHeight and are scaled by the render height,
+// so every one of these is really a fraction of frame height.
+// Sprite RADIUS floor — and it must stay SMALL. The apparent size of one of
+// these does not come from the sprite, it comes from the post chain: a bright
+// point blooms, and spikeSourceFrag then gives it diffraction spikes. That pass
+// keeps only the energy by which a pixel exceeds its brightest neighbour SIX
+// half-res texels away (12 px at full res), so a wide soft disc cancels itself
+// and gets no spikes at all — it just sits there as a ball. The floor is only
+// as large as the anti-twinkle limit demands: under ~1.5 px the Gaussian's
+// sigma drops below half a pixel and the dot's peak starts to depend on where
+// inside a pixel it lands.
+static constexpr double kImpostorDotPx  = 1.60;
+static constexpr double kImpostorFadeLo = 1.00;  // below this the impostor carries everything
+// The handover MUST sit at the dot radius. Below the floor the sprite is
+// kImpostorDotPx across; the mesh at screenPx = kImpostorDotPx is exactly the
+// same size on screen, so the object neither grows nor shrinks as one takes
+// over from the other. Setting this anywhere else puts a visible step there.
+static constexpr double kImpostorFadeHi = kImpostorDotPx;
+// How much of the true dynamic range survives. The flux is computed EXACTLY —
+// albedo x radius^2 x phase / (star distance^2 x camera distance^2) — and then
+// raised to this power, which is order-preserving: whatever is really brighter
+// stays brighter, the ratios just shrink. 1 = physically exact (and unviewable:
+// one fixed exposure cannot hold 1e9), 0 = every object identical.
+//
+// The earlier version compressed the object's ANGULAR SIZE instead, as the
+// cloud path does. That is right for a galaxy, where size and distance are the
+// whole story, and wrong here: it squashed radius^2 to radius^0.1, so a body's
+// own size stopped counting and only its distance from its star mattered.
+// Jupiter came out SEVEN TIMES DIMMER than Mars, when it should be forty times
+// brighter. Compressing the finished flux keeps the physics and only costs
+// contrast.
+static constexpr double kImpostorRange = 0.32;
+// A black hole does not go through any of that: it emits nothing, so it has no
+// flux to compress and its "size" is an event horizon a hundred-millionth of a
+// pixel across, which any flux law sends to zero. The marker keeps the simple
+// angular-size law, with its own exponent.
+static constexpr double kImpostorMarkerFalloff = 0.05;
+// The marker's own level. It cannot share kImpostorGain: that one multiplies a
+// FLUX raised to kImpostorRange, this one multiplies a bare ratio, so the same
+// number means nothing like the same thing on the two paths.
+static constexpr double kImpostorMarkerGain = 0.60;
+// Ceiling on a dot's peak, applied as a soft knee (x -> x/(1+x/max)) so it
+// never introduces a hard edge and NEVER reorders anything: whatever was
+// brighter stays brighter. Two things need bounding. A body's flux keeps
+// growing right up to the handover, so just before its mesh appears the dot can
+// sit a thousand times above the dim disc that replaces it — a flare as you
+// approach. And one gain has to serve both a planet (flux ~1e-6) and a nebula
+// (~0.2), which is six decades; without a ceiling the large end is pure white.
+static constexpr double kImpostorPeakMax = 60.0;
+// Overall level. Exact flux from a body a hundredth of a pixel across is ~1e-7,
+// far under anything one fixed exposure can show, so the stand-in is lifted
+// into a band the post chain can work with. It is deliberately high enough that
+// a typical planet lands ABOVE 1.0 and therefore blooms and spikes: that halo
+// and cross is what makes a point source read as an object rather than a dot,
+// and it carries the object's colour outward even where the core saturates.
+static constexpr double kImpostorGain = 100.0;
+// Normalisation that makes the sprite's integral equal the light the resolved
+// mesh would have delivered. The profile is exp(-k·r²) discarded outside r = 1,
+// whose integral in sprite-radius units is π(1-e^-k)/k, so the factor that
+// restores the mesh's flux is π / that = k/(1-e^-k). Change the profile in
+// impostorFrag.glsl and this number must change with it.
+static constexpr double kImpostorFluxNorm = 3.157248;   // k = 3
+// The one number here that is not derived from a shader: a black hole emits
+// nothing, so this is a findability marker, not a brightness. Zero it to make
+// distant black holes honestly invisible.
+static constexpr float  kImpostorHoleGlow = 3.0f;
+// Fitted, not derived: a ray-marched volume has no analytic disc-mean radiance.
+static constexpr float  kImpostorNebula   = 0.35f;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Far object impostors: the stand-in for a solid that has shrunk below a pixel
+// ─────────────────────────────────────────────────────────────────────────────
+// A sphere under one pixel across IS a point source, and the rasterizer cannot
+// draw one. There is no MSAA here, so a sub-pixel triangle produces a fragment
+// only when a pixel centre happens to fall inside it: Saturn seen from Earth in
+// projects/milky_way.json is 0.027 px across and flickers in and out rather
+// than reading as a faint dot. Tessellation LOD cannot fix that — there is
+// nothing left to tessellate. The stand-in has to be a point sprite.
+//
+// This is NOT the rejected `uSampleWeight` (CLAUDE.md, "ONE rendering model").
+// That tried to make 8 sampled stars impersonate 50 000, which is a different
+// look rather than a coarser one. One sphere collapsing to one point AT the
+// resolution limit is the same object, and the handover is a fade, so nothing
+// pops.
+//
+// Two rules the numbers below exist to keep:
+//   * Brightness is the mean radiance the object's OWN surface shader would
+//     have produced across its disc. That is what makes the impostor continuous
+//     with the mesh instead of a second look to keep in sync — and it keeps the
+//     value per-object, never a scene global (CLAUDE.md, "Never derive a
+//     per-scene render parameter from ONE object").
+//   * Below the pixel floor the sprite cannot shrink any further, so light has
+//     to be removed explicitly or the deep field never dims. That is the same
+//     problem FarFieldDim solves for clouds, so it uses the same law and the
+//     same `farFalloff` dial: a galaxy and a star seen from the same distance
+//     dim by the same rule.
+
+// Blackbody → linear RGB. Mirrors blackbody() in brightStartFragShader.glsl
+// exactly; if that changes, this must change with it or a star's impostor stops
+// matching its own mesh at the handover.
+static vec3 ImpostorBlackbody(float tempK) {
+  const float t = std::clamp(tempK, 1000.0f, 40000.0f);
+  auto sat = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
+  if (t <= 6600.0f) {
+    return vec3{ 1.0f,
+                 sat(0.39008158f * std::log(t / 100.0f) - 0.63184144f),
+                 (t <= 1900.0f) ? 0.0f
+                                : sat(0.54320679f * std::log(t / 100.0f - 10.0f) - 1.19625409f) };
+  }
+  return vec3{ sat((329.698727f * std::pow(t / 100.0f - 60.0f, -0.13320476f)) / 255.0f),
+               sat((288.122170f * std::pow(t / 100.0f - 60.0f, -0.07551485f)) / 255.0f),
+               1.0f };
+}
+
+// Disc-integrated brightness of a Lambert sphere at phase angle a, relative to
+// fully lit. Φ(a) = [sin a + (π - a) cos a] / π — 1 head-on, 1/π at half phase,
+// 0 at new. This is what gives a crescent Venus and a correctly dimmer Saturn
+// for free, from geometry the surface shader already implies.
+static float ImpostorLambertPhase(float cosAlpha) {
+  const float ca = std::clamp(cosAlpha, -1.0f, 1.0f);
+  const float a  = std::acos(ca);
+  return (float)((std::sin(a) + (M_PI - a) * ca) / M_PI);
+}
+
+void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
+                                  float objectType, vec3 color)
+{
+  if (impostorStrength <= 0.0f || impostorInitFailed) return;
+  if (ro.meshType != MeshType::sphere) return;
+  const double radius = (double)ro.sphereRadius();  // already includes size exaggeration
+  if (!(radius > 0.0) || fbHeight <= 0) return;
+
+  // ── Where it is, and how big ──
+  // Camera-relative in DOUBLE (CLAUDE.md, "Large-world coordinates"): at 1e15 AU
+  // a float view-space position resolves to ~1e8 AU, so the whole projection is
+  // done here and the shader is handed a finished NDC coordinate.
+  const double rx = (ro.coordinates.x - gCamAnchor[0]) + cameraTranslate[0];
+  const double ry = (ro.coordinates.y - gCamAnchor[1]) + cameraTranslate[1];
+  const double rz = (ro.coordinates.z - gCamAnchor[2]) + cameraTranslate[2];
+  const double vx = camMatrix[0]*rx + camMatrix[1]*ry + camMatrix[2]*rz;
+  const double vy = camMatrix[3]*rx + camMatrix[4]*ry + camMatrix[5]*rz;
+  const double vz = camMatrix[6]*rx + camMatrix[7]*ry + camMatrix[8]*rz;
+  const double depth = -vz;                          // camera looks down -Z
+  if (!(depth > radius)) return;                     // behind us, or we are inside it
+
+  const double tanV = std::tan((double)zoom * M_PI / 180.0 * 0.5);
+  if (!(tanV > 1e-9)) return;
+  const double aspect  = (double)fbWidth / (double)fbHeight;
+  const double screenPx = radius / (tanV * depth) * 0.5 * (double)fbHeight;
+
+  // Sizes are a FRACTION OF RENDER HEIGHT, not absolute pixels (CLAUDE.md,
+  // "Sprite sizes are a FRACTION OF RENDER HEIGHT"). Scaling the dot floor AND
+  // the handover band by the same factor is what keeps the look identical at
+  // 720p and 4K: the object crosses over at the same apparent size and the dot
+  // covers the same share of the frame. spriteRefHeight 0 = off = absolute px,
+  // matching every other sprite here.
+  const double hScale = (spriteRefHeight > 0.0f)
+                          ? (double)fbHeight / (double)spriteRefHeight : 1.0;
+  const double dotR  = kImpostorDotPx  * hScale;     // sprite radius floor
+  const double fadeLo = kImpostorFadeLo * hScale;
+  const double fadeHi = kImpostorFadeHi * hScale;
+
+  // Hand back to the mesh once it resolves. Above fadeHi this returns before
+  // touching any GL state, so an object big enough to see normally renders
+  // exactly as it did before this existed.
+  if (screenPx >= fadeHi) return;
+  double fade = 1.0;
+  if (screenPx > fadeLo) {
+    const double u = (screenPx - fadeLo) / (fadeHi - fadeLo);
+    fade = 1.0 - u * u * (3.0 - 2.0 * u);            // smoothstep out
+  }
+
+  // ── What it is worth ──
+  // S is the mean radiance across the object's disc, in the units its own
+  // surface shader writes.
+  vec3 S{0.0f, 0.0f, 0.0f};
+  const int type = (int)(objectType + 0.5f);
+  if (type == 1) {                                   // Star — brightStartFragShader
+    // Disc mean of (0.4 + 0.6·cosθ) + 0.6·cosθ^8 weighted by projected area
+    // (∫2μ·… dμ) = 0.8 + 0.12. The ×6 is that shader's own HDR emissive lift.
+    const vec3 bb = ImpostorBlackbody(temperature > 0.0f ? temperature : 5778.0f);
+    const float k = 0.92f * (realisticRasterView ? 6.0f : 1.0f);
+    S = vec3{bb.x * k, bb.y * k, bb.z * k};
+  } else if (type == 3) {                            // Black hole
+    // A black hole emits NOTHING — blackHoleFrag writes pure black — so there
+    // is no physical radiance to be continuous with. This is a findability
+    // marker and the one invented number in this function; kImpostorHoleGlow is
+    // named so it is easy to retune or zero.
+    S = vec3{0.25f * kImpostorHoleGlow, 0.28f * kImpostorHoleGlow, 0.40f * kImpostorHoleGlow};
+  } else if (ro.isNebulaVolume) {                    // Nebula volume
+    // Approximate: the marched volume's mean radiance is not analytic, so this
+    // is emission x a species colour at mid excitation x the share of the
+    // bounding sphere the box actually fills. The one place here that is fitted
+    // rather than derived.
+    const vec3 pal = (ro.nebPalette == 1) ? vec3{0.503f, 0.736f, 0.561f}
+                                          : vec3{0.825f, 0.412f, 0.425f};
+    const float fill = std::cbrt(std::max(ro.nebExtent.x * ro.nebExtent.y * ro.nebExtent.z, 1e-6f));
+    const float k = ro.nebEmission * std::sqrt(std::max(ro.nebDensity, 0.0f)) * fill * kImpostorNebula;
+    S = vec3{pal.x * k, pal.y * k, pal.z * k};
+  } else {                                           // Planet / free model — defaultFrag
+    // Albedo: the texture's average when there is one, because that is what the
+    // surface shader actually shades with. Falling back to `color` for a
+    // textured planet gives every one of them the same default brown.
+    if (ro.hasMeanColor()) color = ro.meanColor;
+    // Reflected light, reproducing that shader's own terms: albedo x Σ over the
+    // lights of (colour / dist²) x the Lambert phase function, x 2/3 for the
+    // disc mean of cosθ on a fully lit sphere. Both the realistic and the nav
+    // branch of defaultFrag carry the same 1/dist² and the same N·L, so one
+    // expression covers both.
+    const int nL = (int)std::min(ro.litPositions.size(), ro.litColors.size());
+    // Loop-invariant: the camera is the origin of these camera-relative
+    // coordinates, so this is the object's distance from the viewer.
+    const double camLen = std::sqrt(rx*rx + ry*ry + rz*rz);
+    if (nL == 0) {
+      // defaultFrag's own no-lights branch: one unattenuated light. Matching it
+      // keeps a starless scene consistent between the mesh and the impostor.
+      S = vec3{color.x * (2.0f / 3.0f), color.y * (2.0f / 3.0f), color.z * (2.0f / 3.0f)};
+    }
+    for (int i = 0; i < nL; ++i) {
+      const vec3& lp = ro.litPositions[i];
+      const float tx = lp.x - (float)rx, ty = lp.y - (float)ry, tz = lp.z - (float)rz;
+      const float d2 = tx*tx + ty*ty + tz*tz;
+      if (!(d2 > 1e-12f)) continue;
+      const float inv = 1.0f / std::sqrt(d2);
+      if (!(camLen > 0.0)) continue;
+      const float cosA = (float)((-rx * tx - ry * ty - rz * tz) * inv / camLen);
+      const float w = (2.0f / 3.0f) * ImpostorLambertPhase(cosA) / d2;
+      S.x += ro.litColors[i].x * w;
+      S.y += ro.litColors[i].y * w;
+      S.z += ro.litColors[i].z * w;
+    }
+    if (nL > 0) { S.x *= color.x; S.y *= color.y; S.z *= color.z; }
+  }
+  if (!(S.x > 0.0f || S.y > 0.0f || S.z > 0.0f)) return;
+
+  // ── The pixel floor, and the light that has to come off because of it ──
+  // Above the floor the sprite is the object's true size and carries its exact
+  // flux. Below it the sprite cannot shrink, so an uncorrected impostor would
+  // hold its brightness for ever and the deep field would never dim — the
+  // failure FarFieldDim exists to prevent. Same law, same dial: with
+  // ratio = trueRadius / spriteRadius, exact flux is ratio², and farFalloff
+  // is the exponent that compresses it (1 = physically exact, 0.08 = the
+  // default, barely dims). One fixed exposure spans 1 AU to 1e15 AU, so how
+  // hard to compress is a LOOK choice, which is why it is a setting.
+  const double spriteR = std::max(screenPx, dotR);
+  double amp;
+  if (type == 3) {
+    // Marker, not flux (see kImpostorMarkerFalloff).
+    const double ratio = screenPx / spriteR;
+    amp = kImpostorFluxNorm * kImpostorMarkerGain
+        * std::min(1.0, std::pow(ratio, 2.0 * kImpostorMarkerFalloff));
+  } else {
+    // Exact flux: radiance x solid angle. screenPx is divided back out to the
+    // reference height first, so the number is a property of the OBJECT and not
+    // of the render resolution — otherwise peak brightness would scale as
+    // height^(2*range) and the same scene would look different at 720p and 4K.
+    const double screenPxRef = screenPx / hScale;
+    const double Smax = std::max({S.x, S.y, S.z});
+    const double flux = Smax * M_PI * screenPxRef * screenPxRef;
+    // Compress the LUMINANCE only and scale all three channels by the same
+    // factor: compressing per channel would pull them together and wash the
+    // colour out of exactly the objects that are meant to be recognisable.
+    const double shaped = std::pow(flux, kImpostorRange);
+    // Unity below the pixel floor; only above it, where the sprite is the
+    // object's true size, does spreading the same light further dim it.
+    const double areaCorr = (dotR * dotR) / (spriteR * spriteR);
+    const double peak     = kImpostorGain * shaped * areaCorr;
+    amp = (peak / (1.0 + peak / kImpostorPeakMax)) / Smax;   // soft knee
+  }
+  amp *= fade * (double)impostorStrength;
+  // The core is deliberately allowed to run past 1.0 and clip. That is what a
+  // bright point source does through a real lens, and it is what feeds the
+  // bloom and the spikes; the halo they draw carries the colour outward, so the
+  // hue survives even where the centre saturates.
+
+  // ── Draw ──
+  if (!impostorProgram) {
+    GLuint vs = compileShaderFromFile("src/shaders/impostorVert.glsl", GL_VERTEX_SHADER);
+    GLuint fs = compileShaderFromFile("src/shaders/impostorFrag.glsl", GL_FRAGMENT_SHADER);
+    if (!vs || !fs) {
+      std::cerr << "[impostor] shader compile failed\n";
+      if (vs) glDeleteShader(vs);
+      if (fs) glDeleteShader(fs);
+      impostorInitFailed = true;
+      return;
+    }
+    GLuint p = glCreateProgram();
+    glAttachShader(p, vs); glAttachShader(p, fs); glLinkProgram(p);
+    GLint ok = 0; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    glDeleteShader(vs); glDeleteShader(fs);
+    if (!ok) {
+      char b[1024]; glGetProgramInfoLog(p, 1024, nullptr, b);
+      std::cerr << "[impostor] link: " << b << "\n";
+      glDeleteProgram(p);
+      impostorInitFailed = true;
+      return;
+    }
+    impostorProgram = p;
+    impLocNdc     = glGetUniformLocation(p, "uNdc");
+    impLocPointPx = glGetUniformLocation(p, "uPointPx");
+    impLocColor   = glGetUniformLocation(p, "uColor");
+    glGenVertexArrays(1, &impostorVao);
+  }
+
+  // NDC, in double. z is the real perspective depth so a nearer solid still
+  // hides the dot, but clamped just inside the far plane: sZFar is only
+  // nearestSurface x 1e5, so anything genuinely distant projects past it and
+  // would be clipped away. Clouds solve this with GL_DEPTH_CLAMP; doing the
+  // clamp arithmetically here is the same fix without the state change.
+  const double n = (double)RenderedObject::sZNear, f = (double)RenderedObject::sZFar;
+  double ndcZ = (f + n) / (f - n) - (2.0 * f * n) / ((f - n) * depth);
+  ndcZ = std::clamp(ndcZ, -1.0, 0.999999);
+  const double ndcX = vx / (tanV * aspect * depth);
+  const double ndcY = vy / (tanV * depth);
+  if (std::fabs(ndcX) > 1.05 || std::fabs(ndcY) > 1.05) return;   // off screen
+
+  GLboolean depthMask = GL_TRUE;
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+  const GLboolean blendWas = glIsEnabled(GL_BLEND);
+  const GLboolean psWas    = glIsEnabled(GL_PROGRAM_POINT_SIZE);
+
+  glUseProgram(impostorProgram);
+  glBindVertexArray(impostorVao);
+  glEnable(GL_PROGRAM_POINT_SIZE);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_ONE, GL_ONE);                 // additive: a point source adds light
+  glDepthMask(GL_FALSE);                       // never occlude anything itself
+  glUniform3f(impLocNdc, (float)ndcX, (float)ndcY, (float)ndcZ);
+  glUniform1f(impLocPointPx, (float)(2.0 * spriteR));
+  glUniform3f(impLocColor, (float)(S.x * amp), (float)(S.y * amp), (float)(S.z * amp));
+  glDrawArrays(GL_POINTS, 0, 1);
+
+  glDepthMask(depthMask);
+  if (!blendWas) glDisable(GL_BLEND);
+  if (!psWas) glDisable(GL_PROGRAM_POINT_SIZE);
+  glBindVertexArray(0);
+
+  if (std::getenv("IMPOSTOR_DEBUG"))
+    std::cerr << "[impostor] type " << type
+              << "  px(" << (ndcX + 1.0) * 0.5 * fbWidth << "," << (1.0 - ndcY) * 0.5 * fbHeight << ")"
+              << "  screenPx " << screenPx << "  sprite " << spriteR
+              << "  fade " << fade
+              << "  rgb " << (S.x * amp) << "," << (S.y * amp) << "," << (S.z * amp) << "\n";
+}
+
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                                   vec3 velocity, vec3 color) {
+  // Far stand-in FIRST, and before the nebula early-out: a nebula that has
+  // shrunk below a pixel needs one too, and DrawNebula runs in its own reduced
+  // -resolution pass which a sub-pixel volume would never survive.
+  if (!rayTracerView) DrawObjectImpostor(ro, temperature, objectType, color);
   if (ro.isNebulaVolume) return;   // drawn by DrawNebula after the clouds; never an RT solid
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere && !ro.lensSkipMesh) {

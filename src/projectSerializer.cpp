@@ -315,6 +315,7 @@ bool ProjectSerializer::Save(const std::string& path,
     s["unresolvedSize"]    = settings.unresolvedSize;
     s["resolvedCut"]       = settings.resolvedCut;
     s["gasStrength"]       = settings.gasStrength;
+    s["impostorStrength"]  = settings.impostorStrength;
     s["farFalloff"]        = settings.farFalloff;
     s["rtCloudPointCap"]   = settings.rtCloudPointCap;
     s["dustStrength"]      = settings.dustStrength;
@@ -666,6 +667,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.unresolvedSize     = s.value("unresolvedSize",     SceneSettings{}.unresolvedSize);
     st.resolvedCut        = s.value("resolvedCut",        SceneSettings{}.resolvedCut);
     st.gasStrength        = s.value("gasStrength",        0.5f);
+    st.impostorStrength   = s.value("impostorStrength",   SceneSettings{}.impostorStrength);
     st.farFalloff         = s.value("farFalloff",         SceneSettings{}.farFalloff);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
     st.dustStrength       = s.value("dustStrength",       1.0f);

@@ -366,6 +366,17 @@ public:
   GLuint normalMapHandle() const { return normalMapID; }
   GLuint nightMapHandle() const { return nightMapID; }
   float sphereRadius() const { return radius; }
+  // The lights last handed to this object, kept camera-relative exactly as the
+  // shader received them. The far impostor (Renderer::DrawObjectImpostor) has
+  // to reproduce the surface shader's own 1/dist^2 term to stay flux-continuous
+  // with it, so it must read the SAME numbers, not recompute them.
+  std::vector<vec3> litPositions;
+  std::vector<vec3> litColors;
+  // Area-weighted average of the surface texture, or {0,0,0} if untextured.
+  // The impostor's albedo: a textured planet's own `color` is normally the
+  // spawn default, because the shader never reads it.
+  vec3 meanColor{0.0f, 0.0f, 0.0f};
+  bool hasMeanColor() const { return meanColor.x > 0.0f || meanColor.y > 0.0f || meanColor.z > 0.0f; }
   bool  shadersReady() const { return program != 0; }
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);

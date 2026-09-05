@@ -201,6 +201,8 @@ struct SceneSettings {
   float unresolvedSize{45.55f};
   float resolvedCut{0.0f};
   float gasStrength{0.5f};
+  // Point-source stand-in for objects below the pixel floor (DrawObjectImpostor).
+  float impostorStrength{1.0f};
   // How hard light is compressed once an object is too small for its sprites
   // and sample count to shrink any further (see FarFieldDim). 1 = follow flux
   // exactly, which renders the deep field black; lower keeps it visible.

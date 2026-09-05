@@ -798,6 +798,7 @@ int main(int argc, char** argv) {
     renderer.unresolvedSize     = s.unresolvedSize;
     renderer.resolvedCut        = s.resolvedCut;
     renderer.gasStrength        = s.gasStrength;
+    renderer.impostorStrength   = s.impostorStrength;
     renderer.farFalloff         = s.farFalloff;
     renderer.backgroundColor    = s.backgroundColor;
     renderer.backgroundLevel    = s.backgroundLevel;
@@ -1006,6 +1007,7 @@ int main(int argc, char** argv) {
     s.unresolvedSize     = renderer.unresolvedSize;
     s.resolvedCut        = renderer.resolvedCut;
     s.gasStrength        = renderer.gasStrength;
+    s.impostorStrength   = renderer.impostorStrength;
     s.farFalloff         = renderer.farFalloff;
     s.backgroundColor    = renderer.backgroundColor;
     s.backgroundLevel    = renderer.backgroundLevel;

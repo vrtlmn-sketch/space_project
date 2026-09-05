@@ -399,6 +399,11 @@ private:
   GLuint nebulaBakeProgram{0};      // nebulaBake.glsl (compute)
   GLuint nebulaCompositeProgram{0}; // nebulaCompositeFrag.glsl (blitVert)
   GLint  nebCompLocTex{-1};
+  // ── Far object impostors (see DrawObjectImpostor) ──
+  GLuint impostorProgram{0};        // impostorVert.glsl + impostorFrag.glsl
+  GLuint impostorVao{0};            // attribute-less; core profile still needs one bound
+  GLint  impLocNdc{-1}, impLocPointPx{-1}, impLocColor{-1};
+  bool   impostorInitFailed{false}; // compile failed once — do not retry every frame
   GLuint nebFBO{0}, nebColorTex{0}, nebDepthRBO{0};
   int    nebFboW{0}, nebFboH{0};
   bool   nebPassActive{false};
@@ -730,6 +735,11 @@ public:
   float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)
   float farFalloff{0.08f};       // far-field light compression (1 = exact flux, deep field black)
+  // Brightness of the point-source stand-in a planet/star/black hole/nebula
+  // falls back to once it is too small for the rasterizer to resolve (see
+  // DrawObjectImpostor). 0 = off, which renders exactly as before the stand-in
+  // existed; 1 = the flux the object's own surface shader implies.
+  float impostorStrength{1.0f};
   float dustStrength{1.0f};     // dust extinction amount (0 = off)
   float dustInfluence{1.0f};     // world-space dust radius, set from the cloud bounds
   float dustReddening{0.72f};    // wavelength tilt (blue absorbed more than red)
@@ -936,6 +946,13 @@ public:
   // Draw a physics object with mass+temperature+objectType (+optional velocity for Doppler)
   void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                          vec3 velocity = {0,0,0}, vec3 color = {0.55f,0.25f,0.15f});
+  // Far stand-in for a solid object that has shrunk below the pixel floor.
+  // Called from DrawPhysicsObject — the ONE funnel every raster site already
+  // goes through (viewport, PiP, both record paths, the compare harness, and
+  // PhysicsObject::Update). Do not add a separate loop for it at the call
+  // sites: that is how rimOccluders and the cloud dust phase went wrong.
+  void DrawObjectImpostor(const RenderedObject& ro, float temperature,
+                          float objectType, vec3 color);
   // Upload star light positions+colours to all planet (non-star) rendered objects
   void UploadStarLights(std::vector<RenderedObject*>& planetShaders,
                         const std::vector<vec3>& positions,

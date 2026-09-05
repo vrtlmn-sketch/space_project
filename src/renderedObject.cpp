@@ -2269,6 +2269,30 @@ bool RenderedObject::loadTexture(const std::string& path)
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  // Average albedo, for the far impostor (Renderer::DrawObjectImpostor). A
+  // textured planet's `data.color` is usually still the spawn default — the
+  // surface shader reads the TEXTURE as its albedo (defaultFrag: baseColor =
+  // texture(uTexture, vTexCoord).rgb), so that is what a distant dot has to be
+  // coloured by, or Earth reads as generic brown instead of blue.
+  // Weighted by sin(theta): an equirectangular map devotes as many rows to a
+  // pole as to the equator, and an unweighted mean is dominated by ice.
+  {
+    double acc[3] = {0.0, 0.0, 0.0}, wsum = 0.0;
+    const int step = std::max(1, std::min(w, h) / 128);   // sample, do not scan 8k maps
+    for (int yy = 0; yy < h; yy += step) {
+      const double theta = (double)(yy + 0.5) / (double)h * M_PI;
+      const double wgt   = std::sin(theta);
+      for (int xx = 0; xx < w; xx += step) {
+        const unsigned char* px = data + ((size_t)yy * w + xx) * 4;
+        acc[0] += wgt * px[0]; acc[1] += wgt * px[1]; acc[2] += wgt * px[2];
+        wsum   += wgt;
+      }
+    }
+    if (wsum > 0.0)
+      meanColor = vec3{ (float)(acc[0] / wsum / 255.0),
+                        (float)(acc[1] / wsum / 255.0),
+                        (float)(acc[2] / wsum / 255.0) };
+  }
   stbi_image_free(data);
 
   hasTexture = true;
@@ -2386,6 +2410,8 @@ void RenderedObject::uploadStarLighting(const std::vector<vec3>& positions,
 {
   glUseProgram(program);
   int count = (int)std::min(positions.size(), (size_t)8);
+  litPositions.assign(positions.begin(), positions.begin() + count);
+  litColors.assign(colors.begin(), colors.begin() + std::min((size_t)count, colors.size()));
   if (lightCountUniform != (unsigned int)-1)
     glUniform1i(lightCountUniform, count);
   if (lightPositionsUniform != (unsigned int)-1 && count > 0)
