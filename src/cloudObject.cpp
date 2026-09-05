@@ -372,6 +372,46 @@ void CloudObject::dispatchAgainstTree(unsigned int sharedTree, int nodeCount,
   readbackParticlesFromGPU();
 }
 
+// Partition the simulating clouds into shared float frames. Two clouds share a
+// frame while they sit within kFrameShareRadii of each other, measured in the
+// LARGER one's radius — scale-free, so the rule means the same thing for a 3 AU
+// formation and a 1e9 AU galaxy. 1000 radii is far past any real interaction
+// and still leaves the frame's ULP ~1e-4 of a cloud radius.
+// Connected components, so a chain of clouds stays in one frame; O(n^2) on a
+// handful of simulating clouds.
+static constexpr double kFrameShareRadii = 1000.0;
+
+static std::vector<std::vector<size_t>> GroupCloudsByFrame(const std::vector<CloudObject*>& sim) {
+  const size_t n = sim.size();
+  std::vector<int> groupOf(n, -1);
+  std::vector<std::vector<size_t>> out;
+  auto reach = [&](size_t a, size_t b) {
+    const double ra = (double)sim[a]->renderedObject.rmsRadius();
+    const double rb = (double)sim[b]->renderedObject.rmsRadius();
+    return kFrameShareRadii * std::max(ra, rb);
+  };
+  for (size_t seed = 0; seed < n; ++seed) {
+    if (groupOf[seed] >= 0) continue;
+    const int g = (int)out.size();
+    groupOf[seed] = g;
+    out.push_back({seed});
+    for (size_t at = 0; at < out[g].size(); ++at) {       // grows as it absorbs
+      const size_t a = out[g][at];
+      for (size_t b = 0; b < n; ++b) {
+        if (groupOf[b] >= 0) continue;
+        const dvec3 d{sim[a]->position.x - sim[b]->position.x,
+                      sim[a]->position.y - sim[b]->position.y,
+                      sim[a]->position.z - sim[b]->position.z};
+        if (std::sqrt(d.x*d.x + d.y*d.y + d.z*d.z) < reach(a, b)) {
+          groupOf[b] = g;
+          out[g].push_back(b);
+        }
+      }
+    }
+  }
+  return out;
+}
+
 void CloudObject::SimulateSharedForward(
     std::vector<std::unique_ptr<CloudObject>>& clouds,
     const std::vector<PhysicsObjectStructure>& bigBodies,
@@ -424,31 +464,42 @@ void CloudObject::SimulateSharedForward(
   for (int r : remaining) maxRem = std::max(maxRem, r);
   if (maxRem <= 0) return;
 
-  // Shared sim frame: everything (octree, big bodies, per-cloud offsets) is
-  // expressed relative to the first simulating cloud's origin, differenced in
-  // double. A float WORLD frame at 1e15 AU resolves to ~1e8 AU — coarser than
-  // galaxy structure — so simulation far from the origin was silently garbage.
-  const dvec3 simOrigin = sim[0]->position;
-
-  // Big bodies are constant across sub-steps → upload once.
-  if (s_sharedBigBodySSBO == 0) glGenBuffers(1, &s_sharedBigBodySSBO);
-  int bbCount = (int)bigBodies.size();
-  {
-    std::vector<GPUBigBody> gpuBB(std::max(bbCount, 1));
-    for (int i = 0; i < bbCount; ++i) {
-      gpuBB[i].px   = (float)(bigBodies[i].position.x - simOrigin.x);
-      gpuBB[i].py   = (float)(bigBodies[i].position.y - simOrigin.y);
-      gpuBB[i].pz   = (float)(bigBodies[i].position.z - simOrigin.z);
-      gpuBB[i].mass = (float)bigBodies[i].mass;
+  // Sim FRAMES: clouds that are close enough share one float frame; clouds that
+  // are far apart get their own. A float frame spans about seven usable decades
+  // and this scene spans fifteen, so anchoring everything on sim[0] destroyed
+  // any cloud far from it all at once — its tree coordinates quantised to the
+  // frame's ULP (268e6 AU at 2.5e15, against a galaxy radius of 1e9), its halo
+  // centre moved with them, its big-body separations cancelled, and
+  // `pos += vel*dt` fell below the representable step so it froze solid while
+  // its velocities ran away to 1000 AU/yr.
+  //
+  // Grouping is by a MULTIPLE OF CLOUD RADIUS, so the rule reads the same for a
+  // 3 AU formation and a 1e9 AU galaxy. What separate groups give up is
+  // star-on-star gravity between them, which is the right thing to lose: a halo
+  // outweighs its stars by ~1e6, and halos stay global below.
+  // rmsRadius() is 0 until the first renderCloud has measured it — that makes
+  // reach 0, i.e. every cloud its own frame, which is the safe direction.
+  const std::vector<std::vector<size_t>> frames = GroupCloudsByFrame(sim);
+  if (std::getenv("DYN_DEBUG")) {
+    static size_t lastFrames = SIZE_MAX, lastSim = SIZE_MAX;
+    if (frames.size() != lastFrames || sim.size() != lastSim) {
+      lastFrames = frames.size(); lastSim = sim.size();
+      std::cerr << "[dyn] " << sim.size() << " simulating clouds in " << frames.size()
+                << " sim frame(s):";
+      for (const auto& f : frames) {
+        std::cerr << " {";
+        for (size_t i = 0; i < f.size(); ++i)
+          std::cerr << (i ? "," : "") << (sim[f[i]]->name.empty() ? "cloud" : sim[f[i]]->name);
+        std::cerr << "}";
+      }
+      std::cerr << "\n";
     }
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedBigBodySSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 std::max(bbCount, 1) * (GLsizeiptr)sizeof(GPUBigBody),
-                 gpuBB.data(), GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
   }
+
+  if (s_sharedBigBodySSBO == 0) glGenBuffers(1, &s_sharedBigBodySSBO);
   if (s_sharedTreeSSBO == 0) glGenBuffers(1, &s_sharedTreeSSBO);
   if (s_sharedHaloSSBO == 0) glGenBuffers(1, &s_sharedHaloSSBO);
+  const int bbCount = (int)bigBodies.size();
 
   // Sub-steps for THIS tick: the finest any still-simulating cloud needs (see
   // dynamics.h). A collapsing cloud shortens its own dynamical time under the
@@ -460,93 +511,123 @@ void CloudObject::SimulateSharedForward(
     if (remaining[k] > 0) Mframe = std::max(Mframe, std::max(1, sim[k]->dynSubsteps));
   const float subSpeed = renderer.simSpeed / (float)Mframe;
 
-  // One recorded frame per s; within it, Mframe sub-steps each rebuild the
-  // shared octree over every cloud's current particles so cross-cloud gravity
+  // One recorded frame per s; within it, Mframe sub-steps each rebuild every
+  // frame's octree over its clouds' current particles so cross-cloud gravity
   // stays in sync as they move.
   for (int s = 0; s < maxRem; ++s) {
     for (int sub = 0; sub < Mframe; ++sub) {
-      std::vector<vec3>  allPos;
-      std::vector<float> allMass;
-      // Per-cloud centre of mass in the SIM frame, accumulated as we assemble
-      // the particles, for the halo list below.
-      std::vector<dvec3>  comSum(sim.size(), dvec3{0,0,0});
-      std::vector<double> comMass(sim.size(), 0.0);
+      // Each cloud's centre of mass in its OWN local coordinates, in double.
+      // Kept frame-independent so every sim frame below can place every halo
+      // exactly, however far away that halo's cloud is.
+      std::vector<dvec3> comLocal(sim.size(), dvec3{0,0,0});
+      std::vector<bool>  comOk(sim.size(), false);
       for (size_t ci = 0; ci < sim.size(); ++ci) {
-        CloudObject* c = sim[ci];
-        const auto& ps = c->renderedObject.cloudParticles;
-        allPos.reserve(allPos.size() + ps.size());
-        allMass.reserve(allMass.size() + ps.size());
-        // Cloud origin relative to the sim frame, differenced in DOUBLE once —
-        // the per-particle add then stays small-float + small-float.
-        const vec3 off{(float)(c->position.x - simOrigin.x),
-                       (float)(c->position.y - simOrigin.y),
-                       (float)(c->position.z - simOrigin.z)};
+        const auto& ps = sim[ci]->renderedObject.cloudParticles;
+        double mx = 0, my = 0, mz = 0, mt = 0;
         for (const auto& p : ps) {
-          const vec3 wp{p.position.x + off.x, p.position.y + off.y, p.position.z + off.z};
-          allPos.push_back(wp);
-          allMass.push_back(p.mass);
-          comSum[ci].x += (double)wp.x * (double)p.mass;
-          comSum[ci].y += (double)wp.y * (double)p.mass;
-          comSum[ci].z += (double)wp.z * (double)p.mass;
-          comMass[ci]  += (double)p.mass;
+          mx += (double)p.position.x * (double)p.mass;
+          my += (double)p.position.y * (double)p.mass;
+          mz += (double)p.position.z * (double)p.mass;
+          mt += (double)p.mass;
         }
+        if (mt > 0.0) { comLocal[ci] = dvec3{mx/mt, my/mt, mz/mt}; comOk[ci] = true; }
       }
-      if (allPos.empty()) break;
 
-      // Halo list: one per simulated cloud that has a halo, centred on its LIVE
-      // centre of mass (sim frame). Every particle feels every halo, so two
-      // galaxies attract each other by their dominant (halo) mass and collide,
-      // and each cloud's halo stays centred on itself as it moves. Only built
-      // for 2+ clouds — a single cloud keeps the uniform path (uFrameOffset 0,
-      // identical to before).
-      int haloCount = 0;
-      if (sim.size() >= 2) {
-        std::vector<GPUHalo> halos;
-        halos.reserve(sim.size());
-        for (size_t ci = 0; ci < sim.size(); ++ci) {
-          const float vf = sim[ci]->renderedObject.haloVFlat;
-          // Only clouds with the halo toggle on contribute (and never a stale
-          // DM-particle cloud). Its halo is centred on the cloud's LIVE COM, so
-          // as two galaxies fall together their halo centres converge — they
-          // merge over time, by distance, with no extra particles.
-          if (!sim[ci]->useDarkMatterHalo) continue;
-          if (sim[ci]->renderedObject.dmParticleCount > 0) continue;
-          if (!(vf > 0.0f) || comMass[ci] <= 0.0) continue;
-          GPUHalo h{};
-          h.cx = (float)(comSum[ci].x / comMass[ci]);
-          h.cy = (float)(comSum[ci].y / comMass[ci]);
-          h.cz = (float)(comSum[ci].z / comMass[ci]);
-          h.vFlat = vf;
-          h.rCore = sim[ci]->renderedObject.haloRCore;
-          h.pad0  = (float)ci;   // owner id: the cloud this halo belongs to
-          halos.push_back(h);
+      for (const auto& frame : frames) {
+        // The frame's origin is its first cloud, so that cloud keeps a zero
+        // offset and a lone cloud is bit-for-bit what it was before grouping.
+        const dvec3 frameOrigin = sim[frame[0]]->position;
+
+        std::vector<vec3>  allPos;
+        std::vector<float> allMass;
+        for (size_t ci : frame) {
+          CloudObject* c = sim[ci];
+          const auto& ps = c->renderedObject.cloudParticles;
+          allPos.reserve(allPos.size() + ps.size());
+          allMass.reserve(allMass.size() + ps.size());
+          // Cloud origin relative to THIS frame, differenced in DOUBLE once —
+          // the per-particle add then stays small-float + small-float.
+          const vec3 off{(float)(c->position.x - frameOrigin.x),
+                         (float)(c->position.y - frameOrigin.y),
+                         (float)(c->position.z - frameOrigin.z)};
+          for (const auto& p : ps) {
+            allPos.push_back(vec3{p.position.x + off.x, p.position.y + off.y, p.position.z + off.z});
+            allMass.push_back(p.mass);
+          }
         }
-        haloCount = (int)halos.size();
-        if (haloCount > 0) {
-          glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedHaloSSBO);
-          glBufferData(GL_SHADER_STORAGE_BUFFER, haloCount * (GLsizeiptr)sizeof(GPUHalo),
-                       halos.data(), GL_DYNAMIC_DRAW);
+        if (allPos.empty()) continue;
+
+        // Big bodies, in this frame. Differenced in double per frame rather
+        // than uploaded once globally: a body near a distant cloud is the whole
+        // point, and in one shared frame its separation cancelled to noise.
+        {
+          std::vector<GPUBigBody> gpuBB(std::max(bbCount, 1));
+          for (int i = 0; i < bbCount; ++i) {
+            gpuBB[i].px   = (float)(bigBodies[i].position.x - frameOrigin.x);
+            gpuBB[i].py   = (float)(bigBodies[i].position.y - frameOrigin.y);
+            gpuBB[i].pz   = (float)(bigBodies[i].position.z - frameOrigin.z);
+            gpuBB[i].mass = (float)bigBodies[i].mass;
+          }
+          glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedBigBodySSBO);
+          glBufferData(GL_SHADER_STORAGE_BUFFER,
+                       std::max(bbCount, 1) * (GLsizeiptr)sizeof(GPUBigBody),
+                       gpuBB.data(), GL_DYNAMIC_DRAW);
           glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         }
-      }
 
-      vec3 zeroOffset{0.0f, 0.0f, 0.0f};
-      s_sharedOctree.build(allPos.data(), allMass.data(), (int)allPos.size(), zeroOffset);
+        // Halo list: EVERY simulating cloud's halo, not just this frame's,
+        // centred on its LIVE centre of mass and placed in this frame by a
+        // double difference. The halo pulls with a 1/d falloff and the merge
+        // boost is built on distant galaxies falling together, so splitting the
+        // frames must not split the halos. Only built for 2+ clouds — a single
+        // cloud keeps the uniform path, identical to before.
+        int haloCount = 0;
+        if (sim.size() >= 2) {
+          std::vector<GPUHalo> halos;
+          halos.reserve(sim.size());
+          for (size_t ci = 0; ci < sim.size(); ++ci) {
+            const float vf = sim[ci]->renderedObject.haloVFlat;
+            // Only clouds with the halo toggle on contribute (and never a stale
+            // DM-particle cloud).
+            if (!sim[ci]->useDarkMatterHalo) continue;
+            if (sim[ci]->renderedObject.dmParticleCount > 0) continue;
+            if (!(vf > 0.0f) || !comOk[ci]) continue;
+            GPUHalo h{};
+            h.cx = (float)((sim[ci]->position.x - frameOrigin.x) + comLocal[ci].x);
+            h.cy = (float)((sim[ci]->position.y - frameOrigin.y) + comLocal[ci].y);
+            h.cz = (float)((sim[ci]->position.z - frameOrigin.z) + comLocal[ci].z);
+            h.vFlat = vf;
+            h.rCore = sim[ci]->renderedObject.haloRCore;
+            h.pad0  = (float)ci;   // owner id: the cloud this halo belongs to
+            halos.push_back(h);
+          }
+          haloCount = (int)halos.size();
+          if (haloCount > 0) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedHaloSSBO);
+            glBufferData(GL_SHADER_STORAGE_BUFFER, haloCount * (GLsizeiptr)sizeof(GPUHalo),
+                         halos.data(), GL_DYNAMIC_DRAW);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+          }
+        }
 
-      const auto& nodes = s_sharedOctree.nodes();
-      int nodeCount = (int)nodes.size();
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedTreeSSBO);
-      glBufferData(GL_SHADER_STORAGE_BUFFER, nodeCount * (GLsizeiptr)sizeof(OctreeNodeGPU),
-                   nodes.data(), GL_DYNAMIC_DRAW);
-      glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        vec3 zeroOffset{0.0f, 0.0f, 0.0f};
+        s_sharedOctree.build(allPos.data(), allMass.data(), (int)allPos.size(), zeroOffset);
 
-      for (size_t k = 0; k < sim.size(); ++k) {
-        if (s >= remaining[k]) continue;   // this cloud already finished its steps
-        sim[k]->dispatchAgainstTree(s_sharedTreeSSBO, nodeCount,
-                                    s_sharedBigBodySSBO, bbCount,
-                                    s_sharedHaloSSBO, haloCount,
-                                    (int)k, renderer.haloMergeStrength, subSpeed,
-                                    simOrigin);
+        const auto& nodes = s_sharedOctree.nodes();
+        int nodeCount = (int)nodes.size();
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, s_sharedTreeSSBO);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, nodeCount * (GLsizeiptr)sizeof(OctreeNodeGPU),
+                     nodes.data(), GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+        for (size_t k : frame) {
+          if (s >= remaining[k]) continue;   // this cloud already finished its steps
+          sim[k]->dispatchAgainstTree(s_sharedTreeSSBO, nodeCount,
+                                      s_sharedBigBodySSBO, bbCount,
+                                      s_sharedHaloSSBO, haloCount,
+                                      (int)k, renderer.haloMergeStrength, subSpeed,
+                                      frameOrigin);
+        }
       }
     }
 
