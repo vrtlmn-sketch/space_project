@@ -2600,10 +2600,14 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
   bool relative = (meshType == MeshType::sphere || meshType == MeshType::grid ||
                    meshType == MeshType::plane  || meshType == MeshType::cloud);
 
+  // The large part is differenced against the anchor FIRST, then the exact
+  // local offset is added — the whole point of the split. Adding them the
+  // other way round would round the sum before the subtraction and throw the
+  // precision away again.
   double relPosD[3] = {
-    (coordinates.x - gCamAnchor[0]) + cameraTranslate[0],
-    (coordinates.y - gCamAnchor[1]) + cameraTranslate[1],
-    (coordinates.z - gCamAnchor[2]) + cameraTranslate[2]
+    (coordinates.x - gCamAnchor[0]) + cameraTranslate[0] + localOffset.x,
+    (coordinates.y - gCamAnchor[1]) + cameraTranslate[1] + localOffset.y,
+    (coordinates.z - gCamAnchor[2]) + cameraTranslate[2] + localOffset.z
   };
   float relPos[3] = { (float)relPosD[0], (float)relPosD[1], (float)relPosD[2] };
   float absPos[3] = { (float)coordinates.x, (float)coordinates.y, (float)coordinates.z };

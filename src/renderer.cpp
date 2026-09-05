@@ -651,10 +651,12 @@ void Renderer::DrawSkybox(RenderedObject& ro) {
 }
 
 void Renderer::DrawAtmosphere(PhysicsObject& obj) {
+  if (obj.inertSlot()) return;
   if (rayTracerView) return;
   if (!obj.atmosphereEnabled || obj.shaderType != ObjectType::Planet) return;
   obj.EnsureAtmosphere(activeSizeExag());
   obj.atmosphereObject.coordinates = obj.data.position;
+  obj.atmosphereObject.localOffset = obj.localOffset;
   float r = obj.renderRadius() * activeSizeExag();
   obj.atmosphereObject.renderAtmosphere(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight,
                                         r, r * (1.0f + obj.atmosphereHeight),
@@ -931,10 +933,12 @@ static GLuint makeFgBuf(int w, int h) {
 }
 
 void Renderer::DrawRings(PhysicsObject& obj) {
+  if (obj.inertSlot()) return;
   if (rayTracerView) return;
   if (obj.shaderType != ObjectType::Planet || !obj.hasVisibleRings()) return;
   obj.EnsureRingMesh();
   obj.ringMesh.coordinates = obj.data.position;
+  obj.ringMesh.localOffset = obj.localOffset;
   const float r = obj.renderRadius() * activeSizeExag();
   int drawn = 0;
   for (const auto& rg : obj.rings) {
@@ -1198,9 +1202,9 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   // Camera-relative in DOUBLE (CLAUDE.md, "Large-world coordinates"): at 1e15 AU
   // a float view-space position resolves to ~1e8 AU, so the whole projection is
   // done here and the shader is handed a finished NDC coordinate.
-  const double rx = (ro.coordinates.x - gCamAnchor[0]) + cameraTranslate[0];
-  const double ry = (ro.coordinates.y - gCamAnchor[1]) + cameraTranslate[1];
-  const double rz = (ro.coordinates.z - gCamAnchor[2]) + cameraTranslate[2];
+  const double rx = (ro.coordinates.x - gCamAnchor[0]) + cameraTranslate[0] + ro.localOffset.x;
+  const double ry = (ro.coordinates.y - gCamAnchor[1]) + cameraTranslate[1] + ro.localOffset.y;
+  const double rz = (ro.coordinates.z - gCamAnchor[2]) + cameraTranslate[2] + ro.localOffset.z;
   const double vx = camMatrix[0]*rx + camMatrix[1]*ry + camMatrix[2]*rz;
   const double vy = camMatrix[3]*rx + camMatrix[4]*ry + camMatrix[5]*rz;
   const double vz = camMatrix[6]*rx + camMatrix[7]*ry + camMatrix[8]*rz;
@@ -1414,6 +1418,7 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
 
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                                   vec3 velocity, vec3 color) {
+  if (ro.inert) return;            // an unassigned universe-content slot
   // Far stand-in FIRST, and before the nebula early-out: a nebula that has
   // shrunk below a pixel needs one too, and DrawNebula runs in its own reduced
   // -resolution pass which a sub-pixel volume would never survive.
@@ -2510,9 +2515,11 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
   };
   {
     for (auto& o : physicsObjects) {
-      double dx = (o.data.position.x - gCamAnchor[0]) + cameraTranslate[0];
-      double dy = (o.data.position.y - gCamAnchor[1]) + cameraTranslate[1];
-      double dz = (o.data.position.z - gCamAnchor[2]) + cameraTranslate[2];
+      if (o.inertSlot()) continue;
+      // Frame origin differenced first, exact offset added after.
+      double dx = (o.data.position.x - gCamAnchor[0]) + cameraTranslate[0] + o.localOffset.x;
+      double dy = (o.data.position.y - gCamAnchor[1]) + cameraTranslate[1] + o.localOffset.y;
+      double dz = (o.data.position.z - gCamAnchor[2]) + cameraTranslate[2] + o.localOffset.z;
       const double orad = (double)(o.renderRadius() * activeSizeExag());
       double d  = std::sqrt(dx*dx + dy*dy + dz*dz) - orad;
       if (d < nearestSurface) { nearestSurface = d; nearestIsField = false; }
@@ -2575,7 +2582,7 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
   int camSel = SelectedCameraIndex();
   int cloudSel = (selectedIdx <= -2 && selectedIdx > -kCameraSelBase) ? -(selectedIdx + 2) : -1;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
-    focusFrom(physicsObjects[selectedIdx].data.position);
+    focusFrom(physicsObjects[selectedIdx].truePosition());
   } else if (camSel >= 0 && camSel < (int)sceneCameras.size()) {
     focusFrom(sceneCameras[camSel].position);
   } else if (cloudSel >= 0 && cloudSel < (int)clouds.size()) {
@@ -2960,7 +2967,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
   SceneCamera*   selCam = nullptr;
   if (selectedIdx >= 0 && selectedIdx < (int)physicsObjects.size()) {
     selObj = &physicsObjects[selectedIdx];
-    pos = selObj->data.position;
+    pos = selObj->truePosition();
     rotPtr = &selObj->rotationDeg;
     haveTarget = true;
   } else if (selectedIdx <= -kCameraSelBase) {
@@ -2983,7 +2990,14 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
   // Write a new centre position back to whichever target is selected
   auto writePos = [&](const dvec3& p) {
     pos = p;
-    if (selObj) { selObj->data.position = p; selObj->renderedObject.coordinates = p; }
+    if (selObj) {
+      // Shift the frame ORIGIN so truePosition() becomes p; the local offset —
+      // a planet's position in its system — is preserved, not flattened away.
+      selObj->data.position = dvec3{p.x - selObj->localOffset.x,
+                                    p.y - selObj->localOffset.y,
+                                    p.z - selObj->localOffset.z};
+      selObj->renderedObject.coordinates = selObj->data.position;
+    }
     else if (selCloud) { selCloud->position = p; }
     else if (selCam) { selCam->position = p; }
   };
@@ -3206,14 +3220,15 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
         // Viewport feedback: ring the object this row refers to (find-my-thing).
         if (hObj) {
           float sx, sy;
-          if (WorldToScreen(hObj->data.position, sx, sy)) {
+          if (WorldToScreen(hObj->truePosition(), sx, sy)) {
             float effR = hObj->renderRadius() * activeSizeExag();
             if (hObj->shaderType == ObjectType::BlackHole)
               effR = std::max(effR, hObj->schwarzschildRadius * 2.6f);
             float projR = 8.0f, esx, esy;
-            if (WorldToScreen({hObj->data.position.x + camMatrix[0]*effR,
-                               hObj->data.position.y + camMatrix[1]*effR,
-                               hObj->data.position.z + camMatrix[2]*effR}, esx, esy)) {
+            const dvec3 hp = hObj->truePosition();
+            if (WorldToScreen({hp.x + camMatrix[0]*effR,
+                               hp.y + camMatrix[1]*effR,
+                               hp.z + camMatrix[2]*effR}, esx, esy)) {
               float ddx = esx - sx, ddy = esy - sy;
               projR = std::max(std::sqrt(ddx*ddx + ddy*ddy), 8.0f);
             }
@@ -3246,7 +3261,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
               float effR = hObj->renderRadius() * activeSizeExag();
               if (hObj->shaderType == ObjectType::BlackHole)
                 effR = std::max(effR, hObj->schwarzschildRadius * 2.6f);
-              LocateCamera(hObj->data.position, effR);
+              LocateCamera(hObj->truePosition(), effR);
             } else {
               dvec3 cen; double rad = 1.0;
               hCloud->boundsEstimate(cen, rad);
@@ -3302,8 +3317,9 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
     int   bestIdx  = -1;
     float bestDist = 30.0f * 30.0f;  // 30 px pick radius
     for (int i = 0; i < (int)physicsObjects.size(); ++i) {
+      if (physicsObjects[i].inertSlot()) continue;   // a free content slot is not pickable
       float sx, sy;
-      if (WorldToScreen(physicsObjects[i].data.position, sx, sy)) {
+      if (WorldToScreen(physicsObjects[i].truePosition(), sx, sy)) {
         float dx = mx - sx, dy = my - sy;
         float d2 = dx*dx + dy*dy;
         if (d2 < bestDist) { bestDist = d2; bestIdx = i; }
@@ -5253,6 +5269,47 @@ void Renderer::DrawUniversePanel() {
       ImGui::RadioButton("Custom laws##up", &U.physicalModel, 2); todo();
 
       ImGui::Spacing();
+      ImGui::Text("Galaxy contents");
+      ImGui::Checkbox("Central black holes##uc", &U.centralBlackHoles);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A supermassive hole at each galaxy's centre, sized from its own\n"
+                          "rotation curve (M-sigma). Gives every galaxy something you can\n"
+                          "select and fly to.");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##unneb", &U.nebulaePerGalaxy, 0, 8, "Nebulae per galaxy %d");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##unsys", &U.systemsPerGalaxy, 0, 8, "Star systems per galaxy %d");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##unpl",  &U.planetsPerSystem, 0, 12, "Planets per system %d");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A star and its planets share one coordinate frame, so their\n"
+                          "orbits stay exact however far out the system is. Fly into a\n"
+                          "galaxy to find them - a system is only worth real objects when\n"
+                          "you are close to it.");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##unlive", &U.liveObjectBudget, 0, 512, "Live at once %d");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##unres", &U.nebulaVolumeRes, 16, 128, "Nebula detail %d");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Baked volume per generated nebula. Out here they are tens of\n"
+                          "pixels across, so this is mostly a VRAM dial: %.1f MB each,\n"
+                          "%.0f MB if the budget filled with nebulae.",
+                          std::pow((double)U.nebulaVolumeRes,3.0)*8.0/1e6,
+                          std::pow((double)U.nebulaVolumeRes,3.0)*8.0/1e6*U.liveObjectBudget);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Contents are generated from each galaxy's seed and cost nothing\n"
+                          "until they are near enough to draw. This caps how many exist as\n"
+                          "real objects at any moment - the nearest galaxies win.\n"
+                          "About %.0f MB at this setting.", U.liveObjectBudget * 0.192);
+      {
+        const int per = (U.centralBlackHoles ? 1 : 0) + U.nebulaePerGalaxy
+                      + U.systemsPerGalaxy * (1 + U.planetsPerSystem);
+        ImGui::TextDisabled("%d galaxies x %d = %.3g bodies described, %d real at once",
+                            universeGalaxyCount, per,
+                            (double)universeGalaxyCount * per, U.liveObjectBudget);
+      }
+
+      ImGui::Spacing();
       ImGui::Text("Generation depth");
       const char* depth[] = { "Full", "Dynamic", "On demand", "Off" };
       ImGui::SetNextItemWidth(-1); ImGui::Combo("##udg", &U.depthGalaxies, depth, IM_ARRAYSIZE(depth));
@@ -5600,12 +5657,16 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
   // it stays outside and is unaffected (see docs/universe.md).
   int universeCount = 0;
   for (const auto& cl : clouds) if (cl && cl->universeMember) ++universeCount;
+  // Generated bodies (black holes, nebulae) belong to the universe that made
+  // them, so they are listed UNDER it, not loose among the user's objects.
+  int universeBodies = 0;
+  for (const auto& o : physicsObjects) if (o.isUniverseSlot() && o.uniActive) ++universeBodies;
   bool universeOpen = false;
   if (universeCount > 0) {
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.14f, 0.10f, 0.24f, 1.f));
     universeOpen = ImGui::TreeNodeEx("##universeNode",
                        ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                       "[U] Universe  (%d galaxies)", universeCount);
+                       "[U] Universe  (%d galaxies, %d bodies)", universeCount, universeBodies);
     ImGui::PopStyleColor();
     // Drop a cloud row here to make it a universe member. Membership is a tag,
     // not a transform parent (the universe IS the coordinate space), so joining
@@ -5640,8 +5701,8 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     const RenderedObject& cro = clouds[i]->renderedObject;
     int shownCount = cro.isGalaxy ? cro.galaxyFullStars : clouds[i]->particleCount();
     if (!clouds[i]->name.empty())
-      snprintf(cloudLabel, sizeof(cloudLabel), "[~] %s  (%d)##cloud%d",
-               clouds[i]->name.c_str(), shownCount, i);
+      snprintf(cloudLabel, sizeof(cloudLabel), "%s %s  (%d)##cloud%d",
+               cro.isGalaxy ? "[G]" : "[~]", clouds[i]->name.c_str(), shownCount, i);
     else
       snprintf(cloudLabel, sizeof(cloudLabel), "[~] Cloud %d  (%d)##cloud%d",
                i, shownCount, i);
@@ -5683,10 +5744,125 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     ImGui::PopStyleColor();
     if (inUniverse) ImGui::Unindent(14.0f);
   };
-  if (universeOpen)
-    for (int i = 0; i < (int)clouds.size(); i++)
-      if (clouds[i] && clouds[i]->universeMember) drawCloudRow(i);
-  if (universeOpen) ImGui::TreePop();
+  if (universeOpen) {
+    // ── Universe > galaxy > bodies ────────────────────────────────────────────
+    // The galaxy is the container: its black hole, nebulae, stars and planets
+    // are all SIBLINGS under it. Planets used to nest under their star, which
+    // read as ownership they do not have - a planet belongs to the galaxy the
+    // same way its star does. One level, one rule, and every row means the
+    // same thing wherever it appears.
+    static const char* kFilter[] = { "everything", "galaxies", "black holes",
+                                     "stars", "planets", "nebulae" };
+    static const char* kSort[]   = { "nearest", "kind", "name", "size" };
+    ImGui::Indent(14.0f);
+    ImGui::TextDisabled("show"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(104.0f);
+    ImGui::Combo("##unifilter", &uniFilterMode, kFilter, IM_ARRAYSIZE(kFilter));
+    ImGui::SameLine(); ImGui::TextDisabled("sort"); ImGui::SameLine();
+    ImGui::SetNextItemWidth(86.0f);
+    ImGui::Combo("##unisort", &uniSortMode, kSort, IM_ARRAYSIZE(kSort));
+    ImGui::Unindent(14.0f);
+
+    auto camDist2 = [&](const dvec3& p, const dvec3& off) {
+      const double x = (p.x - gCamAnchor[0]) + cameraTranslate[0] + off.x;
+      const double y = (p.y - gCamAnchor[1]) + cameraTranslate[1] + off.y;
+      const double z = (p.z - gCamAnchor[2]) + cameraTranslate[2] + off.z;
+      return x*x + y*y + z*z;
+    };
+    auto bodyKind = [&](const PhysicsObject& o) {          // 1 hole, 2 star, 3 planet, 4 nebula
+      switch (o.shaderType) {
+        case ObjectType::BlackHole: return 1;
+        case ObjectType::Star:      return 2;
+        case ObjectType::Nebula:    return 4;
+        default:                    return 3;
+      }
+    };
+    auto passes = [&](int kind) { return uniFilterMode == 0 || (uniFilterMode - 1) == kind; };
+
+    // Which galaxies to show, and which of their bodies.
+    struct GalRow { int cloud; double d2; std::vector<int> bodies; };
+    static std::vector<GalRow> rows; rows.clear();
+    static std::vector<int> cloudOfGal; cloudOfGal.clear();
+    for (int i = 0; i < (int)clouds.size(); i++) {
+      if (!clouds[i] || !clouds[i]->universeMember) continue;
+      rows.push_back({i, camDist2(clouds[i]->position, dvec3{0,0,0}), {}});
+    }
+    for (int i = 0; i < (int)physicsObjects.size(); i++) {
+      const PhysicsObject& o = physicsObjects[i];
+      if (!o.isUniverseSlot() || !o.uniActive) continue;
+      if (!passes(bodyKind(o))) continue;
+      for (auto& r : rows)
+        if (clouds[r.cloud]->uniIndex == o.uniGalaxy &&
+            clouds[r.cloud]->uniRecord == o.uniRecord) { r.bodies.push_back(i); break; }
+    }
+    // Showing 2000 empty galaxy rows when you asked for planets is noise: with a
+    // body filter on, only galaxies that actually have some are listed.
+    const bool bodiesOnly = (uniFilterMode >= 2);
+    std::sort(rows.begin(), rows.end(), [&](const GalRow& a, const GalRow& b) {
+      switch (uniSortMode) {
+        case 2:  return clouds[a.cloud]->name < clouds[b.cloud]->name;
+        case 3:  return clouds[a.cloud]->renderedObject.galaxyDesc.radius >
+                        clouds[b.cloud]->renderedObject.galaxyDesc.radius;
+        default: return a.d2 < b.d2;      // "kind" has no meaning between galaxies
+      }
+    });
+
+    auto bodyRow = [&](int i) {
+      const PhysicsObject& o = physicsObjects[i];
+      const char* icon = (o.shaderType == ObjectType::Star)      ? "[*]"
+                       : (o.shaderType == ObjectType::BlackHole) ? "[O]"
+                       : (o.shaderType == ObjectType::Nebula)    ? "[~]" : "[o]";
+      ImVec4 col = (o.shaderType == ObjectType::Star)
+                 ? ImVec4(0.25f, 0.16f, 0.04f, 1.f)
+                 : (o.shaderType == ObjectType::BlackHole)
+                 ? ImVec4(0.12f, 0.06f, 0.18f, 1.f)
+                 : (o.shaderType == ObjectType::Nebula)
+                 ? ImVec4(0.16f, 0.06f, 0.20f, 1.f)
+                 : ImVec4(0.08f, 0.14f, 0.26f, 1.f);
+      ImGui::Indent(28.0f);
+      char lbl[160];
+      snprintf(lbl, sizeof(lbl), "%s %s##ub%d", icon, o.name.c_str(), i);
+      ImGui::PushStyleColor(ImGuiCol_Header, col);
+      if (ImGui::Selectable(lbl, selectedIdx == i)) { selectedIdx = i; focusInspectorNext = true; }
+      ImGui::PopStyleColor();
+      if (ImGui::IsItemHovered()) {
+        if (hoverIdx != i) { hoverIdx = i; hoverStartTime = ImGui::GetTime(); }
+        hoverLastSeen = ImGui::GetTime();
+        hoverRowY     = ImGui::GetItemRectMin().y;
+        ImGui::SetTooltip("%s\n%s away", o.name.c_str(),
+            units::FormatDistanceAU(std::sqrt(camDist2(o.data.position, o.localOffset))).c_str());
+      }
+      ImGui::Unindent(28.0f);
+    };
+
+    int shownGal = 0;
+    for (auto& r : rows) {
+      if (bodiesOnly && r.bodies.empty()) continue;
+      ++shownGal;
+      drawCloudRow(r.cloud);
+      if (r.bodies.empty()) continue;
+      std::stable_sort(r.bodies.begin(), r.bodies.end(), [&](int a, int b) {
+        const PhysicsObject& oa = physicsObjects[a];
+        const PhysicsObject& ob = physicsObjects[b];
+        switch (uniSortMode) {
+          case 1:  return bodyKind(oa) != bodyKind(ob) ? bodyKind(oa) < bodyKind(ob)
+                          : camDist2(oa.data.position, oa.localOffset) <
+                            camDist2(ob.data.position, ob.localOffset);
+          case 2:  return oa.name < ob.name;
+          case 3:  return oa.visualRadius > ob.visualRadius;
+          default: return camDist2(oa.data.position, oa.localOffset) <
+                          camDist2(ob.data.position, ob.localOffset);
+        }
+      });
+      for (int i : r.bodies) bodyRow(i);
+    }
+    if (shownGal == 0) {
+      ImGui::Indent(14.0f);
+      ImGui::TextDisabled("nothing of that kind nearby");
+      ImGui::Unindent(14.0f);
+    }
+    ImGui::TreePop();
+  }
   for (int i = 0; i < (int)clouds.size(); i++)
     if (clouds[i] && !clouds[i]->universeMember) drawCloudRow(i);
 
@@ -5708,6 +5884,10 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
   // Object list
   for (int i = 0; i < (int)physicsObjects.size(); i++) {
     auto& obj = physicsObjects[i];
+    // Generated bodies are listed under the [U] node above, with the universe
+    // that made them — never loose among the user's own objects. (They are
+    // still ordinary objects: selectable, flyable, inspectable.)
+    if (obj.isUniverseSlot()) continue;
     const char* icon = (obj.shaderType == ObjectType::Star) ? "[*]"
                      : (obj.shaderType == ObjectType::BlackHole) ? "[O]"
                      : (obj.shaderType == ObjectType::FreeModel) ? "[M]" : "[ ]";
@@ -5849,7 +6029,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       float effR = obj.renderRadius() * activeSizeExag();
       if (obj.shaderType == ObjectType::BlackHole)
         effR = std::max(effR, obj.schwarzschildRadius * 2.6f); // shadow size
-      LocateCamera(obj.data.position, effR);
+      LocateCamera(obj.truePosition(), effR);
     }
     if (ImGui::Button("Bring to me##obring", ImVec2(-1, 0))) {
       BringToCamera(&obj, nullptr);
@@ -5858,16 +6038,23 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     // Position (AU)
     ImGui::Text("Position (AU)");
     ImGui::SetNextItemWidth(-1);
-    double p[3] = { obj.data.position.x, obj.data.position.y, obj.data.position.z };
+    const dvec3 tp_ = obj.truePosition();
+    double p[3] = { tp_.x, tp_.y, tp_.z };
     // While the gizmo drags, give the widget a fresh ID each frame so it can
     // never hold stale edit state — the display then always tracks the gizmo.
     if (gizmoDragging) ImGui::PushID(ImGui::GetFrameCount());
     if (ImGui::DragScalarN("##ipos", ImGuiDataType_Double, p, 3, 0.005f,
                            nullptr, nullptr, "%.4g")) {
-      obj.data.position.x = p[0]; obj.data.position.y = p[1]; obj.data.position.z = p[2];
+      // The field shows the BODY, so a typed value moves the frame origin to
+      // put the body there — the local offset (a planet's place in its system)
+      // is kept, not folded into the origin.
+      obj.data.position.x = p[0] - obj.localOffset.x;
+      obj.data.position.y = p[1] - obj.localOffset.y;
+      obj.data.position.z = p[2] - obj.localOffset.z;
     }
     if (gizmoDragging) ImGui::PopID();
     obj.renderedObject.coordinates = obj.data.position;
+    obj.renderedObject.localOffset = obj.localOffset;
 
     // Velocity (AU/yr)
     ImGui::Text("Velocity (AU/yr)");
@@ -6881,7 +7068,10 @@ void Renderer::DrawCloudHighlight(CloudObject& c) {
 }
 
 void Renderer::DrawObjectHighlight(PhysicsObject& obj) {
-  dvec3 pos = obj.data.position;
+  // The BODY, not its frame origin: a planet's origin is its star, so reading
+  // data.position drew the planet's name and selection ring on top of the star
+  // and reported the distance to the star.
+  dvec3 pos = obj.truePosition();
   float bx, by;
   if (!WorldToScreen(pos, bx, by)) return;
 
@@ -6947,8 +7137,12 @@ void Renderer::BringToCamera(PhysicsObject* obj, CloudObject* cloud) {
     if (obj->shaderType == ObjectType::BlackHole)
       effR = std::max(effR, obj->schwarzschildRadius * 2.6f);
     const dvec3 p = CameraFramingPosition(effR);
-    obj->data.position = p;
-    obj->renderedObject.coordinates = p;
+    // Frame the BODY: move its origin so truePosition() lands at p, keeping the
+    // local offset (a planet keeps its place in its system).
+    obj->data.position = dvec3{p.x - obj->localOffset.x,
+                               p.y - obj->localOffset.y,
+                               p.z - obj->localOffset.z};
+    obj->renderedObject.coordinates = obj->data.position;
     ClampNearPlaneFor(effR);
   } else if (cloud) {
     // A cloud's origin is not necessarily its visual centre, so frame the

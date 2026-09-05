@@ -111,6 +111,9 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
                            const std::vector<PhysicsObjectStructure>& cloudSources,
                            Renderer& renderer)
 {
+  // A free slot in the universe content pool: no physics, no trail, no draw.
+  // One early-out here covers every site that calls Update.
+  if (inertSlot()) return;
   if(!simulatePhysics)
   {
     // Keyframe-driven: animate from the timeline instead of gravity. Only apply
@@ -228,6 +231,7 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
     }
   }
   renderedObject.coordinates = data.position;
+  renderedObject.localOffset = localOffset;
   renderedObject.rotationDeg = rotationDeg;
   renderedObject.normalStrength = normalMapStrength;
   renderedObject.nightStrength  = nightMapStrength;

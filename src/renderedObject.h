@@ -476,6 +476,34 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   }
   // ── Nebula volume (ObjectType::Nebula, nebulaFrag.glsl): set by
   //    PhysicsObject::SyncNebulaToRender. renderMesh ray-marches when set. ──
+  // ── Per-object local frame ───────────────────────────────────────────────
+  // `coordinates` is the FRAME ORIGIN and this is an exact small offset inside
+  // it; the true position is their sum. Zero for everything the user makes, so
+  // that path is unchanged.
+  //
+  // It exists because one absolute double cannot hold a planet at cosmological
+  // distance: at 46 Gly a double's step is 0.5 AU — 75 million km — so a planet
+  // orbiting at 1 AU would have two positions in its whole orbit. Splitting it
+  // means the system's ORIGIN carries the half-AU error (the entire system sits
+  // half an AU from where the seed said, which nothing can tell) while the
+  // planet's position inside it stays exact. Same trick gCamAnchor already uses
+  // on the camera, one level down.
+  //
+  // Every world->camera difference for a framed object is therefore
+  // (coordinates - gCamAnchor) + cameraTranslate + localOffset.
+  dvec3 localOffset{0.0, 0.0, 0.0};
+  dvec3 truePosition() const {
+    return dvec3{coordinates.x + localOffset.x,
+                 coordinates.y + localOffset.y,
+                 coordinates.z + localOffset.z};
+  }
+
+  // A free slot in the universe content pool: drawn by nothing. Checked in
+  // Renderer::DrawPhysicsObject, which is the ONE funnel every raster and RT
+  // site already goes through — guarding the eighteen loops over
+  // physicsObjects individually is how rimOccluders and the cloud dust phase
+  // rotted.
+  bool  inert{false};
   bool  isNebulaVolume{false};
   float nebEmission{1.0f}, nebExcitation{0.25f}, nebDust{0.6f}, nebDetail{1.0f}, nebDensity{1.0f};
   int   nebPalette{1}, nebSteps{40};

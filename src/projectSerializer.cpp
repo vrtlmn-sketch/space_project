@@ -88,6 +88,11 @@ bool ProjectSerializer::Save(const std::string& path,
   // ── Physics objects ──
   json objsArr = json::array();
   for (const auto& obj : physicsObjects) {
+    // Universe-generated content is a pure function of the universe's seed, so
+    // it is regenerated on load and never written. That is what keeps a
+    // universe shareable as a few bytes however much is inside it, and it is
+    // the same rule the generated galaxies already follow.
+    if (obj.isUniverseSlot()) continue;
     json o;
     o["name"]        = obj.name;
     o["mass"]        = obj.data.mass;
@@ -248,6 +253,12 @@ bool ProjectSerializer::Save(const std::string& path,
         {"popSpiral",      u.popSpiral},
         {"popElliptical",  u.popElliptical},
         {"popIrregular",   u.popIrregular},
+        {"centralBlackHoles", u.centralBlackHoles},
+        {"nebulaePerGalaxy",  u.nebulaePerGalaxy},
+        {"systemsPerGalaxy",  u.systemsPerGalaxy},
+        {"planetsPerSystem",  u.planetsPerSystem},
+        {"nebulaVolumeRes",   u.nebulaVolumeRes},
+        {"liveObjectBudget",  u.liveObjectBudget},
         {"overrides",      ovArr}
       });
     }
@@ -566,6 +577,19 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       rec.popSpiral      = u.value("popSpiral",      0.58f);
       rec.popElliptical  = u.value("popElliptical",  0.27f);
       rec.popIrregular   = u.value("popIrregular",   0.15f);
+      // A universe SAVED BEFORE contents existed has none. Its keys are absent,
+      // and absent must mean OFF here — not the struct default — or every
+      // existing project silently grows black holes and nebulae it never had.
+      // Same split as keyframe smoothing: the loader's fallback and the
+      // struct's default are deliberately DIFFERENT numbers, because one
+      // answers "what did this file mean" and the other "what should a new one
+      // be". Do not unify them.
+      rec.centralBlackHoles = u.value("centralBlackHoles", false);
+      rec.nebulaePerGalaxy  = u.value("nebulaePerGalaxy",  0);
+      rec.systemsPerGalaxy  = u.value("systemsPerGalaxy",  0);
+      rec.planetsPerSystem  = u.value("planetsPerSystem",  UniverseRecord{}.planetsPerSystem);
+      rec.nebulaVolumeRes   = u.value("nebulaVolumeRes",   UniverseRecord{}.nebulaVolumeRes);
+      rec.liveObjectBudget  = u.value("liveObjectBudget",  UniverseRecord{}.liveObjectBudget);
       if (u.contains("overrides") && u["overrides"].is_array()) {
         for (const auto& o : u["overrides"]) {
           UniverseOverride ov;

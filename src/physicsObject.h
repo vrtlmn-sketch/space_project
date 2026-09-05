@@ -108,6 +108,32 @@ public:
   float temperature{0.0f}; // Kelvin — 0 for planets; e.g. 5778 for Sun
   vec3  rotationDeg{0.0f, 0.0f, 0.0f}; // object orientation (Euler X/Y/Z degrees)
 
+  // Exact offset inside this body's local frame; data.position is the frame
+  // ORIGIN and the true position is their sum. Zero for user objects. See
+  // RenderedObject::localOffset for why a planet needs this at all.
+  dvec3 localOffset{0.0, 0.0, 0.0};
+  dvec3 truePosition() const {
+    return dvec3{data.position.x + localOffset.x,
+                 data.position.y + localOffset.y,
+                 data.position.z + localOffset.z};
+  }
+
+  // ── Universe-generated content (see UpdateUniverseContents in main.cpp) ──
+  // These live in a POOL that is allocated once and recycled IN PLACE as you
+  // fly, never erased. That is deliberate and mirrors how a galaxy promotes:
+  // CloudObject swaps its representation in place and the clouds vector never
+  // changes size. Erasing instead would leak GL handles (deleteObject releases
+  // none) and shift every later index under selectedIdx, hoverIdx, dynParent
+  // and friends. A slot with uniRecord >= 0 is generated, not the user's; one
+  // that is generated and not active is a free slot that every pass skips.
+  int   uniRecord{-1};        // universe record that owns it; -1 = a user object
+  int   uniGalaxy{-1};        // generation index of the galaxy it belongs to
+  int   uniContent{-1};       // which of that galaxy's contents it is
+  int   uniParent{-1};        // content index of its star (planets), else -1
+  bool  uniActive{false};
+  bool  isUniverseSlot() const { return uniRecord >= 0; }
+  bool  inertSlot()      const { return uniRecord >= 0 && !uniActive; }
+
   // When false, the body is not gravity-simulated; its transform is driven by
   // timeline keyframes instead (position + rotationDeg animated on playback).
   bool  simulatePhysics{true};

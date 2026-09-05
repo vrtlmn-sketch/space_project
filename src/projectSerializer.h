@@ -122,10 +122,18 @@ struct UniverseOverride {
 struct UniverseRecord {
   unsigned int seed{82947291u};
   float radiusGly{46.0f};
-  int   galaxyCount{200};
-  int   starsPerGalaxy{50000};
+  int   galaxyCount{2000};
+  int   starsPerGalaxy{15000};
   float clustering{1.0f};
   float popSpiral{0.58f}, popElliptical{0.27f}, popIrregular{0.15f};
+  // What each galaxy contains besides stars, and how many of those may be real
+  // objects at once (see UpdateUniverseContents).
+  bool  centralBlackHoles{true};
+  int   nebulaePerGalaxy{2};
+  int   systemsPerGalaxy{3};
+  int   planetsPerSystem{4};
+  int   nebulaVolumeRes{48};
+  int   liveObjectBudget{256};
   std::vector<UniverseOverride> overrides;
 };
 

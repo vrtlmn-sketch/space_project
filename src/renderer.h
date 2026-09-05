@@ -111,6 +111,12 @@ struct UniverseFormState {
   float radiusGly     = 46.0f;
   float cosmicWeb = 1.0f, clustering = 1.0f, voidSize = 1.0f, galaxyDensity = 1.0f;
   float popSpiral = 0.58f, popElliptical = 0.27f, popIrregular = 0.15f;
+  bool  centralBlackHoles = true;   // a supermassive hole at each galaxy's centre
+  int   nebulaePerGalaxy  = 2;
+  int   systemsPerGalaxy  = 3;   // notable star systems per galaxy
+  int   planetsPerSystem  = 4;
+  int   nebulaVolumeRes   = 48;    // baked volume per generated nebula (VRAM)
+  int   liveObjectBudget  = 256;    // generated bodies that may be real objects at once
   int   physicalModel = 0;      // realistic / relaxed / custom laws
   int   depthGalaxies = 0, depthPlanets = 1, depthSurfaces = 2;
 
@@ -938,6 +944,11 @@ public:
   char startupLoadPath[256] = "";
 
   // Set after loading a pre-v2 project file; DrawUI shows a warning popup
+  // How the universe's generated bodies are ordered in the hierarchy.
+  // Distance is the default because the list changes as you fly and the
+  // thing you are next to is the thing you want to click.
+  int   uniSortMode{0};     // 0 = nearest, 1 = kind, 2 = name, 3 = size
+  int   uniFilterMode{0};   // 0 = everything, then galaxies/holes/stars/planets/nebulae
   bool showLegacyUnitsWarning{false};
 
   bool InitWindow(const char* wName, int wheight, int wwidth);
@@ -1174,8 +1185,8 @@ public:
   SpawnFormState spawnForm{};
   GridFormState  gridForm{};
   UniverseFormState universeForm{};
-  int  universeGalaxyCount{200};
-  int  universeStarsPerGalaxy{50000};
+  int  universeGalaxyCount{2000};
+  int  universeStarsPerGalaxy{15000};
   std::function<void(const UniverseFormState&)> universeCreate{};
 
   // Camera context distance: selected object, or nearest object surface when

@@ -1,4 +1,5 @@
 #include "universeGen.h"
+#include "units.h"
 #include <cmath>
 #include <algorithm>
 
@@ -225,5 +226,117 @@ void GenerateGalaxyStars(const GalaxyDesc& d, int starCount, std::vector<vec3>& 
     float x2 = x * cr - y1 * sr;
     float y2 = x * sr + y1 * cr;
     out.push_back(vec3{ x2, y2, z1 });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What a galaxy contains besides its stars
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawn from the galaxy's OWN seed (a different stream from its shape, so
+// turning contents on or off cannot shift the discs), which makes a galaxy's
+// contents a pure function of its identity: nothing is stored, and the same
+// seed rebuilds them bit-for-bit anywhere.
+void GenerateGalaxyContents(const GalaxyDesc& g, const UniverseParams& p,
+                            std::vector<GalaxyContent>& out)
+{
+  out.clear();
+  Rng rng((uint64_t)g.seed * 0xD1B54A32D192ED03ull + 0x9E3779B97F4A7C15ull);
+
+  if (p.centralBlackHoles) {
+    // M-sigma: a galaxy's central hole tracks its bulge velocity dispersion,
+    // NOT its star count. sigma ~ vFlat/sqrt(2), and M ~ 1.9e8 Msun at
+    // 200 km/s with an exponent near 5 — so the recipe reads off the rotation
+    // curve the generator already placed its stars on, and a big galaxy gets a
+    // big hole for the same reason its stars orbit faster.
+    // sigma is the BULGE dispersion, about half the disc's rotation speed
+    // (the Milky Way: 105 against 218 km/s). Using vFlat/sqrt(2) instead
+    // overshoots Sgr A* twelvefold.
+    const double vFlatKms = (double)g.shape.vFlat * 4.7405;      // AU/yr -> km/s
+    const double sigma    = std::max(vFlatKms * 0.5, 10.0);
+    double m = 1.9e8 * std::pow(sigma / 200.0, 5.1);
+    m *= (double)rng.uni(0.6f, 1.7f);                            // real scatter is ~0.3 dex
+    GalaxyContent c;
+    c.kind     = GalaxyContent::Kind::BlackHole;
+    c.origin   = dvec3{0.0, 0.0, 0.0};                           // it IS the centre
+    c.mass     = m;
+    c.radius   = (float)(units::kRsAUPerMsun * m);
+    c.seed     = g.seed;
+    out.push_back(c);
+  }
+
+  const int nNeb = std::max(0, p.nebulaePerGalaxy);
+  for (int i = 0; i < nNeb; ++i) {
+    GalaxyContent c;
+    c.kind = GalaxyContent::Kind::Nebula;
+    // In the DISC, where star formation is — and pointedly not at the centre.
+    // An exponential radius on the stars' own scale length puts the median at
+    // ~0.7H, and H is 6% of the radius, so almost every nebula landed on top of
+    // the core (and on top of the black hole). Star-forming regions live out in
+    // the arms, so the radius is held between 0.15 and 0.85 of the disc.
+    const double H  = (double)g.shape.discScale * (double)g.radius;
+    double r  = -H * std::log(std::max(rng.uni(), 1e-6f));
+    r = std::clamp(r, 0.15 * (double)g.radius, 0.85 * (double)g.radius);
+    const double th = rng.uni(0.0f, 6.28318531f);
+    const double z  = (double)rng.gauss() * (double)g.shape.thickness * (double)g.radius;
+    c.origin   = dvec3{ r * std::cos(th), z, r * std::sin(th) };
+    // 5-120 ly across, log-distributed: a few big ones dominate any view.
+    c.radius = (float)(5.0 * std::exp((double)rng.uni() * 3.2) * LY_AU);
+    c.seed   = rng.next() ^ (uint32_t)(i * 2654435761u);
+    out.push_back(c);
+  }
+
+  // ── Star systems ──
+  // A star and its planets share ONE frame origin, which is what makes a planet
+  // at 1 AU possible out here at all: the origin carries the coarse position,
+  // the offsets stay exact. Placed in the disc like the nebulae, and away from
+  // the core for the same reason.
+  const int nSys = std::max(0, p.systemsPerGalaxy);
+  for (int i = 0; i < nSys; ++i) {
+    const double H  = (double)g.shape.discScale * (double)g.radius;
+    double r  = -H * std::log(std::max(rng.uni(), 1e-6f));
+    r = std::clamp(r, 0.15 * (double)g.radius, 0.85 * (double)g.radius);
+    const double th = rng.uni(0.0f, 6.28318531f);
+    const double z  = (double)rng.gauss() * (double)g.shape.thickness * (double)g.radius;
+    const dvec3 sysOrigin{ r * std::cos(th), z, r * std::sin(th) };
+
+    // The star. Main-sequence-ish: mass drives temperature and radius, so a
+    // hot blue star really is bigger and a red dwarf really is small.
+    GalaxyContent st;
+    st.kind        = GalaxyContent::Kind::Star;
+    st.origin      = sysOrigin;
+    st.offset      = dvec3{0.0, 0.0, 0.0};
+    const double m = std::exp((double)rng.uni(-1.2f, 1.1f));         // ~0.3 - 3 Msun
+    st.mass        = m;
+    st.temperature = (float)(5778.0 * std::pow(m, 0.55));
+    st.radius      = (float)(0.00465 * std::pow(m, 0.8));            // AU, ~solar at 1 Msun
+    st.seed        = rng.next();
+    st.sysIndex    = i;
+    const int starIdx = (int)out.size();
+    out.push_back(st);
+
+    const int nP = std::max(0, p.planetsPerSystem);
+    double a = (double)rng.uni(0.25f, 0.7f);                          // innermost orbit, AU
+    for (int k = 0; k < nP; ++k) {
+      GalaxyContent pl;
+      pl.kind   = GalaxyContent::Kind::Planet;
+      pl.origin = sysOrigin;                                          // SAME frame as its star
+      const double ang = rng.uni(0.0f, 6.28318531f);
+      const double inc = (double)rng.gauss() * 0.03;                  // near-coplanar
+      pl.offset = dvec3{ a * std::cos(ang), a * inc, a * std::sin(ang) };
+      // Rocky close in, gas giants further out — the usual arrangement, and it
+      // makes the outer ones actually visible.
+      const bool giant = (a > 1.8) && (rng.uni() < 0.75f);
+      pl.radius = giant ? (float)(4.0e-4 * rng.uni(0.6f, 1.6f))
+                        : (float)(4.3e-5 * rng.uni(0.5f, 1.8f));
+      pl.mass   = giant ? 3.0e-4 * rng.uni(0.3f, 2.0f) : 3.0e-6 * rng.uni(0.2f, 3.0f);
+      pl.color  = giant ? vec3{ rng.uni(0.55f,0.85f), rng.uni(0.45f,0.72f), rng.uni(0.35f,0.60f) }
+                        : vec3{ rng.uni(0.30f,0.75f), rng.uni(0.25f,0.55f), rng.uni(0.18f,0.45f) };
+      pl.seed   = rng.next();
+      pl.parentContent = starIdx;
+      pl.sysIndex = i;
+      pl.orbitIndex = k;
+      out.push_back(pl);
+      a *= 1.5 + (double)rng.uni(0.0f, 0.9f);                         // roughly Titius-Bode
+    }
   }
 }
