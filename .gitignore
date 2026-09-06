@@ -33,3 +33,7 @@ settings.json
 templates/dataset/
 __pycache__/
 *.pyc
+
+# local particle sidecars and backups (never committed)
+*.data/
+*.bak
