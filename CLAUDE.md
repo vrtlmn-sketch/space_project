@@ -34,15 +34,21 @@ So: when a change makes something more physically correct and the picture worse,
 the picture wins, and the correct thing is the one to throw away. Do not offer
 "more realistic" as a reason on its own — say what it will look like.
 
-## When to test at all
+## Run the harness WHEN ASKED — the user decides, not you
 
-**Default: look at it, or let the user look at it.** This is a renderer; the
-product is the picture. Read the code, make the change, build, and either open
-the app or hand it over. That is the whole loop for normal work.
+**The user says when to test.** They almost always ask explicitly, and that ask
+is the trigger. Deciding on your own that a change "needs verifying" is how a
+two-line edit turns into forty minutes of captures the user is waiting through.
 
-The harness below exists for ONE case: a long unattended run, where the user is
-away for hours and something has to catch a change that broke the picture while
-nobody was watching. It is not a gate on ordinary edits.
+Default otherwise: build it, and either open the app or hand it over. This is a
+renderer; the product is the picture, and the person who can judge it is the one
+reading this to you.
+
+Where it genuinely earns its place is a long unattended run — the user is away
+for hours and something has to notice a change that broke the picture while
+nobody was watching. Even then the instruction is usually "check it yourself
+before you give it to me", which means LOOK at the render, not compute a
+statistic about it.
 
 Things that are NOT required before handing work over, and that have wasted
 real hours of the user's time when treated as if they were:
