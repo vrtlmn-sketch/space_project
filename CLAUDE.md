@@ -12,6 +12,56 @@ layout, which did not fail to build, it **segfaulted at runtime**.
 Build artefacts (`*.o`, `bin/`) are gitignored and untracked. They used to be
 committed, which is what caused segfaults on other machines after a pull.
 
+## This renderer is a TRICK, and that is the point
+
+The project works because it cheats well. The Milky Way has 100 billion stars
+and this scene has 20 000 — five million times under-sampled — so no
+per-particle quantity in it "is" anything physical, and making one obey a real
+formula is precision on top of a number that is already fiction. Brightness
+comes from sprites OVERLAPPING. Dust is a texture on the star field, not a
+medium. Distance falloff is a look dial. A galaxy too small to resolve is drawn
+with fewer points. None of that is an approximation waiting to be improved; it
+IS the rendering model.
+
+Every physics-first idea tried here has been deleted after the fact:
+volumetric dust (twice), dark-matter particles, `uSampleWeight`, arc ribbons
+(flux-exact to 3.1% and rejected on sight because thin exact arcs lost the
+sprite overlap that makes dust read as solid), lighting dust from `vRim`, and
+the ridged dust field below. Everything that survived is a construction that
+produces an impression.
+
+So: when a change makes something more physically correct and the picture worse,
+the picture wins, and the correct thing is the one to throw away. Do not offer
+"more realistic" as a reason on its own — say what it will look like.
+
+## When to test at all
+
+**Default: look at it, or let the user look at it.** This is a renderer; the
+product is the picture. Read the code, make the change, build, and either open
+the app or hand it over. That is the whole loop for normal work.
+
+The harness below exists for ONE case: a long unattended run, where the user is
+away for hours and something has to catch a change that broke the picture while
+nobody was watching. It is not a gate on ordinary edits.
+
+Things that are NOT required before handing work over, and that have wasted
+real hours of the user's time when treated as if they were:
+
+- Building a control from HEAD and byte-comparing against it.
+- Rendering the three reference scenes and quoting their mean luminance.
+- Sweeping a constant against a target number.
+- Re-running anything "to be sure" once it already built and ran.
+
+A mean luminance is not the look and cannot tell you whether an image got
+better — that judgement is the user's, and on this project their reading has
+been right and mine wrong every time the two disagreed. Measure only when there
+is a specific number in question (a memory ceiling, a frame time, "did this
+change a scene it should not have touched"), and say what the number is FOR.
+
+Also: **a capped measurement proves nothing.** A `--compare` run that takes 90 s
+for 90 frames is bound by swap, not by work, so timing it cannot detect added
+GPU cost. This was reported as "costs nothing" once; it did not.
+
 ## Headless verification harness
 
 ```
@@ -123,7 +173,7 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
   scene) and every run after it is stable. Seen twice, both times mistaken for a
   regression. Run twice, keep the second.
 
-## Regression baseline
+## Reference numbers (for the unattended case only — see "When to test at all")
 
 `RASTER_ONLY=1 SKIP_GEO=1 ./bin/blackholesim --compare` on
 `projects/milky_way.json` gives a raster mean luminance of **25.318** at the
@@ -345,6 +395,23 @@ Before touching a shared pass, capture a before/after on BOTH a near view and
 an in-galaxy view (`UNIVERSE_CAM_DIST=8`) and diff them — a scene-average
 mean can hide a large local change.
 
+## Four look defaults are deliberately 0
+
+`resolvedCut`, `popColour`, `starLumSpread` and `spikeThreshold` all default to
+**0**, which is the pre-2026-09-06 look. Each was landed at a non-zero default
+(0.75 / 1.0 / 4.6 / 0.85), each changed the picture on every project at once
+because no project file carries the keys, and the user asked for all four back.
+Setting any of them to 0 restores the old behaviour EXACTLY — the code paths
+collapse to what was there before, they are not approximations.
+
+`spikeThreshold` is the one to know about: it changed the diffraction spikes in
+three ways at once (an absolute floor most stars could not clear, a
+`log(1+L)/L` compression that squashed the bright ones toward each other, and a
+wider star brightness range feeding the pass). That is why the spikes read as
+different rather than merely fewer.
+
+Do not raise any of these back to a non-zero default without being asked.
+
 ## Defaults live in ONE place
 
 `SceneSettings` (projectSerializer.h) holds the default look. The JSON loader's
@@ -554,7 +621,21 @@ deleted partly because "its draw call had no callers — ticking the box built a
 3D texture nothing ever marched". The second attempt's bake was written, built,
 measured and then deleted for the same reason rather than left in place.
 
-## Thresholding smooth noise can only make ISLANDS
+## Thresholding smooth noise can only make ISLANDS — and it is still what ships
+
+**REVERTED 2026-09-06. `dustLane` uses the smooth 3-octave `dcFbm3` again.**
+Everything below is true about the two fields and was still the wrong trade:
+ridged noise models how real dust is SHAPED, and on screen it read as thin torn
+threads where this renderer's look wants soft overlapping masses. `dcRidged` is
+kept in dust_common.glsl, unused, for anyone who wants to try again with the
+rest of the pipeline changed to suit it.
+
+**The two fields are paired with different ceilings and they must move
+together**: smooth wants `uDustDepth` **1.5**, ridged wants **0.22** (it carries
+7-11x the mean optical depth at the same nominal coverage). Swap one without the
+other and the dust either vanishes or renders the scene black.
+
+
 
 Why dust read as a string of beads and never as branching filaments: the
 excursion set of a SMOOTH random field above a high level is a collection of

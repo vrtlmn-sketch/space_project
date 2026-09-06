@@ -2575,7 +2575,14 @@ void RenderedObject::uploadDustParams(float strength, float reddening, float dar
   //      0.5       -        20.84
   //      0.22    25.556     44.13   <-
   // universe.json is deliberately not part of this: its galaxies changed shape.
-  l = glGetUniformLocation(program, "uDustDepth");      if (l >= 0) glUniform1f(l, 0.22f);
+  // 1.5 is the SMOOTH field's ceiling, and it is paired with the smooth field
+  // in dust_common.glsl — the two must move together. 0.22 existed only to
+  // absorb the ridged multifractal's 7-11x higher mean optical depth (ridged
+  // noise saturates inside a ridge where smooth noise barely clears its
+  // threshold). Leave it at 0.22 with smooth noise and the dust all but
+  // disappears; put the ridged field back without restoring 0.22 and
+  // blackhole.json renders at mean 4.3 instead of 45.5.
+  l = glGetUniformLocation(program, "uDustDepth");      if (l >= 0) glUniform1f(l, 1.5f);
   l = glGetUniformLocation(program, "uDustCoverage");   if (l >= 0) glUniform1f(l, coverage);
   l = glGetUniformLocation(program, "uDustClumpScale"); if (l >= 0) glUniform1f(l, clumpScale);
   l = glGetUniformLocation(program, "uDustInfluence");  if (l >= 0) glUniform1f(l, influence);

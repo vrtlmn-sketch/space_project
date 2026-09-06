@@ -751,7 +751,7 @@ public:
   // which is denser than the pre-calibration look, and the user picked it.
   float spriteRefHeight{720.0f};
   float unresolvedSize{45.55f};   // unresolved lobe angular width (x fixed PSF floor)
-  float resolvedCut{0.75f};       // only stars brighter than this draw as sharp cores
+  float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)
   float farFalloff{0.08f};       // far-field light compression (1 = exact flux, deep field black)
   // Brightness of the point-source stand-in a planet/star/black hole/nebula
@@ -764,9 +764,9 @@ public:
   float dustReddening{0.72f};    // wavelength tilt (blue absorbed more than red)
   float dustDarkest{0.02f};      // transmittance of the densest dust (0 = opaque)
   float dustSettle{1.0f};        // how far dust settles to the cloud's own plane
-  float popColour{1.0f};         // stellar population colour gradient (0 = off)
-  float starLumSpread{4.6f};     // stellar luminosity range, ln(range); 0 = old flat
-  float spikeThreshold{0.85f};   // absolute level a source must pass to spike
+  float popColour{0.0f};         // stellar population colour gradient (0 = off)
+  float starLumSpread{0.0f};     // stellar luminosity range, ln(range); 0 = old flat
+  float spikeThreshold{0.0f};   // absolute level a source must pass to spike
   // Pivot that holds MEAN star flux constant however wide the spread is, so
   // widening the range does not also change how bright every galaxy is.
   // Solved numerically over vMag = h^3, the distribution cloudVert draws.

@@ -129,15 +129,16 @@ float dustLane(vec3 p, float baseScale) {
     // identity at q = 1; this makes the last one so too.
     vwin = mix(1.0, exp(-0.5 * hh * hh), (1.0 - uDustAxisQ) * uDustSettle);
   }
-  float n = dcRidged(q / scale);
-  // Recalibrated for dcRidged. Ridged noise has a different distribution from
-  // the old smooth FBM (mean 0.55 vs 0.50, p90 0.88 vs 0.66), so 0.85 - cov*0.7
-  // would make 41% of space dusty where it used to make 13%. Fitted so the
-  // Patchiness slider keeps its meaning: coverage 0.30 -> 13.5% of space dusty
-  // against the old 13.1%. The window is narrower (0.15, was 0.30) because
-  // filaments want crisp edges where blobs wanted soft ones.
-  float thr = 1.06 - clamp(uDustCoverage, 0.0, 1.0) * 0.95;
-  float d = smoothstep(thr, thr + 0.15, n);
+  // SMOOTH three-octave FBM, deliberately — see the note above dcRidged.
+  // Ridged noise is the better model of how real dust is shaped, and it made
+  // the picture worse: the lanes read as thin torn threads where the look this
+  // renderer is built on wants soft overlapping masses. That is not a tuning
+  // failure, it is the difference between modelling dust and drawing it. The
+  // ridged field is kept below for anyone who wants to try again with the rest
+  // of the pipeline changed to suit it.
+  float n = dcFbm3(q / scale);
+  float thr = 0.85 - clamp(uDustCoverage, 0.0, 1.0) * 0.7;   // coverage widens the lanes
+  float d = smoothstep(thr, thr + 0.30, n);
   return pow(d, max(uDustContrast, 0.25)) * vwin;                    // concentration sharpens lanes
 }
 
