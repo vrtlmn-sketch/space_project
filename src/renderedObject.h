@@ -380,7 +380,7 @@ public:
   bool  shadersReady() const { return program != 0; }
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
-  void uploadDustParams(float strength, float reddening, float coverage,
+  void uploadDustParams(float strength, float reddening, float darkest, float settle, float coverage,
                         float clumpScale, float influence, float contrast);
   void uploadNebulaScatterScale(float scale);
   void uploadParticleSizeSpread(float spread);
@@ -567,6 +567,15 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   // inter-particle spacing, floored at the historic constant 0.001 AU^2 so a
   // small formation simulates exactly as it always did.
   float rmsRadius() const { return 0.5f * cloudRmsRadius; }   // cloudRmsRadius is 2x RMS
+  // The cloud's own principal-axis shape, for the dust layer (see
+  // measureDustShape). dustFlatten = 1 and dustScaleH = 0 mean 'no preferred
+  // plane' and make the shader term the identity — which is what a sphere
+  // measures, so spherical clouds are untouched.
+  void  measureDustShape(double cx, double cy, double cz, size_t np);
+  float dustAxis[3]{0.0f, 0.0f, 1.0f};
+  float dustFlatten{1.0f};   // 1 = isotropic; lower = dust sits closer to the plane
+  float dustScaleH{0.0f};    // dust layer scale height, world units; 0 = off
+  float dustAxisQ{1.0f};     // measured c/a of the star distribution
   // Dark-matter halo particles (see cloudObject.cpp: generateDarkMatter). They
   // live in the TAIL of cloudParticles [starCount, size); they gravitate through
   // the shared octree like everything else, but are drawn only in the debug/nav

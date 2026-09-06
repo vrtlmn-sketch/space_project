@@ -126,10 +126,13 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 ## Regression baseline
 
 `RASTER_ONLY=1 SKIP_GEO=1 ./bin/blackholesim --compare` on
-`projects/milky_way.json` gives a raster mean luminance of **25.545** at the
+`projects/milky_way.json` gives a raster mean luminance of **25.556** at the
 harness default of **1280x720**, captured at the default frame **90** (at the
-old frame-3 default the same scene read 27.704 — see the settling trap
-above). Back-to-back reruns are byte-identical (`cmp`), so the right test is a
+old frame-3 default the same scene read 27.704 — see the settling trap above).
+Companions: `blackhole.json` **44.131**, `universe.json` **20.050**. The
+universe number moved a long way (was 14.538) because its GALAXIES changed
+shape — bulge, bar, wider discs, a wider radius range — not because anything
+regressed. Back-to-back reruns are byte-identical (`cmp`), so the right test is a
 BYTE COMPARE against a control built from the committed source — not a mean,
 which hides a large local change.
 
@@ -456,6 +459,123 @@ simulated body a REGIME from its own dynamical time T against dt:
   SAVE_PROJECT=...` and reading positions back is how the ejection test above
   was measured; when comparing physics across builds match FRAMES PER TICK, not
   Play values (Play's meaning changed).
+
+## Calibrating a new noise field: match the DEPTH, not the area
+
+Replacing the dust field's smooth 3-octave FBM with a 6-octave ridged
+multifractal changed the look as intended and quietly multiplied extinction
+**eightfold**. `projects/blackhole.json` went from mean 45.5 to **4.3** — a
+reference scene rendered essentially black.
+
+The mistake: I fitted the new threshold so the AREA of dusty space matched the
+old field (13.5% vs 13.1% at the default coverage) and never checked the mean
+optical depth. Ridged noise **saturates near 1 inside a ridge**, where smooth
+FBM only just cleared its threshold — so every dusty sample carried far more
+depth even though the same fraction of space was dusty:
+
+| coverage | old mean tau | new mean tau | ratio |
+|---|---|---|---|
+| 0.30 | 0.0162 | 0.1376 | **8.5x** |
+| 0.33 | 0.0245 | 0.1700 | **6.9x** |
+
+**When swapping a noise function, the invariant to preserve is the integral it
+feeds, not the fraction of space it covers.** The two curves are shaped too
+differently to reconcile by threshold alone, so the per-sprite depth ceiling
+(`uDustDepth`, cloudFrag) absorbs the difference at **0.22** — a small number
+for exactly this reason, with the sweep recorded beside it in renderedObject.cpp.
+
+## Dust settles toward the cloud's OWN plane — and a sphere is the identity
+
+Dust is thin because gas is dissipative: it collides, radiates its energy away
+and sinks to whatever plane the object's rotation defines, while stars are
+collisionless and keep their vertical motion. An object with NO preferred plane
+has nothing to settle into — which is why real ellipticals are dust-poor.
+
+`RenderedObject::measureDustShape` therefore measures the distribution's
+principal axes (Jacobi on the 3x3 covariance, on the `cloudGpuDirty` trigger
+next to `cloudRmsRadius`) and hands the shader `uDustAxis`, `uDustFlatten`,
+`uDustScaleH`, `uDustAxisQ`. **It never branches on "is this a disc".** A sphere
+measures q = c/a = 1, at which every term in `dustLane` collapses to the
+identity.
+
+- Verified: `globular_cluster_real_2k` measures **q = 0.932** and renders
+  **BYTE-IDENTICAL** with `dustSettle` 0 or 1. milky_way's disc measures
+  q = 0.122 and gets a 519 ly dust scale height (real MW: 325-490 ly).
+- The measurement found the milky_way formation's disc normal on the **Y** axis,
+  because that Python-generated file is Y-up while the C++ generator is Z-up.
+  A hardcoded normal would have been wrong for one of the two.
+- **TRAP:** the vertical window must be weighted by `(1 - q)` as well as the
+  dial. Every other term is already the identity at q = 1, but a bare Gaussian
+  window would still carve a sphere into a slab along an arbitrary axis.
+
+## Thresholding smooth noise can only make ISLANDS
+
+Why dust read as a string of beads and never as branching filaments: the
+excursion set of a SMOOTH random field above a high level is a collection of
+isolated, roughly convex islands. That is a property of the operation, not a
+parameter — no value of coverage, contrast or patch size turns it into threads.
+
+Folding the field, `r = 1 - |2n - 1|`, puts a crease on the LEVEL SET n = 0.5.
+A level set is codimension-1 — a connected surface — so ridges fork and rejoin
+the way real dust does. Multifractal weighting (each octave scaled by the
+previous) then puts fine structure only where coarse structure already is.
+
+**Octave count is nearly free here.** `dustLane` is evaluated ONCE PER PARTICLE
+in the VERTEX shader (cloudVert.glsl), never per fragment, so 3 -> 6 octaves
+costs ~3 hash evaluations per particle per frame and nothing per pixel.
+
+**Known ceiling of the sprite model** (this is why the volumetric column work
+exists): every dust sprite is a fixed **1,463 ly** across (`worldR = 1.5 x
+uDustInfluence`), and the field is point-sampled at the **724 ly** particle
+spacing, against real filament widths of 1-30 ly. So a characteristic blob size
+is literally a constant in the code, and structure finer than the star spacing
+is not representable at any noise quality.
+
+## resolvedCut only DELETES cores — it does not redistribute
+
+The haze pass draws every star unconditionally (cloudVert's final `else` has no
+`uResolvedCut` gate), so total = haze(all) + cores(resolved). Raising the cut
+removes core sprites and moves nothing into the unresolved sheet: the galaxy
+gets dimmer and duller, not smoother. Left at **0** for that reason. To make the
+"real telescope look" work, the cut has to be made energy-conserving first — an
+unresolved star's haze lobe should carry the flux its core would have had.
+
+## Galaxy shape: measure it offline, do not reason about it
+
+`tools/galaxy_stats.cpp` links `universeGen.cpp` and runs the REAL generator with
+no GL context and no window. Build:
+
+```
+g++ -std=c++20 -O2 -Isrc -Ivendor/include -o /tmp/galaxy_stats \
+    tools/galaxy_stats.cpp src/universeGen.cpp && /tmp/galaxy_stats
+```
+
+Two bugs it caught that arithmetic had got wrong:
+
+- **discScale.** Scaling the old fitted scale length by the ratio gave 0.107,
+  which measures h_R = 6,449 ly against a target of 8,480. H is not the fitted
+  scale length — the 15% extended component flattens the outer profile. Sweeping
+  and fitting gives **0.146** (h_R 8,239). The old 0.06 measured 5,583, which is
+  why the disc read as "too tall": its height was right all along and its width
+  was 1.8x short.
+- **bulgeRadius.** `r = Rb * u^n` has median `Rb * 0.5^n`, so asking for a 2,750
+  ly bulge produced one with half its stars inside **450 ly** — two pixels, and
+  invisible. The outer scale must be divided by `0.5^sersic` for the parameter to
+  mean the effective radius its name promises.
+
+Generated galaxies now carry a bulge, an optional bar (35% of spirals; NOTE a
+real bar is held by orbital resonances that are not modelled, so a barred galaxy
+left simulating smears its bar away), per-galaxy E0-E7 flattening and Sersic
+index for ellipticals, per-galaxy lump count for irregulars, pitch angles across
+the real 5-35 degree range, and Tully-Fisher `vFlat ~ sqrt(R)` so a dwarf and a
+giant stop sharing a rotation curve and an 8e6 Msun black hole.
+
+**Nebulae were in the wrong plane.** `GenerateGalaxyContents` built their origin
+as `{r*cos, z, r*sin}` — the Python generator's Y-up convention — while
+`GenerateGalaxyStars` puts the disc in XY. Every galaxy's nebulae sat in a plane
+at RIGHT ANGLES to its own stellar disc, and never received the galaxy's
+inclination or roll either. Fixed; verified out-of-plane spread is now 6.7% of
+in-plane.
 
 ## A galaxy is held together by its HALO, not by its stars or a black hole
 

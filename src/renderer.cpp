@@ -1058,7 +1058,7 @@ void Renderer::DrawCloudDust(RenderedObject& ro) {
   // the black-hole lens march (and future per-star/depth consumers). The full
   // marched-screen look was built and measured: the honest column through a
   // galaxy is smooth saturated fog — the granular look lives in the sprites.
-  ro.uploadDustParams(dustStrength, dustReddening, dustCoverage, dustClumpScale,
+  ro.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, dustCoverage, dustClumpScale,
                       ro.ownDustInfluence(dustInfluence), dustContrast);
   ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Dust;
   ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -4196,6 +4196,11 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::TextDisabled("Dense regions dim + redden the light behind them.");
     norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  2.0f,  true);
     norm01("Reddening",     "##dustred",   &dustReddening,  0.0f,  4.0f,  true);
+    ImGui::TextDisabled("1.0 = the real Milky Way curve; 0 = dust dims without colouring.");
+    norm01("Darkest",       "##dustdark",  &dustDarkest,    0.001f, 0.3f, true);
+    ImGui::TextDisabled("What the thickest dust still lets through. Low = a true silhouette.");
+    norm01("Settle",        "##dustsettle",&dustSettle,     0.0f,  1.0f, true);
+    ImGui::TextDisabled("Dust sinks toward the cloud's own plane, as gas does. No effect on a sphere.");
     norm01("Concentration", "##dustcon",   &dustContrast,   1.0f,  4.0f,  true);
     ImGui::TextDisabled("Higher packs dust into tighter, darker lanes.");
     norm01("Patchiness",    "##dustcov",   &dustCoverage,   0.0f,  1.0f,  true);
@@ -4205,7 +4210,18 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
     ImGui::Spacing();
     ImGui::SeparatorText("Dust Lighting");
-    ImGui::TextDisabled("Starlight scattering off the dust itself (realistic view).");
+    // These four are consumed ONLY by the RT/geodesic compute shaders — grep
+    // uDustGlow in cloudFrag/cloudVert/tonemapFrag and you get nothing. In the
+    // performant view they did nothing at all while still looking live, so
+    // tuning them there was reading noise. Disabled rather than hidden, so it
+    // is clear they exist and what turns them on.
+    const bool dustLightLive = !cinematicRaster || rayTracerView;
+    if (!dustLightLive) {
+      ImGui::BeginDisabled();
+      ImGui::TextDisabled("Realistic view only - no effect in Performant.");
+    } else {
+      ImGui::TextDisabled("Starlight scattering off the dust itself (realistic view).");
+    }
     norm01("Glow",          "##dustglow",  &dustGlow,       0.0f,  4.0f,  true);
     ImGui::TextDisabled("Dust scatters nearby starlight and glows softly (0 = dark lanes only).");
     norm01("Backlit Bias",  "##dustphase", &dustPhaseG,       0.0f, 0.7f, true);
@@ -4214,6 +4230,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::TextDisabled("How hard clumps shadow themselves - exposes each clump's 3D shape.");
     norm01("Skin Depth",     "##dustskind", &dustSkinDepth,    0.01f, 8.0f, true);
     ImGui::TextDisabled("How deep the lit surface layer reaches into a clump.");
+    if (!dustLightLive) ImGui::EndDisabled();
     norm01("Edge Light", "##edgelight", &edgeLightStrength, 0.0f, 5.0f, false);
     ImGui::TextDisabled("Screen-space rim on dust edges facing bright stars (performant view).");
 
@@ -8400,6 +8417,8 @@ void Renderer::DispatchRaytracer(int width, int height) {
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
+    GLint locDDk = glGetUniformLocation(activeProgram, "uDustDarkest");
+    if (locDDk >= 0) glUniform1f(locDDk, dustDarkest);
     GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
     GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
@@ -9318,6 +9337,8 @@ void Renderer::CaptureImage() {
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
+    GLint locDDk = glGetUniformLocation(activeProgram, "uDustDarkest");
+    if (locDDk >= 0) glUniform1f(locDDk, dustDarkest);
     GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
     GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");
@@ -9653,6 +9674,8 @@ void Renderer::DispatchAndCaptureRecordingFrame() {
     if (locDS >= 0) glUniform1f(locDS, dustStrength);
     GLint locDR = glGetUniformLocation(activeProgram, "uDustReddening");
     if (locDR >= 0) glUniform1f(locDR, dustReddening);
+    GLint locDDk = glGetUniformLocation(activeProgram, "uDustDarkest");
+    if (locDDk >= 0) glUniform1f(locDDk, dustDarkest);
     GLint locDK = glGetUniformLocation(activeProgram, "uDustContrast");
     if (locDK >= 0) glUniform1f(locDK, dustContrast);
     GLint locDV = glGetUniformLocation(activeProgram, "uDustCoverage");

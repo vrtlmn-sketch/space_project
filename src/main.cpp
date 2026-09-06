@@ -1348,6 +1348,8 @@ int main(int argc, char** argv) {
     RenderedObject::rtCloudPointCap = s.rtCloudPointCap;
     renderer.dustStrength       = s.dustStrength;
     renderer.dustReddening      = s.dustReddening;
+    renderer.dustDarkest        = s.dustDarkest;
+    renderer.dustSettle         = s.dustSettle;
     renderer.dustContrast       = s.dustContrast;
     renderer.dustCoverage       = s.dustCoverage;
     renderer.dustClumpScale     = s.dustClumpScale;
@@ -1562,6 +1564,8 @@ int main(int argc, char** argv) {
     s.rtCloudPointCap    = RenderedObject::rtCloudPointCap;
     s.dustStrength       = renderer.dustStrength;
     s.dustReddening      = renderer.dustReddening;
+    s.dustDarkest        = renderer.dustDarkest;
+    s.dustSettle         = renderer.dustSettle;
     s.dustContrast       = renderer.dustContrast;
     s.dustCoverage       = renderer.dustCoverage;
     s.dustClumpScale     = renderer.dustClumpScale;
@@ -2112,6 +2116,15 @@ int main(int argc, char** argv) {
                     << " builtStars=" << r0.galaxyStarCount
                     << " chunkExtent=" << (r0.starChunks.empty() ? -1.0f : r0.starChunks[r0.starChunks.size()/2].extent)
                     << "  => dustInfluence=" << renderer.dustInfluence << "\n";
+          // Measured shape driving the dust layer. q = c/a: 1 is a sphere,
+          // which must leave the dust term as the identity.
+          std::cerr << "[dust] shape q=" << r0.dustAxisQ
+                    << " flatten=" << r0.dustFlatten
+                    << " scaleH=" << r0.dustScaleH
+                    << " axis=(" << r0.dustAxis[0] << "," << r0.dustAxis[1]
+                    << "," << r0.dustAxis[2] << ")"
+                    << (r0.dustAxisQ > 0.95f ? "  [sphere: dust term is identity]" : "")
+                    << "\n";
         }
       }
       // Camera-relative centre (RT objects are pushed camera-relative), so the
@@ -2202,7 +2215,7 @@ int main(int argc, char** argv) {
     auto uploadCloudRO = [&](CloudObject* c){
       c->renderedObject.uploadTemperature(c->temperature);
       c->renderedObject.uploadRenderMode(c->renderMode);
-      c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening,
+      c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening, renderer.dustDarkest, renderer.dustSettle,
                                          renderer.dustCoverage, renderer.dustClumpScale,
                                          c->renderedObject.ownDustInfluence(renderer.dustInfluence),
                                          renderer.dustContrast);

@@ -67,6 +67,11 @@ uniform float uDustContrast;   // sharpens lanes / packs dust into dense cores
 uniform float uDustClumpScale; // dust lane scale (× influence)
 uniform float uDustInfluence;  // world-space dust scale (from cloud bounds)
 uniform float uHashScale;      // frozen dust scale for the hash + lane (particle path)
+uniform vec3  uDustAxis;       // cloud's minor principal axis (see measureDustShape)
+uniform float uDustFlatten;    // 1 = isotropic (a sphere), lower = settled to the plane
+uniform float uDustScaleH;     // dust layer scale height, world units; 0 = off
+uniform float uDustAxisQ;      // measured c/a of the star distribution
+uniform float uDustSettle;     // scene dial: 0 = identity, 1 = full settling
 
 out vec3  vColor;   // per-particle blackbody colour (stars)
 out float vMag;     // per-particle magnitude (0..1, log-ish)

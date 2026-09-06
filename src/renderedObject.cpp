@@ -669,6 +669,79 @@ static float rtDustLane(float x, float y, float z,
 // core, the dominant light). The result is view-INDEPENDENT: orbiting the
 // galaxy keeps the lit side lit — fixing the screen-space rim's flaw. Cheap
 // (array taps only), so it refreshes periodically while the sim animates.
+// ── The cloud's own shape, for the dust layer ───────────────────────────────
+// Dust is thin because GAS IS DISSIPATIVE: it collides, radiates its energy
+// away and settles toward whatever plane the object's rotation defines. Stars
+// are collisionless and keep their vertical motion, so the dust layer ends up
+// about half the stellar scale height in a disc.
+//
+// The corollary is what makes this universal: an object with NO preferred plane
+// has nothing to settle into. So this does not branch on "is it a disc" — it
+// measures the distribution's principal axes and lets the flattening fall out.
+// A sphere measures q = c/a = 1, which makes the shader term the identity, so a
+// spherical procedural cloud renders exactly as it did before. Ellipticals come
+// out barely flattened, which is right: they are dust-poor for this very reason.
+//
+// Keyed on positions, not velocities, so a static formation with no velocities
+// still gets an answer. Runs where cloudRmsRadius does — on cloudGpuDirty — so
+// a static cloud pays for it once.
+void RenderedObject::measureDustShape(double cx, double cy, double cz, size_t np)
+{
+  dustAxis[0] = 0.0f; dustAxis[1] = 0.0f; dustAxis[2] = 1.0f;
+  dustFlatten = 1.0f; dustScaleH = 0.0f;
+  if (np < 32) return;
+  const size_t starFloats = (size_t)std::max(0, starCount()) * 3;
+  double c[6] = {0,0,0,0,0,0};                 // xx, yy, zz, xy, xz, yz
+  size_t used = 0;
+  const size_t stride = std::max<size_t>(1, np / 20000) * 3;
+  for (size_t i = 0; i + 2 < starFloats; i += stride) {
+    const double dx = UVObjectMeshBuffer[i] - cx;
+    const double dy = UVObjectMeshBuffer[i+1] - cy;
+    const double dz = UVObjectMeshBuffer[i+2] - cz;
+    c[0] += dx*dx; c[1] += dy*dy; c[2] += dz*dz;
+    c[3] += dx*dy; c[4] += dx*dz; c[5] += dy*dz;
+    ++used;
+  }
+  if (used < 32) return;
+  for (double& v : c) v /= (double)used;
+  // Jacobi on the symmetric 3x3 covariance. Tiny and exact enough; the matrix
+  // is 3x3 so this converges in a handful of sweeps.
+  double a[3][3] = {{c[0],c[3],c[4]},{c[3],c[1],c[5]},{c[4],c[5],c[2]}};
+  double v[3][3] = {{1,0,0},{0,1,0},{0,0,1}};
+  for (int sweep = 0; sweep < 24; ++sweep) {
+    int p_ = 0, q_ = 1; double off = std::fabs(a[0][1]);
+    if (std::fabs(a[0][2]) > off) { off = std::fabs(a[0][2]); p_ = 0; q_ = 2; }
+    if (std::fabs(a[1][2]) > off) { off = std::fabs(a[1][2]); p_ = 1; q_ = 2; }
+    if (off < 1e-18) break;
+    const double theta = 0.5 * (a[q_][q_] - a[p_][p_]) / a[p_][q_];
+    const double t = (theta >= 0.0 ? 1.0 : -1.0)
+                   / (std::fabs(theta) + std::sqrt(theta*theta + 1.0));
+    const double cs = 1.0 / std::sqrt(t*t + 1.0), sn = t * cs;
+    for (int k = 0; k < 3; ++k) {
+      const double akp = a[k][p_], akq = a[k][q_];
+      a[k][p_] = cs*akp - sn*akq;  a[k][q_] = sn*akp + cs*akq;
+    }
+    for (int k = 0; k < 3; ++k) {
+      const double apk = a[p_][k], aqk = a[q_][k];
+      a[p_][k] = cs*apk - sn*aqk;  a[q_][k] = sn*apk + cs*aqk;
+      const double vkp = v[k][p_], vkq = v[k][q_];
+      v[k][p_] = cs*vkp - sn*vkq;  v[k][q_] = sn*vkp + cs*vkq;
+    }
+  }
+  int lo = 0, hi = 0;
+  for (int i = 1; i < 3; ++i) { if (a[i][i] < a[lo][lo]) lo = i; if (a[i][i] > a[hi][hi]) hi = i; }
+  const double cMin = std::sqrt(std::max(a[lo][lo], 0.0));
+  const double aMax = std::sqrt(std::max(a[hi][hi], 0.0));
+  if (!(aMax > 0.0)) return;
+  const double q = std::clamp(cMin / aMax, 0.0, 1.0);
+  dustAxis[0] = (float)v[0][lo]; dustAxis[1] = (float)v[1][lo]; dustAxis[2] = (float)v[2][lo];
+  dustAxisQ  = (float)q;
+  // Dust settles to about half the stellar scale height in a thin disc, and not
+  // at all in a sphere. Both ends fall out of q with no branch.
+  dustFlatten = (float)(1.0 - 0.55 * (1.0 - q));
+  dustScaleH  = (float)(cMin * (0.40 + 0.60 * q));
+}
+
 void RenderedObject::updateCloudRimFactors()
 {
   // Chunked starfields have no rim attribute buffer (setupRender only wires
@@ -953,7 +1026,9 @@ void RenderedObject::updateCloudDustLight(float dustInfluence, float dustClumpSc
     return std::clamp((int)((v - l) / e * (G - 1) + 0.5f), 0, G - 1);
   };
   const int LOCAL_STEPS = 5;
-  float kR = 1.0f, kG = 1.0f + 1.72f * dustReddening, kB = 1.0f + 7.0f * dustReddening;
+  // C++ MIRROR of dustExtTilt() in src/shaders/dust_spectrum.glsl — change both
+  // together. Milky Way R_V=3.1: 1 : 1.337 : 1.770 at reddening 1.
+  float kR = 1.0f, kG = 1.0f + 0.337f * dustReddening, kB = 1.0f + 0.770f * dustReddening;
   float lstep = std::max(dustInfluence * dustClumpScale, 1e-6f) * std::max(skinDepth, 0.01f);
 
   int cap    = std::max(100, rtCloudPointCap);
@@ -1059,6 +1134,10 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glUniform1i(glGetUniformLocation(program, "uCloudPass"),   3);
   glUniform1i(glGetUniformLocation(program, "uDensityOnly"), 1);
   glUniform1f(glGetUniformLocation(program, "uHashScale"),   hashScale);   // per-object; the program is shared
+  glUniform3f(glGetUniformLocation(program, "uDustAxis"), dustAxis[0], dustAxis[1], dustAxis[2]);
+  glUniform1f(glGetUniformLocation(program, "uDustFlatten"), dustFlatten);
+  glUniform1f(glGetUniformLocation(program, "uDustScaleH"),  dustScaleH);
+  glUniform1f(glGetUniformLocation(program, "uDustAxisQ"),   dustAxisQ);
   glUniform1f(glGetUniformLocation(program, "uCinePixelScale"), 1.0f);
   glUniform1f(glGetUniformLocation(program, "uViewportH"), (float)fbHeight);
   glUniform1f(glGetUniformLocation(program, "uSpriteRefH"), gSpriteRefHeight);
@@ -2458,13 +2537,39 @@ void RenderedObject::uploadRenderMode(int mode)
     glUniform1i(renderModeUniform, mode);
 }
 
-void RenderedObject::uploadDustParams(float strength, float reddening, float coverage,
-                                      float clumpScale, float influence, float contrast)
+void RenderedObject::uploadDustParams(float strength, float reddening, float darkest,
+                                      float settle, float coverage, float clumpScale,
+                                      float influence, float contrast)
 {
   glUseProgram(program);
   GLint l;
   l = glGetUniformLocation(program, "uDustStrength");   if (l >= 0) glUniform1f(l, strength);
   l = glGetUniformLocation(program, "uDustReddening");  if (l >= 0) glUniform1f(l, reddening);
+  l = glGetUniformLocation(program, "uDustDarkest");    if (l >= 0) glUniform1f(l, darkest);
+  l = glGetUniformLocation(program, "uDustSettle");     if (l >= 0) glUniform1f(l, settle);
+  // Per-sprite optical depth ceiling. 2.2: at the old 1.5 one maxed sprite still
+  // passed 22% of the red, so a lane could never block in one layer; at 3.5 the
+  // ridged lanes stacked into a solid black mass. Measured on an edge-on capture:
+  // 1.5 -> mean 13.76, 2.2 -> 12.41, 3.5 -> 10.92 against 18.30 before the noise
+  // change. NOTE this is the wrong knob to be tuning — the binary clear/opaque
+  // look is structural (see the volumetric column work), not a constant.
+  // Per-sprite optical depth ceiling. 0.22, and the small number is the point:
+  // the ridged field (dust_common.glsl) carries ~7-11x the mean optical depth of
+  // the smooth FBM it replaced at the same nominal setting, because ridged noise
+  // SATURATES near 1 inside a ridge where smooth FBM only just cleared its
+  // threshold. Calibrating the new field on dust AREA alone — which is what I
+  // did first — matched coverage and multiplied extinction eightfold, and
+  // blackhole.json went from mean 45.5 to 4.3.
+  //
+  // Measured, sweeping this constant against the two reference scenes whose
+  // CONTENT did not change:
+  //     depth  milky_way  blackhole      (HEAD: 25.545 / 45.554)
+  //      2.2     25.34       4.27
+  //      1.0       -         8.88
+  //      0.5       -        20.84
+  //      0.22    25.556     44.13   <-
+  // universe.json is deliberately not part of this: its galaxies changed shape.
+  l = glGetUniformLocation(program, "uDustDepth");      if (l >= 0) glUniform1f(l, 0.22f);
   l = glGetUniformLocation(program, "uDustCoverage");   if (l >= 0) glUniform1f(l, coverage);
   l = glGetUniformLocation(program, "uDustClumpScale"); if (l >= 0) glUniform1f(l, clumpScale);
   l = glGetUniformLocation(program, "uDustInfluence");  if (l >= 0) glUniform1f(l, influence);
@@ -2793,6 +2898,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
         r2sum += dx*dx + dy*dy + dz*dz;
       }
       cloudRmsRadius = (float)std::max(2.0 * std::sqrt(r2sum / (double)np), 0.1);
+      measureDustShape(cx, cy, cz, np);
     }
     // Freeze the star identities: the same positions and the same scale the
     // live hash would use RIGHT NOW, so an unmoved cloud renders identically.
@@ -2811,6 +2917,10 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   glUseProgram(program);
   setCloudPlacementUniforms(cameraTranslate);
   {
+    glUniform3f(glGetUniformLocation(program, "uDustAxis"), dustAxis[0], dustAxis[1], dustAxis[2]);
+    glUniform1f(glGetUniformLocation(program, "uDustFlatten"), dustFlatten);
+    glUniform1f(glGetUniformLocation(program, "uDustScaleH"),  dustScaleH);
+    glUniform1f(glGetUniformLocation(program, "uDustAxisQ"),   dustAxisQ);
     GLint hl = glGetUniformLocation(program, "uHashScale");
     if (hl >= 0) glUniform1f(hl, hashScale);
   }

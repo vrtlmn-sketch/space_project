@@ -19,7 +19,19 @@ enum class GalaxyType { Spiral = 0, Elliptical = 1, Irregular = 2 };
 // templates/formations/generate_milky_way_real.py — the signed-off look — so a
 // default-constructed shape IS the milky_way sample.
 struct GalaxyShape {
-  float discScale{0.06f};      // exponential disc scale length H, ×radius
+  // Exponential disc scale length H, x radius. 0.146, not 0.06.
+  //
+  // The old value fitted a radial scale length of 4,762 ly where the real Milky
+  // Way is ~8,480 ly (2.6 kpc), so the light sat in the inner 40% of a disc
+  // whose truncation radius was already correct. Vertical sigma was right all
+  // along (1,096 ly vs ~978), which is why the disc read as too TALL when it
+  // was really not wide enough.
+  //
+  // 0.146 is MEASURED, not derived: H is not the fitted scale length, because
+  // the 15% extended component flattens the outer profile. Scaling the old fit
+  // arithmetically gave 0.107, which measures 6,543 ly — still 25% short.
+  // Sweeping the real generator and fitting over 6-34 kly lands on 0.146.
+  float discScale{0.146f};
   float extendedFrac{0.15f};   // stars drawn from the extended outer disc
   float extendedScale{4.5f};   // its scale length, ×H
   float armSpread{0.35f};      // arm gaussian width (radians)
@@ -33,6 +45,36 @@ struct GalaxyShape {
   float vFlat{46.0f};          // flat rotation speed (AU/yr)
   float rCoreFrac{0.0095f};    // rotation-curve rise scale, ×radius
   float velScatter{0.5f};      // random velocity scatter (AU/yr)
+
+  // ── Bulge ────────────────────────────────────────────────────────────────
+  // The central spheroid. There was none: the spiral path was a flat disc all
+  // the way to r = 0, with the same sigma_z at the centre as at the rim. A
+  // bulge is most of what makes a spiral read as a galaxy rather than a disc,
+  // and the Milky Way's holds roughly 15-20% of the stellar mass.
+  float bulgeFrac{0.15f};      // share of stars in the bulge
+  float bulgeRadius{0.055f};   // effective radius, x disc radius (~2.7 kly at MW scale)
+  float bulgeFlat{0.65f};      // z squash; the MW's bulge is boxy, not spherical
+  float bulgeSersic{2.2f};     // r = Rb * u^sersic — steeper = more concentrated
+
+  // ── Bar ──────────────────────────────────────────────────────────────────
+  // The Milky Way is an SBbc and roughly a third of spirals are barred, so a
+  // generator with no bar can never produce our galaxy. NOTE: this is a static
+  // feature. A real bar is held together by orbital resonances we do not model,
+  // so a barred galaxy left simulating will smear its bar away.
+  float barFrac{0.0f};         // share of stars in the bar (0 = unbarred)
+  float barLength{0.25f};      // semi-major axis, x disc radius
+  float barWidth{0.30f};       // b/a of the bar
+  float barAngle{0.0f};        // orientation in the disc plane (radians)
+
+  // ── Elliptical / irregular ───────────────────────────────────────────────
+  // These used to be hard-coded literals, so every elliptical in a universe was
+  // the same galaxy at a different orientation, and every irregular was the
+  // same 5-fold pinwheel at exactly 72 degrees.
+  float ellipB{0.70f};         // b/a  — with c/a spans the E0-E7 sequence
+  float ellipC{0.55f};         // c/a
+  float ellipSersic{2.2f};     // r = R * u^sersic
+  int   irrLumps{5};           // star-forming knots in an irregular
+  float irrSpread{0.12f};      // their blur, x radius
 };
 
 struct GalaxyDesc {

@@ -9,6 +9,8 @@ uniform int   uCloudPass;   // 0 = haze, 1 = core, 3 = dust (reddened extinction
 uniform int   uStarfield;   // 1 = measured catalogue (wide brightness range)
 uniform int   uDensityOnly; // 1 = dust pass writes DENSITY (screen-space rim-light map)
 uniform float uDustReddening;
+uniform float uDustDarkest;    // transmittance of the densest dust (0 = opaque)
+uniform float uDustDepth;      // per-sprite optical depth ceiling (harness A/B)
 uniform float uDustStrength;       // overall dust amount (also gates in the vert)
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
 uniform float uGasStrength;        // glowing-gas emission brightness
@@ -40,6 +42,7 @@ flat in float vLfBetaS;    // signed source angle at the sprite centre
 uniform float uLfFy;       // uProj[1][1]; screen space is tan-space times this
 
 #include "lens_forward.glsl"
+#include "dust_spectrum.glsl"
 
 // 2D value-noise FBM — carves each dust sprite into a wispy cloud (soft edges),
 // so a big dust sprite is a sculpted cloud form, not a smooth disc.
@@ -184,16 +187,18 @@ void main() {
                 return;
             }
 
-            // Reddening-DOMINANT Beer-Lambert extinction, drawn OVER the stars
-            // (GL_ZERO, GL_SRC_COLOR). Thin dust just warms the light (tan→red) so
-            // stars still show; where sprites pile up in a lane, the optical depth
-            // grows until the dust COVERS the stars — a dark reddened cloud.
-            float t = vDust * dens * uDustStrength * 1.5;
-            vec3 dExt = vec3(1.0, 1.0 + 1.0 * uDustReddening, 1.0 + 2.6 * uDustReddening);
-            // Reddish floor so even the densest, most-overlapped dust reads as a
-            // deep red-brown lane (reddened light blocked by dust) rather than a
-            // pure-black "hole"/burn-mark. Red passes most, blue least.
-            vec3 trans = max(exp(-t * dExt), vec3(0.10, 0.035, 0.02));
+            // Beer-Lambert extinction, drawn OVER the stars (GL_ZERO, GL_SRC_COLOR).
+            // Thin dust warms the light so stars still show; where sprites pile up
+            // in a lane the optical depth grows until the dust COVERS them.
+            //
+            // 3.5, not 1.5: at 1.5 a single maxed sprite still passed 22% of the
+            // red, so one layer of dust could never block anything and darkness
+            // only arrived by stacking — but dust sprites only exist where STARS
+            // exist, so the pile-up was bounded by star density and a lane could
+            // not go dark. uDustStrength (0-2) scales it as before.
+            float t = vDust * dens * uDustStrength * uDustDepth;
+            vec3 dExt  = dustExtTilt(uDustReddening);
+            vec3 trans = max(exp(-t * dExt), dustFloorT(uDustDarkest, uDustReddening));
             FragColor = vec4(mix(vec3(1.0), trans, vSlabW * gLfEdgeFade), 1.0);   // slab weight fades the extinction
             return;
         }

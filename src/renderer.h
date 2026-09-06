@@ -762,6 +762,8 @@ public:
   float dustStrength{1.0f};     // dust extinction amount (0 = off)
   float dustInfluence{1.0f};     // world-space dust radius, set from the cloud bounds
   float dustReddening{0.72f};    // wavelength tilt (blue absorbed more than red)
+  float dustDarkest{0.02f};      // transmittance of the densest dust (0 = opaque)
+  float dustSettle{1.0f};        // how far dust settles to the cloud's own plane
   float dustContrast{1.0f};     // 1 = linear; >1 concentrates dust in dense regions
   float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
   float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)

@@ -346,6 +346,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["rtCloudPointCap"]   = settings.rtCloudPointCap;
     s["dustStrength"]      = settings.dustStrength;
     s["dustReddening"]     = settings.dustReddening;
+    s["dustDarkest"]       = settings.dustDarkest;
+    s["dustSettle"]        = settings.dustSettle;
     s["dustContrast"]      = settings.dustContrast;
     s["dustCoverage"]      = settings.dustCoverage;
     s["dustClumpScale"]    = settings.dustClumpScale;
@@ -730,7 +732,9 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.farFalloff         = s.value("farFalloff",         SceneSettings{}.farFalloff);
     st.rtCloudPointCap    = s.value("rtCloudPointCap",    2000);
     st.dustStrength       = s.value("dustStrength",       1.0f);
-    st.dustReddening      = s.value("dustReddening",      0.72f);
+    st.dustReddening      = s.value("dustReddening",      SceneSettings{}.dustReddening);
+    st.dustDarkest        = s.value("dustDarkest",        SceneSettings{}.dustDarkest);
+    st.dustSettle         = s.value("dustSettle",         SceneSettings{}.dustSettle);
     st.dustContrast       = s.value("dustContrast",       1.0f);
     st.dustCoverage       = s.value("dustCoverage",       0.30f);
     st.dustClumpScale     = s.value("dustClumpScale",     0.13f);

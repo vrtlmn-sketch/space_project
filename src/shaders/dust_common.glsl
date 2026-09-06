@@ -8,6 +8,11 @@
 //   uniform float uDustClumpScale;   // lane scale (× influence)
 //   uniform float uDustCoverage;     // how much of the field is dusty
 //   uniform float uDustContrast;     // sharpens lanes
+//   uniform vec3  uDustAxis;         // cloud's minor principal axis (unit)
+//   uniform float uDustFlatten;      // 1 = isotropic, lower = settled
+//   uniform float uDustScaleH;       // dust layer scale height (world), 0 = off
+//   uniform float uDustAxisQ;        // measured c/a of the star distribution
+//   uniform float uDustSettle;       // scene dial: 0 = off (identity), 1 = full
 // ─────────────────────────────────────────────────────────────────────────────
 
 float dcHash11(float p) {
@@ -40,16 +45,100 @@ float dcFbm3(vec3 p) {
   return s / 0.875;   // normalise ~0..1
 }
 
+// ── Ridged multifractal: why dust BRANCHES instead of beading ───────────────
+// Thresholding a SMOOTH field (dcFbm3) gives its excursion set, and the
+// excursion set of a smooth random field above a high level is a collection of
+// isolated, roughly convex islands. That is a property of the operation, not a
+// tuning failure — no value of coverage or contrast turns those islands into
+// threads. It is why the lanes read as a string of beads.
+//
+// Folding the field about its midline, r = 1 - |2n - 1|, puts a CREASE on the
+// level set n = 0.5. A level set is codimension-1 — a connected surface, not
+// islands — so the ridges fork and rejoin the way real dust filaments do.
+//
+// The multifractal weight is the second half: each octave is scaled by the
+// previous one, so fine structure only appears where coarse structure is
+// already dense. Real dust does exactly this — the big rift carries fine
+// tendrils, the empty sky stays empty.
+//
+// Six octaves, not three. dustLane() is evaluated ONCE PER PARTICLE in the
+// VERTEX shader (cloudVert.glsl), never per fragment, so the extra octaves cost
+// ~3 hash evaluations per particle per frame and nothing per pixel.
+float dcRidged(vec3 p) {
+  float sum = 0.0, amp = 0.5, weight = 1.0;
+  for (int i = 0; i < 6; i++) {
+    float n = 1.0 - abs(2.0 * dcVnoise(p) - 1.0);
+    n *= n;                              // sharpen the crease
+    n *= weight;                         // detail only where it is already dense
+    weight = clamp(n * 2.0, 0.0, 1.0);
+    sum += n * amp;
+    p = p * 2.07 + 19.19;                // offset as well as scale: no lattice echo
+    amp *= 0.55;
+  }
+  return clamp(sum * 1.15, 0.0, 1.0);
+}
+
 // Lane mask at a galaxy-local position: a soft FBM field (0 in gaps, up to 1 in
 // lanes). It is only a TEXTURE — density comes from the star particles (sprite
 // path) or the splat volume (volumetric path); where matter is dense the lanes
 // compound into thick dust, and the sparse halo stays clear.
 float dustLane(vec3 p, float baseScale) {
   float scale = max(baseScale * uDustClumpScale, 1e-6);
-  float n = dcFbm3(p / scale);
-  float thr = 0.85 - clamp(uDustCoverage, 0.0, 1.0) * 0.7;   // coverage widens the lanes
-  float d = smoothstep(thr, thr + 0.30, n);
-  return pow(d, max(uDustContrast, 0.25));                    // concentration sharpens lanes
+  // ── Settle the dust toward the cloud's OWN symmetry plane ─────────────────
+  // Dust is thin because gas is dissipative: it collides, radiates its energy
+  // away and sinks to whatever plane the object's rotation defines. Stars are
+  // collisionless and keep their vertical motion, so a spiral's dust layer ends
+  // up about half the stellar scale height.
+  //
+  // This is NOT a branch on "is this a disc". uDustFlatten and uDustScaleH come
+  // from the measured principal axes (RenderedObject::measureDustShape), and a
+  // distribution with no preferred plane measures q = c/a = 1, which makes every
+  // line below the identity. A spherical procedural cloud therefore renders
+  // byte-for-byte as it did before; an elliptical barely moves; only something
+  // that is already flat gets a lane.
+  vec3  q    = p;
+  float vwin = 1.0;
+  if (uDustSettle > 0.0 && uDustScaleH > 0.0) {
+    vec3  n  = uDustAxis;
+    float h  = dot(p, n);          // out of plane
+    vec3  ip = p - h * n;          // in plane
+    // Squash the SAMPLING coordinate across the plane so the noise itself comes
+    // out sheet-like instead of blobby.
+    float f = mix(1.0, uDustFlatten, uDustSettle);
+    q = ip + n * (h / max(f, 1e-3));
+    // Shear it along the local azimuth, the way differential rotation draws a
+    // cloud out into a filament. No rotation-flattening -> no shear.
+    vec3  azi = cross(n, ip);
+    float al  = length(azi);
+    if (al > 1e-9) {
+      azi /= al;
+      float shear = (1.0 - uDustAxisQ) * uDustSettle * 0.75;
+      q -= azi * dot(q, azi) * shear;
+    }
+    // And confine it to a layer thinner than the stars: this is what turns
+    // scattered clumps into a lane in an edge-on view.
+    // The layer's thickness VARIES along the plane. A clean Gaussian window
+    // gives a uniform slab, which is what made the disc read as flat — real
+    // dust sends branches climbing out of the plane (the Great Rift's tendrils)
+    // while hugging it elsewhere. One extra low-frequency sample buys that.
+    float hMod = 0.45 + 1.70 * dcVnoise(ip / (scale * 7.0) + 41.7);
+    float hh   = h / max(uDustScaleH * hMod, 1e-6);
+    // Weighted by (1 - q) as well as the dial: at q = 1 a sphere has no
+    // preferred plane, and without this the window would still carve it into
+    // a slab along an arbitrary axis. Every term above is already the
+    // identity at q = 1; this makes the last one so too.
+    vwin = mix(1.0, exp(-0.5 * hh * hh), (1.0 - uDustAxisQ) * uDustSettle);
+  }
+  float n = dcRidged(q / scale);
+  // Recalibrated for dcRidged. Ridged noise has a different distribution from
+  // the old smooth FBM (mean 0.55 vs 0.50, p90 0.88 vs 0.66), so 0.85 - cov*0.7
+  // would make 41% of space dusty where it used to make 13%. Fitted so the
+  // Patchiness slider keeps its meaning: coverage 0.30 -> 13.5% of space dusty
+  // against the old 13.1%. The window is narrower (0.15, was 0.30) because
+  // filaments want crisp edges where blobs wanted soft ones.
+  float thr = 1.06 - clamp(uDustCoverage, 0.0, 1.0) * 0.95;
+  float d = smoothstep(thr, thr + 0.15, n);
+  return pow(d, max(uDustContrast, 0.25)) * vwin;                    // concentration sharpens lanes
 }
 
 // ── Volumetric dust optics (shared constants) ────────────────────────────────

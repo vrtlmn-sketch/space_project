@@ -1161,7 +1161,7 @@ void main()
             float sC   = clamp(objects[di].radius * objects[di].radius * 1.0e6, 1.0, 64.0);
             { float dInfl2 = uDustInfluence * uDustInfluence; if (dd2 < dInfl2 * 9.0 && hash1(vec3(float(di) * 7.13, float(di) * 13.37, float(di) * 23.79)) < uDustSampleFrac && hash1(floor((dcen - uDustCenter) / max(uDustInfluence * uDustClumpScale, 1e-6))) < uDustCoverage) { float dCt = objects[di].mass * (objects[di].radius * objects[di].radius * 1.0e6) / max(uDustSampleFrac, 1e-4) * exp(-dd2 / dInfl2); dustTau += dCt; dustGlowCol += dCt * ((objects[di].temperature > 100.0) ? blackbody(objects[di].temperature) : vec3(0.55, 0.65, 1.0)); } }
         }
-        vec3 dExt = vec3(1.0, 1.0 + 0.6 * uDustReddening, 1.0 + 1.6 * uDustReddening);
+        vec3 dExt = dustExtTilt(uDustReddening);   // shared: dust_spectrum.glsl
         color *= exp(-uDustStrength * 0.006 * (dustTau * pow(max(dustTau / 20.0, 1e-4), uDustContrast - 1.0)) * dExt);
 
         // Stage 4 (in-scatter): dust scatters nearby starlight and glows softly.

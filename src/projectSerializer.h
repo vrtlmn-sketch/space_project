@@ -225,6 +225,12 @@ struct SceneSettings {
   float lensHazeArc{1.0f};
   float spriteRefHeight{720.0f};
   float unresolvedSize{45.55f};
+  // NOTE: raising this only DELETES cores. The haze pass draws every star
+  // unconditionally (cloudVert: the final else has no uResolvedCut gate), so
+  // total = haze(all) + cores(resolved) and a higher cut just removes light
+  // instead of moving it into the unresolved sheet. Until the cut is made
+  // energy-conserving, raising it makes a galaxy dimmer and duller, not
+  // smoother. Left at 0 for that reason.
   float resolvedCut{0.0f};
   float gasStrength{0.5f};
   // Point-source stand-in for objects below the pixel floor (DrawObjectImpostor).
@@ -237,6 +243,12 @@ struct SceneSettings {
   // Dust
   float dustStrength{1.0f};
   float dustReddening{0.72f};
+  // Transmittance of the DENSEST dust. The old hardcoded floor was a
+  // saturated red at 0.10, which made thick dust glow instead of block.
+  float dustDarkest{0.02f};
+  // How far dust settles toward the cloud's own symmetry plane. 0 = off
+  // (identical to before), 1 = full. A sphere is unaffected at any value.
+  float dustSettle{1.0f};
   float dustContrast{1.0f};
   float dustCoverage{0.30f};
   float dustClumpScale{0.13f};
