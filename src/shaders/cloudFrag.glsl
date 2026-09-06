@@ -30,6 +30,7 @@ in float vSeed;             // per-cloud seed → unique billowing FBM shape
 in float vHot;
 in float vRim;              // 1 = hot blue star
 in float vSlabW;            // depth-slab cross-fade weight (1 = full)
+in float vUnresGain;        // carries an unresolved star's core flux into its haze
 
 // Lens frame from cloudVert (see lens_forward.glsl).
 flat in float vLfSrcRad;   // the source's UNLENSED half-size, screen space; 0 = not lensed
@@ -233,7 +234,10 @@ void main() {
             // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.
             // Thousands overlap → density-driven volumetric glow the dust carves into.
             float halo = exp(-r2 * 1.4);
-            c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim;
+            // vUnresGain is 1 for a star that also draws a core, and >1 for one
+            // the resolve cut skipped — so raising the cut TRADES sparkle for a
+            // smooth sheet at constant total light, instead of just dimming.
+            c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim * vUnresGain;
         }
         FragColor = vec4(c * vSlabW * gLfEdgeFade, 1.0);   // slab weight fades the star/haze light
         return;

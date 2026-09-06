@@ -577,14 +577,41 @@ spacing, against real filament widths of 1-30 ly. So a characteristic blob size
 is literally a constant in the code, and structure finer than the star spacing
 is not representable at any noise quality.
 
-## resolvedCut only DELETES cores — it does not redistribute
+## resolvedCut CONSERVES light — it used to just delete it
 
 The haze pass draws every star unconditionally (cloudVert's final `else` has no
 `uResolvedCut` gate), so total = haze(all) + cores(resolved). Raising the cut
-removes core sprites and moves nothing into the unresolved sheet: the galaxy
-gets dimmer and duller, not smoother. Left at **0** for that reason. To make the
-"real telescope look" work, the cut has to be made energy-conserving first — an
-unresolved star's haze lobe should carry the flux its core would have had.
+used to remove core sprites and move nothing into the sheet: the galaxy got
+dimmer and duller rather than smoother, which is why the slider "did nothing
+good" and sat at 0.
+
+A star that does not resolve now hands its core's flux to its own haze lobe
+(`vUnresGain`). Profile integrals over the unit disc, in sprite-radius² units:
+core `exp(-3.5 r2)·smoothstep(1,0.5,r2)` = **0.82746**, haze `exp(-1.4 r2)` =
+**1.69063**. Measured on an edge-on capture: mean **20.78** at cut 0 against
+**19.20** at cut 0.9, where sparkle falls from 1.95% to 0.66%. Default **0.75**
+(the brightest ~9% still resolve).
+
+**This is NOT the `vHazeBoost` that was removed** (see "Light falls off because
+objects get SMALLER"). That one gave back the light a DISTANCE-capped lobe had
+lost, up to 48x, so per-pixel brightness climbed as d². The gain here is computed
+from the UNCAPPED lobe size, so it is a pure function of the star's own
+magnitude — identical at every distance, and bounded at about 1.1x to 2.8x.
+
+## Stars come from POPULATIONS, not from one urn
+
+Star colour was `hash13` alone, so a galaxy's bulge, arms and halo were all drawn
+from the same distribution — and every universe galaxy also shared `baseT` 4500 K.
+Real discs have an old, metal-rich, yellow-red bulge and young blue stars in the
+THIN disc at larger radii, where the gas is.
+
+`uPopColour` biases the temperature draw (not the brightness, so it is
+energy-neutral) by a radial × vertical young fraction built from the shape terms
+`measureDustShape` already provides. Universality is the same trick as the dust
+settling: the HEIGHT term is weighted by `(1 - q)`, so a sphere keeps only the
+radial gradient — which is correct, ellipticals redden inward and have no thin
+disc to put young stars in. Measured on an edge-on galaxy: outer-band B/R rises
+1.134 → 1.261 with it on, inner stays warmer.
 
 ## Galaxy shape: measure it offline, do not reason about it
 

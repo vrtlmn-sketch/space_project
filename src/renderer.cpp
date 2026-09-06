@@ -1058,7 +1058,7 @@ void Renderer::DrawCloudDust(RenderedObject& ro) {
   // the black-hole lens march (and future per-star/depth consumers). The full
   // marched-screen look was built and measured: the honest column through a
   // galaxy is smooth saturated fog — the granular look lives in the sprites.
-  ro.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, dustCoverage, dustClumpScale,
+  ro.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, dustCoverage, dustClumpScale,
                       ro.ownDustInfluence(dustInfluence), dustContrast);
   ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Dust;
   ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -4129,7 +4129,16 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     norm01("Resolved",   "##rescut",  &resolvedCut,        0.0f, 1.0f,   true);
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("How many stars resolve as sharp points. Higher = fewer sharp\n"
-                        "stars, more unresolved glow (real telescope look).");
+                        "stars, more unresolved glow (real telescope look).\n"
+                        "Light is CONSERVED: a star that stops resolving hands its\n"
+                        "core's flux to its own haze lobe, so this trades sparkle\n"
+                        "for a smooth sheet rather than just dimming the galaxy.");
+    norm01("Populations","##popcol",  &popColour,          0.0f, 1.0f,   true);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Stellar population colour: an old red-yellow bulge and young\n"
+                        "blue stars in the thin disc, instead of one colour everywhere.\n"
+                        "A spheroidal cloud keeps only the radial part, which is right -\n"
+                        "ellipticals redden inward and have no thin disc.");
     norm01("Distance",   "##farfall", &farFalloff,          0.05f, 1.0f, false);
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("How fast a galaxy dims as it gets far enough away to stop\n"

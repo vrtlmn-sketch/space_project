@@ -751,7 +751,7 @@ public:
   // which is denser than the pre-calibration look, and the user picked it.
   float spriteRefHeight{720.0f};
   float unresolvedSize{45.55f};   // unresolved lobe angular width (x fixed PSF floor)
-  float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
+  float resolvedCut{0.75f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)
   float farFalloff{0.08f};       // far-field light compression (1 = exact flux, deep field black)
   // Brightness of the point-source stand-in a planet/star/black hole/nebula
@@ -764,6 +764,7 @@ public:
   float dustReddening{0.72f};    // wavelength tilt (blue absorbed more than red)
   float dustDarkest{0.02f};      // transmittance of the densest dust (0 = opaque)
   float dustSettle{1.0f};        // how far dust settles to the cloud's own plane
+  float popColour{1.0f};         // stellar population colour gradient (0 = off)
   float dustContrast{1.0f};     // 1 = linear; >1 concentrates dust in dense regions
   float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
   float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)

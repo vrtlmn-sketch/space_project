@@ -71,6 +71,8 @@ uniform vec3  uDustAxis;       // cloud's minor principal axis (see measureDustS
 uniform float uDustFlatten;    // 1 = isotropic (a sphere), lower = settled to the plane
 uniform float uDustScaleH;     // dust layer scale height, world units; 0 = off
 uniform float uDustAxisQ;      // measured c/a of the star distribution
+uniform float uCloudRms;       // cloud RMS radius, local units (population gradient)
+uniform float uPopColour;      // 0 = one population everywhere, 1 = full gradient
 uniform float uDustSettle;     // scene dial: 0 = identity, 1 = full settling
 
 out vec3  vColor;   // per-particle blackbody colour (stars)
@@ -80,6 +82,7 @@ out float vSeed;    // per-dust-cloud seed → unique billowing FBM shape in the
 out float vHot;     // 1 = hot blue star (seeds glowing gas)
 out float vRim;     // world-lit rim factor forwarded to the density map
 out float vSlabW;   // depth-slab cross-fade weight (1 = full; <1 near a slab edge)
+out float vUnresGain; // haze gain carrying an unresolved star's core flux (1 = none)
 
 // Lens frame handed to the fragment shader so it can run the map's EXPLICIT
 // direction (image angle -> source angle) once per pixel. All flat: a point
@@ -194,13 +197,44 @@ void main() {
   // Broad, realistic stellar colours: mostly cool (orange/red), a hot blue-white
   // minority (young stars). pow() skews the population toward the cool end so the
   // field spans red → orange → yellow → white → blue instead of one warm band.
-  float T = (2600.0 + 27000.0 * pow(h1, 3.5)) * (baseT / 5000.0);
+  // ── Stellar POPULATIONS ──────────────────────────────────────────────────
+  // h1 alone gives one colour distribution everywhere, so a galaxy's bulge, its
+  // arms and its halo were all drawn from the same urn. Real discs are not like
+  // that: the bulge is old, metal-rich and yellow-red, while young blue stars
+  // sit in the THIN disc at larger radii, where the gas is. That radial+vertical
+  // colour gradient is a large part of why a real galaxy photograph reads as a
+  // galaxy and not as a cloud of pastel dots.
+  //
+  // It costs nothing: the position is already in hand, and the shape terms are
+  // the ones measureDustShape already provides. Universality comes the same way
+  // the dust settling does — the HEIGHT term is weighted by (1 - q), so a sphere
+  // (q = 1) keeps only the radial gradient, which is right: ellipticals really
+  // do redden inward, and they have no thin disc to put young stars in.
+  float youngFrac = 0.0;
+  if (uPopColour > 0.0 && uCloudRms > 0.0) {
+    float hh   = dot(idPos, uDustAxis);
+    float rr   = length(idPos - hh * uDustAxis) / uCloudRms;
+    // young where there is gas: outside the bulge, and in the thin layer
+    float radial = smoothstep(0.08, 0.55, rr);
+    float thin   = 1.0;
+    if (uDustScaleH > 0.0) {
+      float zn = hh / (uDustScaleH * 2.0);
+      thin = mix(1.0, exp(-0.5 * zn * zn), 1.0 - uDustAxisQ);
+    }
+    youngFrac = radial * thin * uPopColour;
+  }
+  // Bias the temperature draw rather than replacing it, so the population keeps
+  // its spread — a young region is not uniformly blue, it is the same
+  // distribution shifted hot.
+  float h1p = clamp(h1 * (0.72 + 0.62 * youngFrac), 0.0, 1.0);
+  float T = (2600.0 + 27000.0 * pow(h1p, 3.5)) * (baseT / 5000.0);
   vColor = blackbody(T);
   vHot   = smoothstep(9000.0, 18000.0, T);   // hot blue stars seed glowing gas
   // Luminosity function: many faint, few bright (steep power law) → the field is
   // dominated by faint stars that blend into haze, not equal-brightness sparkles.
   vMag   = pow(h2, 3.0);
   vDust  = 0.0;
+  vUnresGain = 1.0;
 
   if (uRealistic == 0) {
     gl_PointSize = (uRenderMode == 1) ? 8.0 : 2.0;
@@ -276,6 +310,34 @@ void main() {
     // from uUnresolvedSize (like RT's su = 0.0013*uUnresolvedSize).
     float spread = 0.3 + uUnresolvedSize * 0.03;   // default 32.4 → ~1.27
     float sz = clamp(20.0 * (0.6 + 0.7 * vMag) * spread, 8.0, 160.0) * ps * rs;
+
+    // ── Make uResolvedCut CONSERVE light instead of deleting it ─────────────
+    // The core pass skips stars fainter than the cut, but this pass draws every
+    // star regardless — so total = haze(all) + cores(resolved), and raising the
+    // cut simply removed light. The galaxy got dimmer and duller rather than
+    // smoother, which is why the slider "did nothing good" and sat at 0.
+    //
+    // A star that does not resolve should still emit its light, just as an
+    // unresolved lobe. So hand its core's flux to its haze lobe. Profile
+    // integrals over the unit disc, in units of sprite radius squared:
+    //   core  exp(-3.5 r2) * smoothstep(1, 0.5, r2) -> 0.82746
+    //   haze  exp(-1.4 r2)                          -> 1.69063
+    //
+    // NOTE this is NOT the `vHazeBoost` that was removed (see "Light falls off
+    // because objects get SMALLER"). That one gave back light a DISTANCE-capped
+    // lobe had lost, up to 48x, so per-pixel brightness climbed as d^2. The
+    // gain here is computed from the UNCAPPED lobe size and is therefore a pure
+    // function of the star's own magnitude — identical at every distance. It
+    // ranges about 1.1x to 2.8x and cannot run away.
+    if (vMag < uResolvedCut) {
+      float szCore = max(clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps * uStarSize * rs, 1.0);
+      float szHaze = clamp(20.0 * (0.6 + 0.7 * vMag) * spread, 8.0, 160.0) * ps * rs;
+      float coreI  = (uChunkExtent > 0.0) ? (0.015 + 4.0 * vMag * vMag)
+                                          : (0.30  + 3.5 * vMag);
+      float coreF  = coreI * 0.82746 * szCore * szCore;
+      float hazeF  = max(uUnresolvedStrength * 0.008 * 1.69063 * szHaze * szHaze, 1e-9);
+      vUnresGain   = 1.0 + coreF / hazeF;
+    }
     // The lobe is a fixed SCREEN size, so a galaxy only a few pixels across was
     // still drawn as a stack of 8px+ lobes — a saturated ball far bigger than the
     // galaxy itself, nothing like a distant galaxy. Cap the lobe by how much

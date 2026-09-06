@@ -1138,6 +1138,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glUniform1f(glGetUniformLocation(program, "uDustFlatten"), dustFlatten);
   glUniform1f(glGetUniformLocation(program, "uDustScaleH"),  dustScaleH);
   glUniform1f(glGetUniformLocation(program, "uDustAxisQ"),   dustAxisQ);
+  glUniform1f(glGetUniformLocation(program, "uCloudRms"),   0.5f * cloudRmsRadius);
   glUniform1f(glGetUniformLocation(program, "uCinePixelScale"), 1.0f);
   glUniform1f(glGetUniformLocation(program, "uViewportH"), (float)fbHeight);
   glUniform1f(glGetUniformLocation(program, "uSpriteRefH"), gSpriteRefHeight);
@@ -2538,8 +2539,8 @@ void RenderedObject::uploadRenderMode(int mode)
 }
 
 void RenderedObject::uploadDustParams(float strength, float reddening, float darkest,
-                                      float settle, float coverage, float clumpScale,
-                                      float influence, float contrast)
+                                      float settle, float popColour, float coverage,
+                                      float clumpScale, float influence, float contrast)
 {
   glUseProgram(program);
   GLint l;
@@ -2547,6 +2548,7 @@ void RenderedObject::uploadDustParams(float strength, float reddening, float dar
   l = glGetUniformLocation(program, "uDustReddening");  if (l >= 0) glUniform1f(l, reddening);
   l = glGetUniformLocation(program, "uDustDarkest");    if (l >= 0) glUniform1f(l, darkest);
   l = glGetUniformLocation(program, "uDustSettle");     if (l >= 0) glUniform1f(l, settle);
+  l = glGetUniformLocation(program, "uPopColour");      if (l >= 0) glUniform1f(l, popColour);
   // Per-sprite optical depth ceiling. 2.2: at the old 1.5 one maxed sprite still
   // passed 22% of the red, so a lane could never block in one layer; at 3.5 the
   // ridged lanes stacked into a solid black mass. Measured on an edge-on capture:
@@ -2921,6 +2923,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glUniform1f(glGetUniformLocation(program, "uDustFlatten"), dustFlatten);
     glUniform1f(glGetUniformLocation(program, "uDustScaleH"),  dustScaleH);
     glUniform1f(glGetUniformLocation(program, "uDustAxisQ"),   dustAxisQ);
+    glUniform1f(glGetUniformLocation(program, "uCloudRms"),   0.5f * cloudRmsRadius);
     GLint hl = glGetUniformLocation(program, "uHashScale");
     if (hl >= 0) glUniform1f(hl, hashScale);
   }

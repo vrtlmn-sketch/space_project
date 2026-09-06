@@ -1350,6 +1350,7 @@ int main(int argc, char** argv) {
     renderer.dustReddening      = s.dustReddening;
     renderer.dustDarkest        = s.dustDarkest;
     renderer.dustSettle         = s.dustSettle;
+    renderer.popColour          = s.popColour;
     renderer.dustContrast       = s.dustContrast;
     renderer.dustCoverage       = s.dustCoverage;
     renderer.dustClumpScale     = s.dustClumpScale;
@@ -1566,6 +1567,7 @@ int main(int argc, char** argv) {
     s.dustReddening      = renderer.dustReddening;
     s.dustDarkest        = renderer.dustDarkest;
     s.dustSettle         = renderer.dustSettle;
+    s.popColour          = renderer.popColour;
     s.dustContrast       = renderer.dustContrast;
     s.dustCoverage       = renderer.dustCoverage;
     s.dustClumpScale     = renderer.dustClumpScale;
@@ -2215,7 +2217,7 @@ int main(int argc, char** argv) {
     auto uploadCloudRO = [&](CloudObject* c){
       c->renderedObject.uploadTemperature(c->temperature);
       c->renderedObject.uploadRenderMode(c->renderMode);
-      c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening, renderer.dustDarkest, renderer.dustSettle,
+      c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening, renderer.dustDarkest, renderer.dustSettle, renderer.popColour,
                                          renderer.dustCoverage, renderer.dustClumpScale,
                                          c->renderedObject.ownDustInfluence(renderer.dustInfluence),
                                          renderer.dustContrast);

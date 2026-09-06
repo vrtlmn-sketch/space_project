@@ -380,7 +380,8 @@ public:
   bool  shadersReady() const { return program != 0; }
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
-  void uploadDustParams(float strength, float reddening, float darkest, float settle, float coverage,
+  void uploadDustParams(float strength, float reddening, float darkest, float settle,
+                        float popColour, float coverage,
                         float clumpScale, float influence, float contrast);
   void uploadNebulaScatterScale(float scale);
   void uploadParticleSizeSpread(float spread);

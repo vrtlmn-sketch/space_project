@@ -225,13 +225,13 @@ struct SceneSettings {
   float lensHazeArc{1.0f};
   float spriteRefHeight{720.0f};
   float unresolvedSize{45.55f};
-  // NOTE: raising this only DELETES cores. The haze pass draws every star
-  // unconditionally (cloudVert: the final else has no uResolvedCut gate), so
-  // total = haze(all) + cores(resolved) and a higher cut just removes light
-  // instead of moving it into the unresolved sheet. Until the cut is made
-  // energy-conserving, raising it makes a galaxy dimmer and duller, not
-  // smoother. Left at 0 for that reason.
-  float resolvedCut{0.0f};
+  // Stars fainter than this melt into the unresolved haze instead of drawing a
+  // core. The cut CONSERVES light now (cloudVert hands a skipped core's flux to
+  // that star's haze lobe), so raising it trades sparkle for a smooth sheet at
+  // constant total brightness instead of just dimming. vMag = h^3, so the
+  // fraction still resolving is 1 - cut^(1/3): 0.75 keeps the brightest ~9%.
+  // Measured on an edge-on capture: mean 20.78 at cut 0, 19.20 at cut 0.9.
+  float resolvedCut{0.75f};
   float gasStrength{0.5f};
   // Point-source stand-in for objects below the pixel floor (DrawObjectImpostor).
   float impostorStrength{1.0f};
@@ -249,6 +249,9 @@ struct SceneSettings {
   // How far dust settles toward the cloud's own symmetry plane. 0 = off
   // (identical to before), 1 = full. A sphere is unaffected at any value.
   float dustSettle{1.0f};
+  // Stellar population colour gradient: old/red bulge, young/blue thin disc.
+  // 0 = one population everywhere (the previous behaviour).
+  float popColour{1.0f};
   float dustContrast{1.0f};
   float dustCoverage{0.30f};
   float dustClumpScale{0.13f};
