@@ -12,27 +12,45 @@ layout, which did not fail to build, it **segfaulted at runtime**.
 Build artefacts (`*.o`, `bin/`) are gitignored and untracked. They used to be
 committed, which is what caused segfaults on other machines after a pull.
 
-## This renderer is a TRICK, and that is the point
+## The goal is the ILLUSION of a galaxy, not a model of one
 
-The project works because it cheats well. The Milky Way has 100 billion stars
-and this scene has 20 000 — five million times under-sampled — so no
-per-particle quantity in it "is" anything physical, and making one obey a real
-formula is precision on top of a number that is already fiction. Brightness
-comes from sprites OVERLAPPING. Dust is a texture on the star field, not a
-medium. Distance falloff is a look dial. A galaxy too small to resolve is drawn
-with fewer points. None of that is an approximation waiting to be improved; it
-IS the rendering model.
+We are not simulating a galaxy. We are building something that LOOKS like one,
+cheaply, and those are different jobs with different right answers.
 
-Every physics-first idea tried here has been deleted after the fact:
-volumetric dust (twice), dark-matter particles, `uSampleWeight`, arc ribbons
-(flux-exact to 3.1% and rejected on sight because thin exact arcs lost the
-sprite overlap that makes dust read as solid), lighting dust from `vRim`, and
-the ridged dust field below. Everything that survived is a construction that
-produces an impression.
+A real galaxy has a hundred billion stars; a scene here has 20 000. At five
+million times under-sampled, no particle in this renderer "is" a star, and no
+sprite "is" a dust cloud — each one stands in for an enormous number of things
+it is not. So a rule that would be correct for the thing being depicted is not
+automatically correct for the thing being drawn. **You cannot treat dust as
+dust.** Dust here is a texture on the star field, and its job is to read as dust
+at a glance, not to obey an extinction law per sample.
 
-So: when a change makes something more physically correct and the picture worse,
-the picture wins, and the correct thing is the one to throw away. Do not offer
-"more realistic" as a reason on its own — say what it will look like.
+What the picture is actually made of:
+
+- Brightness comes from sprites OVERLAPPING, not from any 1/d² term.
+- Dust is a field sampled per particle in the vertex shader, not a medium.
+- Distance falloff is a look dial, chosen for how deep you can see.
+- An object too small to resolve is drawn with fewer points on purpose.
+
+None of that is an approximation waiting to be improved. It IS the rendering
+model, and it is what makes 20 000 points read as a galaxy.
+
+**Cheap is part of the goal, not a constraint bolted on afterwards.** A
+technique that looks right and costs too much has failed at the actual task.
+The reason the sprite dust works is that the field is evaluated once per
+particle in a vertex shader and nothing per pixel; the reason marched volumetric
+dust keeps losing is that it costs per pixel for structure that averages away.
+
+Every physics-first idea tried here has been deleted after the fact: volumetric
+dust (twice), dark-matter particles, `uSampleWeight`, arc ribbons (flux-exact to
+3.1% and rejected on sight, because thin exact arcs lost the sprite overlap that
+makes dust read as solid), lighting dust from `vRim`, and the ridged dust field
+below. Every one of them was more faithful to the real thing and made the
+picture worse.
+
+So: when correctness and the picture disagree, the picture wins, and the correct
+thing is the one to throw away. Do not offer "more realistic" as a reason on its
+own — say what it will look like, and what it will cost.
 
 ## Run the harness WHEN ASKED — the user decides, not you
 
