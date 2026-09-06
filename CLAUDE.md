@@ -126,10 +126,10 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 ## Regression baseline
 
 `RASTER_ONLY=1 SKIP_GEO=1 ./bin/blackholesim --compare` on
-`projects/milky_way.json` gives a raster mean luminance of **25.535** at the
+`projects/milky_way.json` gives a raster mean luminance of **25.318** at the
 harness default of **1280x720**, captured at the default frame **90** (at the
 old frame-3 default the same scene read 27.704 — see the settling trap above).
-Companions: `blackhole.json` **42.967**, `universe.json` **19.967**. The
+Companions: `blackhole.json` **43.939**, `universe.json` **19.444**. The
 universe number moved a long way (was 14.538) because its GALAXIES changed
 shape — bulge, bar, wider discs, a wider radius range — not because anything
 regressed. Back-to-back reruns are byte-identical (`cmp`), so the right test is a
@@ -597,6 +597,37 @@ objects get SMALLER"). That one gave back the light a DISTANCE-capped lobe had
 lost, up to 48x, so per-pixel brightness climbed as d². The gain here is computed
 from the UNCAPPED lobe size, so it is a pure function of the star's own
 magnitude — identical at every distance, and bounded at about 1.1x to 2.8x.
+
+## Do not try to LIGHT the dust with vRim — it is a scalar, not a direction
+
+Attempted 2026-09-06 and reverted. The reasoning was sound and the result was
+not: pure extinction cannot look three-dimensional (an absorbing medium is only
+darker or lighter, never MODELLED), and what makes the Horsehead read as solid
+is shading — bright rim, dark interior, gradient between.
+
+`updateCloudRimFactors` looked like the answer: it already bakes a per-particle
+factor and the visible dust ignores it. Measured, the data is real and full
+range (milky_way: mean 0.054, p90 0.163, max 1.0, but **70.8% near zero**;
+`RIM_STATS=1` prints this).
+
+**It does not work, and the reason is structural.** `vRim` is a SCALAR surface
+term — "am I on an exposed surface" — with no direction. So every dust clump
+lights up around its whole perimeter, and a ring of light around a dark core
+reads as GLOWING, not as lit. Magnified, it is the ember problem straight back:
+the same warm halo the old `vec3(0.14, 0.038, 0.016)` floor produced, which is
+what made dust look like fire in the first place. Lit means bright on ONE side
+and dark on the other.
+
+Two things worth keeping from it:
+
+- The old fiery floor and the "3D" quality had the SAME cause. Removing the
+  floor fixed the fire and took the depth with it. Anyone re-adding warmth to
+  dust is re-adding the fire unless the warmth is DIRECTIONAL.
+- What would actually work is per-particle light DIRECTION plus self-shadowing
+  along it, which is what `updateCloudDustLight` already does — five steps
+  toward the light accumulating optical depth, on a 48³ illumination field. It
+  is RT-only. Porting it to raster is the real job; repurposing `vRim` is not a
+  shortcut to it.
 
 ## Diffraction spikes are a SATURATION artefact, so stars need a real range
 
