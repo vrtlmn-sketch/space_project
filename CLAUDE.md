@@ -508,6 +508,52 @@ identity.
   dial. Every other term is already the identity at q = 1, but a bare Gaussian
   window would still carve a sphere into a slab along an arbitrary axis.
 
+## Volumetric dust has been tried TWICE — read this before a third
+
+`DrawCloudDust` carries a one-line verdict: *"the honest column through a galaxy
+is smooth saturated fog — the granular look lives in the sprites."* The pass was
+added in `a61c154` and deleted in `5597302`. It is worth knowing WHY, because
+the idea is very appealing and the reasoning that leads to it is sound.
+
+The appeal is real. The sprite model's ceilings are hard, not tunable: a fixed
+**1,463 ly** sprite size, point sampling at the **724 ly** particle spacing, and
+dust that exists only where stars exist. Real filaments are 1-30 ly. So "make it
+a real 3D medium and march it" is the obvious answer.
+
+**Attempt 2 (2026-09-06) reached the same wall from the other side.** The field
+recipe was prototyped offline first, against the reference photograph:
+
+- Tileable ridged multifractal + domain warp + log-normal density, sampled at
+  three periods with an inter-scale warp. As a FIELD this is right — slices show
+  torn branching filaments with no dominant feature size, which is exactly what
+  the sprite dust cannot do.
+- Integrated as a column from OUTSIDE, it renders **a featureless black lens**.
+  The central limit theorem: a line integral through a statistically uniform
+  medium averages its own structure away.
+- The obvious rescue is depth: attenuate each star only by the dust in FRONT of
+  it (a froxel volume), since the deleted pass multiplied the whole scene by the
+  whole column. **Tested, and it does not rescue it.** Front-to-back ordered
+  compositing and a flat multiply produce nearly identical external edge-on
+  images. The rejection is general, not an artefact of how it was applied.
+
+**What IS true, and is the one thing worth keeping:** structure is resolved when
+the medium is NEAR. The reference photograph is the view from INSIDE the Milky
+Way, where the nearest clouds are a few hundred ly away and subtend large
+angles; the same prototype viewed from inside DOES produce branching filaments.
+That is physically correct behaviour at both ends — a distant galaxy's dust lane
+really is smooth — so a volumetric medium would help the inside-the-galaxy view
+and change little else. Whether that one case justifies the build is a judgement
+call; it has now twice looked like a bigger win than it is.
+
+Prototype and images: `/tmp/dustproto` is not kept. The recipe is written out in
+full above; rebuilding it is an hour, and the negative result is the expensive
+part, which is why it is written down here.
+
+**Do not commit the medium bake without a consumer.** The first attempt was
+deleted partly because "its draw call had no callers — ticking the box built a
+3D texture nothing ever marched". The second attempt's bake was written, built,
+measured and then deleted for the same reason rather than left in place.
+
 ## Thresholding smooth noise can only make ISLANDS
 
 Why dust read as a string of beads and never as branching filaments: the
