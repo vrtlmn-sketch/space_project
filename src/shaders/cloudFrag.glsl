@@ -11,6 +11,9 @@ uniform int   uDensityOnly; // 1 = dust pass writes DENSITY (screen-space rim-li
 uniform float uDustReddening;
 uniform float uDustDarkest;    // transmittance of the densest dust (0 = opaque)
 uniform float uDustDepth;      // per-sprite optical depth ceiling (harness A/B)
+uniform float uStarLumSpread;  // stellar luminosity range: 0 = flat (old), ln(range)
+uniform float uStarLumPivotC;  // core pivot: mean CORE flux unchanged at any spread
+uniform float uStarLumPivotH;  // haze pivot: its base is constant, so it differs
 uniform float uDustStrength;       // overall dust amount (also gates in the vert)
 uniform float uUnresolvedStrength; // star-haze brightness (RT parity)
 uniform float uGasStrength;        // glowing-gas emission brightness
@@ -150,6 +153,26 @@ vec2 lfSourceCoord() {
     return pc * 0.5 + 0.5;                          // profile and its FBM read the same way as unlensed
 }
 
+// ── Stellar luminosity range ────────────────────────────────────────────────
+// Real stellar populations span four to six orders of magnitude. Ours spanned
+// 12.7x (coreI = 0.30 + 3.5*vMag over vMag in [0,1)), which is the reason the
+// renderer could not do a Milky Way band AND a JWST star cluster.
+//
+// Diffraction spikes are a SATURATION artefact: they appear on sources that
+// overwhelm the sensor and grow with how far above saturation they are. With a
+// 12.7x range there is no population sitting above a threshold while the rest
+// sit below, so either every star spikes or none does. Widen the range and both
+// looks fall out of ONE model at different exposures — a wide galaxy view
+// saturates almost nothing, a nebula close-up saturates its O-stars.
+//
+// uStarLumPivot is solved on the CPU so the MEAN flux is identical at every
+// spread (see Renderer::starLumPivot). Without it, widening the range would
+// also change how bright every galaxy is, and this would be untunable.
+float starLum(float pivot) {
+    if (uStarLumSpread <= 0.0) return 1.0;
+    return exp(uStarLumSpread * (vMag - pivot));
+}
+
 void main() {
     vec2 lfCoord = lfSourceCoord();
     // ── Dark-matter debug dots ──
@@ -229,7 +252,7 @@ void main() {
             // the budget just whited out the screen instead of adding depth.
             float coreI = (uStarfield == 1) ? (0.015 + 4.0 * vMag * vMag)
                                             : (0.30  + 3.5 * vMag);
-            c = vColor * core * edge * coreI * uPointDim;
+            c = vColor * core * edge * coreI * starLum(uStarLumPivotC) * uPointDim;
         } else {
             // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.
             // Thousands overlap → density-driven volumetric glow the dust carves into.
@@ -237,7 +260,10 @@ void main() {
             // vUnresGain is 1 for a star that also draws a core, and >1 for one
             // the resolve cut skipped — so raising the cut TRADES sparkle for a
             // smooth sheet at constant total light, instead of just dimming.
-            c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim * vUnresGain;
+            // starLum() applies here TOO: a star bright enough to blaze should
+            // have a bright halo. It also cancels out of vUnresGain's core/haze
+            // ratio, so the energy transfer stays exact at any spread.
+            c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim * vUnresGain * starLum(uStarLumPivotH);
         }
         FragColor = vec4(c * vSlabW * gLfEdgeFade, 1.0);   // slab weight fades the star/haze light
         return;

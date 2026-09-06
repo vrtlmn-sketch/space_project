@@ -1048,6 +1048,35 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
   }
 }
 
+// Pivot for the stellar luminosity spread (see starLum() in cloudFrag.glsl).
+//
+// TWO pivots, because the core and the haze have different bases: the core's
+// response rises with vMag (0.30 + 3.5v) while the haze's is a constant. Using
+// the core's pivot for the haze made the whole scene 26% brighter, because the
+// haze carries most of a galaxy's light.
+//
+// Solved so mean(base * exp(R*(v - p))) == mean(base) over the SAME distribution
+// cloudVert draws, v = h^3 with h uniform. base and exp are correlated (both
+// rise with v), so the naive E[exp(R*(v-p))] = 1 does not preserve the mean —
+// it came out 2.9x too bright, which would have made the spread untunable
+// because every galaxy would change brightness as you widened it.
+float Renderer::starLumPivot(bool coreWeighted) const
+{
+  const float R = starLumSpread;
+  if (!(R > 0.0f)) return 0.0f;
+  const int N = 2048;
+  double num = 0.0, den = 0.0;
+  for (int i = 0; i < N; ++i) {
+    const double h = (i + 0.5) / N;
+    const double v = h * h * h;                 // cloudVert: vMag = pow(h2, 3.0)
+    const double base = coreWeighted ? (0.30 + 3.5 * v)   // non-starfield core
+                                     : 1.0;               // haze: base is constant
+    num += base * std::exp((double)R * v);
+    den += base;
+  }
+  return (float)(std::log(num / std::max(den, 1e-12)) / (double)R);
+}
+
 void Renderer::DrawCloudDust(RenderedObject& ro) {
   if (rayTracerView || ro.meshType != MeshType::cloud) return;
   if (!ro.cloudLightDrawn) return;
@@ -1058,7 +1087,7 @@ void Renderer::DrawCloudDust(RenderedObject& ro) {
   // the black-hole lens march (and future per-star/depth consumers). The full
   // marched-screen look was built and measured: the honest column through a
   // galaxy is smooth saturated fog — the granular look lives in the sprites.
-  ro.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, dustCoverage, dustClumpScale,
+  ro.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, starLumSpread, starLumPivot(true), starLumPivot(false), dustCoverage, dustClumpScale,
                       ro.ownDustInfluence(dustInfluence), dustContrast);
   ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Dust;
   ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
@@ -4133,6 +4162,21 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "Light is CONSERVED: a star that stops resolving hands its\n"
                         "core's flux to its own haze lobe, so this trades sparkle\n"
                         "for a smooth sheet rather than just dimming the galaxy.");
+    norm01("Dynamic Range","##lumspread", &starLumSpread,  0.0f, 9.2f,  true);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How far stellar brightness spreads. 0 = every star within 12.7x\n"
+                        "of every other (the old look). 4.6 = about 1000x, so a few stars\n"
+                        "saturate and spike while the rest stay small points - one model\n"
+                        "that gives both a Milky Way band and a JWST cluster, with\n"
+                        "EXPOSURE choosing between them. Mean flux is held constant, but\n"
+                        "bloom and spikes are additive, so widening wants exposure down.");
+    norm01("Spike Onset","##spiketh", &spikeThreshold,       0.0f, 3.0f,  true);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How bright a source must be before it gets diffraction spikes.\n"
+                        "Spikes are a SATURATION artefact, so only genuinely bright stars\n"
+                        "should have them. 0 = every local maximum spikes at full strength\n"
+                        "(the old look). Above 0 also compresses a spike's energy\n"
+                        "logarithmically, as a real one grows.");
     norm01("Populations","##popcol",  &popColour,          0.0f, 1.0f,   true);
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Stellar population colour: an old red-yellow bulge and young\n"
@@ -8733,6 +8777,11 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     glUseProgram(spikeSourceProgram);
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
     glUniform1i(spkSrcLocTex, 0);
+    // Spikes mark SATURATION, so a source must clear an absolute level, not
+    // merely beat its neighbours. Without this every faint star in a wide field
+    // got the same six-point cross as an O-star.
+    { GLint l = glGetUniformLocation(spikeSourceProgram, "uSpikeFloor");
+      if (l >= 0) glUniform1f(l, spikeThreshold); }
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // Streak the isolated sources: per direction, an à-trous ladder of three

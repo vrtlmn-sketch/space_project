@@ -754,7 +754,7 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     renderedObject.uploadRenderMode(renderMode);
     renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
     renderedObject.uploadParticleSizeSpread(particleSizeSpread);
-    renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening, renderer.dustDarkest, renderer.dustSettle, renderer.popColour,
+    renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening, renderer.dustDarkest, renderer.dustSettle, renderer.popColour, renderer.starLumSpread, renderer.starLumPivot(true), renderer.starLumPivot(false),
                                     renderer.dustCoverage, renderer.dustClumpScale,
                                     renderedObject.ownDustInfluence(renderer.dustInfluence),
                                     renderer.dustContrast);

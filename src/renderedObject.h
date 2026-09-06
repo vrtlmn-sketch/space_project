@@ -381,7 +381,7 @@ public:
   void uploadTemperature(float kelvin);
   void uploadRenderMode(int mode);
   void uploadDustParams(float strength, float reddening, float darkest, float settle,
-                        float popColour, float coverage,
+                        float popColour, float lumSpread, float lumPivot, float lumPivotH, float coverage,
                         float clumpScale, float influence, float contrast);
   void uploadNebulaScatterScale(float scale);
   void uploadParticleSizeSpread(float spread);

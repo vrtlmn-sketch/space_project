@@ -349,6 +349,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["dustDarkest"]       = settings.dustDarkest;
     s["dustSettle"]        = settings.dustSettle;
     s["popColour"]         = settings.popColour;
+    s["starLumSpread"]     = settings.starLumSpread;
+    s["spikeThreshold"]    = settings.spikeThreshold;
     s["dustContrast"]      = settings.dustContrast;
     s["dustCoverage"]      = settings.dustCoverage;
     s["dustClumpScale"]    = settings.dustClumpScale;
@@ -737,6 +739,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.dustDarkest        = s.value("dustDarkest",        SceneSettings{}.dustDarkest);
     st.dustSettle         = s.value("dustSettle",         SceneSettings{}.dustSettle);
     st.popColour          = s.value("popColour",          SceneSettings{}.popColour);
+    st.starLumSpread      = s.value("starLumSpread",      SceneSettings{}.starLumSpread);
+    st.spikeThreshold     = s.value("spikeThreshold",     SceneSettings{}.spikeThreshold);
     st.dustContrast       = s.value("dustContrast",       1.0f);
     st.dustCoverage       = s.value("dustCoverage",       0.30f);
     st.dustClumpScale     = s.value("dustClumpScale",     0.13f);

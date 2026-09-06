@@ -252,6 +252,25 @@ struct SceneSettings {
   // Stellar population colour gradient: old/red bulge, young/blue thin disc.
   // 0 = one population everywhere (the previous behaviour).
   float popColour{1.0f};
+  // Stellar luminosity range, as ln(range). 0 = the old flat 12.7x spread.
+  // 4.6 gives ~1000x overall, which is what lets a few stars saturate (and so
+  // spike) while the rest stay small points — the ESO band and a JWST cluster
+  // from ONE model, with exposure choosing between them.
+  //
+  // Mean LINEAR flux is held constant at any spread (two pivots, see
+  // Renderer::starLumPivot), but the DISPLAYED image is not: concentrating
+  // light into a few saturating sources feeds bloom and spikes, which are
+  // additive on top. So widening the range wants the exposure brought down to
+  // match, and the three reference projects were re-exposed when this landed.
+  // That is not a bug, it is what a wider dynamic range means.
+  float starLumSpread{4.6f};
+  // Absolute level a source must exceed before it gets diffraction spikes, and
+  // the switch for compressing a spike's energy logarithmically (a real spike
+  // grows with the LOG of how far a source is over saturation, not linearly).
+  // 0 = both off, i.e. exactly the previous behaviour: every local maximum
+  // spikes, at full strength. ~0.85 is the photographic look. Default 0 because
+  // turning it on dims the reference scenes 14-17% and that is a look decision.
+  float spikeThreshold{0.85f};
   float dustContrast{1.0f};
   float dustCoverage{0.30f};
   float dustClumpScale{0.13f};

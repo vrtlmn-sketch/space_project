@@ -2539,7 +2539,8 @@ void RenderedObject::uploadRenderMode(int mode)
 }
 
 void RenderedObject::uploadDustParams(float strength, float reddening, float darkest,
-                                      float settle, float popColour, float coverage,
+                                      float settle, float popColour, float lumSpread,
+                                      float lumPivot, float lumPivotH, float coverage,
                                       float clumpScale, float influence, float contrast)
 {
   glUseProgram(program);
@@ -2549,6 +2550,9 @@ void RenderedObject::uploadDustParams(float strength, float reddening, float dar
   l = glGetUniformLocation(program, "uDustDarkest");    if (l >= 0) glUniform1f(l, darkest);
   l = glGetUniformLocation(program, "uDustSettle");     if (l >= 0) glUniform1f(l, settle);
   l = glGetUniformLocation(program, "uPopColour");      if (l >= 0) glUniform1f(l, popColour);
+  l = glGetUniformLocation(program, "uStarLumSpread"); if (l >= 0) glUniform1f(l, lumSpread);
+  l = glGetUniformLocation(program, "uStarLumPivotC"); if (l >= 0) glUniform1f(l, lumPivot);
+  l = glGetUniformLocation(program, "uStarLumPivotH"); if (l >= 0) glUniform1f(l, lumPivotH);
   // Per-sprite optical depth ceiling. 2.2: at the old 1.5 one maxed sprite still
   // passed 22% of the red, so a lane could never block in one layer; at 3.5 the
   // ridged lanes stacked into a solid black mass. Measured on an edge-on capture:

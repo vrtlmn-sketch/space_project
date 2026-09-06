@@ -765,6 +765,12 @@ public:
   float dustDarkest{0.02f};      // transmittance of the densest dust (0 = opaque)
   float dustSettle{1.0f};        // how far dust settles to the cloud's own plane
   float popColour{1.0f};         // stellar population colour gradient (0 = off)
+  float starLumSpread{4.6f};     // stellar luminosity range, ln(range); 0 = old flat
+  float spikeThreshold{0.85f};   // absolute level a source must pass to spike
+  // Pivot that holds MEAN star flux constant however wide the spread is, so
+  // widening the range does not also change how bright every galaxy is.
+  // Solved numerically over vMag = h^3, the distribution cloudVert draws.
+  float starLumPivot(bool coreWeighted) const;
   float dustContrast{1.0f};     // 1 = linear; >1 concentrates dust in dense regions
   float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
   float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)

@@ -126,10 +126,10 @@ UNIVERSE_CAM_DIST=<AU>` (1e10 ≈ the real-pipeline switch, 1e11 ≈ a few pixel
 ## Regression baseline
 
 `RASTER_ONLY=1 SKIP_GEO=1 ./bin/blackholesim --compare` on
-`projects/milky_way.json` gives a raster mean luminance of **25.556** at the
+`projects/milky_way.json` gives a raster mean luminance of **25.535** at the
 harness default of **1280x720**, captured at the default frame **90** (at the
 old frame-3 default the same scene read 27.704 — see the settling trap above).
-Companions: `blackhole.json` **44.131**, `universe.json` **20.050**. The
+Companions: `blackhole.json` **42.967**, `universe.json` **19.967**. The
 universe number moved a long way (was 14.538) because its GALAXIES changed
 shape — bulge, bar, wider discs, a wider radius range — not because anything
 regressed. Back-to-back reruns are byte-identical (`cmp`), so the right test is a
@@ -597,6 +597,45 @@ objects get SMALLER"). That one gave back the light a DISTANCE-capped lobe had
 lost, up to 48x, so per-pixel brightness climbed as d². The gain here is computed
 from the UNCAPPED lobe size, so it is a pure function of the star's own
 magnitude — identical at every distance, and bounded at about 1.1x to 2.8x.
+
+## Diffraction spikes are a SATURATION artefact, so stars need a real range
+
+The renderer could not do a Milky Way band (fine points, almost no spikes) AND a
+JWST cluster (a few blazing crosses over many small points), and the reason was
+not the spike pass. It was the luminosity function:
+
+```
+coreI = 0.30 + 3.5 * vMag        // vMag in [0,1)  ->  12.7x, ~250x in flux
+```
+
+Real stellar populations span four to six orders of magnitude. At 12.7x there is
+no population sitting ABOVE a saturation threshold while the rest sit below, so
+either every star spikes or none does. Both reference looks obey one rule — a
+spike appears when a source overwhelms the sensor — and they differ only in how
+much of the field is over that line.
+
+`uStarLumSpread` (Stars → **Dynamic Range**, ln of the range, default 4.6 ≈
+1000x) widens it. `uSpikeFloor` (Stars → **Spike Onset**, default 0.85) makes
+spikes require an absolute level rather than merely beating their neighbours.
+
+- **TWO pivots, not one.** `Renderer::starLumPivot(coreWeighted)` solves the
+  offset that holds MEAN flux constant. The core's base rises with vMag and the
+  haze's is a constant, so they need different pivots — using the core's for the
+  haze made the whole scene 26% brighter.
+- **Mean LINEAR flux constant does NOT mean the image is unchanged.**
+  Concentrating light into a few saturating sources feeds bloom and spikes,
+  which are ADDITIVE on top. At spread 4.6 the reference scenes moved -11%,
+  +35%, +17% before re-exposure. Widening the range genuinely wants the exposure
+  brought down; that is what a wider dynamic range means, not a bug. The three
+  reference projects were re-exposed when this landed: milky_way 0.920 → 0.851,
+  blackhole 0.880 → 0.479, universe 0.320 → 0.177, which returns all three to
+  their previous mean luminance.
+- **Spike energy must COMPRESS.** A real spike grows with the LOG of how far a
+  source is over saturation. Feeding the raw excess to the streak pass meant
+  widening the range made the spikes explode and swallow the frame — the exact
+  opposite of the point, which is a few stars that stand out rather than a few
+  that dominate. `spikeSourceFrag` applies `log(1+L)/L`, gated on the floor so
+  that Spike Onset 0 restores the previous behaviour exactly.
 
 ## Stars come from POPULATIONS, not from one urn
 
