@@ -750,7 +750,7 @@ public:
   // 720 is the signed-off default: at a 1080p render that draws sprites at 1.5x,
   // which is denser than the pre-calibration look, and the user picked it.
   float spriteRefHeight{720.0f};
-  float unresolvedSize{45.55f};   // unresolved lobe angular width (x fixed PSF floor)
+  float unresolvedSize{64.36f};   // unresolved lobe angular width (x fixed PSF floor)
   float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)
   float farFalloff{0.08f};       // far-field light compression (1 = exact flux, deep field black)
@@ -1245,18 +1245,18 @@ public:
   void RescanProjects();
 
   // ---- RT photographic post-process (bloom + ACES tonemap) ----
-  float  rtExposure{0.92f};      // photographic exposure multiplier
-  float  bloomStrength{0.045f};   // how much bloom is added back
+  float  rtExposure{0.16f};      // photographic exposure multiplier
+  float  bloomStrength{1.185f};   // how much bloom is added back
   float  bloomThreshold{0.0f};  // brightness above which pixels bloom
 
   // ---- Diffraction spikes (synthetic PSF) ----
-  float  spikeStrength{1.56f};   // spike intensity (0 = off)
+  float  spikeStrength{1.38f};   // spike intensity (0 = off)
   int    spikeCount{6};         // number of spikes (6 = JWST, 4 = Hubble)
   float  spikeAngle{0.0f};      // base rotation (radians)
-  float  spikeLength{0.27f};     // reach, fraction of the smaller bloom dimension
-  float  spikeDecay{0.966f};      // falloff along the spike (higher = shorter)
-  float  spikeSecondary{0.72f}; // faint secondary spike pair (0 = off)
-  float  spikeChroma{0.65f};     // chromatic tint toward the spike tips (0 = white)
+  float  spikeLength{0.4205f};     // reach, fraction of the smaller bloom dimension
+  float  spikeDecay{0.3f};      // falloff along the spike (higher = shorter)
+  float  spikeSecondary{0.4f}; // faint secondary spike pair (0 = off)
+  float  spikeChroma{0.3f};     // chromatic tint toward the spike tips (0 = white)
 
   // ---- Spheremap background (rasterized + raytraced views) ----
   // Empty sky — ONE value for the rasterizer's scene clear and the raytracer's

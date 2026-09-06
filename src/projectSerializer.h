@@ -201,17 +201,17 @@ struct SceneSettings {
   int   rasterLiveHeight{0};
 
   // Photographic HDR (RT views)
-  float rtExposure{0.92f};
-  float bloomStrength{0.045f};
+  float rtExposure{0.16f};
+  float bloomStrength{1.185f};
   float bloomThreshold{0.0f};
   float edgeLightStrength{0.45f};
-  float spikeStrength{1.56f};
+  float spikeStrength{1.38f};
   int   spikeCount{6};
   float spikeAngle{0.0f};
-  float spikeLength{0.27f};
-  float spikeDecay{0.966f};
-  float spikeSecondary{0.72f};
-  float spikeChroma{0.65f};
+  float spikeLength{0.4205f};
+  float spikeDecay{0.3f};
+  float spikeSecondary{0.4f};
+  float spikeChroma{0.3f};
   // Unresolved-star haze + resolved-point density
   float unresolvedStrength{3.4f};
   // Sprite sizes are calibrated at THIS render height and scale with it, so a
@@ -224,7 +224,7 @@ struct SceneSettings {
   float lensMaxSprite{0.25f};
   float lensHazeArc{1.0f};
   float spriteRefHeight{720.0f};
-  float unresolvedSize{45.55f};
+  float unresolvedSize{64.36f};
   // Stars fainter than this melt into the unresolved haze instead of drawing a
   // core. The cut CONSERVES light now (cloudVert hands a skipped core's flux to
   // that star's haze lobe), so raising it trades sparkle for a smooth sheet at
