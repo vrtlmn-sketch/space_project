@@ -83,6 +83,7 @@ out float vHot;     // 1 = hot blue star (seeds glowing gas)
 out float vRim;     // world-lit rim factor forwarded to the density map
 out float vSlabW;   // depth-slab cross-fade weight (1 = full; <1 near a slab edge)
 out float vUnresGain; // haze gain carrying an unresolved star's core flux (1 = none)
+out float vDistGain;  // flux the size cap could not fit into area (1 = none)
 
 // Lens frame handed to the fragment shader so it can run the map's EXPLICIT
 // direction (image angle -> source angle) once per pixel. All flat: a point
@@ -152,8 +153,9 @@ void main() {
   // on a ~1e8..1e12 AU centre and jitters as the view interpolates. Normal FOV
   // takes the else branch, bit-for-bit the old path.
   vec3 viewCentre = (uHasViewCentre != 0) ? uViewCentre : (uViewRot * center);
+  vec3 viewOffset = uViewRot * offset;
   vec4 centreClip = uProj * vec4(viewCentre, 1.0);
-  vec4 offsetClip = uProj * vec4(uViewRot * offset, 0.0);
+  vec4 offsetClip = uProj * vec4(viewOffset, 0.0);
   gl_Position     = centreClip + offsetClip;
 
   // ── Gravitational lensing ────────────────────────────────────────────────
@@ -235,6 +237,7 @@ void main() {
   vMag   = pow(h2, 3.0);
   vDust  = 0.0;
   vUnresGain = 1.0;
+  vDistGain = 1.0;
 
   if (uRealistic == 0) {
     gl_PointSize = (uRenderMode == 1) ? 8.0 : 2.0;
@@ -266,7 +269,42 @@ void main() {
     // relative to the frame at double the resolution — which is most of why the
     // same scene rendered darker at 4K. The 1 px floor stays absolute: below one
     // pixel there is nothing to draw.
-    else gl_PointSize = max(clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps * uStarSize * rs, 1.0);
+    else {
+      // ── A near star GROWS, up to a limit, and then blazes instead ──────────
+      // Everything else here draws a star at a fixed screen size whatever its
+      // distance, so a particle you fly right up to is the same 2-9 px dot as
+      // one across the galaxy and can never reach the extremes a real star
+      // object does. (DrawObjectImpostor takes the other route: above the pixel
+      // floor a sphere is its TRUE angular size carrying its EXACT flux, which
+      // is exactly why star objects blaze up close and particles do not.)
+      //
+      // So give a particle an angular size too — but cap it at 5x, because one
+      // of these stands in for millions of stars and letting it resolve into a
+      // disc would show the trick. Between the two limits the sprite grows and
+      // its intensity stays put, which IS flux ~ 1/d^2 for free, since sprite
+      // area grows as 1/d^2. Past the cap the area is frozen, so the light that
+      // can no longer go into area goes into BRIGHTNESS instead (vDistGain) —
+      // fly closer and it does not become a ball, it becomes blinding, which is
+      // what a saturating star does.
+      //
+      // Below the base size nothing changes at all: truePx < basePx gives a
+      // ratio under 1, which is clamped away. Every existing view is untouched,
+      // and the far end stays with FarFieldDim, which corrects sample COUNT and
+      // is orthogonal to this.
+      float basePx = max(clamp(2.0 + 5.0 * vMag, 2.0, 9.0) * ps * uStarSize * rs, 1.0);
+      // The star's own radius, as a fraction of the cloud's particle spacing
+      // (uHashScale is the frozen per-cloud dust scale, ~1 000 ly on milky_way).
+      // Scaled off the cloud, so a 3 AU formation and a 26 kly galaxy behave the
+      // same. The 0.01 is the one fitted number: it puts the growth threshold a
+      // few thousand ly out and the cap a few hundred, so from outside a galaxy
+      // every particle is far under basePx and nothing moves.
+      float starR  = uHashScale * 0.01 * (1.0 + 2.0 * vMag);
+      float truePx = starR * uProj[1][1] / gl_Position.w * (uViewportH * 0.5);
+      float drawPx = clamp(truePx, basePx, 5.0 * basePx);
+      gl_PointSize = drawPx;
+      float over   = max(truePx / drawPx, 1.0);   // >1 only past the cap
+      vDistGain    = over * over;                 // area it could not have -> brightness
+    }
   } else if (uCloudPass == 4) {
     // Glowing gas: only hot young stars seed emission nebulosity. Large soft
     // sprite (perspective-sized like dust), FBM-carved into filaments in the frag,

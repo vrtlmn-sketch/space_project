@@ -766,12 +766,21 @@ spikes require an absolute level rather than merely beating their neighbours.
   reference projects were re-exposed when this landed: milky_way 0.920 → 0.851,
   blackhole 0.880 → 0.479, universe 0.320 → 0.177, which returns all three to
   their previous mean luminance.
-- **Spike energy must COMPRESS.** A real spike grows with the LOG of how far a
-  source is over saturation. Feeding the raw excess to the streak pass meant
-  widening the range made the spikes explode and swallow the frame — the exact
-  opposite of the point, which is a few stars that stand out rather than a few
-  that dominate. `spikeSourceFrag` applies `log(1+L)/L`, gated on the floor so
-  that Spike Onset 0 restores the previous behaviour exactly.
+- **Spike LENGTH is already a logarithm — do not take it twice.** The streak
+  pass weights each tap by `exp(-decayPerTexel·D)`, so a spike stays visible out
+  to `D ~ ln(amplitude)/decayPerTexel`. Length therefore scales with the log of
+  source brightness for free, and the size variety in a real telescope frame
+  (one star throwing a 250 px cross, its neighbour 50) falls out of the star
+  population's brightness range with nothing in the spike pass to produce it.
+  `spikeSourceFrag` briefly ALSO applied `log(1+L)/L` on the argument that a
+  real spike grows with the log of the excess. It does — and the decay above is
+  that log, so the second one collapsed every surviving cross to the same size.
+  Removed. If a wide star range makes the crosses swallow the frame, the dials
+  are Spike Strength and Spike Onset, not squashing bright stars into faint ones.
+- **Spike Onset does ONE job: rarity.** It sets the absolute level a source must
+  clear to spike at all — which stars get a cross, never how big that cross is.
+  The two used to be gated on the same uniform, so you could not have rare
+  spikes without uniform ones.
 
 ## Stars come from POPULATIONS, not from one urn
 

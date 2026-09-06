@@ -29,6 +29,7 @@ uniform float uPointDim;
 in vec3  vColor;            // per-particle blackbody colour (from cloudVert)
 in float vMag;              // per-particle magnitude 0..1
 in float vDust;             // dust density at this particle (0 = not dusty)
+in float vDistGain;         // flux the core's size cap could not fit into area
 in float vSeed;             // per-cloud seed → unique billowing FBM shape
 in float vHot;
 in float vRim;              // 1 = hot blue star
@@ -252,7 +253,7 @@ void main() {
             // the budget just whited out the screen instead of adding depth.
             float coreI = (uStarfield == 1) ? (0.015 + 4.0 * vMag * vMag)
                                             : (0.30  + 3.5 * vMag);
-            c = vColor * core * edge * coreI * starLum(uStarLumPivotC) * uPointDim;
+            c = vColor * core * edge * coreI * starLum(uStarLumPivotC) * uPointDim * vDistGain;
         } else {
             // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.
             // Thousands overlap → density-driven volumetric glow the dust carves into.
