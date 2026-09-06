@@ -29,8 +29,8 @@
    "temperature": 11000.0,
    "theta": 0.5,
    "universeMember": false,
-   "haloVFlat": 45.79808115554078,
-   "haloRCore": 25110467.90967121
+   "haloVFlat": 46.0,
+   "haloRCore": 30029498.0
   }
  ],
  "grid": {
