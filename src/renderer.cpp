@@ -1595,7 +1595,8 @@ bool Renderer::UpdateInputs() {
       rotateCamera(dyaw, dpitch, droll);
 
     // ── Right-mouse drag = look around (same as the arrow keys) ──
-    // Drag left → view rotates right (== Right arrow); drag up → look up.
+    // Drag left -> look left (== Left arrow); drag up -> look up (== Up arrow).
+    // The first person convention: the mouse moves the view, not the world.
     // Only begins when the press starts over the viewport (not a panel).
     {
       // The scene sits inside the "Viewport" ImGui window in editor mode, so
@@ -1613,7 +1614,7 @@ bool Renderer::UpdateInputs() {
           // Proportional to FOV all the way down (floor = minFov/45), so
           // mouse-look stays fine and controllable however deep the zoom is.
           float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.00001f / 45.0f, 1.5f);
-          rotateCamera(-d.x * sens, -d.y * sens, 0.0f);
+          rotateCamera(d.x * sens, d.y * sens, 0.0f);
         }
       }
     }
