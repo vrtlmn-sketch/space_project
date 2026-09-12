@@ -1632,7 +1632,17 @@ bool Renderer::UpdateInputs() {
     if (zoom < 0.00001f) zoom = 0.00001f;
     if (zoom > 120.0f)   zoom = 120.0f;
 
-    // Toggle keys (fire on release)
+    // Toggle keys (fire on release). None of them exist in exploration: there
+    // is no PiP to flip, no view to toggle, no timeline to record or scrub, and
+    // no panel to open. Their edge state is cleared so a key held across the
+    // switch cannot fire the moment you return to Creative.
+    if (exploring()) {
+      flipKeyPressed = rtToggleKeyPressed = viewportKeyPressed = recordKeyPressed = false;
+      reverseButtonPressed = pauseButtonPressed = false;
+      spawnPanelKeyPressed = scenePanelKeyPressed = false;
+      captureKeyPressed = clearCaptureKeyPressed = false;
+      recStartKeyPressed = recStopKeyPressed = false;
+    } else {
     // F = flip main/PiP views
     if (glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS)  flipKeyPressed = true;
     else { if (flipKeyPressed) cinematicFullscreen = !cinematicFullscreen; flipKeyPressed = false; }
@@ -1690,6 +1700,7 @@ bool Renderer::UpdateInputs() {
     // 2 = set recording stop keyframe (edge-triggered)
     if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS)  recStopKeyPressed = true;
     else { if (recStopKeyPressed) { recStopRequested = true; } recStopKeyPressed = false; }
+    }   // !exploring()
   }
 
   // Q = open quit dialog. Suppressed while a text field / the editor owns the
@@ -2647,6 +2658,9 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
 }
 
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
+  // Exploration has no panels, no dock, no gizmo and no picking — returning
+  // here is what makes clicking a planet do nothing: the pick code never runs.
+  if (exploring()) { DrawExplorationUI(cb); return; }
   // Scene scale (near/far, focusDistance, forward zoom target) was already
   // computed before the objects drew this frame (main loop) — the UI panels
   // below read those members. Not recomputed here: in a universe this scan is
@@ -3483,6 +3497,55 @@ void Renderer::DrawStepLandmarks(float x0, float y0, float x1, float y1, bool sl
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Exploration mode
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::EnterExploration() {
+  if (exploring()) return;
+  creativeView = { editorViewport, cinematicFullscreen, cinematicViewEnabled, cinematicRaster };
+  // Fullscreen cinematic raster, drawn straight to the window: no docked
+  // Viewport, the cinematic slot as the main pass, the view on, Performant.
+  editorViewport       = false;
+  cinematicFullscreen  = true;
+  cinematicViewEnabled = true;
+  cinematicRaster      = true;
+  // Nothing may be left selected, hovered or mid-drag, or it would reappear
+  // highlighted (or still dragging) on the way back.
+  selectedIdx     = -1;
+  hoverIdx        = -1;
+  ghostDragActive = false;
+  rightLookActive = false;
+  appMode = AppMode::Exploration;
+}
+
+void Renderer::LeaveExploration() {
+  if (!exploring()) return;
+  editorViewport       = creativeView.editorViewport;
+  cinematicFullscreen  = creativeView.cinematicFullscreen;
+  cinematicViewEnabled = creativeView.cinematicViewEnabled;
+  cinematicRaster      = creativeView.cinematicRaster;
+  rightLookActive = false;
+  appMode = AppMode::Creative;
+}
+
+// The whole exploration UI: one bar across the top with the way back. The quit
+// dialog still has to draw, because Esc and Q still open it.
+void Renderer::DrawExplorationUI(const SceneCallbacks& cb) {
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  const float barH = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+  ImGui::SetNextWindowPos(vp->WorkPos);
+  ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, barH));
+  ImGui::SetNextWindowViewport(vp->ID);
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+                         | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings
+                         | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
+  ImGui::Begin("##ExplorationBar", nullptr, flags);
+  if (ImGui::Button("Creative", ImVec2(95, 0))) LeaveExploration();
+  ImGui::End();
+
+  DrawQuitDialog(cb);
+}
+
 void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Controls", nullptr, flags);
@@ -3491,6 +3554,10 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   if (ImGui::Button("Project", ImVec2(70, 0))) showProjectPanel = !showProjectPanel;
   ImGui::SameLine();
   if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
+  ImGui::SameLine();
+  // First in the row on purpose: the bar does not wrap, and anything past the
+  // step slider falls off the right edge on a narrower window.
+  if (ImGui::Button("Exploration", ImVec2(95, 0))) EnterExploration();
   ImGui::SameLine();
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();

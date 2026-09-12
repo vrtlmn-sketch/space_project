@@ -1529,9 +1529,11 @@ int main(int argc, char** argv) {
     s.camRoll     = renderer.roll;
     s.camZoom     = renderer.zoom;
     s.raytracerMethod  = renderer.raytracerMethod;
-    s.cinematicFullscreen  = renderer.cinematicFullscreen;
-    s.cinematicViewEnabled = renderer.cinematicViewEnabled;
-    s.cinematicRaster      = renderer.cinematicRaster;
+    // The editor's own flags, even while exploring (which forces its own).
+    const Renderer::CreativeViewFlags cvf = renderer.creativeViewForSave();
+    s.cinematicFullscreen  = cvf.cinematicFullscreen;
+    s.cinematicViewEnabled = cvf.cinematicViewEnabled;
+    s.cinematicRaster      = cvf.cinematicRaster;
     s.dopplerMode          = renderer.dopplerMode;
     s.dopplerVelScale      = renderer.dopplerVelScale;
     s.dopplerBrightnessStr = renderer.dopplerBrightnessStr;
@@ -2052,7 +2054,9 @@ int main(int argc, char** argv) {
     // Physics objects + trail lines, parents first
     for (int i : objectOrder) {
       physicsObjects[i].Update(physicsObjects, cloudSources, renderer);
-      lineObjects[i].Update(renderer);
+      // Trails are an editor overlay: still grown below so none are missing on
+      // the way back, but not drawn while exploring.
+      if (!renderer.exploring()) lineObjects[i].Update(renderer);
       // Only grow trails when simulating new frames forward
       if (!renderer.paused && renderer.playingForward) {
         lineObjects[i].AddPoint(physicsObjects[i].data.position);
@@ -2069,7 +2073,7 @@ int main(int argc, char** argv) {
     for (const auto& obj : physicsObjects)
       physData.emplace_back(obj.data);
 
-    if (grid.has_value() && currentGrid.visible)
+    if (grid.has_value() && currentGrid.visible && !renderer.exploring())
       grid->Update(renderer, physData);
 
     // Regenerate nearby galaxies at higher star density before they are drawn,
@@ -2616,6 +2620,7 @@ cp.planetsPerSystem = 4;
     // ── Secondary (PiP) render pass ─────────────────────────────────────────
     // Renders the OTHER view (rasterizer or raytracer) into the PiP FBO.
     // BeginSecondaryPass flips rayTracerView and binds the FBO.
+    if (!renderer.exploring()) {
     renderer.BeginSecondaryPass();
     computeLensFraming(renderer.GetFbHeight());   // lens framing for the SECONDARY (cinematic) camera
 
@@ -2667,15 +2672,18 @@ cp.planetsPerSystem = 4;
     }
 
     renderer.EndSecondaryPass();
+    }   // !exploring(): exploration has no PiP, so no secondary pass
     // ── End secondary pass ──────────────────────────────────────────────────
 
     // Draw all UI panels
     renderer.DrawUI(physicsObjects, clouds, cb);
 
     // Procedural cloud generator (standalone window, opened from Cloud spawn tab)
-    if (renderer.showProceduralGen) procGen.open = true;
-    procGen.draw();
-    renderer.showProceduralGen = procGen.open;
+    if (!renderer.exploring()) {
+      if (renderer.showProceduralGen) procGen.open = true;
+      procGen.draw();
+      renderer.showProceduralGen = procGen.open;
+    }
 
     if (!renderer.UpdateInputs()) {
       std::cout << "Exiting\n";

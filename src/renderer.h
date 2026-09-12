@@ -829,6 +829,33 @@ public:
   // ---- RAM budget for frame history (GB) ----
   float ramBudgetGB{1.0f};  // user-configurable: 1–128 GB
 
+  // ---- App mode: Creative (the editor) or Exploration ----
+  // Exploration is a different PLACE, not a view setting: fullscreen cinematic
+  // raster, one top bar with a way back, and nothing to do but move. Anything
+  // that is editor-only checks exploring() and stays out.
+  //
+  // Entering forces the four view flags below and remembers the editor's own
+  // values; leaving puts them back. Three of those flags are saved in the
+  // project, so without the round-trip a visit to exploration would quietly
+  // rewrite the editor setup. creativeViewForSave() is what the saver reads.
+  enum class AppMode { Creative, Exploration };
+  AppMode appMode{AppMode::Creative};
+  bool exploring() const { return appMode == AppMode::Exploration; }
+  struct CreativeViewFlags {
+    bool editorViewport{true};
+    bool cinematicFullscreen{false};
+    bool cinematicViewEnabled{false};
+    bool cinematicRaster{true};
+  };
+  CreativeViewFlags creativeView{};
+  CreativeViewFlags creativeViewForSave() const {
+    if (exploring()) return creativeView;
+    return { editorViewport, cinematicFullscreen, cinematicViewEnabled, cinematicRaster };
+  }
+  void EnterExploration();
+  void LeaveExploration();
+  void DrawExplorationUI(const SceneCallbacks& cb);
+
   // ---- Editor viewport mode ----
   bool editorViewport{true};   // true = render scene to FBO, show in central docked window
   void BindViewportFBO();      // call before primary 3D draw; no-op when editorViewport=false
