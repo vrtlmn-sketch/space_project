@@ -11,7 +11,14 @@ uniform vec2      uTexelD;       // texel of the density/bloom maps
 uniform int       uOccCount;     // solid-body screen discs (planets + atmo)
 uniform vec4      uOccDiscs[8];  // (px, py, radius_px, used) — glow suppressed inside
 uniform vec2      uSceneSize;    // render-target pixels (disc math)
-uniform float     uExposure;     // photographic exposure multiplier
+uniform float     uExposure;     // manual exposure: the look of a frame of stars
+// ── Auto exposure ──
+// The exposure itself is computed once per frame by aeExposureFrag from an exact
+// meter (overall light AND the brightest region of a minimum size) and stored in
+// a 1x1 texture, so this pass and the spike pass read the same number. The whole
+// image is multiplied by it; the sky is dimmed at its source (ClearSceneTarget).
+uniform int       uAutoExposure; // 0 = manual only (original path), 1 = metered
+uniform sampler2D uAeExposure;   // 1x1 R32F: this frame's exposure
 uniform float     uBloomStrength;
 uniform float     uSpikeStrength; // 0 = spikes off
 
@@ -90,6 +97,12 @@ void main() {
     rim *= smoothstep(uOccDiscs[oi].z * 0.92, uOccDiscs[oi].z * 1.18, dpx);
   }
 
-  vec3 c = (hdr + bloom * uBloomStrength + spike * uSpikeStrength + rim) * uExposure;
+  if (uAutoExposure == 0) {
+    vec3 c = (hdr + bloom * uBloomStrength + spike * uSpikeStrength + rim) * uExposure;
+    FragColor = vec4(aces(c), 1.0);
+    return;
+  }
+  float exposure = texelFetch(uAeExposure, ivec2(0), 0).r;   // same value for every pixel
+  vec3  c = (hdr + bloom * uBloomStrength + spike * uSpikeStrength + rim) * exposure;
   FragColor = vec4(aces(c), 1.0);
 }

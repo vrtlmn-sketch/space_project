@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdlib>
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -292,6 +293,7 @@ public:
   float cineGasStrength{0.5f};   // glowing-gas emission brightness (0 = off)
   float cineStarSize{1.0f};      // artistic scale on resolved star-core sprites
   float cineFarFalloff{0.08f};   // far-field light compression (see FarFieldDim)
+  float cineStarFieldGain{0.008661f}; // star field brightness vs planets (2^-6.851; see cloudFrag)
   // Procedural cloud layer params (shared packing, both views):
   // P0 = (coverage, scale, bandedness, turbulence); P1 = (softness, altitude,
   // whiteness, driftPhase). coverage 0 = clouds off.

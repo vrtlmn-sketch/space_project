@@ -535,6 +535,10 @@ bool Renderer::BeginFrame() {
 // EndFrame
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::EndFrame() {
+  // One auto-exposure step per frame (RunAeMeter). A recording that is not running
+  // must start clean, so its first frame jumps to the right exposure, not fades.
+  ++aeFrameCounter;
+  if (!recording) aeRecSmooth.valid = false;
   // Render ImGui on top
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -588,7 +592,7 @@ void Renderer::Draw(RenderedObject& ro) {
                                             AddRimOccluder(ro); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     gSpriteRefHeight = spriteRefHeight;
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.cineStarFieldGain = std::pow(2.0f, starFieldStops); ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             // Volumetric dust: (re)splat the volume now — keyed on
                                             // cloudGpuDirty, so it must run before renderCloud clears
                                             // it. The extinction march itself runs in DrawCloudDust,
@@ -1157,6 +1161,11 @@ static constexpr double kImpostorGain = 100.0;
 // restores the mesh's flux is π / that = k/(1-e^-k). Change the profile in
 // impostorFrag.glsl and this number must change with it.
 static constexpr double kImpostorFluxNorm = 3.157248;   // k = 3
+// Apparent radius (px at spriteRefHeight) at and below which a dot sits fully on
+// the STAR brightness scale. Between here and the mesh handover (kImpostorFadeHi)
+// it ramps, in log size, back to its planet-scale brightness, so a planet that
+// resolves into a disc does not pop. Mars from Earth is ~0.1 px: fully star-like.
+static constexpr double kImpostorStarLikePx = 0.25;
 // The one number here that is not derived from a shader: a black hole emits
 // nothing, so this is a findability marker, not a brightness. Zero it to make
 // distant black holes honestly invisible.
@@ -1367,6 +1376,24 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
     amp = (peak / (1.0 + peak / kImpostorPeakMax)) / Smax;   // soft knee
   }
   amp *= fade * (double)impostorStrength;
+  // ── A POINT sits on the star scale ──
+  // The star field and the sky are dimmed by starFieldStops against sunlit
+  // planets, because a RESOLVED planet should outshine the galaxy behind it. A
+  // planet or star far enough away to be a sub-pixel dot is no longer a lit
+  // surface, it is a light source like any star — Mars from Earth is about as
+  // bright as the brightest stars. Left on the planet scale, this dot came out
+  // ~2000x brighter than a star particle: Sun-sized crosses on Mars, and the
+  // exposure pulled down by a dot. The gain fades out by the handover, so at the
+  // moment the mesh takes over the dot is exactly as bright as it always was.
+  // The black-hole marker and nebula dots are not light sources of that kind.
+  if (type != 3 && !ro.isNebulaVolume) {
+    const double pointGain = std::pow(2.0, (double)starFieldStops + (double)pointObjectStops);
+    const double lo = kImpostorStarLikePx * hScale, hi = fadeHi;
+    double t = (std::log(std::max(screenPx, 1e-12)) - std::log(lo)) / (std::log(hi) - std::log(lo));
+    t = std::clamp(t, 0.0, 1.0);
+    t = t * t * (3.0 - 2.0 * t);
+    amp *= std::exp((1.0 - t) * std::log(std::max(pointGain, 1e-12)));
+  }
   // The core is deliberately allowed to run past 1.0 and clip. That is what a
   // bright point source does through a real lens, and it is what feeds the
   // bloom and the spikes; the halo they draw carries the colour outward, so the
@@ -4213,8 +4240,96 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   if (ImGui::CollapsingHeader("Light & Exposure", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::TextDisabled("Exposure, glow + ACES tonemap (cinematic views).");
     norm01("Exposure",       "##rtexposure", &rtExposure,     0.0f, 4.0f,  false);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("The look of the sky, and the reference auto exposure works from.\n"
+                        "The empty sky never gets brighter than this.");
     norm01("Glow",           "##bloomstr",   &bloomStrength,  0.0f, 1.5f,  false);
     norm01("Glow Threshold", "##bloomthr",   &bloomThreshold, 0.0f, 2.0f,  false);
+
+    // Star-to-planet brightness ratio, tuned by eye. Not saved in projects.
+    ImGui::Spacing();
+    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Tuning (not saved)");
+    ImGui::Text("Star Field vs Planets");
+    ImGui::SetNextItemWidth(-1);
+    {
+      const float gain = std::pow(2.0f, starFieldStops);
+      char lbl[48];
+      std::snprintf(lbl, sizeof(lbl), "%.1f stops  (x%.4g)", starFieldStops, gain);
+      ImGui::SliderFloat("##starfieldstops", &starFieldStops, -20.0f, 2.0f, lbl,
+                         ImGuiSliderFlags_NoRoundToFormat);
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Dims the star field (galaxy stars, haze, glowing gas) against planets.\n"
+                        "Planets are untouched. Each stop halves: -10 is about 1/1000.\n"
+                        "Found by eye: -6.85. Ctrl+click to type a value. Not saved in the project.");
+    ImGui::Text("Point Objects vs Stars");
+    ImGui::SetNextItemWidth(-1);
+    {
+      char lbl[48];
+      std::snprintf(lbl, sizeof(lbl), "%+.1f stops", pointObjectStops);
+      ImGui::SliderFloat("##pointobjstops", &pointObjectStops, -8.0f, 8.0f, lbl,
+                         ImGuiSliderFlags_NoRoundToFormat);
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How bright a far planet or star that is only a dot comes out, against\n"
+                        "the star field. 0 = exactly star brightness; a little above 0 = barely\n"
+                        "brighter than the stars. Resolved planets are unaffected. Not saved.");
+
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Auto Exposure (not saved)##ae", &autoExposure) && autoExposure) {
+      aeLiveSmooth.valid = false;   // switched back on: jump to the right exposure, do not fade in
+      aeRecSmooth.valid  = false;
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Measures the light on the whole screen. A frame of stars looks as it\n"
+                        "did before Star Field dimming; a planet on screen darkens everything.\n"
+                        "The sky never gets brighter than Exposure. Instant for now.");
+    if (autoExposure) {
+      ImGui::Text("Brightness Limit");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##aelimit", &aeLimit, 0.005f, 2.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How bright the whole screen should come out on average.\n"
+                          "Lower it if a planet on screen is still too bright.");
+      ImGui::Text("Max Darkening");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##aedarken", &aeMaxDarkenStops, -16.0f, 0.0f, "%.1f stops");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The furthest a bright frame can pull the exposure down.\n"
+                          "The Sun in frame may need a lot of room.");
+      ImGui::Text("Highlight Limit");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##aehilimit", &aeHiLimit, 0.05f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How bright the brightest object on screen may come out, even a\n"
+                          "small one. Lower = a small bright planet or the Sun darkens the\n"
+                          "whole frame more, as a camera exposing for it would.");
+      ImGui::Text("Highlight Size");
+      ImGui::SetNextItemWidth(-1);
+      {
+        float pct = aeHiSize * 100.0f;
+        if (ImGui::SliderFloat("##aehisize", &pct, 0.5f, 20.0f, "%.1f%% of frame", ImGuiSliderFlags_Logarithmic))
+          aeHiSize = pct / 100.0f;
+      }
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("The smallest object that counts as a bright object, as a share of\n"
+                          "the frame height. Anything smaller (stars, far dots) spreads out\n"
+                          "and does not drive the exposure.");
+      ImGui::Text("Highlight Strictness");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##aehipower", &aeHiPower, 1.0f, 8.0f, "%.1f");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How much a SMALL bright object counts. 1 = only the average light\n"
+                          "matters; 8 = nearly just the brightest object, so a planet corner at\n"
+                          "the edge darkens everything. Default 3.6.");
+      ImGui::Text("Transition Speed");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##aespeed", &aeSpeedStops, 0.25f, 40.0f, "%.2f stops/s", ImGuiSliderFlags_Logarithmic);
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How fast the exposure moves toward what the frame needs, whatever\n"
+                          "changed. Low = slow, eye-like adaptation; high = nearly instant.\n"
+                          "Recordings ease in video time; Snap always takes the exact value.");
+    }
   }
 
   // ── Stars ──────────────────────────────────────────────────────────────────
@@ -4240,11 +4355,11 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "bloom and spikes are additive, so widening wants exposure down.");
     norm01("Spike Onset","##spiketh", &spikeThreshold,       0.0f, 3.0f,  true);
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("How bright a source must be before it gets diffraction spikes.\n"
-                        "Spikes are a SATURATION artefact, so only genuinely bright stars\n"
-                        "should have them. 0 = every local maximum spikes at full strength\n"
-                        "(the old look). Above 0 also compresses a spike's energy\n"
-                        "logarithmically, as a real one grows.");
+      ImGui::SetTooltip("How far over saturation a source must be before it gets diffraction\n"
+                        "spikes, measured on the EXPOSED image. Spikes are a saturation\n"
+                        "artefact: exposed for a planet only the planet and the Sun spike,\n"
+                        "exposed for stars the bright stars do. 0 = every local maximum\n"
+                        "spikes (the old look). Pair with Dynamic Range for a few crosses.");
     norm01("Populations","##popcol",  &popColour,          0.0f, 1.0f,   true);
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Stellar population colour: an old red-yellow bulge and young\n"
@@ -7627,8 +7742,16 @@ void Renderer::SetPassView(bool cinematicSlot) {
   else                 rayTracerView = true;        // Realistic → raytracer
 }
 
-void Renderer::ClearSceneTarget() {
-  const vec3 bg = backgroundRGB();
+void Renderer::ClearSceneTarget(bool starFieldSky) {
+  // The empty sky is part of the star field: in the cinematic raster it is
+  // dimmed by the same stops as the stars, so auto exposure's rise brings BOTH
+  // back to their old look, and a planet on screen darkens both. Doing it here,
+  // at the source, keeps bloom, dust over the sky and night sides consistent.
+  vec3 bg = backgroundRGB();
+  if (starFieldSky) {
+    const float g = std::pow(2.0f, starFieldStops);
+    bg = vec3{bg.x * g, bg.y * g, bg.z * g};
+  }
   glClearColor(bg.x, bg.y, bg.z, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
@@ -7678,7 +7801,7 @@ void Renderer::CineBeginIfActive(GLuint realTargetFBO, int w, int h) {
   currentPixelScale  = (float)ssH / (float)h;  // keep point sprites the same apparent size
   glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
   glViewport(0, 0, ssW, ssH);
-  ClearSceneTarget();
+  ClearSceneTarget(true);
 }
 
 // Composite the HDR buffer (bloom + ACES) into the real target bound for this pass.
@@ -7690,6 +7813,7 @@ void Renderer::CineResolveIfActive() {
   // and sets lensViewportDone; here we just tonemap. Other paths (fullscreen/PiP)
   // fall back to the single-pass lens overlay.
   GLuint hdr = cineColorTex;
+  aePostRole = AePostLive;
   RunPostProcess(hdr, cinePostW, cinePostH);           // samples the larger HDR buffer → downsample
   cineActive = false;
   currentPixelScale = 1.0f;
@@ -8267,6 +8391,19 @@ void Renderer::DestroyComputeResources() {
   if (bloomPrefilterProgram) { glDeleteProgram(bloomPrefilterProgram); bloomPrefilterProgram = 0; }
   if (bloomBlurProgram)      { glDeleteProgram(bloomBlurProgram);      bloomBlurProgram = 0; }
   if (tonemapProgram)        { glDeleteProgram(tonemapProgram);        tonemapProgram = 0; }
+  if (aeMeterProgram)        { glDeleteProgram(aeMeterProgram);        aeMeterProgram = 0; }
+  for (GLuint t : aeMeterTex) glDeleteTextures(1, &t);
+  aeMeterTex.clear(); aeMeterW.clear(); aeMeterH.clear(); aeMeterSrcW = aeMeterSrcH = 0;
+  if (aeMeterFBO)            { glDeleteFramebuffers(1, &aeMeterFBO);   aeMeterFBO = 0; }
+  if (aeExposureProgram)     { glDeleteProgram(aeExposureProgram);     aeExposureProgram = 0; }
+  if (aeExposureTex)         { glDeleteTextures(1, &aeExposureTex);    aeExposureTex = 0; }
+  if (aeExposureFBO)         { glDeleteFramebuffers(1, &aeExposureFBO); aeExposureFBO = 0; }
+  if (aeSmoothProgram)       { glDeleteProgram(aeSmoothProgram);       aeSmoothProgram = 0; }
+  if (aeSmoothFBO)           { glDeleteFramebuffers(1, &aeSmoothFBO);  aeSmoothFBO = 0; }
+  for (AeSmoothState* st : {&aeLiveSmooth, &aeRecSmooth}) {
+    for (GLuint& t : st->tex) if (t) { glDeleteTextures(1, &t); t = 0; }
+    st->valid = false;
+  }
   if (spikeProgram)          { glDeleteProgram(spikeProgram);          spikeProgram = 0; }
   if (spikeSourceProgram)    { glDeleteProgram(spikeSourceProgram);    spikeSourceProgram = 0; }
   if (bloomFBO)         { glDeleteFramebuffers(1, &bloomFBO); bloomFBO = 0; }
@@ -8659,6 +8796,9 @@ void Renderer::InitPostProcess() {
     {"src/shaders/spikeSourceFrag.glsl",    &spikeSourceProgram},
     {"src/shaders/spikeAccumFrag.glsl",     &spikeAccumProgram},
     {"src/shaders/nebulaCompositeFrag.glsl", &nebulaCompositeProgram},
+    {"src/shaders/aeMeterFrag.glsl",        &aeMeterProgram},
+    {"src/shaders/aeExposureFrag.glsl",     &aeExposureProgram},
+    {"src/shaders/aeSmoothFrag.glsl",       &aeSmoothProgram},
   };
   for (auto& ps : passes) {
     GLuint fs = compileShaderFromFile(ps.frag, GL_FRAGMENT_SHADER);
@@ -8688,10 +8828,34 @@ void Renderer::InitPostProcess() {
     tmLocExposure = glGetUniformLocation(tonemapProgram, "uExposure");
     tmLocBloomStr = glGetUniformLocation(tonemapProgram, "uBloomStrength");
     tmLocSpike    = glGetUniformLocation(tonemapProgram, "uSpike");
+    tmLocAeExposure = glGetUniformLocation(tonemapProgram, "uAeExposure");
+    tmLocAuto     = glGetUniformLocation(tonemapProgram, "uAutoExposure");
     tmLocSpikeStr = glGetUniformLocation(tonemapProgram, "uSpikeStrength");
     tmLocDustDens = glGetUniformLocation(tonemapProgram, "uDustDens");
     tmLocEdgeLight= glGetUniformLocation(tonemapProgram, "uEdgeLight");
     tmLocTexelD   = glGetUniformLocation(tonemapProgram, "uTexelD");
+  }
+  if (aeMeterProgram) {
+    aeMtLocTex     = glGetUniformLocation(aeMeterProgram, "uTexture");
+    aeMtLocFirst   = glGetUniformLocation(aeMeterProgram, "uFirst");
+    aeMtLocSrcSize = glGetUniformLocation(aeMeterProgram, "uSrcSize");
+    aeMtLocHiMode  = glGetUniformLocation(aeMeterProgram, "uHiMode");
+    aeMtLocHiPower = glGetUniformLocation(aeMeterProgram, "uHiPower");
+  }
+  if (aeExposureProgram) {
+    aeExLocMeter    = glGetUniformLocation(aeExposureProgram, "uMeter");
+    aeExLocExposure = glGetUniformLocation(aeExposureProgram, "uExposure");
+    aeExLocLimit    = glGetUniformLocation(aeExposureProgram, "uAeLimit");
+    aeExLocHiLimit  = glGetUniformLocation(aeExposureProgram, "uAeHiLimit");
+    aeExLocFloor    = glGetUniformLocation(aeExposureProgram, "uAeFloor");
+    aeExLocCeil     = glGetUniformLocation(aeExposureProgram, "uAeCeil");
+    aeExLocHiPower  = glGetUniformLocation(aeExposureProgram, "uAeHiPower");
+  }
+  if (aeSmoothProgram) {
+    aeSmLocTarget  = glGetUniformLocation(aeSmoothProgram, "uTarget");
+    aeSmLocPrev    = glGetUniformLocation(aeSmoothProgram, "uPrev");
+    aeSmLocMaxStep = glGetUniformLocation(aeSmoothProgram, "uMaxStep");
+    aeSmLocReset   = glGetUniformLocation(aeSmoothProgram, "uReset");
   }
   if (spikeProgram) {
     spkLocTex           = glGetUniformLocation(spikeProgram, "uTexture");
@@ -8759,6 +8923,146 @@ void Renderer::EnsureRecLdr(int w, int h) {
 
 // Composite srcHDR (bloom + ACES tonemap + exposure) into the currently bound
 // framebuffer/viewport. Saves and restores the caller's FBO + viewport.
+// Exact whole-frame mean luminance for auto exposure, reduced to one texel.
+// Levels round their size UP and carry a pixel count, so no row or column is
+// ever dropped (automatic mipmaps drop them on non-power-of-two sizes, which made
+// the metering depend on where a planet sat). Size comes from the texture itself:
+// the caller's srcW/srcH are the post size, while an SSAA source is larger.
+GLuint Renderer::RunAeMeter(GLuint srcHDR, int role) {
+  if (!aeMeterProgram || !aeExposureProgram || !srcHDR) return 0;
+  // A second LIVE run in the same frame is the same view: reuse this frame's
+  // value. Advancing again would double the transition speed.
+  if (role == AePostLive && aeLiveSmooth.valid && aeLiveSmooth.advancedFrame == aeFrameCounter)
+    return aeLiveSmooth.tex[aeLiveSmooth.idx];
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, srcHDR);
+  GLint sw = 0, sh = 0;
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH,  &sw);
+  glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &sh);
+  if (sw <= 0 || sh <= 0) return 0;
+  if (sw != aeMeterSrcW || sh != aeMeterSrcH || aeMeterTex.empty()) {
+    for (GLuint t : aeMeterTex) glDeleteTextures(1, &t);
+    aeMeterTex.clear(); aeMeterW.clear(); aeMeterH.clear();
+    int w = sw, h = sh;
+    do {
+      w = (w + 1) / 2; h = (h + 1) / 2;
+      GLuint t = 0; glGenTextures(1, &t);
+      glBindTexture(GL_TEXTURE_2D, t);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, nullptr);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      aeMeterTex.push_back(t); aeMeterW.push_back(w); aeMeterH.push_back(h);
+    } while (w > 1 || h > 1);
+    aeMeterSrcW = sw; aeMeterSrcH = sh;
+  }
+  if (!aeMeterFBO) glGenFramebuffers(1, &aeMeterFBO);
+  glBindFramebuffer(GL_FRAMEBUFFER, aeMeterFBO);
+  // Blending off for the reduction, then put back exactly as found: RunPostProcess
+  // never sets it on entry, so with spikes off the composite inherits the caller's
+  // blend state, and the meter must not change that.
+  const GLboolean blendWas = glIsEnabled(GL_BLEND);
+  glDisable(GL_BLEND);
+  glUseProgram(aeMeterProgram);
+  glBindVertexArray(blitVAO);          // left bound: the rest of the post chain draws with it
+  glUniform1i(aeMtLocTex, 0);
+  // The brightest REGION is formed at the pass whose output texels span
+  // aeHiSize of the frame height. Pass k's output texel covers 2^(k+1) pixels,
+  // so an object at least that big keeps its brightness in some window while
+  // stars and far dots spread out to nothing. Sized from the SOURCE height, so
+  // an SSAA buffer picks a pass one deeper and the region stays the same share.
+  const int lastPass = (int)aeMeterTex.size() - 1;
+  const double hiPx  = std::max(2.0, (double)aeHiSize * (double)sh);
+  const int hiPass   = std::clamp((int)std::lround(std::log2(hiPx)) - 1, 0, lastPass);
+  glUniform1f(aeMtLocHiPower, std::clamp(aeHiPower, 1.0f, 8.0f));
+  GLuint src = srcHDR; int srcW = sw, srcH = sh;
+  for (int k = 0; k <= lastPass; ++k) {
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, aeMeterTex[(size_t)k], 0);
+    glViewport(0, 0, aeMeterW[(size_t)k], aeMeterH[(size_t)k]);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, src);
+    glUniform1i(aeMtLocFirst, k == 0 ? 1 : 0);
+    glUniform2i(aeMtLocSrcSize, srcW, srcH);
+    glUniform1i(aeMtLocHiMode, k < hiPass ? 0 : (k == hiPass ? 1 : 2));
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    src = aeMeterTex[(size_t)k]; srcW = aeMeterW[(size_t)k]; srcH = aeMeterH[(size_t)k];
+  }
+
+  // The exposure itself, once, from the finished meter.
+  if (aeExposureProgram) {
+    if (!aeExposureTex) {
+      glGenTextures(1, &aeExposureTex);
+      glBindTexture(GL_TEXTURE_2D, aeExposureTex);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, 1, 1, 0, GL_RED, GL_FLOAT, nullptr);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+    if (!aeExposureFBO) glGenFramebuffers(1, &aeExposureFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, aeExposureFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, aeExposureTex, 0);
+    glViewport(0, 0, 1, 1);
+    glUseProgram(aeExposureProgram);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, aeMeterTex.back());
+    glUniform1i(aeExLocMeter, 0);
+    glUniform1f(aeExLocExposure, rtExposure);
+    glUniform1f(aeExLocLimit,    std::max(aeLimit, 1e-4f));
+    glUniform1f(aeExLocHiLimit,  std::max(aeHiLimit, 1e-4f));
+    glUniform1f(aeExLocHiPower,  std::clamp(aeHiPower, 1.0f, 8.0f));
+    glUniform1f(aeExLocFloor,    std::pow(2.0f, std::min(aeMaxDarkenStops, 0.0f)));
+    // A frame of stars may rise exactly far enough to undo the star field
+    // dimming (stars and sky alike). The raytracer never dims, so no rise there.
+    glUniform1f(aeExLocCeil, rayTracerView ? 1.0f : std::pow(2.0f, std::max(-starFieldStops, 0.0f)));
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+  }
+
+  // ── Transition ──
+  // aeExposureTex now holds this image's TARGET. Live and Record step their own
+  // current value toward it (aeSmoothFrag); Snap uses the target as it is.
+  GLuint result = aeExposureTex;
+  if (role != AePostSnap && aeSmoothProgram) {
+    AeSmoothState& st = (role == AePostRecord) ? aeRecSmooth : aeLiveSmooth;
+    float dt = 0.0f;
+    if (role == AePostRecord) {
+      dt = 1.0f / (float)std::max(recordFps, 1);          // video time, not render time
+    } else {
+      const auto now = std::chrono::steady_clock::now();
+      if (st.valid) dt = (float)std::chrono::duration<double>(now - aeLiveLastTime).count();
+      aeLiveLastTime = now;
+      dt = std::clamp(dt, 0.0f, 0.25f);                    // a long hitch is one bounded step
+    }
+    for (GLuint& t : st.tex) {
+      if (t) continue;
+      glGenTextures(1, &t);
+      glBindTexture(GL_TEXTURE_2D, t);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, 1, 1, 0, GL_RED, GL_FLOAT, nullptr);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      st.valid = false;                                    // fresh storage: nothing to ease from
+    }
+    const int dst = 1 - st.idx;
+    if (!aeSmoothFBO) glGenFramebuffers(1, &aeSmoothFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, aeSmoothFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, st.tex[dst], 0);
+    glViewport(0, 0, 1, 1);
+    glUseProgram(aeSmoothProgram);
+    glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, aeExposureTex);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, st.tex[st.idx]);
+    glUniform1i(aeSmLocTarget, 0);
+    glUniform1i(aeSmLocPrev, 1);
+    glUniform1f(aeSmLocMaxStep, std::max(aeSpeedStops, 0.0f) * dt);
+    glUniform1i(aeSmLocReset, st.valid ? 0 : 1);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
+    st.idx = dst;
+    st.valid = true;
+    st.advancedFrame = aeFrameCounter;
+    result = st.tex[st.idx];
+  }
+  if (blendWas) glEnable(GL_BLEND);
+  return result;
+}
+
 void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   if (!tonemapProgram || !bloomPrefilterProgram || !bloomBlurProgram) {
     // Post chain unavailable — plain passthrough so RT still shows.
@@ -8824,6 +9128,12 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glDisable(GL_DEPTH_TEST);
   glBindVertexArray(blitVAO);
 
+  // Auto exposure: meter the frame and compute this frame's exposure FIRST. The
+  // spike source reads it (onset is a saturation level on the exposed image),
+  // and so does the tonemap. Every pass below rebinds its own target and program.
+  const GLuint aeTex = autoExposure ? RunAeMeter(srcHDR, aePostRole) : 0;
+  const bool aeLive = aeTex != 0;
+
   glBindFramebuffer(GL_FRAMEBUFFER, bloomFBO);
   glViewport(0, 0, bw, bh);
 
@@ -8845,11 +9155,20 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     glUseProgram(spikeSourceProgram);
     glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, bloomTex[0]);
     glUniform1i(spkSrcLocTex, 0);
-    // Spikes mark SATURATION, so a source must clear an absolute level, not
-    // merely beat its neighbours. Without this every faint star in a wide field
-    // got the same six-point cross as an O-star.
+    // Spikes mark SATURATION, so a source must clear a level, not merely beat
+    // its neighbours. The level is on the EXPOSED image — the shader divides it
+    // by this frame's exposure — so exposed for Saturn only Saturn and the Sun
+    // spike, and exposed for a star field the bright stars do.
     { GLint l = glGetUniformLocation(spikeSourceProgram, "uSpikeFloor");
       if (l >= 0) glUniform1f(l, spikeThreshold); }
+    { GLint l = glGetUniformLocation(spikeSourceProgram, "uExposure");
+      if (l >= 0) glUniform1f(l, rtExposure); }
+    { GLint l = glGetUniformLocation(spikeSourceProgram, "uAutoExposure");
+      if (l >= 0) glUniform1i(l, aeLive ? 1 : 0); }
+    { GLint l = glGetUniformLocation(spikeSourceProgram, "uAeExposure");
+      if (l >= 0) glUniform1i(l, 5); }
+    glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, aeTex);
+    glActiveTexture(GL_TEXTURE0);
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // Streak the isolated sources: per direction, an à-trous ladder of three
@@ -8985,6 +9304,10 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
                 (float)sceneRenderW, (float)sceneRenderH);
   }
   glUniform1f(tmLocExposure, rtExposure);
+  // ── Auto exposure ── (computed by RunAeMeter before the bright-pass)
+  glUniform1i(tmLocAeExposure, 4);
+  glUniform1i(tmLocAuto, aeLive ? 1 : 0);
+  if (aeLive) { glActiveTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, aeTex); }
   glUniform1f(tmLocBloomStr, bloomStrength);
   // RT star cores feed the (shared) spike source less energy than the raster's
   // larger sprites, so RT gets a fixed boost to read as the same population.
@@ -8992,6 +9315,10 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glUniform1f(tmLocSpikeStr, spikesOn ? spikeGain : 0.0f);
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
+  if (autoExposure) {
+    glActiveTexture(GL_TEXTURE4); glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, 0);
+  }
   glActiveTexture(GL_TEXTURE0);
   glBindVertexArray(0);
   glEnable(GL_DEPTH_TEST);
@@ -9002,6 +9329,7 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::BlitRaytracerToScreen() {
   if (!rtOutputTex) return;
+  aePostRole = AePostLive;
   RunPostProcess(rtOutputTex, rtTexWidth, rtTexHeight);
 }
 
@@ -9123,7 +9451,9 @@ void Renderer::CaptureFrame(int w, int h) {
   EnsureRecLdr(w, h);
   glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
   glViewport(0, 0, w, h);
+  aePostRole = AePostRecord;   // see AePostRole
   RunPostProcess(recOutputTex, w, h);
+  aePostRole = AePostLive;
   glFinish();
   glBindTexture(GL_TEXTURE_2D, recLdrTex);
   glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
@@ -9197,7 +9527,7 @@ void Renderer::BeginRecordRaster(int w, int h) {
   glViewport(0, 0, w, h);
   fbWidth = w; fbHeight = h;                 // projection aspect for the record draw
   currentPixelScale = 1.0f;                  // record FBO is not supersampled
-  ClearSceneTarget();
+  ClearSceneTarget(true);
 }
 
 void Renderer::EndRecordRaster() {
@@ -9245,7 +9575,9 @@ void Renderer::CaptureRecordRasterVideo(int w, int h) {
   EnsureRecLdr(w, h);
   glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
   glViewport(0, 0, w, h);
+  aePostRole = AePostRecord;   // see AePostRole
   RunPostProcess(recRasterColorTex, w, h);   // bloom + ACES
+  aePostRole = AePostLive;
   glFinish();
   glBindTexture(GL_TEXTURE_2D, recLdrTex);
   glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixelBuffer.data());
@@ -9260,7 +9592,9 @@ void Renderer::CaptureRecordRasterImage(int w, int h) {
   EnsureRecLdr(w, h);
   glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
   glViewport(0, 0, w, h);
+  aePostRole = AePostSnap;   // see AePostRole
   RunPostProcess(recRasterColorTex, w, h);
+  aePostRole = AePostLive;
   glFinish();
   glBindTexture(GL_TEXTURE_2D, recLdrTex);
   glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
@@ -9535,7 +9869,9 @@ void Renderer::CaptureImage() {
   EnsureRecLdr(w, h);
   glBindFramebuffer(GL_FRAMEBUFFER, recLdrFBO);
   glViewport(0, 0, w, h);
+  aePostRole = AePostSnap;   // see AePostRole
   RunPostProcess(recOutputTex, w, h);
+  aePostRole = AePostLive;
   glFinish();
   glBindTexture(GL_TEXTURE_2D, recLdrTex);
   glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());

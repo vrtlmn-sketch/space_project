@@ -133,7 +133,7 @@
    0.029999999329447746
   ],
   "backgroundLevel": 1.2000000476837158,
-  "bloomStrength": 1.185,
+  "bloomStrength": 0.825,
   "bloomThreshold": 0.0,
   "camPitch": -0.16403038799762726,
   "camRoll": -3.1909470558166504,
@@ -305,7 +305,7 @@
   "recordWidth": 2558,
   "resolvedCut": 0.0,
   "rtCloudPointCap": 2000,
-  "rtExposure": 0.16,
+  "rtExposure": 0.56,
   "rtLiveHeight": 0,
   "rtLiveResPreset": 0,
   "rtLiveWidth": 0,
@@ -327,7 +327,7 @@
   "spriteRefHeight": 720.0,
   "starBudget": 80000,
   "starSize": 1.0,
-  "unresolvedSize": 64.36,
+  "unresolvedSize": 63.37,
   "unresolvedStrength": 3.4
  },
  "unitsVersion": 2

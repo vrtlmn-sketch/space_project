@@ -405,6 +405,44 @@ private:
   GLint  bloomBlurLocTex{-1}, bloomBlurLocDir{-1};
   GLint  tmLocScene{-1}, tmLocBloom{-1}, tmLocExposure{-1}, tmLocBloomStr{-1};
   GLint  tmLocSpike{-1}, tmLocSpikeStr{-1};
+  GLint  tmLocAeExposure{-1}, tmLocAuto{-1};
+  // Auto exposure meter: an exact whole-frame mean luminance, reduced to 1x1 by
+  // aeMeterFrag in RunAeMeter. One RG32F texture per level (R mean, G count).
+  GLuint aeMeterProgram{0}, aeMeterFBO{0};
+  GLint  aeMtLocTex{-1}, aeMtLocFirst{-1}, aeMtLocSrcSize{-1}, aeMtLocHiMode{-1}, aeMtLocHiPower{-1};
+  // The exposure itself, computed once per frame from the finished meter
+  // (aeExposureFrag) into a 1x1 R32F texture read by the tonemap AND the spikes.
+  GLuint aeExposureProgram{0}, aeExposureFBO{0}, aeExposureTex{0};
+  GLint  aeExLocMeter{-1}, aeExLocExposure{-1}, aeExLocLimit{-1}, aeExLocHiLimit{-1};
+  GLint  aeExLocFloor{-1}, aeExLocCeil{-1}, aeExLocHiPower{-1};
+  std::vector<GLuint> aeMeterTex;
+  std::vector<int>    aeMeterW, aeMeterH;
+  int    aeMeterSrcW{0}, aeMeterSrcH{0};
+  // Meters srcHDR and returns the exposure texture the tonemap and spikes should
+  // read (0 = unavailable): a smoothed value for Live and Record, this image's own
+  // instant value for Snap.
+  GLuint RunAeMeter(GLuint srcHDR, int role);
+  // Who is calling the post chain, set by each caller around RunPostProcess.
+  //   Live    the cinematic view / live raytracer: eases by wall-clock time, and
+  //           advances at most once per frame
+  //   Record  a recording frame: eases by VIDEO time (1/fps per recorded frame),
+  //           from its own image, in its own state
+  //   Snap    a still or the harness: this image's exposure, instantly — a still
+  //           must not freeze a transition half way, and the harness must stay
+  //           repeatable, which wall-clock smoothing would not be
+  enum AePostRole : int { AePostLive = 0, AePostRecord = 1, AePostSnap = 2 };
+  int    aePostRole{AePostLive};
+  struct AeSmoothState {
+    GLuint tex[2]{0, 0};           // ping-pong 1x1 R32F: tex[idx] is the current exposure
+    int    idx{0};
+    bool   valid{false};           // false = next step jumps straight to the target
+    unsigned long long advancedFrame{~0ull};
+  };
+  AeSmoothState aeLiveSmooth, aeRecSmooth;
+  unsigned long long aeFrameCounter{0};   // bumped in EndFrame
+  std::chrono::steady_clock::time_point aeLiveLastTime{};
+  GLuint aeSmoothProgram{0}, aeSmoothFBO{0};
+  GLint  aeSmLocTarget{-1}, aeSmLocPrev{-1}, aeSmLocMaxStep{-1}, aeSmLocReset{-1};
   GLint tmLocDustDens{-1};
   GLint tmLocEdgeLight{-1};
   GLint tmLocTexelD{-1};
@@ -750,10 +788,38 @@ public:
   // 720 is the signed-off default: at a 1080p render that draws sprites at 1.5x,
   // which is denser than the pre-calibration look, and the user picked it.
   float spriteRefHeight{720.0f};
-  float unresolvedSize{64.36f};   // unresolved lobe angular width (x fixed PSF floor)
+  float unresolvedSize{63.37f};   // unresolved lobe angular width (x fixed PSF floor)
   float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)
   float farFalloff{0.08f};       // far-field light compression (1 = exact flux, deep field black)
+  // Stops of star-field brightness against planets. -3.6 was found by eye; kept
+  // as a live slider (deliberately NOT saved in projects) so it can be retuned
+  // once auto exposure works. 0 = the old equal-brightness look.
+  float starFieldStops{-6.851f};
+  // A POINT (a planet or star far enough away to be a sub-pixel dot) is a light
+  // source, not a lit surface, so its dot goes on the star scale: the star field
+  // dimming plus this many stops. 0 = exactly star scale. Applied only to the dot,
+  // fading out by the mesh handover so resolving into a disc never pops. Not saved.
+  float pointObjectStops{1.7f};
+  // Auto exposure (tonemapFrag): meter the light on the whole screen. A frame of
+  // stars rises until they look as they did before the star field dimming (the
+  // ceiling is tied to starFieldStops); a bright planet pulls it down. The empty
+  // sky never rises above rtExposure. Live tuning values, NOT saved in projects
+  // yet. On by default.
+  bool  autoExposure{true};
+  float aeLimit{0.18f};             // average on-screen brightness to aim for
+  float aeMaxDarkenStops{-16.0f};    // furthest a bright frame can pull exposure down
+  // Brightest REGION of at least aeHiSize (fraction of frame height): catches a
+  // small but blazing object that barely moves the mean. Smaller things (stars,
+  // far dots) spread out over the region and do not count.
+  float aeHiLimit{0.09f};            // how bright that region may come out
+  float aeHiSize{0.016f};            // smallest object that counts, fraction of frame height
+  // How much a SMALL bright region counts: the meter takes the power mean of
+  // region brightnesses, (mean of region^p)^(1/p). p = 1 is the plain average;
+  // high p approaches the single brightest region, which made one planet corner
+  // at the frame edge flip the whole exposure. Clamped to 8 for float headroom.
+  float aeHiPower{3.6f};
+  float aeSpeedStops{8.0f};         // transition speed toward the target, stops per second
   // Brightness of the point-source stand-in a planet/star/black hole/nebula
   // falls back to once it is too small for the rasterizer to resolve (see
   // DrawObjectImpostor). 0 = off, which renders exactly as before the stand-in
@@ -765,8 +831,8 @@ public:
   float dustDarkest{0.02f};      // transmittance of the densest dust (0 = opaque)
   float dustSettle{1.0f};        // how far dust settles to the cloud's own plane
   float popColour{0.0f};         // stellar population colour gradient (0 = off)
-  float starLumSpread{0.0f};     // stellar luminosity range, ln(range); 0 = old flat
-  float spikeThreshold{0.0f};   // absolute level a source must pass to spike
+  float starLumSpread{1.84f};     // stellar luminosity range, ln(range); 0 = old flat
+  float spikeThreshold{0.21f};   // absolute level a source must pass to spike
   // Pivot that holds MEAN star flux constant however wide the spread is, so
   // widening the range does not also change how bright every galaxy is.
   // Solved numerically over vMag = h^3, the distribution cloudVert draws.
@@ -1272,8 +1338,8 @@ public:
   void RescanProjects();
 
   // ---- RT photographic post-process (bloom + ACES tonemap) ----
-  float  rtExposure{0.16f};      // photographic exposure multiplier
-  float  bloomStrength{1.185f};   // how much bloom is added back
+  float  rtExposure{0.56f};      // photographic exposure multiplier
+  float  bloomStrength{0.825f};   // how much bloom is added back
   float  bloomThreshold{0.0f};  // brightness above which pixels bloom
 
   // ---- Diffraction spikes (synthetic PSF) ----
@@ -1293,7 +1359,8 @@ public:
   // Clear the bound scene target to the background. Every target the SCENE is
   // drawn into goes through here; post-process ping-pong buffers (bloom, spike,
   // dust density) must stay black and are cleared directly.
-  void   ClearSceneTarget();
+  // starFieldSky: dim the sky by the star field stops (cinematic raster passes).
+  void   ClearSceneTarget(bool starFieldSky = false);
   const char* MainSlotLabel() const;   // what the fullscreen slot is showing
   void DrawStepLandmarks(float x0, float y0, float x1, float y1, bool sliderHovered);   // hover ruler under the Step slider
   vec3   backgroundRGB() const {

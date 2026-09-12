@@ -201,8 +201,8 @@ struct SceneSettings {
   int   rasterLiveHeight{0};
 
   // Photographic HDR (RT views)
-  float rtExposure{0.16f};
-  float bloomStrength{1.185f};
+  float rtExposure{0.56f};
+  float bloomStrength{0.825f};
   float bloomThreshold{0.0f};
   float edgeLightStrength{0.45f};
   float spikeStrength{1.38f};
@@ -224,7 +224,7 @@ struct SceneSettings {
   float lensMaxSprite{0.25f};
   float lensHazeArc{1.0f};
   float spriteRefHeight{720.0f};
-  float unresolvedSize{64.36f};
+  float unresolvedSize{63.37f};
   // Stars fainter than this melt into the unresolved haze instead of drawing a
   // core. The cut CONSERVES light now (cloudVert hands a skipped core's flux to
   // that star's haze lobe), so raising it trades sparkle for a smooth sheet at
@@ -263,14 +263,14 @@ struct SceneSettings {
   // additive on top. So widening the range wants the exposure brought down to
   // match, and the three reference projects were re-exposed when this landed.
   // That is not a bug, it is what a wider dynamic range means.
-  float starLumSpread{0.0f};
+  float starLumSpread{1.84f};
   // Absolute level a source must exceed before it gets diffraction spikes, and
   // the switch for compressing a spike's energy logarithmically (a real spike
   // grows with the LOG of how far a source is over saturation, not linearly).
   // 0 = both off, i.e. exactly the previous behaviour: every local maximum
   // spikes, at full strength. ~0.85 is the photographic look. Default 0 because
   // turning it on dims the reference scenes 14-17% and that is a look decision.
-  float spikeThreshold{0.0f};
+  float spikeThreshold{0.21f};
   float dustContrast{1.0f};
   float dustCoverage{0.30f};
   float dustClumpScale{0.13f};

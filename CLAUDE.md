@@ -419,10 +419,160 @@ Before touching a shared pass, capture a before/after on BOTH a near view and
 an in-galaxy view (`UNIVERSE_CAM_DIST=8`) and diff them — a scene-average
 mean can hide a large local change.
 
-## Four look defaults are deliberately 0
+## The star field is 3.6 stops dimmer than planets, on purpose
 
-`resolvedCut`, `popColour`, `starLumSpread` and `spikeThreshold` all default to
-**0**, which is the pre-2026-09-06 look. Each was landed at a non-zero default
+`cloudFrag.glsl` multiplies every star point, haze lobe and glowing-gas sprite
+by `uStarFieldGain` = 2^-6.851 = **0.008661** (was -3.6 when first found; retuned by
+the user once auto exposure worked). Planets, star objects, nebulae and
+the raytracer are untouched. The empty SKY is dimmed by the same stops
+(`ClearSceneTarget(true)`, only in the two cinematic raster clears:
+`CineBeginIfActive` and `BeginRecordRaster`), because the sky is part of what a
+frame of stars looks like. It is a live slider (Rendering Settings -> Light &
+Exposure -> **Star Field vs Planets**, in stops, `Renderer::starFieldStops`,
+default -6.851), deliberately NOT saved in projects, so it can be retuned once auto
+exposure works. The upload lives in `renderCloud`; an unset uniform reads 0 and
+would black out every star.
+
+Everything used to be tuned to sit at ONE brightness, so a sunlit planet and the
+galaxy behind it came out equally bright, and no exposure could favour either:
+auto exposure had nothing to choose between. The ratio was found BY EYE with a
+temporary slider against a reference photograph of a sunlit planet in front of
+the Milky Way. It is a look decision, not a derived number, so do not "correct"
+it analytically.
+
+Consequence: at a fixed exposure, a view of stars alone reads dark. That is what
+exposure is for, not a regression — do not raise the constant to compensate.
+
+## A far planet or star drawn as a DOT sits on the star scale
+
+`DrawObjectImpostor` multiplies a planet or star dot by
+`2^(starFieldStops + pointObjectStops)` when it is far below a pixel, fading back
+to 1 (in log apparent size, smoothstep) between `kImpostorStarLikePx` (0.25 px)
+and the mesh handover (`kImpostorFadeHi`, 1.6 px).
+
+The star field and sky are dimmed against sunlit planets so a RESOLVED planet
+outshines the galaxy. A planet far enough away to be a point is not a lit surface
+any more, it is a light source like a star (Mars from Earth is about as bright as
+the brightest stars). Left on the planet scale the dot peaked near the soft cap
+(~60) while a star particle's core peaks around 0.03, so Mars threw Sun-sized
+crosses and dragged the exposure down.
+
+- Ending the fade AT the handover is what keeps it from popping: when the mesh
+  takes over, the dot is exactly as bright as it always was. Dimming the dot
+  alone at every size would have made a planet jump ~115x on resolving.
+- The mesh is untouched — only the dot path knows the on-screen size.
+- The black-hole marker and nebula dots are excluded (not light sources of this
+  kind). **Point Objects vs Stars** (Light & Exposure, stops, not saved) sets how
+  much brighter than a star a dot comes out. Default **+1.7** (tuned by the user; +4 and +3 were too bright): at 0 the user found
+  planets nowhere near as bright as stars, while an estimate from the impostor
+  constants had predicted the opposite — tune it by eye, not from the formula.
+
+## Auto exposure: overall light AND the brightest region, then one exposure
+
+On by default (Rendering Settings -> Light & Exposure). Per frame, in
+`RunPostProcess`, BEFORE the bright-pass:
+
+1. `aeMeterFrag.glsl` reduces the HDR source to 1x1, carrying per texel the
+   EXACT mean luminance (R), the pixel count it stands for (G) and the brightest
+   REGION of at least Highlight Size found below it (B).
+   B is the POWER MEAN of region brightnesses, `(mean of region^p)^(1/p)` with
+   p = Highlight Strictness (default 3.6, clamped 1..8): the single brightest
+   region let one planet corner at the frame edge darken everything and flip it
+   back in one frame when it slid off. A planet filling the frame still reads at
+   full brightness; a corner covering a few regions barely counts.
+2. `aeExposureFrag.glsl` turns that into ONE exposure in a 1x1 R32F texture:
+   ```
+   exposure = Exposure * clamp(min(limit / (mean * Exposure),
+                                   highlightLimit / (brightestRegion * Exposure)),
+                               2^maxDarkening, 2^-starFieldStops)
+   ```
+3. The tonemap multiplies the whole image by it; `spikeSourceFrag` divides Spike
+   Onset by it.
+
+Why each part exists — every one of these was a version the user rejected:
+- **The mean alone** cannot see a small blazing object. Saturn at half a percent
+  of the frame barely moved it, so exposure stayed high and Saturn blew out: the
+  camera-pointed-at-the-Moon failure.
+- **The brightest pixels alone** would expose for star cores, which are points
+  that are SUPPOSED to saturate, and crush every star frame. SIZE separates them:
+  a star averaged over a region of Highlight Size (default 2% of frame height)
+  spreads to nothing; a planet or a near Sun disc keeps its brightness. A far star
+  OBJECT draws as a 1.6 px impostor dot, also a point, so it does not count
+  either; a star PARTICLE grown to its size cap next to the camera does.
+- **A fixed grid of regions** would flicker: an object split across four blocks
+  reads up to 4x dimmer than the same object centred in one. The region is a
+  SLIDING window — at the highlight pass every 2x2 group of source texels
+  starting inside the output texel is tried, including groups reaching into the
+  next one.
+- **A centre spot** ignored a planet off to one side.
+- **`glGenerateMipmap` for the mean**: non-power-of-two halvings DROP the odd last
+  row/column, so ~20-30% of the frame was silently unmetered — position-dependent
+  metering, felt as flicker. Levels here round UP and carry a count.
+- **Rising exposure with an undimmed sky**, and **exposing the sky separately
+  in the tonemap**: both left the sky navy (bloom at threshold 0 is a blurred
+  copy of the sky too). The sky is dimmed at its SOURCE instead, by the star
+  field stops (`ClearSceneTarget(true)`), so a frame of stars rises back exactly.
+- **Only darkening**: with stars 3.6 stops below planets, star frames stayed dark.
+
+**Spike Onset is a saturation level on the EXPOSED image.** Spikes are a
+saturation artefact and a sensor saturates on exposed light, so exposed for
+Saturn only Saturn and the Sun spike, and exposed for a star field the bright
+stars do. At 0 it is 0 either way, so the default look is unchanged. **Dynamic
+Range** then decides how many stars cross that line at a given exposure: at 0
+star brightnesses are bunched and it is all-or-none; raising it gives a few
+blazing crosses over many plain points. The meter runs before the spike pass for
+exactly this reason.
+
+Mechanics worth knowing:
+- The highlight pass is chosen from the SOURCE height (`aeHiSize * height`), so an
+  SSAA buffer picks a pass one deeper and the region stays the same share.
+- `aeLive` (auto on AND both programs AND the textures exist) gates both readers;
+  a failed shader compile falls back to the manual exposure instead of reading an
+  unbound texture.
+- `RunAeMeter` saves and restores `GL_BLEND`; with spikes off the composite
+  inherits the caller's blend state.
+- It reaches everything through `RunPostProcess`: live raster, the raytracer
+  (ceiling 1, it never dims), Snap (instant) and recordings (eased in video time, see
+  Transitions). An object shrinking through Highlight Size as you fly away still
+  switches from counting to not counting; the transition turns that into a fade.
+- The Sun-to-planet brightness ratio in this renderer was tuned by eye, not
+  physically, so how dark planets get with the Sun in frame is a look call.
+- **Transitions.** Exposure never jumps: `aeSmoothFrag.glsl` steps the shown
+  exposure toward the metered target by at most Transition Speed x dt, in STOPS
+  (exposure spans ~2^-16..2^7, so a raw-unit step would crawl at one end and
+  jump at the other), landing exactly once within a step. Both values are 1x1
+  R32F textures ping-ponged on the GPU: the scene is never redrawn for it, and a
+  settled exposure costs one pixel a frame. The caller sets `aePostRole`:
+  - **Live** (`CineResolveIfActive`, `BlitRaytracerToScreen`): wall-clock dt,
+    advanced at most ONCE per frame (`aeFrameCounter`, bumped in `EndFrame`);
+    a second live run in a frame reuses the value and skips the meter.
+  - **Record** (`CaptureRecordRasterVideo`, `CaptureFrame`): its own state,
+    dt = 1/recordFps, from the recording's own image — recordings render far
+    slower than real time, so wall-clock easing would compress every transition
+    in the video. Reset whenever nothing is recording, so a new take jumps.
+  - **Snap** (`CaptureRecordRasterImage`, `CaptureImage`): the image's own target,
+    instantly. A still must not freeze a transition half way, and the `--compare`
+    harness goes through `CaptureImage` — wall-clock smoothing would make it
+    non-repeatable.
+  Re-enabling Auto Exposure resets both states so it jumps rather than fades in.
+- Settings are live and NOT saved in projects yet, same as the star field ratio.
+  Code defaults are the user's tuned milky_way values: Brightness Limit 0.18,
+  Max Darkening -16 stops, Highlight Limit 0.09, Highlight Size 1.6%,
+  Highlight Strictness 3.6, Transition Speed 8 stops/s.
+- **Highlight Limit values do not carry across metering changes.** It was first
+  tuned to 0.48 against the single brightest region; the power mean reads far
+  lower for a small object, so the same 0.48 darkened much less and came out
+  too bright. Retuned to 0.09 under the power mean. Re-tune it by eye whenever
+  what the meter measures changes.
+
+## Look defaults: two back at 0, two taken from the tuned milky_way
+
+`resolvedCut` and `popColour` default to **0**, the pre-2026-09-06 look.
+`starLumSpread` (Dynamic Range) **1.84** and `spikeThreshold` (Spike Onset)
+**0.21** were set on 2026-09-13 at the user's request, copied from the milky_way
+project they tuned alongside auto exposure — the onset is now a saturation level
+on the EXPOSED image, which is what makes a non-zero default sensible. The history
+below is why all four were once reset to 0. Each was landed at a non-zero default
 (0.75 / 1.0 / 4.6 / 0.85), each changed the picture on every project at once
 because no project file carries the keys, and the user asked for all four back.
 Setting any of them to 0 restores the old behaviour EXACTLY — the code paths
@@ -434,7 +584,7 @@ three ways at once (an absolute floor most stars could not clear, a
 wider star brightness range feeding the pass). That is why the spikes read as
 different rather than merely fewer.
 
-Do not raise any of these back to a non-zero default without being asked.
+Do not change these defaults again without being asked.
 
 ## Defaults live in ONE place
 
@@ -444,10 +594,11 @@ they used to be a second, silently diverging copy, so changing a struct default
 did nothing for any project file that omitted the key. `Renderer`'s own members
 carry the same values for the pre-project startup state; keep the two in sync.
 
-The current defaults ARE the signed-off milky_way look (resolvedCut 0.0,
-unresolvedStrength 3.4, unresolvedSize 45.55, bloom 0.045, edgeLight 0.45,
-spikeStrength 1.56, spikeDecay 0.966, rtExposure 0.92, dustSkinContrast 6.5,
-dustDetail 14000, farFalloff 0.08, background 0.005/0.005/0.030 at level 1.2).
+The current defaults ARE the tuned milky_way look (2026-09-13): rtExposure 0.56,
+bloom 1.2, unresolvedStrength 3.4, unresolvedSize 63.37, spikeStrength 1.38,
+spikeLength 0.4205, spikeDecay 0.30, spikeSecondary 0.40, spikeChroma 0.30,
+spikeThreshold 0.21, starLumSpread 1.84, resolvedCut 0, popColour 0,
+farFalloff 0.08, edgeLight 0.45, background 0.005/0.005/0.030 at level 1.2.
 Verified: stripping those keys from a project renders the same image the
 explicit values do.
 
@@ -751,8 +902,10 @@ spike appears when a source overwhelms the sensor — and they differ only in ho
 much of the field is over that line.
 
 `uStarLumSpread` (Stars → **Dynamic Range**, ln of the range, default 4.6 ≈
-1000x) widens it. `uSpikeFloor` (Stars → **Spike Onset**, default 0.85) makes
-spikes require an absolute level rather than merely beating their neighbours.
+1000x) widens it. `uSpikeFloor` (Stars → **Spike Onset**) makes spikes require
+a saturation level rather than merely beating their neighbours. Both defaults are
+now 0 (see "Four look defaults"), and the onset is measured on the EXPOSED image
+(see "Auto exposure").
 
 - **TWO pivots, not one.** `Renderer::starLumPivot(coreWeighted)` solves the
   offset that holds MEAN flux constant. The core's base rises with vMag and the
@@ -777,8 +930,8 @@ spikes require an absolute level rather than merely beating their neighbours.
   that log, so the second one collapsed every surviving cross to the same size.
   Removed. If a wide star range makes the crosses swallow the frame, the dials
   are Spike Strength and Spike Onset, not squashing bright stars into faint ones.
-- **Spike Onset does ONE job: rarity.** It sets the absolute level a source must
-  clear to spike at all — which stars get a cross, never how big that cross is.
+- **Spike Onset does ONE job: rarity.** It sets the saturation level, on the EXPOSED
+  image, a source must clear to spike at all — which stars get a cross, never how big that cross is.
   The two used to be gated on the same uniform, so you could not have rare
   spikes without uniform ones.
 

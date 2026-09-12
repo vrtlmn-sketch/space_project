@@ -2963,6 +2963,9 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     if (ssLoc >= 0) glUniform1f(ssLoc, cineStarSize);
     GLint gsLoc = glGetUniformLocation(program, "uGasStrength");
     if (gsLoc >= 0) glUniform1f(gsLoc, cineGasStrength);
+    // Always uploaded: an unset uniform reads 0, which would black out every star.
+    GLint sfgLoc = glGetUniformLocation(program, "uStarFieldGain");
+    if (sfgLoc >= 0) glUniform1f(sfgLoc, cineStarFieldGain);
   }
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 

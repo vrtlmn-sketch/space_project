@@ -25,6 +25,20 @@ uniform float uGasStrength;        // glowing-gas emission brightness
 // object's true angular size). Without it a galaxy 0.001 px across drew eight
 // full-brightness stars and outshone everything nearby.
 uniform float uPointDim;
+// Brightness of the whole star field (star points, haze, glowing gas) against
+// planets, which are not drawn here. -3.6 stops = 2^-3.6 = 0.08246. FOUND BY EYE against a
+// reference photograph of a sunlit planet in front of the Milky Way, with a
+// temporary slider: it is a look decision, not a derived number.
+//
+// Everything used to be tuned to sit at the same brightness, so a sunlit planet
+// and the galaxy behind it came out equally bright and no exposure could favour
+// one over the other. Auto exposure only has something to choose between once
+// they differ. Looking at stars alone therefore reads DARK until exposure rises
+// to meet them; that is the intended behaviour, not a regression.
+// Dust is multiplicative and needs no gain; bloom and spikes follow linearly.
+// Uploaded per cloud from the Light & Exposure slider (default -3.6 stops), kept
+// live so the ratio can be retuned once auto exposure is working.
+uniform float uStarFieldGain;
 
 in vec3  vColor;            // per-particle blackbody colour (from cloudVert)
 in float vMag;              // per-particle magnitude 0..1
@@ -237,7 +251,7 @@ void main() {
             float dens = smoothstep(0.30, 0.90, env * (0.22 + 0.9 * n));
             if (dens <= 0.001) discard;
             vec3 gasCol = mix(vec3(1.0, 0.30, 0.45), vec3(0.45, 0.6, 1.0), 0.25 * vHot);
-            FragColor = vec4(gasCol * dens * uGasStrength * 0.02 * uPointDim * vSlabW * gLfEdgeFade, 1.0);
+            FragColor = vec4(gasCol * dens * uGasStrength * 0.02 * uPointDim * uStarFieldGain * vSlabW * gLfEdgeFade, 1.0);
             return;
         }
 
@@ -253,7 +267,7 @@ void main() {
             // the budget just whited out the screen instead of adding depth.
             float coreI = (uStarfield == 1) ? (0.015 + 4.0 * vMag * vMag)
                                             : (0.30  + 3.5 * vMag);
-            c = vColor * core * edge * coreI * starLum(uStarLumPivotC) * uPointDim * vDistGain;
+            c = vColor * core * edge * coreI * starLum(uStarLumPivotC) * uPointDim * vDistGain * uStarFieldGain;
         } else {
             // Unresolved-star haze: wide dim lobe, brightness from uUnresolvedStrength.
             // Thousands overlap → density-driven volumetric glow the dust carves into.
@@ -264,7 +278,7 @@ void main() {
             // starLum() applies here TOO: a star bright enough to blaze should
             // have a bright halo. It also cancels out of vUnresGain's core/haze
             // ratio, so the energy transfer stays exact at any spread.
-            c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim * vUnresGain * starLum(uStarLumPivotH);
+            c = vColor * halo * uUnresolvedStrength * 0.008 * uPointDim * vUnresGain * starLum(uStarLumPivotH) * uStarFieldGain;
         }
         FragColor = vec4(c * vSlabW * gLfEdgeFade, 1.0);   // slab weight fades the star/haze light
         return;
