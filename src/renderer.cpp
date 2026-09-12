@@ -1228,13 +1228,13 @@ static float ImpostorLambertPhase(float cosAlpha) {
   return (float)((std::sin(a) + (M_PI - a) * ca) / M_PI);
 }
 
-void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
+bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
                                   float objectType, vec3 color)
 {
-  if (impostorStrength <= 0.0f || impostorInitFailed) return;
-  if (ro.meshType != MeshType::sphere) return;
+  if (impostorStrength <= 0.0f || impostorInitFailed) return false;
+  if (ro.meshType != MeshType::sphere) return false;
   const double radius = (double)ro.sphereRadius();  // already includes size exaggeration
-  if (!(radius > 0.0) || fbHeight <= 0) return;
+  if (!(radius > 0.0) || fbHeight <= 0) return false;
 
   // ── Where it is, and how big ──
   // Camera-relative in DOUBLE (CLAUDE.md, "Large-world coordinates"): at 1e15 AU
@@ -1247,10 +1247,10 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   const double vy = camMatrix[3]*rx + camMatrix[4]*ry + camMatrix[5]*rz;
   const double vz = camMatrix[6]*rx + camMatrix[7]*ry + camMatrix[8]*rz;
   const double depth = -vz;                          // camera looks down -Z
-  if (!(depth > radius)) return;                     // behind us, or we are inside it
+  if (!(depth > radius)) return false;               // behind us, or we are inside it
 
   const double tanV = std::tan((double)zoom * M_PI / 180.0 * 0.5);
-  if (!(tanV > 1e-9)) return;
+  if (!(tanV > 1e-9)) return false;
   const double aspect  = (double)fbWidth / (double)fbHeight;
   const double screenPx = radius / (tanV * depth) * 0.5 * (double)fbHeight;
 
@@ -1269,7 +1269,13 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   // Hand back to the mesh once it resolves. Above fadeHi this returns before
   // touching any GL state, so an object big enough to see normally renders
   // exactly as it did before this existed.
-  if (screenPx >= fadeHi) return;
+  if (screenPx >= fadeHi) return false;
+  // Below the fade band the dot IS the object. The mesh must not be drawn on
+  // top: it is opaque, and a sub-pixel sphere only produces a fragment on the
+  // frames a pixel centre lands inside it — where it painted plain surface
+  // colour over the dot's core and killed its spike. That was the "spike, no
+  // spike, spike" as a planet or star moved across the screen.
+  const bool carries = screenPx <= fadeLo;
   double fade = 1.0;
   if (screenPx > fadeLo) {
     const double u = (screenPx - fadeLo) / (fadeHi - fadeLo);
@@ -1339,7 +1345,7 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
     }
     if (nL > 0) { S.x *= color.x; S.y *= color.y; S.z *= color.z; }
   }
-  if (!(S.x > 0.0f || S.y > 0.0f || S.z > 0.0f)) return;
+  if (!(S.x > 0.0f || S.y > 0.0f || S.z > 0.0f)) return false;
 
   // ── The pixel floor, and the light that has to come off because of it ──
   // Above the floor the sprite is the object's true size and carries its exact
@@ -1408,7 +1414,7 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
       if (vs) glDeleteShader(vs);
       if (fs) glDeleteShader(fs);
       impostorInitFailed = true;
-      return;
+      return false;
     }
     GLuint p = glCreateProgram();
     glAttachShader(p, vs); glAttachShader(p, fs); glLinkProgram(p);
@@ -1419,12 +1425,13 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
       std::cerr << "[impostor] link: " << b << "\n";
       glDeleteProgram(p);
       impostorInitFailed = true;
-      return;
+      return false;
     }
     impostorProgram = p;
-    impLocNdc     = glGetUniformLocation(p, "uNdc");
-    impLocPointPx = glGetUniformLocation(p, "uPointPx");
-    impLocColor   = glGetUniformLocation(p, "uColor");
+    impLocNdc       = glGetUniformLocation(p, "uNdc");
+    impLocPointPx   = glGetUniformLocation(p, "uPointPx");
+    impLocColor     = glGetUniformLocation(p, "uColor");
+    impLocDepthOnly = glGetUniformLocation(p, "uDepthOnly");
     glGenVertexArrays(1, &impostorVao);
   }
 
@@ -1443,7 +1450,7 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   ndcZ = std::clamp(ndcZ, 1e-7, 1.0);
   const double ndcX = vx / (tanV * aspect * depth);
   const double ndcY = vy / (tanV * depth);
-  if (std::fabs(ndcX) > 1.05 || std::fabs(ndcY) > 1.05) return;   // off screen
+  if (std::fabs(ndcX) > 1.05 || std::fabs(ndcY) > 1.05) return carries;   // off screen
 
   GLboolean depthMask = GL_TRUE;
   glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
@@ -1455,11 +1462,26 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   glEnable(GL_PROGRAM_POINT_SIZE);
   glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE);                 // additive: a point source adds light
-  glDepthMask(GL_FALSE);                       // never occlude anything itself
+  glDepthMask(GL_FALSE);
   glUniform3f(impLocNdc, (float)ndcX, (float)ndcY, (float)ndcZ);
-  glUniform1f(impLocPointPx, (float)(2.0 * spriteR));
+  // Every size above is in DISPLAY pixels; under SSAA the buffer is
+  // currentPixelScale times taller, so the sprite has to be too, or the dot
+  // shrinks below the anti-twinkle limit (at the default 1.5x it drew 2/3 size).
+  glUniform1f(impLocPointPx, (float)(2.0 * spriteR * (double)currentPixelScale));
   glUniform3f(impLocColor, (float)(S.x * amp), (float)(S.y * amp), (float)(S.z * amp));
+  glUniform1i(impLocDepthOnly, 0);
   glDrawArrays(GL_POINTS, 0, 1);
+
+  // Then the CORE writes depth, colour masked off. Without it the dot left the
+  // depth buffer empty, so galaxy dust drawn later — even far BEHIND the
+  // planet — passed its GL_GEQUAL test and multiplied the dot down. Panning
+  // slid the dot across dust wisps and its spike came and went. Drawn after the
+  // colour pass, because that pass would fail GL_GREATER against its own depth.
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  glDepthMask(GL_TRUE);
+  glUniform1i(impLocDepthOnly, 1);
+  glDrawArrays(GL_POINTS, 0, 1);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
   glDepthMask(depthMask);
   if (!blendWas) glDisable(GL_BLEND);
@@ -1472,6 +1494,7 @@ void Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
               << "  screenPx " << screenPx << "  sprite " << spriteR
               << "  fade " << fade
               << "  rgb " << (S.x * amp) << "," << (S.y * amp) << "," << (S.z * amp) << "\n";
+  return carries;
 }
 
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
@@ -1480,10 +1503,12 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
   // Far stand-in FIRST, and before the nebula early-out: a nebula that has
   // shrunk below a pixel needs one too, and DrawNebula runs in its own reduced
   // -resolution pass which a sub-pixel volume would never survive.
-  if (!rayTracerView) DrawObjectImpostor(ro, temperature, objectType, color);
+  const bool dotOnly = !rayTracerView && DrawObjectImpostor(ro, temperature, objectType, color);
   if (ro.isNebulaVolume) return;   // drawn by DrawNebula after the clouds; never an RT solid
   if (!rayTracerView) {
-    if (ro.meshType == MeshType::sphere && !ro.lensSkipMesh) {
+    if (dotOnly) {
+      AddRimOccluder(ro);
+    } else if (ro.meshType == MeshType::sphere && !ro.lensSkipMesh) {
       ro.uploadPlanetColor(color);
       ro.realisticShading = realisticRasterView;
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);

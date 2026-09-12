@@ -1316,6 +1316,16 @@ limit is the same object, and the handover is a fade.
   sits there as a ball.
 - `screenPx` is divided back to `spriteRefHeight` before the flux, or peak
   brightness scales with render height.
+- **Below the fade band the mesh is NOT drawn** (`DrawObjectImpostor` returns
+  true). It is opaque, and a sub-pixel sphere gets a fragment only on the frames
+  a pixel centre lands in it — where it overwrote the dot's core and killed its
+  spike. That, and the next point, were the "spike, no spike, spike" flicker on
+  planets and stars while panning or approaching.
+- **The dot's CORE writes depth** (a second, colour-masked draw, r < 0.5).
+  Without it dust drawn later from far BEHIND the body passed `GL_GEQUAL` and
+  multiplied the dot down wherever a wisp lay behind it.
+- The drawn point size is multiplied by `currentPixelScale`; every size rule is
+  in display pixels, and under SSAA the buffer is taller.
 
 ## Light falls off because objects get SMALLER — until the floors stop it
 

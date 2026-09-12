@@ -455,7 +455,7 @@ private:
   // ── Far object impostors (see DrawObjectImpostor) ──
   GLuint impostorProgram{0};        // impostorVert.glsl + impostorFrag.glsl
   GLuint impostorVao{0};            // attribute-less; core profile still needs one bound
-  GLint  impLocNdc{-1}, impLocPointPx{-1}, impLocColor{-1};
+  GLint  impLocNdc{-1}, impLocPointPx{-1}, impLocColor{-1}, impLocDepthOnly{-1};
   bool   impostorInitFailed{false}; // compile failed once — do not retry every frame
   GLuint nebFBO{0}, nebColorTex{0}, nebDepthRBO{0};
   int    nebFboW{0}, nebFboH{0};
@@ -1077,7 +1077,9 @@ public:
   // goes through (viewport, PiP, both record paths, the compare harness, and
   // PhysicsObject::Update). Do not add a separate loop for it at the call
   // sites: that is how rimOccluders and the cloud dust phase went wrong.
-  void DrawObjectImpostor(const RenderedObject& ro, float temperature,
+  // Returns true when the dot carries the object on its own (under the fade
+  // band), so the caller must NOT draw the mesh as well.
+  bool DrawObjectImpostor(const RenderedObject& ro, float temperature,
                           float objectType, vec3 color);
   // Upload star light positions+colours to all planet (non-star) rendered objects
   void UploadStarLights(std::vector<RenderedObject*>& planetShaders,
