@@ -461,6 +461,14 @@ crosses and dragged the exposure down.
   takes over, the dot is exactly as bright as it always was. Dimming the dot
   alone at every size would have made a planet jump ~115x on resolving.
 - The mesh is untouched — only the dot path knows the on-screen size.
+- **A far STAR object is never dimmer than a star particle.** A particle's core
+  does not dim with distance; the dot's flux falls as d^-0.64, so the Sun sank
+  below the faintest particle at ~16 ly and was ~300x under it from half across
+  the galaxy. The dot's integrated flux is floored at a particle of magnitude
+  `kImpostorStarMag` (0.512, brighter than ~80% of particles), computed from the
+  particle's own core terms so Dynamic Range, Star Size and Star Field vs
+  Planets move both together. The floor takes over at ~1e4 AU (0.15 ly).
+  Planets are not floored.
 - The black-hole marker and nebula dots are excluded (not light sources of this
   kind). **Point Objects vs Stars** (Light & Exposure, stops, not saved) sets how
   much brighter than a star a dot comes out. Default **+1.7** (tuned by the user; +4 and +3 were too bright): at 0 the user found
@@ -1326,6 +1334,11 @@ limit is the same object, and the handover is a fade.
   multiplied the dot down wherever a wisp lay behind it.
 - The drawn point size is multiplied by `currentPixelScale`; every size rule is
   in display pixels, and under SSAA the buffer is taller.
+- **A far black hole draws NO dot** (`kImpostorHoleGlow` = 0). The findability
+  marker at 3.0 made Sagittarius A* seen from Sol ~25x a bright star particle;
+  it was hidden only because dust behind it darkened it, and the depth-writing
+  core above removed that. With zero glow the dot path returns before drawing,
+  so the (black) mesh draws as it always did.
 
 ## Light falls off because objects get SMALLER — until the floors stop it
 

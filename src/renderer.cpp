@@ -1166,10 +1166,17 @@ static constexpr double kImpostorFluxNorm = 3.157248;   // k = 3
 // it ramps, in log size, back to its planet-scale brightness, so a planet that
 // resolves into a disc does not pop. Mars from Earth is ~0.1 px: fully star-like.
 static constexpr double kImpostorStarLikePx = 0.25;
+// Magnitude (cloudVert vMag, 0..1) of the star particle a far star object is
+// never dimmer than. 0.512 = hash 0.8, brighter than ~80% of particles: clearly
+// visible, not a standout. Median is 0.125.
+static constexpr double kImpostorStarMag = 0.512;
 // The one number here that is not derived from a shader: a black hole emits
 // nothing, so this is a findability marker, not a brightness. Zero it to make
 // distant black holes honestly invisible.
-static constexpr float  kImpostorHoleGlow = 3.0f;
+// It is ZERO: at 3.0 Sagittarius A* seen from Sol peaked ~25x a bright star
+// particle. That went unnoticed only while galactic-centre dust behind the dot
+// multiplied it down; once the dot's core wrote depth, the hole shone.
+static constexpr float  kImpostorHoleGlow = 0.0f;
 // Fitted, not derived: a ray-marched volume has no analytic disc-mean radiance.
 static constexpr float  kImpostorNebula   = 0.35f;
 
@@ -1399,6 +1406,30 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
     t = std::clamp(t, 0.0, 1.0);
     t = t * t * (3.0 - 2.0 * t);
     amp *= std::exp((1.0 - t) * std::log(std::max(pointGain, 1e-12)));
+  }
+  // ── A far STAR never goes dimmer than a star particle ──
+  // A star particle does not dim with distance: its core is a fixed sprite at a
+  // brightness set by its magnitude. The flux above keeps falling as the true
+  // size shrinks (d^-0.64), so the Sun dropped below the faintest particle at
+  // ~16 ly and was ~300x under it from half across the galaxy. Past the point
+  // where the two cross, the dot holds the light of a particle of magnitude
+  // kImpostorStarMag, computed with the particle's own terms (cloudVert/
+  // cloudFrag core: coreI, starLum, uStarSize, uStarFieldGain), so the Dynamic
+  // Range, Star Size and star field sliders move both together. Matched by
+  // INTEGRATED flux, not peak, because the two sprites differ in size.
+  if (type == 1) {
+    const double v      = kImpostorStarMag;
+    const double coreI  = 0.30 + 3.5 * v;
+    const double lum    = (starLumSpread > 0.0f)
+                            ? std::exp((double)starLumSpread * (v - (double)starLumPivot(true))) : 1.0;
+    const double diam   = std::max(std::clamp(2.0 + 5.0 * v, 2.0, 9.0) * (double)starSize, 1.0);
+    const double pFlux  = coreI * lum * std::pow(2.0, (double)starFieldStops)
+                        * 0.82746 * 0.25 * diam * diam;            // ref px
+    const double dotRef = dotR / hScale;
+    const double dotInt = M_PI * dotRef * dotRef * (1.0 - std::exp(-3.0)) / 3.0;
+    const double Smax   = std::max({S.x, S.y, S.z});
+    const double floorAmp = (pFlux / dotInt) / std::max(Smax, 1e-12);
+    amp = std::max(amp, floorAmp * fade * (double)impostorStrength);
   }
   // The core is deliberately allowed to run past 1.0 and clip. That is what a
   // bright point source does through a real lens, and it is what feeds the
