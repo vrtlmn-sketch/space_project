@@ -6335,6 +6335,16 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     if (ImGui::InputText("##iname", nameBuf, sizeof(nameBuf)))
       obj.name = nameBuf;
 
+    // Description — what the Explore search shows for it.
+    ImGui::TextDisabled("Description");
+    {
+      char descBuf[2048];
+      std::strncpy(descBuf, obj.description.c_str(), sizeof(descBuf) - 1);
+      descBuf[sizeof(descBuf) - 1] = '\0';
+      if (ImGui::InputTextMultiline("##idesc", descBuf, sizeof(descBuf), ImVec2(-1, 72)))
+        obj.description = descBuf;
+    }
+
     ImGui::Spacing();
 
     // Type — Planet / Star / Black Hole / Free Model / Nebula
@@ -7011,6 +7021,23 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       else
         ImGui::TextColored(ImVec4(0.90f, 0.75f, 0.40f, 1.00f), "Cloud %d", cloudIdx);
       ImGui::Separator();
+
+      // Name and description — the same two fields an object has.
+      {
+        char nameBuf[128];
+        std::strncpy(nameBuf, cloud->name.c_str(), sizeof(nameBuf) - 1);
+        nameBuf[sizeof(nameBuf) - 1] = '\0';
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputTextWithHint("##cloudname", "Name", nameBuf, sizeof(nameBuf)))
+          cloud->name = nameBuf;
+        ImGui::TextDisabled("Description");
+        char descBuf[2048];
+        std::strncpy(descBuf, cloud->description.c_str(), sizeof(descBuf) - 1);
+        descBuf[sizeof(descBuf) - 1] = '\0';
+        if (ImGui::InputTextMultiline("##clouddesc", descBuf, sizeof(descBuf), ImVec2(-1, 72)))
+          cloud->description = descBuf;
+        ImGui::Spacing();
+      }
 
       if (cloud->renderedObject.isGalaxy) {
         ImGui::Text("Stars: %d", cloud->renderedObject.galaxyFullStars);

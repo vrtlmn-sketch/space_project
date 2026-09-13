@@ -10,6 +10,7 @@
 
 struct PhysicsObjectData {
   std::string name;
+  std::string description;    // "" = none (key omitted on save)
   double mass{};        // solar masses
   dvec3  position{};    // AU — the frame ORIGIN when localOffset is used
   // Exact offset inside that frame. Non-zero only for something placed out
@@ -91,6 +92,7 @@ struct CloudData {
   bool  haloSet{false};
   std::vector<CameraKeyframe> keyframes;
   std::string name;            // display name ("" = "Cloud N")
+  std::string description;     // "" = none (key omitted on save)
   bool  universeMember{false}; // grouped under the [U] Universe node
   // Binary particle sidecar (relative to the project file). Non-empty means
   // the cloud's exact particles are stored — a procedural cloud used to

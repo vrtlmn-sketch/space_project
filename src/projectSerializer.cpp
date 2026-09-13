@@ -95,6 +95,7 @@ bool ProjectSerializer::Save(const std::string& path,
     if (obj.isUniverseSlot()) continue;
     json o;
     o["name"]        = obj.name;
+    if (!obj.description.empty()) o["description"] = obj.description;
     o["mass"]        = obj.data.mass;
     o["position"]    = dvec3ToJson(obj.data.position);
     // Only written when it is actually used, so ordinary projects are unchanged.
@@ -216,6 +217,7 @@ bool ProjectSerializer::Save(const std::string& path,
       {"simulatePhysics",   cloud.simulatePhysics},
       {"keyframes",         keyframesToJson(cloud.keyframes)},
       {"name",              cloud.name},
+      {"description",       cloud.description},
       {"universeMember",    cloud.universeMember},
       {"dataFile",          cloud.dataFile}
     });
@@ -456,6 +458,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     for (const auto& o : root["physicsObjects"]) {
       PhysicsObjectData pod;
       pod.name        = o.value("name",        "Object");
+      pod.description = o.value("description", std::string{});
       pod.mass        = o.value("mass",         1.0);
       pod.position    = jsonToDVec3(o["position"]);
       if (o.contains("localOffset")) pod.localOffset = jsonToDVec3(o["localOffset"]);
@@ -587,6 +590,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.simulatePhysics    = c.value("simulatePhysics",    true);
     if (c.contains("keyframes")) cd.keyframes = jsonToKeyframes(c["keyframes"]);
     cd.name           = c.value("name",           std::string{});
+    cd.description    = c.value("description",    std::string{});
     cd.universeMember = c.value("universeMember", false);
     cd.dataFile       = c.value("dataFile",       std::string{});
     return cd;

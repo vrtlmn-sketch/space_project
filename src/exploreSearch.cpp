@@ -94,11 +94,6 @@ int MatchScore(const std::string& nameLower, const std::string& q) {
   return 2;
 }
 
-constexpr const char* kLorem =
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor "
-    "incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis "
-    "nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.";
-
 double Len(const dvec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
 
 }  // namespace
@@ -283,7 +278,12 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
     ImGui::SetWindowFontScale(1.0f);
     ImGui::TextDisabled("%s  -  %s away", KindName(e.kind), units::FormatDistanceAU(e.dist).c_str());
     ImGui::Spacing();
-    ImGui::TextWrapped("%s", kLorem);
+    {
+      const std::string& desc = (e.obj >= 0) ? physicsObjects[(size_t)e.obj].description
+                                             : clouds[(size_t)e.cloud]->description;
+      if (!desc.empty()) ImGui::TextWrapped("%s", desc.c_str());
+      else               ImGui::TextDisabled("No description yet.");
+    }
     ImGui::Spacing();
 
     // What Travel would show.

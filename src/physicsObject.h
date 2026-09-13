@@ -100,6 +100,7 @@ private:
 public:
   unsigned int timeframe{};
   std::string name{"Object"};
+  std::string description;   // free text, shown by the Explore search; edited in the inspector
   ObjectType shaderType{ObjectType::Planet};
 
   RenderedObject renderedObject;

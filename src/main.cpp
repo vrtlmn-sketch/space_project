@@ -75,6 +75,7 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
   cloud->position           = cd.position;
   cloud->renderedObject.coordinates = cd.position;
   cloud->name               = cd.name;
+  cloud->description        = cd.description;
   cloud->universeMember     = cd.universeMember;
   if (cd.scale != 1.0f)
     cloud->applyVirialScale(cd.scale);
@@ -129,6 +130,7 @@ static void buildScene(
     if (pod.schwarzschildRadius > 0.0f)
       physicsObjects.back().schwarzschildRadius = pod.schwarzschildRadius;
     physicsObjects.back().localOffset = pod.localOffset;
+    physicsObjects.back().description = pod.description;
     physicsObjects.back().starSurface = {pod.starContrast, pod.starScale,
                                          pod.starEvolve, pod.starSpots, pod.starWarp};
     physicsObjects.back().data.color = pod.color;
@@ -1246,6 +1248,7 @@ int main(int argc, char** argv) {
     cd.position = dvec3(clouds[cloudIdx]->position);  // keep current placement
     cd.rotation = clouds[cloudIdx]->rotationDeg;      // keep current orientation
     cd.name           = clouds[cloudIdx]->name;       // keep identity in the scene list
+    cd.description    = clouds[cloudIdx]->description;
     cd.universeMember = clouds[cloudIdx]->universeMember;
     // A respawn REPLACES the object, so its universe identity has to be carried
     // across by hand. Losing it made a respawned galaxy save as a loose cloud
@@ -1438,6 +1441,7 @@ int main(int argc, char** argv) {
       cd.simulatePhysics = c->simulatePhysics;
       cd.keyframes = c->keyframes;
       cd.name = c->name;
+      cd.description = c->description;
       cd.universeMember = c->universeMember;
       // Procedural clouds (no formation file) keep their EXACT particles in a
       // sidecar; they used to reload as a random blob of the same count.
