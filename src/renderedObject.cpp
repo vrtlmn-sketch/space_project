@@ -742,6 +742,26 @@ void RenderedObject::measureDustShape(double cx, double cy, double cz, size_t np
   dustScaleH  = (float)(cMin * (0.40 + 0.60 * q));
 }
 
+// aRim (attribute 2) is fetched for all bufferSize particles, so rimVbo must never
+// hold fewer floats than that. An under-sized buffer is undefined behaviour in GL:
+// Mesa reads zeros, NVIDIA dereferences null and segfaults. A cloud's first frame
+// had NO storage at all — the bake runs before setupRender creates rimVbo.
+// Real factors first, zero-padded up to bufferSize.
+void RenderedObject::uploadRimFactors()
+{
+  if (!rimVbo) return;
+  const size_t need = std::max(rimFactors.size(), (size_t)std::max(0, bufferSize));
+  glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
+  if (rimFactors.size() >= need) {
+    glBufferData(GL_ARRAY_BUFFER, rimFactors.size()*sizeof(float), rimFactors.data(), GL_DYNAMIC_DRAW);
+  } else {
+    std::vector<float> padded(need, 0.0f);
+    std::copy(rimFactors.begin(), rimFactors.end(), padded.begin());
+    glBufferData(GL_ARRAY_BUFFER, padded.size()*sizeof(float), padded.data(), GL_DYNAMIC_DRAW);
+  }
+  rimVboCount = need;
+}
+
 void RenderedObject::updateCloudRimFactors()
 {
   // Chunked starfields have no rim attribute buffer (setupRender only wires
@@ -767,10 +787,7 @@ void RenderedObject::updateCloudRimFactors()
       maxD = std::max(maxD, std::fabs(rimTargets[i] - rimFactors[i]));
     }
     if (maxD < 1e-3f) { rimFactors = rimTargets; rimConverged = true; }
-    if (rimVbo) {
-      glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
-      glBufferData(GL_ARRAY_BUFFER, rimFactors.size()*sizeof(float), rimFactors.data(), GL_DYNAMIC_DRAW);
-    }
+    uploadRimFactors();
     return;
   }
 
@@ -840,8 +857,7 @@ void RenderedObject::updateCloudRimFactors()
     rimFactors[i] = firstBake ? target : rimFactors[i] + (target - rimFactors[i]) * kRimBlend;
   }
   if (rimVbo) {
-    glBindBuffer(GL_ARRAY_BUFFER, rimVbo);
-    glBufferData(GL_ARRAY_BUFFER, rimFactors.size()*sizeof(float), rimFactors.data(), GL_DYNAMIC_DRAW);
+    uploadRimFactors();
   } else {
     // First draw: this runs BEFORE setupRender has created the VBO, so the bake
     // has nowhere to go. Do not count it as done, or the factors are never
@@ -2181,7 +2197,7 @@ void RenderedObject::releaseCloudGlObjects()
 {
   if (vao)           { glDeleteVertexArrays(1, &vao); vao = 0; }
   if (vbo)           { glDeleteBuffers(1, &vbo); vbo = 0; }
-  if (rimVbo)        { glDeleteBuffers(1, &rimVbo); rimVbo = 0; }
+  if (rimVbo)        { glDeleteBuffers(1, &rimVbo); rimVbo = 0; rimVboCount = 0; }
   if (hashVbo)       { glDeleteBuffers(1, &hashVbo); hashVbo = 0; }
   if (ssboParticles) { glDeleteBuffers(1, &ssboParticles); ssboParticles = 0; }
   if (ssboObjects)   { glDeleteBuffers(1, &ssboObjects); ssboObjects = 0; }
@@ -2926,6 +2942,9 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       hashDirty = false;
     }
   }
+  // Every draw below fetches aRim; see uploadRimFactors for why this cannot wait
+  // for the bake.
+  if (!isStarfield && rimVboCount < (size_t)bufferSize) uploadRimFactors();
 
   glUseProgram(program);
   setCloudPlacementUniforms(cameraTranslate);

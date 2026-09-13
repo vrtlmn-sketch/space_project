@@ -150,6 +150,7 @@ private:
   unsigned int vbo{};
   unsigned int relVbo{};                 // cloud: per-frame camera-relative positions (large-world precision)
   unsigned int rimVbo{};                 // cloud: per-particle world-lit rim factor (attribute 2)
+  size_t rimVboCount{0};                 // floats currently stored in rimVbo (must be >= bufferSize before a draw)
   std::vector<float> rimFactors{};       // CPU-side rim factors (regenerated periodically)
   std::vector<float> dustLightRGB{};     // per-particle transmitted starlight (3 floats each)
   std::vector<float> dustLightDir{};     // per-particle unit direction TOWARD the light
@@ -396,6 +397,7 @@ public:
   // density map's G channel so screen-space rims light 3D-correctly.
   void setCloudPlacementUniforms(const double cameraTranslate[3]);
   void updateCloudRimFactors();
+  void uploadRimFactors();
   // Per-particle in-scatter light (Option A): starlight reaching each dust
   // particle from the galactic core, self-shadowed by the dust between them.
   void updateCloudDustLight(float dustInfluence, float dustClumpScale,
