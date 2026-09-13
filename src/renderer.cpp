@@ -2758,7 +2758,7 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
 void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
   // Exploration has no panels, no dock, no gizmo and no picking — returning
   // here is what makes clicking a planet do nothing: the pick code never runs.
-  if (exploring()) { DrawExplorationUI(cb); return; }
+  if (exploring()) { DrawExplorationUI(physicsObjects, clouds, cb); return; }
   // Scene scale (near/far, focusDistance, forward zoom target) was already
   // computed before the objects drew this frame (main loop) — the UI panels
   // below read those members. Not recomputed here: in a universe this scan is
@@ -3628,7 +3628,9 @@ void Renderer::LeaveExploration() {
 
 // The whole exploration UI: one bar across the top with the way back. The quit
 // dialog still has to draw, because Esc and Q still open it.
-void Renderer::DrawExplorationUI(const SceneCallbacks& cb) {
+void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
+                                 std::vector<std::unique_ptr<CloudObject>>& clouds,
+                                 const SceneCallbacks& cb) {
   ImGuiViewport* vp = ImGui::GetMainViewport();
   const float barH = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
   ImGui::SetNextWindowPos(vp->WorkPos);
@@ -3647,6 +3649,7 @@ void Renderer::DrawExplorationUI(const SceneCallbacks& cb) {
 
   // Floating here: there is no dockspace in exploration, and a window docked in
   // Creative would never show without one (see the ### titles in each panel).
+  DrawExplorationMap(physicsObjects, clouds);
   DrawProjectPanel(cb);
   DrawSettingsPanel();
   DrawQuitDialog(cb);

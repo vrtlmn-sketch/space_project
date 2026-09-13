@@ -930,7 +930,15 @@ public:
   }
   void EnterExploration();
   void LeaveExploration();
-  void DrawExplorationUI(const SceneCallbacks& cb);
+  void DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
+                         std::vector<std::unique_ptr<CloudObject>>& clouds,
+                         const SceneCallbacks& cb);
+  // Bottom-right minimap (explorationMap.cpp): what is in a sphere around you.
+  void DrawExplorationMap(std::vector<PhysicsObject>& physicsObjects,
+                          std::vector<std::unique_ptr<CloudObject>>& clouds);
+  double mapRadius{0.0};     // sphere radius in AU; 0 = set from the scene scale on first draw
+  float  mapYawOff{0.0f};    // drag offsets from following the camera, eased back on release
+  float  mapTiltOff{0.0f};
 
   // ---- Editor viewport mode ----
   bool editorViewport{true};   // true = render scene to FBO, show in central docked window
