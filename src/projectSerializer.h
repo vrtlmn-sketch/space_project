@@ -271,6 +271,17 @@ struct SceneSettings {
   // spikes, at full strength. ~0.85 is the photographic look. Default 0 because
   // turning it on dims the reference scenes 14-17% and that is a look decision.
   float spikeThreshold{0.21f};
+  // Light & Exposure. Star field vs planets and point dots vs stars, in stops,
+  // then auto exposure. Mirrors Renderer's members of the same names.
+  float starFieldStops{-6.851f};
+  float pointObjectStops{1.7f};
+  bool  autoExposure{true};
+  float aeLimit{0.18f};
+  float aeMaxDarkenStops{-16.0f};
+  float aeHiLimit{0.09f};
+  float aeHiSize{0.016f};
+  float aeHiPower{3.6f};
+  float aeSpeedStops{8.0f};
   float dustContrast{1.0f};
   float dustCoverage{0.30f};
   float dustClumpScale{0.13f};

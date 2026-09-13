@@ -801,6 +801,15 @@ public:
   // dimming plus this many stops. 0 = exactly star scale. Applied only to the dot,
   // fading out by the mesh handover so resolving into a disc never pops. Not saved.
   float pointObjectStops{1.7f};
+  // How far exposure rises to undo the star field dimming: what auto exposure
+  // gives a frame of stars, and what manual Exposure always applies, so turning
+  // auto off leaves the star field as auto shows it. The raytracer never dims.
+  float StarFieldLift() const {
+    return rayTracerView ? 1.0f : std::pow(2.0f, std::max(-starFieldStops, 0.0f));
+  }
+  float ManualExposure() const { return rtExposure * StarFieldLift(); }
+  // Next exposure jumps to its target instead of easing (scene load, auto re-enabled).
+  void ResetAutoExposureTransition();
   // Auto exposure (tonemapFrag): meter the light on the whole screen. A frame of
   // stars rises until they look as they did before the star field dimming (the
   // ceiling is tied to starFieldStops); a bright planet pulls it down. The empty

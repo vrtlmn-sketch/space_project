@@ -1528,6 +1528,11 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   return carries;
 }
 
+void Renderer::ResetAutoExposureTransition() {
+  aeLiveSmooth.valid = false;
+  aeRecSmooth.valid  = false;
+}
+
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                                   vec3 velocity, vec3 color) {
   if (ro.inert) return;            // an unassigned universe-content slot
@@ -4297,14 +4302,21 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::TextDisabled("Exposure, glow + ACES tonemap (cinematic views).");
     norm01("Exposure",       "##rtexposure", &rtExposure,     0.0f, 4.0f,  false);
     if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("The look of the sky, and the reference auto exposure works from.\n"
-                        "The empty sky never gets brighter than this.");
+      ImGui::SetTooltip("The look of the sky and the star field, and the reference auto\n"
+                        "exposure works from. The empty sky never gets brighter than this.");
     norm01("Glow",           "##bloomstr",   &bloomStrength,  0.0f, 1.5f,  false);
     norm01("Glow Threshold", "##bloomthr",   &bloomThreshold, 0.0f, 2.0f,  false);
 
-    // Star-to-planet brightness ratio, tuned by eye. Not saved in projects.
     ImGui::Spacing();
-    ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Tuning (not saved)");
+    if (ImGui::Checkbox("Auto Exposure##ae", &autoExposure) && autoExposure)
+      ResetAutoExposureTransition();   // switched back on: jump to the right exposure, do not fade in
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("Measures the light on the whole screen and eases toward it: a frame\n"
+                        "of stars is lifted, a bright planet or the Sun darkens everything.\n"
+                        "Off = one fixed exposure, with stars as they look in a star frame.");
+
+    // Star-to-planet brightness ratio and the auto exposure dials, tuned by eye.
+    if (ImGui::TreeNodeEx("Advanced##lightadv", ImGuiTreeNodeFlags_SpanAvailWidth)) {
     ImGui::Text("Star Field vs Planets");
     ImGui::SetNextItemWidth(-1);
     {
@@ -4317,7 +4329,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Dims the star field (galaxy stars, haze, glowing gas) against planets.\n"
                         "Planets are untouched. Each stop halves: -10 is about 1/1000.\n"
-                        "Found by eye: -6.85. Ctrl+click to type a value. Not saved in the project.");
+                        "Found by eye: -6.85. Ctrl+click to type a value.");
     ImGui::Text("Point Objects vs Stars");
     ImGui::SetNextItemWidth(-1);
     {
@@ -4329,18 +4341,10 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("How bright a far planet or star that is only a dot comes out, against\n"
                         "the star field. 0 = exactly star brightness; a little above 0 = barely\n"
-                        "brighter than the stars. Resolved planets are unaffected. Not saved.");
+                        "brighter than the stars. Resolved planets are unaffected.");
 
-    ImGui::Spacing();
-    if (ImGui::Checkbox("Auto Exposure (not saved)##ae", &autoExposure) && autoExposure) {
-      aeLiveSmooth.valid = false;   // switched back on: jump to the right exposure, do not fade in
-      aeRecSmooth.valid  = false;
-    }
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Measures the light on the whole screen. A frame of stars looks as it\n"
-                        "did before Star Field dimming; a planet on screen darkens everything.\n"
-                        "The sky never gets brighter than Exposure. Instant for now.");
     if (autoExposure) {
+      ImGui::SeparatorText("Auto Exposure");
       ImGui::Text("Brightness Limit");
       ImGui::SetNextItemWidth(-1);
       ImGui::SliderFloat("##aelimit", &aeLimit, 0.005f, 2.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
@@ -4385,6 +4389,8 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
         ImGui::SetTooltip("How fast the exposure moves toward what the frame needs, whatever\n"
                           "changed. Low = slow, eye-like adaptation; high = nearly instant.\n"
                           "Recordings ease in video time; Snap always takes the exact value.");
+    }
+    ImGui::TreePop();
     }
   }
 
@@ -9067,7 +9073,7 @@ GLuint Renderer::RunAeMeter(GLuint srcHDR, int role) {
     glUniform1f(aeExLocFloor,    std::pow(2.0f, std::min(aeMaxDarkenStops, 0.0f)));
     // A frame of stars may rise exactly far enough to undo the star field
     // dimming (stars and sky alike). The raytracer never dims, so no rise there.
-    glUniform1f(aeExLocCeil, rayTracerView ? 1.0f : std::pow(2.0f, std::max(-starFieldStops, 0.0f)));
+    glUniform1f(aeExLocCeil, StarFieldLift());
     glDrawArrays(GL_TRIANGLES, 0, 6);
   }
 
@@ -9218,7 +9224,7 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     { GLint l = glGetUniformLocation(spikeSourceProgram, "uSpikeFloor");
       if (l >= 0) glUniform1f(l, spikeThreshold); }
     { GLint l = glGetUniformLocation(spikeSourceProgram, "uExposure");
-      if (l >= 0) glUniform1f(l, rtExposure); }
+      if (l >= 0) glUniform1f(l, ManualExposure()); }
     { GLint l = glGetUniformLocation(spikeSourceProgram, "uAutoExposure");
       if (l >= 0) glUniform1i(l, aeLive ? 1 : 0); }
     { GLint l = glGetUniformLocation(spikeSourceProgram, "uAeExposure");
@@ -9359,7 +9365,7 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     glUniform2f(glGetUniformLocation(tonemapProgram, "uSceneSize"),
                 (float)sceneRenderW, (float)sceneRenderH);
   }
-  glUniform1f(tmLocExposure, rtExposure);
+  glUniform1f(tmLocExposure, ManualExposure());
   // ── Auto exposure ── (computed by RunAeMeter before the bright-pass)
   glUniform1i(tmLocAeExposure, 4);
   glUniform1i(tmLocAuto, aeLive ? 1 : 0);

@@ -428,10 +428,16 @@ the raytracer are untouched. The empty SKY is dimmed by the same stops
 (`ClearSceneTarget(true)`, only in the two cinematic raster clears:
 `CineBeginIfActive` and `BeginRecordRaster`), because the sky is part of what a
 frame of stars looks like. It is a live slider (Rendering Settings -> Light &
-Exposure -> **Star Field vs Planets**, in stops, `Renderer::starFieldStops`,
-default -6.851), deliberately NOT saved in projects, so it can be retuned once auto
-exposure works. The upload lives in `renderCloud`; an unset uniform reads 0 and
+Exposure -> Advanced -> **Star Field vs Planets**, in stops,
+`Renderer::starFieldStops`, default -6.851), saved in projects like every other
+look setting. The upload lives in `renderCloud`; an unset uniform reads 0 and
 would black out every star.
+
+**Manual exposure applies the same lift.** With Auto Exposure off, the tonemap
+and the spike onset use `Renderer::ManualExposure()` = Exposure x
+`StarFieldLift()` (2^-starFieldStops, 1 in the raytracer) — exactly what auto
+gives a frame of stars. Without it, turning auto off left the star field
+6.85 stops dark with no slider able to reach it (Exposure tops out at 4).
 
 Everything used to be tuned to sit at ONE brightness, so a sunlit planet and the
 galaxy behind it came out equally bright, and no exposure could favour either:
@@ -470,7 +476,7 @@ crosses and dragged the exposure down.
   Planets move both together. The floor takes over at ~1e4 AU (0.15 ly).
   Planets are not floored.
 - The black-hole marker and nebula dots are excluded (not light sources of this
-  kind). **Point Objects vs Stars** (Light & Exposure, stops, not saved) sets how
+  kind). **Point Objects vs Stars** (Light & Exposure -> Advanced, stops, saved) sets how
   much brighter than a star a dot comes out. Default **+1.7** (tuned by the user; +4 and +3 were too bright): at 0 the user found
   planets nowhere near as bright as stars, while an estimate from the impostor
   constants had predicted the opposite — tune it by eye, not from the formula.
@@ -563,7 +569,9 @@ Mechanics worth knowing:
     harness goes through `CaptureImage` — wall-clock smoothing would make it
     non-repeatable.
   Re-enabling Auto Exposure resets both states so it jumps rather than fades in.
-- Settings are live and NOT saved in projects yet, same as the star field ratio.
+- Settings are saved in projects (`SceneSettings`, same path as every look
+  setting); loading a project resets the transition so it jumps to its exposure.
+  The dials sit under Light & Exposure -> Advanced, closed by default.
   Code defaults are the user's tuned milky_way values: Brightness Limit 0.18,
   Max Darkening -16 stops, Highlight Limit 0.09, Highlight Size 1.6%,
   Highlight Strictness 3.6, Transition Speed 8 stops/s.

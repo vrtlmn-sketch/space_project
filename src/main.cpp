@@ -1353,6 +1353,16 @@ int main(int argc, char** argv) {
     renderer.popColour          = s.popColour;
     renderer.starLumSpread      = s.starLumSpread;
     renderer.spikeThreshold     = s.spikeThreshold;
+    renderer.starFieldStops     = s.starFieldStops;
+    renderer.pointObjectStops   = s.pointObjectStops;
+    renderer.autoExposure       = s.autoExposure;
+    renderer.aeLimit            = s.aeLimit;
+    renderer.aeMaxDarkenStops   = s.aeMaxDarkenStops;
+    renderer.aeHiLimit          = s.aeHiLimit;
+    renderer.aeHiSize           = s.aeHiSize;
+    renderer.aeHiPower          = s.aeHiPower;
+    renderer.aeSpeedStops       = s.aeSpeedStops;
+    renderer.ResetAutoExposureTransition();   // a newly loaded scene jumps to its exposure
     renderer.dustContrast       = s.dustContrast;
     renderer.dustCoverage       = s.dustCoverage;
     renderer.dustClumpScale     = s.dustClumpScale;
@@ -1574,6 +1584,15 @@ int main(int argc, char** argv) {
     s.popColour          = renderer.popColour;
     s.starLumSpread      = renderer.starLumSpread;
     s.spikeThreshold     = renderer.spikeThreshold;
+    s.starFieldStops     = renderer.starFieldStops;
+    s.pointObjectStops   = renderer.pointObjectStops;
+    s.autoExposure       = renderer.autoExposure;
+    s.aeLimit            = renderer.aeLimit;
+    s.aeMaxDarkenStops   = renderer.aeMaxDarkenStops;
+    s.aeHiLimit          = renderer.aeHiLimit;
+    s.aeHiSize           = renderer.aeHiSize;
+    s.aeHiPower          = renderer.aeHiPower;
+    s.aeSpeedStops       = renderer.aeSpeedStops;
     s.dustContrast       = renderer.dustContrast;
     s.dustCoverage       = renderer.dustCoverage;
     s.dustClumpScale     = renderer.dustClumpScale;
