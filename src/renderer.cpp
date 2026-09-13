@@ -1609,10 +1609,18 @@ bool Renderer::UpdateInputs() {
   // Esc = open quit dialog (edge-triggered so it doesn't re-fire).
   // Suppressed while the text editor owns the keyboard — there ESC is a vim
   // mode switch, not a request to quit.
-  if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) escKeyPressed = true;
-  else {
-    if (escKeyPressed && !textEditorCaptured) showQuitDialog = true;
+  // While the Explore search is open, Esc closes it instead. Decided at the
+  // PRESS, so the release that follows closing it cannot open the quit dialog.
+  if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
+    if (!escKeyPressed) escStartedInSearch = exploreSearchOpen;
+    escKeyPressed = true;
+  } else {
+    if (escKeyPressed) {
+      if (escStartedInSearch)       CloseExploreSearch();
+      else if (!textEditorCaptured) showQuitDialog = true;
+    }
     escKeyPressed = false;
+    escStartedInSearch = false;
   }
 
   // Intercept GLFW window-close button → show quit dialog instead of closing
@@ -1726,6 +1734,14 @@ bool Renderer::UpdateInputs() {
     else {
       if (modeKeyPressed) { if (exploring()) LeaveExploration(); else EnterExploration(); }
       modeKeyPressed = false;
+    }
+
+    // K = open the Explore search (exploration only, fires on release). Not
+    // reachable while typing, so Esc is the way out of it.
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS)  exploreKeyPressed = true;
+    else {
+      if (exploreKeyPressed && exploring() && !exploreSearchOpen) OpenExploreSearch();
+      exploreKeyPressed = false;
     }
 
     // Toggle keys (fire on release). None of them exist in exploration: there
@@ -3623,6 +3639,7 @@ void Renderer::LeaveExploration() {
   cinematicViewEnabled = creativeView.cinematicViewEnabled;
   cinematicRaster      = creativeView.cinematicRaster;
   rightLookActive = false;
+  CloseExploreSearch();
   appMode = AppMode::Creative;
 }
 
@@ -3645,10 +3662,27 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
   if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
   ImGui::SameLine();
   if (ImGui::Button("Creative", ImVec2(95, 0))) LeaveExploration();
+  // The Explore search box, in the middle of the bar. Clicking it (or K) opens
+  // the search; the box itself is only a button, the typing happens below it.
+  {
+    const float w = std::clamp(vp->WorkSize.x * 0.28f, 220.0f, 460.0f);
+    ImGui::SameLine(std::max(ImGui::GetCursorPosX(), (vp->WorkSize.x - w) * 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
+    char lbl[96];
+    std::snprintf(lbl, sizeof(lbl), "  %s##exploreBox",
+                  exploreSearchOpen ? "Exploring...  (Esc to close)" : "Explore  -  K");
+    if (ImGui::Button(lbl, ImVec2(w, 0))) {
+      if (exploreSearchOpen) CloseExploreSearch(); else OpenExploreSearch();
+    }
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+  }
   ImGui::End();
 
   // Floating here: there is no dockspace in exploration, and a window docked in
   // Creative would never show without one (see the ### titles in each panel).
+  DrawExploreSearch(physicsObjects, clouds);   // before the maps: it sets their focus
   DrawExplorationMap(physicsObjects, clouds);
   DrawProjectPanel(cb);
   DrawSettingsPanel();
@@ -7564,6 +7598,23 @@ void Renderer::LocateCamera(dvec3 target, float effRadius) {
 // local translate, where they keep full precision at any distance.
 void Renderer::LocateCameraOn(dvec3 origin, dvec3 offset, float effRadius) {
   invalidateZoomAnchor();   // camera teleported → re-anchor the reversible zoom
+  LocatePose p;
+  ComputeLocatePose(origin, offset, effRadius, p);
+  gCamAnchor[0] = p.anchor[0]; gCamAnchor[1] = p.anchor[1]; gCamAnchor[2] = p.anchor[2];
+  cameraTranslate[0] = p.translate[0];
+  cameraTranslate[1] = p.translate[1];
+  cameraTranslate[2] = p.translate[2];
+  rotation = p.rotation;
+  pitch    = p.pitch;
+  roll     = 0.0f;
+  syncMatrixFromEuler();
+  zoom = p.zoom;
+  rtDirty = true;
+}
+
+// The pose LocateCameraOn applies, computed without touching the camera, so the
+// Explore search can render "what Travel would show" from it.
+void Renderer::ComputeLocatePose(dvec3 origin, dvec3 offset, float effRadius, LocatePose& out) const {
   double dist = std::max((double)effRadius * 5.7, 1e-4);
 
   // Vector from the body to the camera, built without ever forming an absolute
@@ -7579,24 +7630,22 @@ void Renderer::LocateCameraOn(dvec3 origin, dvec3 offset, float effRadius) {
   // Anchor on the ORIGIN, and put the offset plus the standoff in the local
   // part. The camera is then at origin + offset + b*dist, exactly, and every
   // world->camera difference the renderer forms stays small.
-  gCamAnchor[0] = origin.x; gCamAnchor[1] = origin.y; gCamAnchor[2] = origin.z;
-  cameraTranslate[0] = -(offset.x + b.x * dist);
-  cameraTranslate[1] = -(offset.y + b.y * dist);
-  cameraTranslate[2] = -(offset.z + b.z * dist);
+  out.anchor[0] = origin.x; out.anchor[1] = origin.y; out.anchor[2] = origin.z;
+  out.translate[0] = -(offset.x + b.x * dist);
+  out.translate[1] = -(offset.y + b.y * dist);
+  out.translate[2] = -(offset.z + b.z * dist);
+  out.dist = dist;
 
   // Invert this codebase's Euler convention (backward row with roll = 0 is
   // (-sin y, cos y·sin p, cos y·cos p)). Pick the branch with cos y matching
   // sign(b.z) so the camera comes out right side up (cos p > 0).
   double s = (b.z >= 0.0) ? 1.0 : -1.0;
-  rotation = (float)std::atan2(-b.x, s * std::sqrt(b.y*b.y + b.z*b.z));
-  pitch    = (float)std::atan2(s * b.y, s * b.z);
-  roll     = 0.0f;
-  syncMatrixFromEuler();
+  out.rotation = (float)std::atan2(-b.x, s * std::sqrt(b.y*b.y + b.z*b.z));
+  out.pitch    = (float)std::atan2(s * b.y, s * b.z);
 
   // Target fills ~40% of the view; small objects get a zoomed-in FOV instead
   float angDeg = (float)(2.0 * std::atan((double)effRadius / dist) * 180.0 / M_PI);
-  zoom = std::clamp(angDeg / 0.4f, 5.0f, 45.0f);
-  rtDirty = true;
+  out.zoom = std::clamp(angDeg / 0.4f, 5.0f, 45.0f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -7896,7 +7945,9 @@ void Renderer::CineResolveIfActive() {
   // and sets lensViewportDone; here we just tonemap. Other paths (fullscreen/PiP)
   // fall back to the single-pass lens overlay.
   GLuint hdr = cineColorTex;
-  aePostRole = AePostLive;
+  // The Explore preview is a still of somewhere else: it takes its own exposure
+  // instantly and must not advance (or borrow) the live transition.
+  aePostRole = explorePreviewPass ? AePostSnap : AePostLive;
   RunPostProcess(hdr, cinePostW, cinePostH);           // samples the larger HDR buffer → downsample
   cineActive = false;
   currentPixelScale = 1.0f;

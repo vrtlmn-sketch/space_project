@@ -2692,6 +2692,43 @@ cp.planetsPerSystem = 4;
 
     renderer.EndSecondaryPass();
     }   // !exploring(): exploration has no PiP, so no secondary pass
+
+    // ── Explore search preview pass ──────────────────────────────────────────
+    // The scene from where Travel would put you, for the search's details pane.
+    // Only for a few frames after the selection changes (the renderer decides).
+    if (renderer.exploring() && renderer.ExplorePreviewWanted() &&
+        renderer.BeginExplorePreviewPass(physicsObjects, clouds)) {
+      computeLensFraming(renderer.GetFbHeight());
+      renderer.DrawSkybox(skybox);
+      for (int i = 0; i < (int)physicsObjects.size(); i++) {
+        float objType = RtObjectType(physicsObjects[i].shaderType);
+        renderer.DrawPhysicsObject(physicsObjects[i].renderedObject,
+                                   physicsObjects[i].data.mass,
+                                   physicsObjects[i].temperature,
+                                   objType,
+                                   physicsObjects[i].data.velocity,
+                                   physicsObjects[i].data.color);
+      }
+      static std::vector<int> prevOrder;
+      BuildCloudDrawOrder(clouds, renderer.cameraTranslate, prevOrder);
+      for (int ci : prevOrder) { uploadCloudRO(clouds[ci].get()); renderer.Draw(clouds[ci]->renderedObject); }
+      for (int ci : prevOrder) renderer.DrawCloudDust(clouds[ci]->renderedObject);
+      for (auto& obj : physicsObjects) {
+        renderer.DrawAtmosphere(obj);
+        renderer.DrawRings(obj);
+      }
+      renderer.BeginNebulaPass();
+      for (int ni : NebulaDrawOrder(physicsObjects, renderer)) {
+        PhysicsObject& obj = physicsObjects[ni];
+        const int sc = obj.nebula.sourceCloud;
+        const bool ok = sc >= 0 && sc < (int)clouds.size() && clouds[sc];
+        renderer.DrawNebula(obj, ok ? &clouds[sc]->renderedObject.particles() : nullptr,
+                            ok ? &clouds[sc]->rotationDeg : nullptr);
+      }
+      renderer.EndNebulaPass();
+      background.Update(renderer);
+      renderer.EndExplorePreviewPass();
+    }
     // ── End secondary pass ──────────────────────────────────────────────────
 
     // Draw all UI panels

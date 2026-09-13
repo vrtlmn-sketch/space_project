@@ -217,6 +217,15 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
   }
   if (!(awayR > 0.0)) awayR = nearR;
   if (!hasAnchor) awayGoal = 0.0;
+  // A search selection: centre back on you and widen until it is on the map.
+  dvec3  focusRel{0.0, 0.0, 0.0};
+  double focusDist = 0.0;
+  if (mapFocusActive) {
+    focusRel  = CameraRelative(mapFocusOrigin, mapFocusOffset);
+    focusDist = Len(focusRel);
+    awayGoal  = 0.0;
+    nearR     = std::max(nearR, focusDist * 1.15);
+  }
 
   // Ease the near/away blend, then the scale in log space, then the scroll offset.
   if (!(ms.radius > 0.0)) ms.away = awayGoal;
@@ -611,6 +620,43 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
       tx = std::clamp(tx, p0.x + 4.0f, p0.x + sz.x - ts.x - 4.0f);
       ty = std::clamp(ty, p0.y + 22.0f, p0.y + sz.y - 40.0f);
       dl->AddText(ImVec2(tx, ty), Col(0.80f, 0.82f, 0.86f, 0.90f * al), txt);
+    }
+  }
+
+  // ── Search selection: a blinking green dotted line from you to it ──
+  // Pinned to the square's edge if it is still off the map while the scale eases out.
+  if (mapFocusActive) {
+    const float blink = 0.55f + 0.45f * std::sin((float)ImGui::GetTime() * 6.0f);
+    double fmx, fmy, fmz; toMap(focusRel, fmx, fmy, fmz);
+    float fx = 0.0f, fy = 0.0f, fd = 0.0f;
+    const bool ok = project(fmx, fmy, fmz, fx, fy, fd);
+    if (ok) {
+      bool onMap = fx > p0.x + inset && fx < p0.x + sz.x - inset && fy > p0.y + inset && fy < p0.y + sz.y - inset;
+      float ex = fx, ey = fy;
+      if (!onMap) {
+        float dx = fx - youX, dy = fy - youY;
+        const float l = std::sqrt(dx * dx + dy * dy);
+        if (l > 1e-3f) {
+          dx /= l; dy /= l;
+          const float tx = dx > 0 ? (p0.x + sz.x - inset - youX) / dx : dx < 0 ? (p0.x + inset - youX) / dx : 1e9f;
+          const float ty = dy > 0 ? (p0.y + sz.y - inset - youY) / dy : dy < 0 ? (p0.y + inset - youY) / dy : 1e9f;
+          const float t = std::max(0.0f, std::min(tx, ty));
+          ex = youX + dx * t; ey = youY + dy * t;
+        }
+      }
+      const ImU32 green = Col(0.35f, 1.0f, 0.45f, 0.95f * blink);
+      const float dx = ex - youX, dy = ey - youY;
+      const float len = std::sqrt(dx * dx + dy * dy);
+      const int dots = std::max(2, (int)(len / 5.0f));
+      for (int i = 0; i <= dots; ++i) {
+        const float t = (float)i / (float)dots;
+        dl->AddCircleFilled(ImVec2(youX + dx * t, youY + dy * t), 1.3f, green, 6);
+      }
+      if (onMap) {
+        dl->AddCircle(ImVec2(fx, fy), 7.0f, green, 16, 2.0f);
+        if (!mapFocusName.empty())
+          dl->AddText(ImVec2(fx + 10.0f, fy - 7.0f), Col(0.55f, 1.0f, 0.60f, 0.95f), mapFocusName.c_str());
+      }
     }
   }
 

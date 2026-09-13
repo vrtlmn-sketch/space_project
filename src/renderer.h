@@ -576,6 +576,9 @@ private:
   // Frame a body given as frame origin + exact offset, never collapsing them
   // into one absolute position (which rounds away at universe scale).
   void LocateCameraOn(dvec3 origin, dvec3 offset, float effRadius);
+  // The camera LocateCameraOn would produce, without moving anything.
+  struct LocatePose { double anchor[3]; double translate[3]; float rotation, pitch, zoom; double dist; };
+  void ComputeLocatePose(dvec3 origin, dvec3 offset, float effRadius, LocatePose& out) const;
 
   // ── Editor viewport FBO ──
   GLuint vpFBO{0};
@@ -949,6 +952,46 @@ public:
     double away{0.0};        // 0 = centred on you, 1 = centred on the system/galaxy you are away from
   };
   ExplorationMapState mapState[3];   // 0 Solar, 1 Galaxy, 2 Universe
+  // A search selection the maps must show: every map widens to include it and
+  // draws a blinking green line to it. Set each frame by DrawExploreSearch.
+  bool   mapFocusActive{false};
+  dvec3  mapFocusOrigin{0.0, 0.0, 0.0}, mapFocusOffset{0.0, 0.0, 0.0};
+  std::string mapFocusName;
+
+  // ── Explore search (exploreSearch.cpp): K opens, Esc closes ──
+  void OpenExploreSearch();
+  void CloseExploreSearch();
+  void DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
+                         std::vector<std::unique_ptr<CloudObject>>& clouds);
+  // Where Locate would frame an object (a body by index, else a cloud by index).
+  bool ExploreTarget(std::vector<PhysicsObject>& physicsObjects,
+                     std::vector<std::unique_ptr<CloudObject>>& clouds,
+                     int obj, int cloud, dvec3& origin, dvec3& offset, float& effR);
+  bool   exploreSearchOpen{false};
+  bool   exploreSearchWantFocus{false};
+  char   exploreQuery[128]{};
+  int    exploreFilter{0};           // 0 all, 1 galaxies, 2 black holes, 3 stars, 4 planets, 5 nebulae
+  int    exploreSelObj{-1}, exploreSelCloud{-1};
+  bool   exploreKeyPressed{false};   // K edge state
+  bool   escStartedInSearch{false};  // an Esc that began while searching closes it, never quits
+  // The preview: the scene rendered from where Travel would put you, at the
+  // main view's own size so the shared HDR and post targets never reallocate.
+  // Rendered for a few frames after the selection changes, then held.
+  bool   ExplorePreviewWanted() const {
+    return exploreSearchOpen && explorePreviewFrames > 0 && (explorePreviewObj >= 0 || explorePreviewCloud >= 0);
+  }
+  bool   BeginExplorePreviewPass(std::vector<PhysicsObject>& physicsObjects,
+                                 std::vector<std::unique_ptr<CloudObject>>& clouds);
+  void   EndExplorePreviewPass();
+  GLuint explorePreviewFBO{0}, explorePreviewTex{0}, explorePreviewDepth{0};
+  int    explorePreviewW{0}, explorePreviewH{0};
+  int    explorePreviewFrames{0};
+  int    explorePreviewObj{-1}, explorePreviewCloud{-1};
+  bool   explorePreviewReady{false};
+  bool   explorePreviewPass{false};  // inside the pass: post chain meters its own exposure (Snap)
+  double epSavedAnchor[3]{}, epSavedTranslate[3]{}, epSavedViewRot[9]{};
+  float  epSavedCamMatrix[9]{}, epSavedRotation{0}, epSavedPitch{0}, epSavedRoll{0}, epSavedZoom{0};
+  float  epSavedNear{0}, epSavedFar{0};
 
   // ---- Editor viewport mode ----
   bool editorViewport{true};   // true = render scene to FBO, show in central docked window
