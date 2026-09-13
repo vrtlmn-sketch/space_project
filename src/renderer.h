@@ -933,12 +933,22 @@ public:
   void DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
                          std::vector<std::unique_ptr<CloudObject>>& clouds,
                          const SceneCallbacks& cb);
-  // Bottom-right minimap (explorationMap.cpp): what is in a sphere around you.
+  // Exploration maps (explorationMap.cpp): Solar, Galaxy and Universe, stacked
+  // down the right edge, each framing its own context around you.
   void DrawExplorationMap(std::vector<PhysicsObject>& physicsObjects,
                           std::vector<std::unique_ptr<CloudObject>>& clouds);
-  double mapRadius{0.0};     // sphere radius in AU; 0 = set from the scene scale on first draw
-  float  mapYawOff{0.0f};    // drag offsets from following the camera, eased back on release
-  float  mapTiltOff{0.0f};
+  void DrawExplorationMapPanel(int kind, float x, float y, float side,
+                               std::vector<PhysicsObject>& physicsObjects,
+                               std::vector<std::unique_ptr<CloudObject>>& clouds);
+  struct ExplorationMapState {
+    double radius{0.0};      // shown sphere radius in AU, eased toward the context target; 0 = jump
+    double userLog{0.0};     // scroll offset from the target, ln(radius); springs back to 0
+    double lastScroll{-1e9}; // ImGui time of the last scroll on this map
+    float  yawOff{0.0f};     // drag offsets from following the camera, eased back on release
+    float  tiltOff{0.0f};
+    double away{0.0};        // 0 = centred on you, 1 = centred on the system/galaxy you are away from
+  };
+  ExplorationMapState mapState[3];   // 0 Solar, 1 Galaxy, 2 Universe
 
   // ---- Editor viewport mode ----
   bool editorViewport{true};   // true = render scene to FBO, show in central docked window
