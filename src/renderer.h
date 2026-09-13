@@ -187,6 +187,7 @@ private:
 
   // Keyboard edge-detection flags
   bool flipKeyPressed{false};
+  bool modeKeyPressed{false};   // E = switch between Creative and Exploration
   bool recordKeyPressed{false};
   bool viewportKeyPressed{false};
   bool quitButtonPressed{false};

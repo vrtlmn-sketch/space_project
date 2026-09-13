@@ -1721,6 +1721,13 @@ bool Renderer::UpdateInputs() {
     if (zoom < 0.00001f) zoom = 0.00001f;
     if (zoom > 120.0f)   zoom = 120.0f;
 
+    // E = switch between Creative and Exploration (fires on release, both modes).
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)  modeKeyPressed = true;
+    else {
+      if (modeKeyPressed) { if (exploring()) LeaveExploration(); else EnterExploration(); }
+      modeKeyPressed = false;
+    }
+
     // Toggle keys (fire on release). None of them exist in exploration: there
     // is no PiP to flip, no view to toggle, no timeline to record or scrub, and
     // no panel to open. Their edge state is cleared so a key held across the
@@ -2393,7 +2400,9 @@ void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
   if (!projectsScanned) RescanProjects();
 
   ImGui::SetNextWindowSize(ImVec2(480, 700), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Project", &showProjectPanel)) { ImGui::End(); return; }
+  // Exploration gets its own window id: the Creative one may be docked into a
+  // dockspace that exploration never draws, which would leave it invisible.
+  if (!ImGui::Begin(exploring() ? "Project###ProjectExplore" : "Project", &showProjectPanel)) { ImGui::End(); return; }
 
   // ── New ──
   if (ImGui::Button("New Empty Project", ImVec2(-1, 0)) && cb.newProject)
@@ -3629,9 +3638,17 @@ void Renderer::DrawExplorationUI(const SceneCallbacks& cb) {
                          | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings
                          | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
   ImGui::Begin("##ExplorationBar", nullptr, flags);
+  if (ImGui::Button("Project", ImVec2(70, 0))) showProjectPanel = !showProjectPanel;
+  ImGui::SameLine();
+  if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
+  ImGui::SameLine();
   if (ImGui::Button("Creative", ImVec2(95, 0))) LeaveExploration();
   ImGui::End();
 
+  // Floating here: there is no dockspace in exploration, and a window docked in
+  // Creative would never show without one (see the ### titles in each panel).
+  DrawProjectPanel(cb);
+  DrawSettingsPanel();
   DrawQuitDialog(cb);
 }
 
@@ -3901,7 +3918,8 @@ void Renderer::DrawSettingsPanel() {
   if (!showSettingsPanel) return;
 
   ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_FirstUseEver);
-  if (!ImGui::Begin("Settings", &showSettingsPanel)) { ImGui::End(); return; }
+  // Own id in exploration, same reason as DrawProjectPanel.
+  if (!ImGui::Begin(exploring() ? "Settings###SettingsExplore" : "Settings", &showSettingsPanel)) { ImGui::End(); return; }
 
   if (ImGui::BeginTabBar("##settingsTabs")) {
     if (ImGui::BeginTabItem("Interface")) {
