@@ -18,6 +18,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "uiScale.h"
+#include "uiRows.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
@@ -174,6 +175,7 @@ ImVec4 Renderer::SemBtn(const ImVec4& c) const {
 void Renderer::ApplyTheme(const char* name) {
   themeLight  = (std::strcmp(name, "Luna (Light)") == 0);
   themeModern = themeLight || (std::strcmp(name, "Mercury smooth (Gray)") == 0);
+  gUiFlatSections = themeModern;
   ImGuiStyle& style = ImGui::GetStyle();
   style = ImGuiStyle();          // every theme starts from the same defaults
   ImGui::StyleColorsDark();
@@ -4033,13 +4035,7 @@ void Renderer::DockBesideInspector() {
 void Renderer::DrawCameraPanel() {
   DockBesideInspector();
   ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_NoCollapse);
-  const float labelCol = Em(70);
-  auto row = [&](const char* label) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%s", label);
-    ImGui::SameLine(labelCol);
-    ImGui::SetNextItemWidth(-1);
-  };
+  auto row = [](const char* label) { PropLabel(label); };
 
   ImGui::SeparatorText("Position");
   double camAbs[3] = { cameraTranslate[0] - gCamAnchor[0],
@@ -4405,8 +4401,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   // 0..1 slider that maps to a real [lo,hi] range. dirty=true for compute-side
   // params (need a re-dispatch); false for post-process params (live every frame).
   auto norm01 = [&](const char* label, const char* id, float* v, float lo, float hi, bool dirty) {
-    ImGui::Text("%s", label);
-    ImGui::SetNextItemWidth(-1);
+    PropLabel(label);
     float n = (hi > lo) ? (*v - lo) / (hi - lo) : 0.0f;
     n = n < 0.0f ? 0.0f : (n > 1.0f ? 1.0f : n);
     if (ImGui::SliderFloat(id, &n, 0.0f, 1.0f, "%.2f")) {
@@ -4416,7 +4411,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   };
 
   // ── Camera & Movement ──────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Camera & Movement", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (PropSection("Camera & Movement", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::Text("Camera Speed");
     ImGui::SetNextItemWidth(Em(-60));
     ImGui::SliderFloat("##camspeed", &cameraSpeedFactor, 0.05f, 10.0f, "%.2fx",
@@ -4429,7 +4424,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       ImGui::TextDisabled("Constant (nothing selected)");
 
     ImGui::Spacing();
-    if (ImGui::Checkbox("Exaggerated Sizes##exag", &exaggeratedSizes))
+    if (PropCheckbox("Exaggerated Sizes##exag", &exaggeratedSizes))
       sizesDirty = true;
     if (exaggeratedSizes) {
       ImGui::SameLine();
@@ -4442,15 +4437,14 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       : "True-scale sizes (planets are tiny)");
 
     ImGui::Spacing();
-    if (ImGui::Checkbox("Doppler Effect", &dopplerMode))
+    if (PropCheckbox("Doppler Effect", &dopplerMode))
       rtDirty = true;
     ImGui::TextDisabled("Colour + brightness shift from motion toward/away.");
     if (dopplerMode) {
       ImGui::Indent(8.0f);
-      ImGui::Text("Velocity Exaggeration");
+      PropLabel("Velocity Exaggeration");
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("1x = physically real Doppler for AU/yr velocities.\nHigher exaggerates the effect artistically.");
-      ImGui::SetNextItemWidth(-1);
       {
         // Stored value is the raw v->beta multiplier; the slider edits it as a
         // multiple of the PHYSICAL 1/c (63,241 AU/yr) so 1x sits mid-range and
@@ -4462,12 +4456,10 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
           rtDirty = true;
         }
       }
-      ImGui::Text("Brightness Str");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Brightness Str");
       if (ImGui::SliderFloat("##dbrightness", &dopplerBrightnessStr, 0.0f, 6.0f, "%.2f"))
         rtDirty = true;
-      ImGui::Text("Color Str");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Color Str");
       if (ImGui::SliderFloat("##dcolor", &dopplerColorStr, 0.0f, 4.0f, "%.2f"))
         rtDirty = true;
       ImGui::Unindent(8.0f);
@@ -4475,7 +4467,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   }
 
   // ── Light & Exposure ───────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Light & Exposure", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (PropSection("Light & Exposure", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::TextDisabled("Exposure, glow + ACES tonemap (cinematic views).");
     norm01("Exposure",       "##rtexposure", &rtExposure,     0.0f, 4.0f,  false);
     if (ImGui::IsItemHovered())
@@ -4485,7 +4477,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     norm01("Glow Threshold", "##bloomthr",   &bloomThreshold, 0.0f, 2.0f,  false);
 
     ImGui::Spacing();
-    if (ImGui::Checkbox("Auto Exposure##ae", &autoExposure) && autoExposure)
+    if (PropCheckbox("Auto Exposure##ae", &autoExposure) && autoExposure)
       ResetAutoExposureTransition();   // switched back on: jump to the right exposure, do not fade in
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Measures the light on the whole screen and eases toward it: a frame\n"
@@ -4494,8 +4486,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
     // Star-to-planet brightness ratio and the auto exposure dials, tuned by eye.
     if (ImGui::TreeNodeEx("Advanced##lightadv", ImGuiTreeNodeFlags_SpanAvailWidth)) {
-    ImGui::Text("Star Field vs Planets");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Star Field vs Planets");
     {
       const float gain = std::pow(2.0f, starFieldStops);
       char lbl[48];
@@ -4507,8 +4498,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       ImGui::SetTooltip("Dims the star field (galaxy stars, haze, glowing gas) against planets.\n"
                         "Planets are untouched. Each stop halves: -10 is about 1/1000.\n"
                         "Found by eye: -6.85. Ctrl+click to type a value.");
-    ImGui::Text("Point Objects vs Stars");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Point Objects vs Stars");
     {
       char lbl[48];
       std::snprintf(lbl, sizeof(lbl), "%+.1f stops", pointObjectStops);
@@ -4522,27 +4512,23 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
     if (autoExposure) {
       ImGui::SeparatorText("Auto Exposure");
-      ImGui::Text("Brightness Limit");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Brightness Limit");
       ImGui::SliderFloat("##aelimit", &aeLimit, 0.005f, 2.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("How bright the whole screen should come out on average.\n"
                           "Lower it if a planet on screen is still too bright.");
-      ImGui::Text("Max Darkening");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Max Darkening");
       ImGui::SliderFloat("##aedarken", &aeMaxDarkenStops, -16.0f, 0.0f, "%.1f stops");
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("The furthest a bright frame can pull the exposure down.\n"
                           "The Sun in frame may need a lot of room.");
-      ImGui::Text("Highlight Limit");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Highlight Limit");
       ImGui::SliderFloat("##aehilimit", &aeHiLimit, 0.05f, 20.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("How bright the brightest object on screen may come out, even a\n"
                           "small one. Lower = a small bright planet or the Sun darkens the\n"
                           "whole frame more, as a camera exposing for it would.");
-      ImGui::Text("Highlight Size");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Highlight Size");
       {
         float pct = aeHiSize * 100.0f;
         if (ImGui::SliderFloat("##aehisize", &pct, 0.5f, 20.0f, "%.1f%% of frame", ImGuiSliderFlags_Logarithmic))
@@ -4552,15 +4538,13 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
         ImGui::SetTooltip("The smallest object that counts as a bright object, as a share of\n"
                           "the frame height. Anything smaller (stars, far dots) spreads out\n"
                           "and does not drive the exposure.");
-      ImGui::Text("Highlight Strictness");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Highlight Strictness");
       ImGui::SliderFloat("##aehipower", &aeHiPower, 1.0f, 8.0f, "%.1f");
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("How much a SMALL bright object counts. 1 = only the average light\n"
                           "matters; 8 = nearly just the brightest object, so a planet corner at\n"
                           "the edge darkens everything. Default 3.6.");
-      ImGui::Text("Transition Speed");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Transition Speed");
       ImGui::SliderFloat("##aespeed", &aeSpeedStops, 0.25f, 40.0f, "%.2f stops/s", ImGuiSliderFlags_Logarithmic);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("How fast the exposure moves toward what the frame needs, whatever\n"
@@ -4572,7 +4556,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   }
 
   // ── Stars ──────────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Stars")) {
+  if (PropSection("Stars")) {
     ImGui::SeparatorText("Star Haze");
     ImGui::TextDisabled("Smooth glow from stars too dense to resolve as points.");
     norm01("Brightness", "##unrstr",  &unresolvedStrength, 0.0f, 10.0f,  true);
@@ -4629,8 +4613,8 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   }
 
   // ── Black Hole Lensing ─────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Black Hole Lensing")) {
-    ImGui::Checkbox("Enable lensing", &lensingEnabled);
+  if (PropSection("Black Hole Lensing")) {
+    PropCheckbox("Enable lensing", &lensingEnabled);
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Real-time gravitational lensing in the raster view.\n"
                         "Off = the black hole is an ordinary object.");
@@ -4666,7 +4650,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   }
 
   // ── Dust & Gas Clouds ──────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Dust & Gas Clouds")) {
+  if (PropSection("Dust & Gas Clouds")) {
     ImGui::SeparatorText("Dust Shape");
     ImGui::TextDisabled("Dense regions dim + redden the light behind them.");
     norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  2.0f,  true);
@@ -4713,23 +4697,20 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::SeparatorText("Nebula Gas");
     ImGui::TextDisabled("Glowing emission gas near hot young stars.");
     norm01("Amount##gas", "##gasstr", &gasStrength, 0.0f, 2.0f, true);
-    ImGui::Text("Detail");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Detail");
     if (ImGui::SliderFloat("##nebuladetail", &nebulaDetail, 0.0f, 1.0f, "%.2f"))
       rtDirty = true;
     ImGui::TextDisabled("Density + color variation per particle");
   }
 
   // ── Background & Grid ──────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Background & Grid")) {
+  if (PropSection("Background & Grid")) {
     ImGui::SeparatorText("Empty Sky");
     ImGui::TextDisabled("Colour where nothing is drawn - both views.");
-    ImGui::Text("Colour");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Colour");
     if (ImGui::ColorEdit3("##bgcol", &backgroundColor.x, ImGuiColorEditFlags_Float))
       rtDirty = true;
-    ImGui::Text("Brightness");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Brightness");
     if (ImGui::SliderFloat("##bglevel", &backgroundLevel, 0.0f, 2.0f, "%.3f"))
       rtDirty = true;
 
@@ -4741,11 +4722,9 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Cell size follows the camera's context distance\n"
                         "in powers of 10 (Cell Size = the base cell).");
-    ImGui::Text("Cell Size (AU)");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Cell Size (AU)");
     changed |= ImGui::SliderFloat("##gcell", &gridForm.cellSize, 0.1f, 10.f, "%.2f");
-    ImGui::Text("Radius (cells)");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Radius (cells)");
     changed |= ImGui::SliderInt("##gradius", &gridForm.radius, 2, 30);
     ImGui::Text("Lines");
     changed |= ImGui::Checkbox("X##gx", &gridForm.showX); ImGui::SameLine();
@@ -4755,9 +4734,8 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   }
 
   // ── Quality & Speed ────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Quality & Speed")) {
-    ImGui::Text("Rendering Method");
-    ImGui::SetNextItemWidth(-1);
+  if (PropSection("Quality & Speed")) {
+    PropLabel("Rendering Method");
     const char* methodItems[] = { "Simple", "Geodesic", "Geodesic Acyclic" };
     ImGui::Combo("##rtmethod", &raytracerMethod, methodItems, 3);
     ImGui::TextDisabled("Simple is fastest; geodesic bends light around black holes.");
@@ -4770,8 +4748,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       { "720p",  1280,  720 }, { "1080p",1920, 1080 },
     };
     static const int numRtPresets = (int)(sizeof(rtLivePresets) / sizeof(rtLivePresets[0]));
-    ImGui::Text("RT Resolution");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("RT Resolution");
     if (ImGui::Combo("##rtres2", &rtLiveResPreset, [](void*, int idx) -> const char* {
       static const char* labels[] = { "Native", "80p", "144p", "240p", "360p", "480p", "720p", "1080p" };
       return labels[idx];
@@ -4787,8 +4764,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       { "1440p", 2560, 1440 }, { "4K",    3840, 2160 },
     };
     static const int numRasterPresets = (int)(sizeof(rasterPresets) / sizeof(rasterPresets[0]));
-    ImGui::Text("Raster Resolution");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Raster Resolution");
     if (ImGui::Combo("##rasterres", &rasterLiveResPreset, [](void*, int idx) -> const char* {
       static const char* labels[] = { "Viewport", "480p", "720p", "1080p", "1440p", "4K" };
       return labels[idx];
@@ -4801,8 +4777,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "takes its width from the view's aspect.");
 
     ImGui::Spacing();
-    ImGui::Text("Sprite Density");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Sprite Density");
     {
       // 0 = off, else a reference height. A LOWER reference makes every sprite
       // bigger at the same render height, so this is also a density dial, not
@@ -4855,8 +4830,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "4.36 s. Standard (720p) is what the bundled projects are tuned at.");
 
     ImGui::Spacing();
-    ImGui::Text("Nebula Pass");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Nebula Pass");
     {
       const char* nq[] = { "Full resolution", "1/2 resolution", "1/3 resolution", "1/4 resolution" };
       int qi = std::clamp(nebulaQuality, 1, 4) - 1;
@@ -4866,14 +4840,12 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "Soft gas hides it; a planet in front gets a slightly soft edge.");
 
     ImGui::Spacing();
-    ImGui::Text("Max Bounces");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Max Bounces");
     ImGui::SliderInt("##bounce2", &rtMaxBounces, 0, 4, "%d");
 
     if (raytracerMethod >= 1) {
       ImGui::Spacing();
-      ImGui::Text("Max Steps");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Max Steps");
       ImGui::SliderInt("##maxsteps", &rtMaxSteps, 32, 1024, "%d");
     }
 
@@ -4884,38 +4856,33 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "flicker while moving, but more GPU cost (cost grows with the square).");
 
     ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Star Catalogue", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (PropSection("Star Catalogue", ImGuiTreeNodeFlags_DefaultOpen)) {
       norm01("Star Size", "##starsize", &starSize, 0.05f, 2.0f, false);
       ImGui::TextDisabled("Size of resolved star sprites. Lower = pinpoint stars.");
-      ImGui::Text("Star Budget");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Star Budget");
       ImGui::SliderInt("##starbudget", &starBudget, 5000, 400000, "%d", ImGuiSliderFlags_Logarithmic);
       ImGui::TextDisabled("Max catalogue stars drawn per frame; chunks off screen cost nothing.");
     }
 
-    ImGui::Text("Star Points");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Star Points");
     if (ImGui::SliderInt("##rtpoints", &RenderedObject::rtCloudPointCap, 500, 100000, "%d",
                          ImGuiSliderFlags_Logarithmic))
       rtDirty = true;
     ImGui::TextDisabled("How many stars render as individual points. Raise for stills.");
 
-    ImGui::Text("Dust Points");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Dust Points");
     if (ImGui::SliderInt("##dustdetail", &dustDetail, 200, 20000))
       rtDirty = true;
     ImGui::TextDisabled("How many points the dust samples - independent of Star Points (fewer = more mottled).");
 
     ImGui::Spacing();
-    ImGui::Text("RAM Budget");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("RAM Budget");
     ImGui::SliderFloat("##ram2", &ramBudgetGB, 1.0f, 128.0f, "%.0f GB");
   }
 
   // ── Save & Record ──────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Save & Record", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::Text("Screenshot Path");
-    ImGui::SetNextItemWidth(-1);
+  if (PropSection("Save & Record", ImGuiTreeNodeFlags_DefaultOpen)) {
+    PropLabel("Screenshot Path");
     ImGui::InputText("##imgf2", imagePathBuf, sizeof(imagePathBuf));
     if (ImGui::Button("Snap", ImVec2(-1, 0))) {
       if (cinematicViewEnabled && cinematicRaster) rasterSnapRequested = true; // main loop renders + saves
@@ -4924,15 +4891,13 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
     ImGui::Spacing();
     ImGui::SeparatorText("Video");
-    ImGui::Text("Recording Path");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Recording Path");
     if (recording) ImGui::BeginDisabled();
     ImGui::InputText("##recf2", recordPathBuf, sizeof(recordPathBuf));
     if (recording) ImGui::EndDisabled();
 
     ImGui::Spacing();
-    ImGui::Text("Recording FPS");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Recording FPS");
     if (recording) ImGui::BeginDisabled();
     const char* fpsItems[] = { "24", "30", "60" };
     int fpsIdx = (recordFps == 24) ? 0 : (recordFps == 60) ? 2 : 1;
@@ -4982,7 +4947,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   }
 
   // ── Performance ────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Performance"))
+  if (PropSection("Performance"))
     DrawBenchmarkPanel();
 
   ImGui::End();
@@ -6484,7 +6449,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     char nameBuf[64];
     strncpy(nameBuf, obj.name.c_str(), sizeof(nameBuf) - 1);
     nameBuf[sizeof(nameBuf) - 1] = '\0';
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Name");
     if (ImGui::InputText("##iname", nameBuf, sizeof(nameBuf)))
       obj.name = nameBuf;
 
@@ -6506,7 +6471,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     int typeIdx = 0;
     for (int k = 0; k < 5; ++k) if (obj.shaderType == typeOrder[k]) typeIdx = k;
     const char* typeItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula" };
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Type");
     if (ImGui::Combo("##itype", &typeIdx, typeItems, 5)) {
       ObjectType newType = typeOrder[typeIdx];
       bool wasFree = (obj.shaderType == ObjectType::FreeModel);
@@ -6525,15 +6490,15 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     // Mass — gravity only, no longer tied to visual size (solar masses)
     {
       double mMin = 1e-12, mMax = 1e8;
-      ImGui::SetNextItemWidth(-1);
-      ImGui::DragScalar("Mass##i", ImGuiDataType_Double, &obj.data.mass,
+      PropLabel("Mass");
+      ImGui::DragScalar("##Mass##i", ImGuiDataType_Double, &obj.data.mass,
                         0.01f, &mMin, &mMax, "%.4g Ms", ImGuiSliderFlags_Logarithmic);
       ImGui::TextDisabled("= %s", units::FormatMassMsun(obj.data.mass).c_str());
     }
 
     // Size — visual radius in AU (real, before exaggeration)
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::DragFloat("Size##i", &obj.visualRadius, 0.01f, 1e-7f, 2.0f, "%.4g AU",
+    PropLabel("Size");
+    if (ImGui::DragFloat("##Size##i", &obj.visualRadius, 0.01f, 1e-7f, 2.0f, "%.4g AU",
                          ImGuiSliderFlags_Logarithmic)) {
       if (obj.shaderType == ObjectType::FreeModel && !obj.meshPath.empty())
         obj.renderedObject.SetFreeMeshRadius(obj.visualRadius * activeSizeExag());
@@ -6546,7 +6511,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
     // Simulate physics: when off, the object is driven by timeline keyframes
     // (capture with C) instead of gravity. Toggling clears its recorded frames.
-    if (ImGui::Checkbox("Simulate physics##isim", &obj.simulatePhysics)) {
+    if (PropCheckbox("Simulate physics##isim", &obj.simulatePhysics)) {
       obj.clearRecording();
     }
     if (!obj.simulatePhysics)
@@ -6572,8 +6537,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     }
 
     // Position (AU)
-    ImGui::Text("Position (AU)");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Position (AU)");
     const dvec3 tp_ = obj.truePosition();
     double p[3] = { tp_.x, tp_.y, tp_.z };
     // While the gizmo drags, give the widget a fresh ID each frame so it can
@@ -6593,8 +6557,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     obj.renderedObject.localOffset = obj.localOffset;
 
     // Velocity (AU/yr)
-    ImGui::Text("Velocity (AU/yr)");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Velocity (AU/yr)");
     double v[3] = { obj.data.velocity.x, obj.data.velocity.y, obj.data.velocity.z };
     if (ImGui::DragScalarN("##ivel", ImGuiDataType_Double, v, 3, 0.01f,
                            nullptr, nullptr, "%.4g")) {
@@ -6602,8 +6565,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     }
 
     // Rotation (Euler X/Y/Z degrees)
-    ImGui::Text("Rotation (deg)");
-    ImGui::SetNextItemWidth(-1);
+    PropLabel("Rotation (deg)");
     float rot[3] = { obj.rotationDeg.x, obj.rotationDeg.y, obj.rotationDeg.z };
     if (gizmoDragging && gizmoDragKind == 1) ImGui::PushID(ImGui::GetFrameCount());
     if (ImGui::DragFloat3("##irot", rot, 0.5f, 0.0f, 0.0f, "%.1f")) {
@@ -6618,9 +6580,8 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
     // Colour editor shared by Planet and Free Model.
     auto colorEditor = [&]() {
-      ImGui::Text("Color");
+      PropLabel("Color");
       float col[3] = { obj.data.color.x, obj.data.color.y, obj.data.color.z };
-      ImGui::SetNextItemWidth(-1);
       if (ImGui::ColorEdit3("##icolor", col, ImGuiColorEditFlags_Float)) {
         obj.data.color.x = col[0]; obj.data.color.y = col[1]; obj.data.color.z = col[2];
       }
@@ -6675,8 +6636,8 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     };
 
     if (obj.shaderType == ObjectType::BlackHole) {
-      ImGui::SetNextItemWidth(-1);
-      ImGui::DragFloat("Rs##irs", &obj.schwarzschildRadius, 0.001f, 0.001f, 10.0f, "%.4f");
+      PropLabel("Rs");
+      ImGui::DragFloat("##Rs##irs", &obj.schwarzschildRadius, 0.001f, 0.001f, 10.0f, "%.4f");
       ImGui::TextDisabled("Photon sphere: %.4f", 1.5f * obj.schwarzschildRadius);
     }
     else if (obj.shaderType == ObjectType::Nebula) {
@@ -6684,44 +6645,34 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       auto& nb = obj.nebula;
       bool changed = false;
       ImGui::SeparatorText("Nebula");
-      ImGui::Text("Radius (ly)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Radius (ly)");
       float rly = obj.visualRadius / 63241.077f;
       if (ImGui::DragFloat("##nb_r", &rly, 0.1f, 0.2f, 300.0f, "%.1f ly", ImGuiSliderFlags_Logarithmic)) {
         obj.visualRadius = rly * 63241.077f;
         obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
         sizesDirty = true;
       }
-      ImGui::Text("Palette");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Palette");
       const char* pals[] = { "Natural", "Hubble" };
       changed |= ImGui::Combo("##nb_pal", &nb.palette, pals, 2);
-      ImGui::Text("Emission");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Emission");
       changed |= ImGui::SliderFloat("##nb_em", &nb.emission, 0.05f, 6.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-      ImGui::Text("Ionisation reach");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Ionisation reach");
       changed |= ImGui::SliderFloat("##nb_exc", &nb.excitation, 0.03f, 1.5f, "%.2f R", ImGuiSliderFlags_Logarithmic);
       if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the embedded stars' light reaches (x radius).\nSmall: high-excitation colours only at the core, low at the rim. Large: teal throughout.");
-      ImGui::Text("Gas density");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Gas density");
       changed |= ImGui::SliderFloat("##nb_den", &nb.density, 0.1f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-      ImGui::Text("Dust");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Dust");
       changed |= ImGui::SliderFloat("##nb_dust", &nb.dust, 0.0f, 3.0f, "%.2f");
       if (ImGui::IsItemHovered()) ImGui::SetTooltip("Absorption in the dense, unlit gas: dark lanes and bays.");
-      ImGui::Text("Detail");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Detail");
       changed |= ImGui::SliderFloat("##nb_det", &nb.detail, 0.2f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-      ImGui::Text("Illuminating stars");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Illuminating stars");
       changed |= ImGui::SliderInt("##nb_l", &nb.lights, 1, 4);
-      ImGui::Text("Shape extent (x, y, z)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Shape extent (x, y, z)");
       changed |= ImGui::SliderFloat3("##nb_ext", nb.extent, 0.1f, 1.0f, "%.2f");
       if (ImGui::IsItemHovered()) ImGui::SetTooltip("Box half-size along each local axis, as a fraction of the radius.\nRotate the object to orient it. Squash one axis for a disc, two for a bar.");
-      ImGui::Text("Shape source");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Shape source");
       {
         std::string cur = (nb.sourceCloud < 0) ? "Recipe (bubble + filaments)"
                         : (nb.sourceCloud < (int)clouds.size() && clouds[nb.sourceCloud])
@@ -6753,20 +6704,17 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Redo the shape from the cloud's CURRENT particles (after simulating or editing it).");
         }
       }
-      ImGui::Text("Volume resolution");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Volume resolution");
       {
         const int resOpts[4] = { 48, 64, 96, 128 };
         int ri = 2; for (int k = 0; k < 4; k++) if (nb.volumeRes == resOpts[k]) ri = k;
         const char* resItems[] = { "48 (1 MB)", "64 (2 MB)", "96 (7 MB)", "128 (16 MB)" };
         if (ImGui::Combo("##nb_res", &ri, resItems, 4)) { nb.volumeRes = resOpts[ri]; changed = true; }
       }
-      ImGui::Text("Quality (steps)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Quality (steps)");
       changed |= ImGui::SliderInt("##nb_st", &nb.steps, 12, 128);
       if (ImGui::IsItemHovered()) ImGui::SetTooltip("Ray-march steps per pixel in the Cinematic view (the nav view uses half).\nOne texture fetch each. Cost = steps x covered pixels / pass quality^2.");
-      ImGui::Text("Seed");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Seed");
       int sd = (int)nb.seed;
       if (ImGui::InputInt("##nb_seed", &sd)) { nb.seed = (unsigned)std::max(sd, 0); changed = true; }
       if (changed) obj.SyncNebulaToRender();
@@ -6777,7 +6725,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       previewImage();
 
       ImGui::Spacing();
-      if (ImGui::CollapsingHeader("Mesh (.obj)", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (PropSection("Mesh (.obj)", ImGuiTreeNodeFlags_DefaultOpen)) {
       static std::vector<std::string> modelFiles;
       static bool modelsScanned = false;
       if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
@@ -6809,14 +6757,13 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
 
       ImGui::Spacing();
-      if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (PropSection("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Text("Texture");
       imagePicker("ftex", obj.texturePath, 0);
       ImGui::Text("Normal Map");
       imagePicker("fnrm", obj.normalMapPath, 1);
       if (!obj.normalMapPath.empty()) {
-        ImGui::Text("Strength");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Strength");
         ImGui::SliderFloat("##fnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
       }
       ImGui::TextDisabled("Uses the model's UVs (needs vt in the .obj).");
@@ -6825,10 +6772,10 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     else if (obj.shaderType == ObjectType::Star) {
       temperatureEditor();
       ImGui::Spacing();
-      if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (PropSection("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
         auto& ss = obj.starSurface;
         bool on = ss.contrast > 0.0f;
-        if (ImGui::Checkbox("Granulation##ssOn", &on))
+        if (PropCheckbox("Granulation##ssOn", &on))
           ss.contrast = on ? 1.0f : 0.0f;
         if (ImGui::IsItemHovered())
           ImGui::SetTooltip("Convection cells, dark lanes and slow churn, drawn on the\n"
@@ -6836,19 +6783,19 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                             "star. It costs nothing until the star is more than a few\n"
                             "pixels across, and each layer fades in as you approach.");
         if (on) {
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##ssamt", &ss.contrast, 0.05f, 2.0f, "Strength %.2f");
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##sssc", &ss.scale, 8.0f, 160.0f, "Granules %.0f");
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##ssev", &ss.evolve, 0.0f, 0.5f, "Evolve %.3f");
+          PropLabel("Strength");
+          ImGui::SliderFloat("##ssamt", &ss.contrast, 0.05f, 2.0f, "%.2f");
+          PropLabel("Granules");
+          ImGui::SliderFloat("##sssc", &ss.scale, 8.0f, 160.0f, "%.0f");
+          PropLabel("Evolve");
+          ImGui::SliderFloat("##ssev", &ss.evolve, 0.0f, 0.5f, "%.3f");
           if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Each layer drifts along its own direction, so the pattern\n"
                               "churns instead of scrolling as a sheet. 0 freezes it.");
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##ssspot", &ss.spots, 0.0f, 1.0f, "Spots %.2f");
-          ImGui::SetNextItemWidth(-1);
-          ImGui::SliderFloat("##sswarp", &ss.warp, 0.0f, 3.0f, "Warp %.2f");
+          PropLabel("Spots");
+          ImGui::SliderFloat("##ssspot", &ss.spots, 0.0f, 1.0f, "%.2f");
+          PropLabel("Warp");
+          ImGui::SliderFloat("##sswarp", &ss.warp, 0.0f, 3.0f, "%.2f");
         }
       }
     }
@@ -6858,43 +6805,37 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       colorEditor();
 
       ImGui::Spacing();
-      if (ImGui::CollapsingHeader("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (PropSection("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Text("Texture");
       previewImage();
       imagePicker("ptex", obj.texturePath, 0);
       ImGui::Text("Normal Map");
       imagePicker("pnrm", obj.normalMapPath, 1);
       if (!obj.normalMapPath.empty()) {
-        ImGui::Text("Strength");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Strength");
         ImGui::SliderFloat("##pnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
       }
       ImGui::Text("Night Lights");
       imagePicker("pnight", obj.nightMapPath, 2);
       if (!obj.nightMapPath.empty()) {
-        ImGui::Text("Brightness");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Brightness");
         ImGui::SliderFloat("##pnightstr", &obj.nightMapStrength, 0.0f, 6.0f, "%.2f");
       }
       ImGui::TextDisabled("City lights on the night side (Cinematic view).");
       }
 
       ImGui::Spacing();
-      if (ImGui::CollapsingHeader("Atmosphere")) {
-      ImGui::Checkbox("Enabled##iatm", &obj.atmosphereEnabled);
+      if (PropSection("Atmosphere")) {
+      PropCheckbox("Enabled##iatm", &obj.atmosphereEnabled);
       if (obj.atmosphereEnabled) {
-        ImGui::Text("Height");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Height");
         ImGui::SliderFloat("##iatmh", &obj.atmosphereHeight, 0.05f, 1.0f, "%.2f");
-        ImGui::Text("Density Falloff");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Density Falloff");
         ImGui::SliderFloat("##iatmf", &obj.atmosphereFalloff, 0.5f, 15.0f, "%.1f");
-        ImGui::Text("Intensity");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Intensity");
         ImGui::SliderFloat("##iatmi", &obj.atmosphereIntensity, 0.05f, 10.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-        ImGui::Text("Scatter Color");
+        PropLabel("Scatter Color");
         float atmCol[3] = { obj.atmosphereScatter.x, obj.atmosphereScatter.y, obj.atmosphereScatter.z };
-        ImGui::SetNextItemWidth(-1);
         if (ImGui::ColorEdit3("##iatmc", atmCol, ImGuiColorEditFlags_Float)) {
           obj.atmosphereScatter.x = atmCol[0];
           obj.atmosphereScatter.y = atmCol[1];
@@ -6903,48 +6844,39 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
       }
 
-      if (ImGui::CollapsingHeader("Clouds")) {
-      ImGui::Checkbox("Enabled##icld", &obj.cloudsEnabled);
+      if (PropSection("Clouds")) {
+      PropCheckbox("Enabled##icld", &obj.cloudsEnabled);
       if (obj.cloudsEnabled) {
-        ImGui::Text("Coverage");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Coverage");
         ImGui::SliderFloat("##icldcov", &obj.cloudCoverage, 0.0f, 1.0f, "%.2f");
-        ImGui::Text("Scale");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Scale");
         ImGui::SliderFloat("##icldsc", &obj.cloudScale, 1.0f, 24.0f, "%.1f");
-        ImGui::Text("Bandedness");
+        PropLabel("Bandedness");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = cumulus fields (Earth), 1 = gas-giant bands (Jupiter).");
-        ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##icldband", &obj.cloudBanded, 0.0f, 1.0f, "%.2f");
-        ImGui::Text("Turbulence");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Turbulence");
         ImGui::SliderFloat("##icldturb", &obj.cloudTurbulence, 0.0f, 2.0f, "%.2f");
-        ImGui::Text("Softness");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Softness");
         ImGui::SliderFloat("##icldsoft", &obj.cloudSoftness, 0.02f, 0.5f, "%.2f");
-        ImGui::Text("Altitude");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Altitude");
         ImGui::SliderFloat("##icldalt", &obj.cloudAltitude, 0.0f, 0.10f, "%.3f");
-        ImGui::Text("Whiteness");
+        PropLabel("Whiteness");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("1 = white clouds; 0 = tinted by the planet colour (banded palettes).");
-        ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##icldwhite", &obj.cloudWhiteness, 0.0f, 1.0f, "%.2f");
-        ImGui::Text("Drift Speed");
+        PropLabel("Drift Speed");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = static (RT stays cached); >0 animates (RT re-renders per frame).");
-        ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat("##iclddrift", &obj.cloudDrift, 0.0f, 0.2f, "%.3f");
       }
       }
 
-      if (ImGui::CollapsingHeader("Rings")) {
+      if (PropSection("Rings")) {
       // Full-width labelled slider — there are 15 of these per ring, so the
       // Text/SetNextItemWidth/Slider triple used elsewhere is folded up here.
       auto ringF = [](const char* label, const char* id, float* v, float lo, float hi,
                       const char* fmt = "%.2f", const char* tip = nullptr,
                       ImGuiSliderFlags flags = 0) {
-        ImGui::Text("%s", label);
+        PropLabel(label);
         if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
-        ImGui::SetNextItemWidth(-1);
         ImGui::SliderFloat(id, v, lo, hi, fmt, flags);
       };
 
@@ -6962,8 +6894,8 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         char header[96];
         std::snprintf(header, sizeof(header), "%s###ringhdr",
                       rg.name.empty() ? "Ring" : rg.name.c_str());
-        if (ImGui::CollapsingHeader(header, ImGuiTreeNodeFlags_DefaultOpen)) {
-          ImGui::Checkbox("Enabled", &rg.enabled);
+        if (PropSection(header, ImGuiTreeNodeFlags_DefaultOpen)) {
+          PropCheckbox("Enabled", &rg.enabled);
 
           ImGui::SeparatorText("Extent");
           ringF("Inner Radius", "##rin", &rg.innerRadius, 1.0f, 10.0f, "%.2f",
@@ -6996,9 +6928,8 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                 "Dials a different ring system. Everything above is regenerated.");
 
           ImGui::SeparatorText("Plane");
-          ImGui::Text("Orientation");
+          PropLabel("Orientation");
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Mean plane, Euler X/Y/Z degrees.");
-          ImGui::SetNextItemWidth(-1);
           ImGui::SliderFloat3("##rorient", &rg.orientation.x, -180.0f, 180.0f, "%.1f");
           ringF("Tilt", "##rtilt", &rg.tilt, -90.0f, 90.0f, "%.1f",
                 "Extra tilt about the ring's own axis, on top of the orientation.");
@@ -7019,14 +6950,12 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
           if (rg.opacity > 1.8f)
             ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
                                "High: structure is washing out.");
-          ImGui::Text("Colour (inner)");
-          ImGui::SetNextItemWidth(-1);
+          PropLabel("Colour (inner)");
           ImGui::ColorEdit3("##rcol", &rg.color.x, ImGuiColorEditFlags_Float);
-          ImGui::Text("Colour (outer)");
+          PropLabel("Colour (outer)");
           if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Colour is mixed across the ring, and thin regions "
                               "desaturate toward grey on their own.");
-          ImGui::SetNextItemWidth(-1);
           ImGui::ColorEdit3("##rcolo", &rg.colorOuter.x, ImGuiColorEditFlags_Float);
 
           ImGui::SeparatorText("Offset");
@@ -7034,10 +6963,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                 "Stretches the ring into an ellipse.");
           ringF("Ecc. Direction", "##reccd", &rg.eccentricityAngle, 0.0f, 360.0f, "%.1f",
                 "Which way the ellipse points.");
-          ImGui::Text("Centre Offset");
+          PropLabel("Centre Offset");
           if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Shifts the ring off the planet centre, in planet radii.");
-          ImGui::SetNextItemWidth(-1);
           ImGui::SliderFloat3("##rcen", &rg.centerOffset.x, -2.0f, 2.0f, "%.3f");
 
           ImGui::Spacing();
@@ -7077,8 +7005,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       char nameBuf[64];
       std::strncpy(nameBuf, cam->name.c_str(), sizeof(nameBuf) - 1);
       nameBuf[sizeof(nameBuf) - 1] = '\0';
-      ImGui::Text("Name");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Name");
       if (ImGui::InputText("##camname", nameBuf, sizeof(nameBuf))) cam->name = nameBuf;
 
       ImGui::SeparatorText("Transform");
@@ -7108,8 +7035,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Snap this camera to the current freecam view");
 
-      ImGui::Text("Position (AU)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Position (AU)");
       double cpp[3] = { cam->position.x, cam->position.y, cam->position.z };
       if (gizmoDragging && gizmoDragKind == 0) ImGui::PushID(ImGui::GetFrameCount());
       if (ImGui::DragScalarN("##campos", ImGuiDataType_Double, cpp, 3, 0.01f,
@@ -7118,8 +7044,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
       if (gizmoDragging && gizmoDragKind == 0) ImGui::PopID();
 
-      ImGui::Text("Rotation (deg)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Rotation (deg)");
       float crr[3] = { cam->rotationDeg.x, cam->rotationDeg.y, cam->rotationDeg.z };
       if (gizmoDragging && gizmoDragKind == 1) ImGui::PushID(ImGui::GetFrameCount());
       if (ImGui::DragFloat3("##camrot", crr, 0.5f, 0.0f, 0.0f, "%.1f")) {
@@ -7128,8 +7053,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       }
       if (gizmoDragging && gizmoDragKind == 1) ImGui::PopID();
 
-      ImGui::Text("Field of View");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Field of View");
       ImGui::SliderFloat("##camfov", &cam->fov, 1.0f, 120.0f, "%.1f deg");
 
       ImGui::Spacing();
@@ -7180,7 +7104,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         char nameBuf[128];
         std::strncpy(nameBuf, cloud->name.c_str(), sizeof(nameBuf) - 1);
         nameBuf[sizeof(nameBuf) - 1] = '\0';
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Name");
         if (ImGui::InputTextWithHint("##cloudname", "Name", nameBuf, sizeof(nameBuf)))
           cloud->name = nameBuf;
         ImGui::TextDisabled("Description");
@@ -7229,7 +7153,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
                                !cloud->renderedObject.isGalaxy &&
                                cloud->renderedObject.simulatableParticleCount() == 0;
       ImGui::BeginDisabled(catalogueSf);
-      if (ImGui::Checkbox("Simulate physics##csim", &cloud->simulatePhysics)) {
+      if (PropCheckbox("Simulate physics##csim", &cloud->simulatePhysics)) {
         cloud->clearRecording();
       }
       ImGui::EndDisabled();
@@ -7291,8 +7215,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
       // Position (AU) — cloud centre. Numeric field always works even when the
       // centre is at galactic distance (gizmo would be unreachable there).
-      ImGui::Text("Position (AU)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Position (AU)");
       double cp[3] = { cloud->position.x, cloud->position.y, cloud->position.z };
       if (gizmoDragging && gizmoDragKind == 0) ImGui::PushID(ImGui::GetFrameCount());
       if (ImGui::DragScalarN("##cipos", ImGuiDataType_Double, cp, 3, 0.05f,
@@ -7302,8 +7225,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       if (gizmoDragging && gizmoDragKind == 0) ImGui::PopID();
 
       // Rotation (Euler X/Y/Z degrees) — spins the whole particle cloud
-      ImGui::Text("Rotation (deg)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Rotation (deg)");
       float crot[3] = { cloud->rotationDeg.x, cloud->rotationDeg.y, cloud->rotationDeg.z };
       if (gizmoDragging && gizmoDragKind == 1) ImGui::PushID(ImGui::GetFrameCount());
       if (ImGui::DragFloat3("##cirot", crot, 0.5f, 0.0f, 0.0f, "%.1f")) {
@@ -7329,7 +7251,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         if (inspFormFiles[i] == cloudForm.formationFile) { formIdx = i; break; }
       }
       const char* previewStr = (formIdx >= 0) ? inspFormFiles[formIdx].c_str() : "Procedural";
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("File");
       if (ImGui::BeginCombo("##ci_form", previewStr)) {
         if (ImGui::Selectable("Procedural", formIdx < 0)) {
           cloudForm.formationFile.clear();
@@ -7351,16 +7273,14 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       if (cloudForm.formationFile.empty()) {
         ImGui::SliderInt("Count##ci", &cloudForm.count, 100, 5000);
         ImGui::Spacing();
-        ImGui::Text("Spawn Radius");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Spawn Radius");
         float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
         if (ImGui::DragFloat3("##cisz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
           cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
         }
         ImGui::Spacing();
       } else {
-        ImGui::Text("Scale");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Scale");
         ImGui::DragFloat("##ci_scale", &cloudForm.scale, 0.05f, 0.1f, 20.f, "%.2fx");
         ImGui::TextDisabled("Velocities adjusted for correct orbits");
         ImGui::TextDisabled("(Needs Respawn to apply)");
@@ -7370,20 +7290,20 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       // ── Compute method ──
       ImGui::SeparatorText("Physics");
       const char* methodItems[] = { "CPU", "Barnes-Hut GPU" };
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Method");
       if (ImGui::Combo("##ci_method", &cloudForm.computeMethod, methodItems, 2)) {
         cloud->computeMethod = static_cast<CloudComputeMethod>(cloudForm.computeMethod);
       }
 
       if (cloudForm.computeMethod == 1) {
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat("Theta##ci", &cloudForm.theta, 0.1f, 1.0f, "%.2f")) {
+        PropLabel("Theta");
+        if (ImGui::SliderFloat("##Theta##ci", &cloudForm.theta, 0.1f, 1.0f, "%.2f")) {
           cloud->barnesHutTheta = cloudForm.theta;
         }
         ImGui::TextDisabled("Lower = more accurate, slower. >1 clusters stars on a grid.");
       }
 
-      if (ImGui::Checkbox("Dark matter halo##ci", &cloudForm.useDarkMatterHalo))
+      if (PropCheckbox("Dark matter halo##ci", &cloudForm.useDarkMatterHalo))
         cloud->useDarkMatterHalo = cloudForm.useDarkMatterHalo;
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Invisible heavy particles that reproduce the rotation curve, so the\n"
@@ -7396,19 +7316,17 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::SeparatorText("Appearance");
 
       const char* renderModeItems[] = { "Points", "Nebula" };
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Render as");
       if (ImGui::Combo("##ci_rendermode", &cloudForm.renderMode, renderModeItems, 2)) {
         cloud->renderMode = cloudForm.renderMode;
       }
 
       if (cloudForm.renderMode == 1) {
-        ImGui::Text("Density");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Density");
         if (ImGui::SliderFloat("##ci_nebula", &cloudForm.nebulaScatterScale, 0.001f, 2.0f, "%.3f")) {
           cloud->nebulaScatterScale = cloudForm.nebulaScatterScale;
         }
-        ImGui::Text("Clumpiness");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Clumpiness");
         if (ImGui::SliderFloat("##ci_spread", &cloudForm.particleSizeSpread, 0.0f, 1.0f, "%.2f")) {
           cloud->particleSizeSpread = cloudForm.particleSizeSpread;
           rtDirty = true;
