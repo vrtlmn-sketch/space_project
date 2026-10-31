@@ -17,6 +17,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "uiScale.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
@@ -91,9 +92,11 @@ bool Renderer::InitWindow(
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
   // Monospace font: bundled DejaVu Sans Mono, ImGui default as fallback
-  if (!io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSansMono.ttf", 14.0f))
-    io.Fonts->AddFontDefault();
-  exploreFont = io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSans.ttf", 15.0f);
+  uiMonoFont = io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSansMono.ttf", 14.0f);
+  if (!uiMonoFont) uiMonoFont = io.Fonts->AddFontDefault();
+  // Inter: the modern themes and all of exploration.
+  uiSansFont  = io.Fonts->AddFontFromFileTTF("assets/fonts/Inter-Regular.ttf", 14.0f);
+  exploreFont = uiSansFont;
 
   // Theme from settings.json
   LoadAppSettings();
@@ -109,6 +112,8 @@ bool Renderer::InitWindow(
   return true;
 }
 
+float Em(float px) { return px * ImGui::GetFontSize() / 14.0f; }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // App settings (settings.json) + themes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,7 +123,7 @@ void Renderer::LoadAppSettings() {
   try {
     nlohmann::json root;
     f >> root;
-    std::string theme = root.value("theme", std::string{"Space wander (ImGui)"});
+    std::string theme = root.value("theme", std::string{"Mercury smooth (Gray)"});
     std::strncpy(appTheme, theme.c_str(), sizeof(appTheme) - 1);
     appTheme[sizeof(appTheme) - 1] = '\0';
     vimMode = root.value("vimMode", false);
@@ -140,16 +145,23 @@ void Renderer::SaveAppSettings() {
   std::cout << "[Settings] Saved settings.json\n";
 }
 
-// Themes share the terminal-dashboard geometry (sharp edges, thin borders,
-// dense padding); the palette depends on the name:
-//   "Space wander (ImGui)" — dark navy + cyan (default, fallback for unknown)
-//   "Unix (Dark)"          — monochrome: black surfaces, white text & borders
-//   "Mercury smooth (Gray)" — soft charcoal grays
-//   "Luna (Light)"          — clean light theme, white surfaces, blue accent
+// Two families of theme:
+//   Terminal (sharp edges, thin borders, dense padding, DejaVu Sans Mono)
+//     "Space wander (ImGui)"  — dark navy + cyan (fallback for unknown names)
+//     "Unix (Dark)"           — monochrome: black surfaces, white text & borders
+//   Modern (rounded, airy, borderless fields, Inter)
+//     "Mercury smooth (Gray)" — near-black neutrals, blue accent (the default)
+//     "Luna (Light)"          — white panels on light gray, indigo accent
 // Brighten semantic colours (orange Play, red Rec, green Viewport…) on light
 // themes: dark-tuned buttons are barely visible on white, so scale the
 // dominant channel up to 0.95 while keeping the hue. Identity on dark themes.
+// On Mercury they are softened toward the surface instead, so a neon orange
+// does not shout from a near-black panel.
 ImVec4 Renderer::SemBtn(const ImVec4& c) const {
+  if (themeModern && !themeLight) {
+    const float k = 0.22f;
+    return ImVec4(c.x + (0.12f - c.x) * k, c.y + (0.12f - c.y) * k, c.z + (0.13f - c.z) * k, c.w);
+  }
   if (!themeLight) return c;
   float mx = std::max(c.x, std::max(c.y, c.z));
   if (mx <= 0.0f) return c;
@@ -160,9 +172,11 @@ ImVec4 Renderer::SemBtn(const ImVec4& c) const {
 }
 
 void Renderer::ApplyTheme(const char* name) {
-  themeLight = (std::strcmp(name, "Luna (Light)") == 0);
-  ImGui::StyleColorsDark();
+  themeLight  = (std::strcmp(name, "Luna (Light)") == 0);
+  themeModern = themeLight || (std::strcmp(name, "Mercury smooth (Gray)") == 0);
   ImGuiStyle& style = ImGui::GetStyle();
+  style = ImGuiStyle();          // every theme starts from the same defaults
+  ImGui::StyleColorsDark();
 
   // Shared geometry for ALL themes — only colours differ between them.
   // Sharp edges everywhere — no rounding
@@ -343,154 +357,129 @@ void Renderer::ApplyTheme(const char* name) {
     c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.10f, 0.10f, 0.10f, 0.40f);
   }
 
-  // ── "Mercury smooth (Gray)" — soft charcoal grays, low-contrast
-  // borders. The editor-like neutral look; semantic colours stay untouched.
-  else if (std::strcmp(name, "Mercury smooth (Gray)") == 0) {
-    const ImVec4 bg      = ImVec4(0.130f, 0.135f, 0.155f, 1.00f);
-    const ImVec4 surface = ImVec4(0.165f, 0.170f, 0.190f, 1.00f);
-    const ImVec4 field   = ImVec4(0.190f, 0.195f, 0.220f, 1.00f);
-    const ImVec4 hover   = ImVec4(0.240f, 0.250f, 0.280f, 1.00f);
-    const ImVec4 active  = ImVec4(0.300f, 0.310f, 0.350f, 1.00f);
-    const ImVec4 border  = ImVec4(0.270f, 0.280f, 0.310f, 1.00f);
-    const ImVec4 text    = ImVec4(0.870f, 0.880f, 0.900f, 1.00f);
-    const ImVec4 dim     = ImVec4(0.520f, 0.535f, 0.570f, 1.00f);
-    const ImVec4 accent  = ImVec4(0.580f, 0.640f, 0.780f, 1.00f);
+  // ── "Mercury smooth (Gray)" and "Luna (Light)" — the modern pair: neutral
+  // surfaces in three close steps, borderless fields, one strong accent, soft
+  // dividers. Mercury is near-black with a blue accent; Luna is white panels
+  // on light gray chrome with an indigo accent.
+  else if (themeModern) {
+    struct Pal {
+      ImVec4 chrome, window, child, popup, field, hover, active, border, divider;
+      ImVec4 text, dim, accent, accentHi, overlay;   // overlay: neutral tint for hovers on rows/grips
+    };
+    const Pal p = themeLight
+      ? Pal{ ImVec4(0.957f, 0.957f, 0.961f, 1.00f), ImVec4(1.000f, 1.000f, 1.000f, 1.00f),
+             ImVec4(0.982f, 0.982f, 0.985f, 1.00f), ImVec4(1.000f, 1.000f, 1.000f, 0.99f),
+             ImVec4(0.955f, 0.955f, 0.960f, 1.00f), ImVec4(0.925f, 0.925f, 0.933f, 1.00f),
+             ImVec4(0.895f, 0.895f, 0.906f, 1.00f), ImVec4(0.894f, 0.894f, 0.906f, 1.00f),
+             ImVec4(0.922f, 0.922f, 0.930f, 1.00f),
+             ImVec4(0.094f, 0.094f, 0.106f, 1.00f), ImVec4(0.443f, 0.443f, 0.478f, 1.00f),
+             ImVec4(0.310f, 0.275f, 0.898f, 1.00f), ImVec4(0.400f, 0.370f, 0.950f, 1.00f),
+             ImVec4(0.000f, 0.000f, 0.000f, 1.00f) }
+      : Pal{ ImVec4(0.035f, 0.035f, 0.040f, 1.00f), ImVec4(0.055f, 0.055f, 0.060f, 1.00f),
+             ImVec4(0.078f, 0.078f, 0.086f, 1.00f), ImVec4(0.086f, 0.086f, 0.094f, 0.98f),
+             ImVec4(0.110f, 0.110f, 0.122f, 1.00f), ImVec4(0.150f, 0.150f, 0.165f, 1.00f),
+             ImVec4(0.180f, 0.180f, 0.200f, 1.00f), ImVec4(0.137f, 0.137f, 0.150f, 1.00f),
+             ImVec4(0.120f, 0.120f, 0.132f, 1.00f),
+             ImVec4(0.930f, 0.930f, 0.940f, 1.00f), ImVec4(0.540f, 0.540f, 0.580f, 1.00f),
+             ImVec4(0.231f, 0.510f, 0.965f, 1.00f), ImVec4(0.360f, 0.600f, 1.000f, 1.00f),
+             ImVec4(1.000f, 1.000f, 1.000f, 1.00f) };
+    auto tint = [](ImVec4 v, float a) { return ImVec4(v.x, v.y, v.z, a); };
 
-    c[ImGuiCol_WindowBg]             = bg;
-    c[ImGuiCol_ChildBg]              = surface;
-    c[ImGuiCol_PopupBg]              = ImVec4(0.150f, 0.155f, 0.175f, 0.98f);
-
-    c[ImGuiCol_Border]               = border;
+    c[ImGuiCol_WindowBg]             = p.window;
+    c[ImGuiCol_ChildBg]              = p.child;
+    c[ImGuiCol_PopupBg]              = p.popup;
+    c[ImGuiCol_Border]               = p.border;
     c[ImGuiCol_BorderShadow]         = ImVec4(0, 0, 0, 0);
 
-    c[ImGuiCol_FrameBg]              = field;
-    c[ImGuiCol_FrameBgHovered]       = hover;
-    c[ImGuiCol_FrameBgActive]        = active;
+    c[ImGuiCol_FrameBg]              = p.field;
+    c[ImGuiCol_FrameBgHovered]       = p.hover;
+    c[ImGuiCol_FrameBgActive]        = p.active;
 
-    c[ImGuiCol_TitleBg]              = bg;
-    c[ImGuiCol_TitleBgActive]        = surface;
-    c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.13f, 0.135f, 0.155f, 0.85f);
+    c[ImGuiCol_TitleBg]              = p.window;
+    c[ImGuiCol_TitleBgActive]        = p.window;
+    c[ImGuiCol_TitleBgCollapsed]     = tint(p.window, 0.90f);
+    c[ImGuiCol_MenuBarBg]            = p.window;
 
-    c[ImGuiCol_MenuBarBg]            = surface;
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ScrollbarGrab]        = tint(p.overlay, 0.12f);
+    c[ImGuiCol_ScrollbarGrabHovered] = tint(p.overlay, 0.20f);
+    c[ImGuiCol_ScrollbarGrabActive]  = tint(p.overlay, 0.28f);
 
-    c[ImGuiCol_ScrollbarBg]          = bg;
-    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.300f, 0.310f, 0.345f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.380f, 0.395f, 0.435f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabActive]  = accent;
+    c[ImGuiCol_Button]               = p.field;
+    c[ImGuiCol_ButtonHovered]        = p.hover;
+    c[ImGuiCol_ButtonActive]         = p.active;
 
-    c[ImGuiCol_Button]               = field;
-    c[ImGuiCol_ButtonHovered]        = hover;
-    c[ImGuiCol_ButtonActive]         = active;
+    c[ImGuiCol_CheckMark]            = p.accent;
+    c[ImGuiCol_SliderGrab]           = p.accent;
+    c[ImGuiCol_SliderGrabActive]     = p.accentHi;
 
-    c[ImGuiCol_CheckMark]            = accent;
-    c[ImGuiCol_SliderGrab]           = ImVec4(0.480f, 0.530f, 0.650f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]     = accent;
+    c[ImGuiCol_Header]               = tint(p.accent, themeLight ? 0.12f : 0.22f);
+    c[ImGuiCol_HeaderHovered]        = tint(p.overlay, themeLight ? 0.05f : 0.06f);
+    c[ImGuiCol_HeaderActive]         = tint(p.accent, themeLight ? 0.18f : 0.32f);
 
-    c[ImGuiCol_Header]               = hover;
-    c[ImGuiCol_HeaderHovered]        = ImVec4(0.270f, 0.280f, 0.315f, 1.00f);
-    c[ImGuiCol_HeaderActive]         = active;
+    c[ImGuiCol_Separator]            = p.divider;
+    c[ImGuiCol_SeparatorHovered]     = tint(p.accent, 0.60f);
+    c[ImGuiCol_SeparatorActive]      = p.accent;
 
-    c[ImGuiCol_Separator]            = border;
-    c[ImGuiCol_SeparatorHovered]     = ImVec4(0.400f, 0.440f, 0.550f, 1.00f);
-    c[ImGuiCol_SeparatorActive]      = accent;
+    c[ImGuiCol_ResizeGrip]           = tint(p.overlay, 0.06f);
+    c[ImGuiCol_ResizeGripHovered]    = tint(p.accent, 0.50f);
+    c[ImGuiCol_ResizeGripActive]     = p.accent;
 
-    c[ImGuiCol_ResizeGrip]           = ImVec4(0.580f, 0.640f, 0.780f, 0.25f);
-    c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.580f, 0.640f, 0.780f, 0.65f);
-    c[ImGuiCol_ResizeGripActive]     = ImVec4(0.580f, 0.640f, 0.780f, 0.90f);
+    c[ImGuiCol_InputTextCursor]      = p.text;
+    c[ImGuiCol_Tab]                  = p.chrome;
+    c[ImGuiCol_TabHovered]           = p.hover;
+    c[ImGuiCol_TabSelected]          = p.window;
+    c[ImGuiCol_TabSelectedOverline]  = p.accent;
+    c[ImGuiCol_TabDimmed]            = p.chrome;
+    c[ImGuiCol_TabDimmedSelected]    = p.window;
+    c[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0, 0, 0, 0);
 
-    c[ImGuiCol_Tab]                  = bg;
-    c[ImGuiCol_TabHovered]           = hover;
-    c[ImGuiCol_TabSelected]          = ImVec4(0.240f, 0.250f, 0.285f, 1.00f);
-    c[ImGuiCol_TabSelectedOverline]  = accent;
-    c[ImGuiCol_TabDimmed]            = bg;
-    c[ImGuiCol_TabDimmedSelected]    = surface;
+    c[ImGuiCol_DockingPreview]       = tint(p.accent, 0.50f);
+    c[ImGuiCol_DockingEmptyBg]       = p.chrome;
 
-    c[ImGuiCol_DockingPreview]       = ImVec4(0.580f, 0.640f, 0.780f, 0.70f);
-    c[ImGuiCol_DockingEmptyBg]       = ImVec4(0.110f, 0.115f, 0.130f, 1.00f);
+    c[ImGuiCol_Text]                 = p.text;
+    c[ImGuiCol_TextDisabled]         = p.dim;
+    c[ImGuiCol_TextSelectedBg]       = tint(p.accent, 0.30f);
+    c[ImGuiCol_TextLink]             = p.accentHi;
+    c[ImGuiCol_DragDropTarget]       = p.accent;
+    c[ImGuiCol_NavCursor]            = p.accent;
+    c[ImGuiCol_ModalWindowDimBg]     = ImVec4(0.0f, 0.0f, 0.0f, themeLight ? 0.25f : 0.55f);
 
-    c[ImGuiCol_Text]                 = text;
-    c[ImGuiCol_TextDisabled]         = dim;
+    c[ImGuiCol_PlotLines]            = p.accent;
+    c[ImGuiCol_PlotHistogram]        = p.accent;
 
-    c[ImGuiCol_TableHeaderBg]        = surface;
-    c[ImGuiCol_TableBorderStrong]    = border;
-    c[ImGuiCol_TableBorderLight]     = ImVec4(0.210f, 0.220f, 0.245f, 1.00f);
+    c[ImGuiCol_TableHeaderBg]        = p.child;
+    c[ImGuiCol_TableBorderStrong]    = p.border;
+    c[ImGuiCol_TableBorderLight]     = p.divider;
     c[ImGuiCol_TableRowBg]           = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.180f, 0.185f, 0.210f, 0.40f);
+    c[ImGuiCol_TableRowBgAlt]        = tint(p.overlay, 0.025f);
+
+    // Geometry: rounded, borderless fields, no tab overline. Spacing and
+    // padding stay the SAME as the terminal pair, so every panel keeps its
+    // footprint: the look changes, the layout does not.
+    style.WindowRounding     = 8.0f;
+    style.ChildRounding      = 8.0f;
+    style.FrameRounding      = 6.0f;
+    style.GrabRounding       = 6.0f;
+    style.PopupRounding      = 8.0f;
+    style.ScrollbarRounding  = 8.0f;
+    style.TabRounding        = 6.0f;
+    style.FrameBorderSize    = 0.0f;
+    style.TabBarOverlineSize = 0.0f;
+    style.SeparatorTextBorderSize = 1.0f;
+    style.DockingSeparatorSize    = 1.0f;
   }
 
-  // ── "Luna (Light)" — clean light theme: off-white chrome, white panels,
-  // soft gray borders, dark text, blue accent.
-  else if (std::strcmp(name, "Luna (Light)") == 0) {
-    const ImVec4 bg      = ImVec4(0.960f, 0.965f, 0.972f, 1.00f);
-    const ImVec4 surface = ImVec4(0.990f, 0.992f, 0.995f, 1.00f);
-    const ImVec4 field   = ImVec4(1.000f, 1.000f, 1.000f, 1.00f);
-    const ImVec4 hover   = ImVec4(0.900f, 0.915f, 0.935f, 1.00f);
-    const ImVec4 active  = ImVec4(0.830f, 0.860f, 0.895f, 1.00f);
-    const ImVec4 border  = ImVec4(0.800f, 0.820f, 0.845f, 1.00f);
-    const ImVec4 text    = ImVec4(0.145f, 0.165f, 0.195f, 1.00f);
-    const ImVec4 dim     = ImVec4(0.500f, 0.530f, 0.565f, 1.00f);
-    const ImVec4 accent  = ImVec4(0.130f, 0.440f, 0.870f, 1.00f);
-
-    c[ImGuiCol_WindowBg]             = bg;
-    c[ImGuiCol_ChildBg]              = surface;
-    c[ImGuiCol_PopupBg]              = ImVec4(0.985f, 0.988f, 0.992f, 0.99f);
-
-    c[ImGuiCol_Border]               = border;
-    c[ImGuiCol_BorderShadow]         = ImVec4(0, 0, 0, 0);
-
-    c[ImGuiCol_FrameBg]              = field;
-    c[ImGuiCol_FrameBgHovered]       = hover;
-    c[ImGuiCol_FrameBgActive]        = active;
-
-    c[ImGuiCol_TitleBg]              = bg;
-    c[ImGuiCol_TitleBgActive]        = hover;
-    c[ImGuiCol_TitleBgCollapsed]     = ImVec4(0.96f, 0.965f, 0.972f, 0.90f);
-
-    c[ImGuiCol_MenuBarBg]            = bg;
-
-    c[ImGuiCol_ScrollbarBg]          = bg;
-    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.740f, 0.765f, 0.795f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.620f, 0.655f, 0.695f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabActive]  = accent;
-
-    c[ImGuiCol_Button]               = ImVec4(0.940f, 0.948f, 0.958f, 1.00f);
-    c[ImGuiCol_ButtonHovered]        = hover;
-    c[ImGuiCol_ButtonActive]         = active;
-
-    c[ImGuiCol_CheckMark]            = accent;
-    c[ImGuiCol_SliderGrab]           = ImVec4(0.350f, 0.560f, 0.860f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]     = accent;
-
-    c[ImGuiCol_Header]               = ImVec4(0.800f, 0.880f, 0.980f, 1.00f);
-    c[ImGuiCol_HeaderHovered]        = ImVec4(0.855f, 0.910f, 0.980f, 1.00f);
-    c[ImGuiCol_HeaderActive]         = ImVec4(0.740f, 0.840f, 0.970f, 1.00f);
-
-    c[ImGuiCol_Separator]            = border;
-    c[ImGuiCol_SeparatorHovered]     = ImVec4(0.350f, 0.560f, 0.860f, 1.00f);
-    c[ImGuiCol_SeparatorActive]      = accent;
-
-    c[ImGuiCol_ResizeGrip]           = ImVec4(0.130f, 0.440f, 0.870f, 0.20f);
-    c[ImGuiCol_ResizeGripHovered]    = ImVec4(0.130f, 0.440f, 0.870f, 0.55f);
-    c[ImGuiCol_ResizeGripActive]     = ImVec4(0.130f, 0.440f, 0.870f, 0.85f);
-
-    c[ImGuiCol_Tab]                  = ImVec4(0.910f, 0.920f, 0.935f, 1.00f);
-    c[ImGuiCol_TabHovered]           = hover;
-    c[ImGuiCol_TabSelected]          = field;
-    c[ImGuiCol_TabSelectedOverline]  = accent;
-    c[ImGuiCol_TabDimmed]            = bg;
-    c[ImGuiCol_TabDimmedSelected]    = ImVec4(0.940f, 0.948f, 0.958f, 1.00f);
-
-    c[ImGuiCol_DockingPreview]       = ImVec4(0.130f, 0.440f, 0.870f, 0.60f);
-    c[ImGuiCol_DockingEmptyBg]       = ImVec4(0.900f, 0.910f, 0.925f, 1.00f);
-
-    c[ImGuiCol_Text]                 = text;
-    c[ImGuiCol_TextDisabled]         = dim;
-
-    c[ImGuiCol_TableHeaderBg]        = bg;
-    c[ImGuiCol_TableBorderStrong]    = border;
-    c[ImGuiCol_TableBorderLight]     = ImVec4(0.880f, 0.895f, 0.915f, 1.00f);
-    c[ImGuiCol_TableRowBg]           = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_TableRowBgAlt]        = ImVec4(0.930f, 0.940f, 0.952f, 0.50f);
+  // Font follows the theme: Inter for the modern pair, the mono for the
+  // terminal pair, both at 14 px (the size every hand-written width was tuned
+  // at, see Em). Takes effect from the next frame.
+  ImGuiIO& io = ImGui::GetIO();
+  ImFont* font = themeModern ? uiSansFont : uiMonoFont;
+  if (font) {
+    io.FontDefault = font;
+    const float size = 14.0f;
+    style.FontSizeBase = size;
+    style._NextFrameFontSizeBase = size;   // what ImGui's own style editor does
   }
 }
 
@@ -2222,7 +2211,7 @@ static bool FilePickerInput(const char* id, char* buf, size_t bufSize,
   float arrowW = ImGui::GetFrameHeight();
   ImGui::SetNextItemWidth(width - arrowW - 2.0f);
   changed |= ImGui::InputTextWithHint(id, hint, buf, bufSize);
-  ImGui::SameLine(0, 2);
+  ImGui::SameLine(0, Em(2));
   std::string btnId   = std::string(id) + "_dd";
   std::string popupId = std::string(id) + "_pop";
   if (ImGui::ArrowButton(btnId.c_str(), ImGuiDir_Down))
@@ -2381,11 +2370,12 @@ bool Renderer::DrawStartupModal() {
   ImGui::Begin("##startup", nullptr, flags);
 
   // ── Project browser ──
+  ImGui::AlignTextToFramePadding();
   ImGui::Text("Projects");
   ImGui::SameLine();
-  if (ImGui::SmallButton("Rescan##startup")) RescanProjects();
+  if (ImGui::Button("Rescan##startup")) RescanProjects();
   // Fill everything except the bottom section (empty-project + custom path)
-  ImGui::BeginChild("##startupProjects", ImVec2(0, -150), true);
+  ImGui::BeginChild("##startupProjects", ImVec2(0, Em(-150)), true);
   if (projectList.empty()) {
     ImGui::TextDisabled("No projects found in the projects/ directory.");
   } else {
@@ -2402,7 +2392,7 @@ bool Renderer::DrawStartupModal() {
   ImGui::Spacing();
 
   // ── Empty ──
-  if (ImGui::Button("New Empty Project", ImVec2(-1, 42))) {
+  if (ImGui::Button("New Empty Project", ImVec2(-1, 0))) {
     startupChoice  = StartupChoice::Empty;
     showStartupModal = false;
   }
@@ -2414,17 +2404,17 @@ bool Renderer::DrawStartupModal() {
   ImGui::Spacing();
   ImGui::Text("Load from file:");
   ImGui::TextDisabled("projects/");
-  ImGui::SameLine(0, 2);
+  ImGui::SameLine(0, Em(2));
   FilePickerInput("##loadpath", startupLoadPath, sizeof(startupLoadPath),
                   "my_project", ListProjectEntries(),
                   ImGui::GetContentRegionAvail().x - 200.0f);
   ImGui::SameLine();
-  if (ImGui::Button("Browse...##startup", ImVec2(95, 0))) {
+  if (ImGui::Button("Browse...##startup", ImVec2(Em(95), 0))) {
     if (ZenityPickFile(startupLoadPath, sizeof(startupLoadPath), "Load Project"))
       StripProjectsPrefix(startupLoadPath);
   }
   ImGui::SameLine();
-  if (ImGui::Button("Load", ImVec2(90, 0)) && startupLoadPath[0] != '\0') {
+  if (ImGui::Button("Load", ImVec2(Em(90), 0)) && startupLoadPath[0] != '\0') {
     std::string full = ResolveProjectPath(startupLoadPath);
     std::strncpy(startupLoadPath, full.c_str(), sizeof(startupLoadPath) - 1);
     startupLoadPath[sizeof(startupLoadPath) - 1] = '\0';
@@ -2443,7 +2433,7 @@ void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
   if (!showProjectPanel) return;
   if (!projectsScanned) RescanProjects();
 
-  ImGui::SetNextWindowSize(ImVec2(480, 700), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(Em(480), Em(700)), ImGuiCond_FirstUseEver);
   // Exploration gets its own window id: the Creative one may be docked into a
   // dockspace that exploration never draws, which would leave it invisible.
   if (!ImGui::Begin(exploring() ? "Project###ProjectExplore" : "Project", &showProjectPanel)) { ImGui::End(); return; }
@@ -2498,7 +2488,7 @@ void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
   else
     ImGui::TextDisabled("File: (not saved yet)");
 
-  if (ImGui::Button("Save", ImVec2(120, 0))) {
+  if (ImGui::Button("Save", ImVec2(Em(120), 0))) {
     if (projectFileBuf[0] == '\0') {
       std::string p = "projects/" + SanitizeProjectFileName(projectNameBuf) + ".json";
       std::strncpy(projectFileBuf, p.c_str(), sizeof(projectFileBuf) - 1);
@@ -2512,12 +2502,12 @@ void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
 
   std::string saveAsHint = SanitizeProjectFileName(projectNameBuf);
   ImGui::TextDisabled("projects/");
-  ImGui::SameLine(0, 2);
-  ImGui::SetNextItemWidth(-100.f);
+  ImGui::SameLine(0, Em(2));
+  ImGui::SetNextItemWidth(Em(-100.f));
   ImGui::InputTextWithHint("##saveas", saveAsHint.c_str(),
                            projectSaveAsBuf, sizeof(projectSaveAsBuf));
   ImGui::SameLine();
-  if (ImGui::Button("Save As", ImVec2(90, 0))) {
+  if (ImGui::Button("Save As", ImVec2(Em(90), 0))) {
     std::string target = ResolveProjectPath(
       projectSaveAsBuf[0] != '\0' ? projectSaveAsBuf : saveAsHint.c_str());
     std::strncpy(projectFileBuf, target.c_str(), sizeof(projectFileBuf) - 1);
@@ -2530,11 +2520,12 @@ void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
+  ImGui::AlignTextToFramePadding();
   ImGui::Text("Load Project");
   ImGui::SameLine();
-  if (ImGui::SmallButton("Rescan##projpanel")) RescanProjects();
+  if (ImGui::Button("Rescan##projpanel")) RescanProjects();
   ImGui::TextDisabled("Loading replaces the current scene — save first!");
-  ImGui::BeginChild("##panelProjects", ImVec2(0, 200), true);
+  ImGui::BeginChild("##panelProjects", ImVec2(0, Em(200)), true);
   if (projectList.empty()) {
     ImGui::TextDisabled("No projects found in the projects/ directory.");
   } else {
@@ -2545,17 +2536,17 @@ void Renderer::DrawProjectPanel(const SceneCallbacks& cb) {
   ImGui::EndChild();
 
   ImGui::TextDisabled("projects/");
-  ImGui::SameLine(0, 2);
+  ImGui::SameLine(0, Em(2));
   FilePickerInput("##panelloadpath", loadPathBuf, sizeof(loadPathBuf),
                   "my_project", ListProjectEntries(),
                   ImGui::GetContentRegionAvail().x - 200.0f);
   ImGui::SameLine();
-  if (ImGui::Button("Browse...##panel", ImVec2(95, 0))) {
+  if (ImGui::Button("Browse...##panel", ImVec2(Em(95), 0))) {
     if (ZenityPickFile(loadPathBuf, sizeof(loadPathBuf), "Load Project"))
       StripProjectsPrefix(loadPathBuf);
   }
   ImGui::SameLine();
-  if (ImGui::Button("Load##panel", ImVec2(90, 0)) && loadPathBuf[0] != '\0') {
+  if (ImGui::Button("Load##panel", ImVec2(Em(90), 0)) && loadPathBuf[0] != '\0') {
     if (cb.loadProject) cb.loadProject(ResolveProjectPath(loadPathBuf));
   }
 
@@ -2837,7 +2828,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
                         "behave incorrectly. Re-create the scene and save it\n"
                         "again to upgrade it.");
     ImGui::Spacing();
-    if (ImGui::Button("OK", ImVec2(120, 0)))
+    if (ImGui::Button("OK", ImVec2(Em(120), 0)))
       ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
   }
@@ -2890,7 +2881,8 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGui::DockBuilderDockWindow("Cinematic View",     dock_left_bottom);
     // Inspector + Rendering Settings share one node as tabs
     ImGui::DockBuilderDockWindow("Inspector",          dock_right);
-    ImGui::DockBuilderDockWindow("Rendering Settings", dock_right);
+    ImGui::DockBuilderDockWindow("Rendering",          dock_right);
+    ImGui::DockBuilderDockWindow("Camera",             dock_right);
     // Bottom strip: timeline on the left, CLI on the right
     ImGuiID dock_cli;
     ImGui::DockBuilderSplitNode(dock_center_bottom, ImGuiDir_Right, 0.30f,
@@ -2911,11 +2903,12 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
 
   // ── Draw all panels ──
   DrawControlsPanel(cb);
-  DrawTimeline(physicsObjects, clouds);
+  DrawTimeline(physicsObjects, clouds, cb);
   DrawSpawnPanel(cb);
   DrawSceneHierarchy(physicsObjects, clouds, cb);
   DrawInspector(physicsObjects, clouds, cb);
   DrawRenderingSettings(cb);
+  DrawCameraPanel();
   DrawProjectPanel(cb);
   DrawUniversePanel();
   DrawSettingsPanel();
@@ -2977,7 +2970,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
     ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(340, 140), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(Em(340), Em(140)), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
                            | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar
@@ -3004,7 +2997,7 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
     ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(360, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(Em(360), 0), ImGuiCond_Always);
 
     ImGuiWindowFlags mflags = ImGuiWindowFlags_NoMove   | ImGuiWindowFlags_NoResize
                             | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking
@@ -3015,17 +3008,17 @@ void Renderer::DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<st
     const char* mLabel = (bench.sumMethod >= 0 && bench.sumMethod <= 2)
                           ? methodLabel[bench.sumMethod] : "?";
 
-    ImGui::TextDisabled("File");        ImGui::SameLine(110); ImGui::TextWrapped("%s", bench.sumFile);
-    ImGui::TextDisabled("Resolution");  ImGui::SameLine(110); ImGui::Text("%dx%d", bench.sumWidth, bench.sumHeight);
-    ImGui::TextDisabled("Method");      ImGui::SameLine(110); ImGui::Text("%s", mLabel);
-    ImGui::TextDisabled("Objects (RT)");ImGui::SameLine(110); ImGui::Text("%d", bench.sumObjects);
+    ImGui::TextDisabled("File");        ImGui::SameLine(Em(110)); ImGui::TextWrapped("%s", bench.sumFile);
+    ImGui::TextDisabled("Resolution");  ImGui::SameLine(Em(110)); ImGui::Text("%dx%d", bench.sumWidth, bench.sumHeight);
+    ImGui::TextDisabled("Method");      ImGui::SameLine(Em(110)); ImGui::Text("%s", mLabel);
+    ImGui::TextDisabled("Objects (RT)");ImGui::SameLine(Em(110)); ImGui::Text("%d", bench.sumObjects);
     ImGui::Separator();
-    ImGui::TextDisabled("Frames");      ImGui::SameLine(110);
+    ImGui::TextDisabled("Frames");      ImGui::SameLine(Em(110));
     ImGui::Text("%d  (%.1fs @ %d fps)", bench.sumFrames,
                 bench.sumFrames / (double)(recordFps > 0 ? recordFps : 30), recordFps);
-    ImGui::TextDisabled("Wall time");   ImGui::SameLine(110); ImGui::Text("%.1fs", bench.sumWallSecs);
-    ImGui::TextDisabled("Avg dispatch");ImGui::SameLine(110); ImGui::Text("%.1f ms/frame", bench.sumAvgDispatchMs);
-    ImGui::TextDisabled("Avg fps");     ImGui::SameLine(110); ImGui::Text("%.2f", bench.sumAvgFps);
+    ImGui::TextDisabled("Wall time");   ImGui::SameLine(Em(110)); ImGui::Text("%.1fs", bench.sumWallSecs);
+    ImGui::TextDisabled("Avg dispatch");ImGui::SameLine(Em(110)); ImGui::Text("%.1f ms/frame", bench.sumAvgDispatchMs);
+    ImGui::TextDisabled("Avg fps");     ImGui::SameLine(Em(110)); ImGui::Text("%.2f", bench.sumAvgFps);
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -3444,7 +3437,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
           else                             ImGui::Text("Cloud %d", hci);
           ImGui::Separator();
 
-          if (ImGui::Button("Locate", ImVec2(96, 0))) {
+          if (ImGui::Button("Locate", ImVec2(Em(96), 0))) {
             selectedIdx = hoverIdx;
             highlightMode = 0;
             focusInspectorNext = true;
@@ -3460,7 +3453,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
             }
           }
           // Reverse of Locate: move the OBJECT to the camera instead.
-          if (ImGui::Button("Bring to me", ImVec2(96, 0))) {
+          if (ImGui::Button("Bring to me", ImVec2(Em(96), 0))) {
             BringToCamera(hObj, hCloud);
             selectedIdx = hoverIdx;
             highlightMode = 0;
@@ -3475,7 +3468,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
           ImGui::BeginDisabled(catalogueSf);
           ImGui::Checkbox("Physics", phys);
           ImGui::EndDisabled();
-          if (ImGui::Button("Inspector", ImVec2(96, 0))) {
+          if (ImGui::Button("Inspector", ImVec2(Em(96), 0))) {
             selectedIdx = hoverIdx;
             highlightMode = 0;
             focusInspectorNext = true;
@@ -3483,7 +3476,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
           ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
           ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
           ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
-          if (ImGui::Button("Delete", ImVec2(96, 0))) {
+          if (ImGui::Button("Delete", ImVec2(Em(96), 0))) {
             quickDeleteIdx     = hoverIdx;
             quickDeletePending = true;
           }
@@ -3739,13 +3732,13 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
                          | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings
                          | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
   ImGui::Begin("##ExplorationBar", nullptr, flags);
-  if (ImGui::Button("Project", ImVec2(70, 0))) showProjectPanel = !showProjectPanel;
+  if (ImGui::Button("Project", ImVec2(Em(70), 0))) showProjectPanel = !showProjectPanel;
   ImGui::SameLine();
-  if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
+  if (ImGui::Button("Settings", ImVec2(Em(75), 0))) showSettingsPanel = !showSettingsPanel;
   ImGui::SameLine();
-  if (ImGui::Button("Creative", ImVec2(95, 0))) LeaveExploration();
+  if (ImGui::Button("Creative", ImVec2(Em(95), 0))) LeaveExploration();
   ImGui::SameLine();
-  if (ImGui::Button(atlasVisible ? "Hide atlas  M" : "Show atlas  M", ImVec2(115, 0))) {
+  if (ImGui::Button(atlasVisible ? "Hide atlas  M" : "Show atlas  M", ImVec2(Em(115), 0))) {
     atlasVisible = !atlasVisible;
     if (atlasVisible) atlasShownAt = ImGui::GetTime();
   }
@@ -3784,18 +3777,41 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
   if (exploreFont) ImGui::PopFont();
 }
 
-void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
+void Renderer::DrawControlsPanel(const SceneCallbacks& /*cb*/) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Controls", nullptr, flags);
 
+  // Docked as the top strip, the strip is exactly as tall as its content:
+  // sized from the row, not from a share of the window, so a theme or font
+  // with a different row height can never leave it scrolling or padded.
+  {
+    ImGuiWindow* w = ImGui::GetCurrentWindow();
+    ImGuiDockNode* node = w->DockNode;
+    ImGuiDockNode* parent = node ? node->ParentNode : nullptr;
+    if (parent && parent->SplitAxis == ImGuiAxis_Y && parent->ChildNodes[0] == node && w->ContentSize.y > 0.0f) {
+      const ImGuiStyle& st = ImGui::GetStyle();
+      const float tabH = (node->IsHiddenTabBar() || node->IsNoTabBar()) ? 0.0f : ImGui::GetFrameHeight();
+      const float want = std::ceil(tabH + w->ContentSize.y + st.WindowPadding.y * 2.0f + st.WindowBorderSize);
+      if (std::fabs(node->Size.y - want) > 0.5f) {
+        node->Size.y = want;
+        node->WantLockSizeOnce = true;
+      }
+    }
+  }
+
+  // Every button fits its text with the same padding; a toggle reserves the
+  // width of its wider label so the row never shifts when it flips.
+  auto toggleW = [](const char* a, const char* b) {
+    return std::max(ImGui::CalcTextSize(a, nullptr, true).x, ImGui::CalcTextSize(b, nullptr, true).x)
+           + ImGui::GetStyle().FramePadding.x * 2.0f;
+  };
+
   // ── Project ──
-  if (ImGui::Button("Project", ImVec2(70, 0))) showProjectPanel = !showProjectPanel;
+  if (ImGui::Button("Project")) showProjectPanel = !showProjectPanel;
   ImGui::SameLine();
-  if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
+  if (ImGui::Button("Settings")) showSettingsPanel = !showSettingsPanel;
   ImGui::SameLine();
-  // First in the row on purpose: the bar does not wrap, and anything past the
-  // step slider falls off the right edge on a narrower window.
-  if (ImGui::Button("Exploration", ImVec2(95, 0))) EnterExploration();
+  if (ImGui::Button("Exploration")) EnterExploration();
   ImGui::SameLine();
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
@@ -3805,32 +3821,32 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.80f, 0.40f, 0.00f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.95f, 0.55f, 0.10f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.65f, 0.30f, 0.00f, 1.00f)));
-    if (ImGui::Button("Play [P]", ImVec2(80, 0))) paused = false;
+    if (ImGui::Button("Play [P]", ImVec2(toggleW("Play [P]", "Pause [P]"), 0))) paused = false;
     ImGui::PopStyleColor(3);
   } else {
-    if (ImGui::Button("Pause [P]", ImVec2(80, 0))) paused = true;
+    if (ImGui::Button("Pause [P]", ImVec2(toggleW("Play [P]", "Pause [P]"), 0))) paused = true;
   }
   ImGui::SameLine();
 
   if (playingForward) {
-    if (ImGui::Button("Rev [L]", ImVec2(65, 0))) playingForward = false;
+    if (ImGui::Button("Rev [L]", ImVec2(toggleW("Rev [L]", "Fwd [L]"), 0))) playingForward = false;
   } else {
-    if (ImGui::Button("Fwd [L]", ImVec2(65, 0))) playingForward = true;
+    if (ImGui::Button("Fwd [L]", ImVec2(toggleW("Rev [L]", "Fwd [L]"), 0))) playingForward = true;
   }
   ImGui::SameLine();
 
-  if (ImGui::Button(cinematicFullscreen ? "Flip [F]##rt" : "Flip [F]##rs", ImVec2(65, 0)))
+  if (ImGui::Button(cinematicFullscreen ? "Flip [F]##rt" : "Flip [F]##rs"))
     cinematicFullscreen = !cinematicFullscreen;
   ImGui::SameLine();
 
   // Cinematic View master on/off (drives both Realistic/RT and Performant modes)
   if (cinematicViewEnabled) {
-    if (ImGui::Button("Cinematic On [T]", ImVec2(115, 0))) cinematicViewEnabled = false;
+    if (ImGui::Button("Cinematic On [T]", ImVec2(toggleW("Cinematic On [T]", "Cinematic Off [T]"), 0))) cinematicViewEnabled = false;
   } else {
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.35f, 0.35f, 0.35f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.50f, 0.50f, 0.50f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.60f, 0.60f, 0.60f, 1.00f)));
-    if (ImGui::Button("Cinematic Off [T]", ImVec2(115, 0))) cinematicViewEnabled = true;
+    if (ImGui::Button("Cinematic Off [T]", ImVec2(toggleW("Cinematic On [T]", "Cinematic Off [T]"), 0))) cinematicViewEnabled = true;
     ImGui::PopStyleColor(3);
   }
   ImGui::SameLine();
@@ -3840,55 +3856,15 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.85f, 0.10f, 0.10f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(1.00f, 0.20f, 0.20f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.70f, 0.05f, 0.05f, 1.00f)));
-    if (ImGui::Button("Stop [R]", ImVec2(75, 0))) recordToggleRequested = true;
+    if (ImGui::Button("Stop [R]", ImVec2(toggleW("Rec [R]", "Stop [R]"), 0))) recordToggleRequested = true;
     ImGui::PopStyleColor(3);
   } else {
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.45f, 0.10f, 0.10f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.65f, 0.20f, 0.20f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.80f, 0.15f, 0.15f, 1.00f)));
-    if (ImGui::Button("Rec [R]", ImVec2(75, 0))) recordToggleRequested = true;
+    if (ImGui::Button("Rec [R]", ImVec2(toggleW("Rec [R]", "Stop [R]"), 0))) recordToggleRequested = true;
     ImGui::PopStyleColor(3);
   }
-  ImGui::SameLine();
-
-  // Separator
-  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
-
-  // Camera
-  ImGui::Text("Cam");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(55);
-  double camAbs[3] = { cameraTranslate[0] - gCamAnchor[0],
-                       cameraTranslate[1] - gCamAnchor[1],
-                       cameraTranslate[2] - gCamAnchor[2] };
-  if (ImGui::DragScalar("##cX", ImGuiDataType_Double, &camAbs[0], 0.02f, nullptr, nullptr, "%.4g"))
-    cameraTranslate[0] = camAbs[0] + gCamAnchor[0];
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(55);
-  if (ImGui::DragScalar("##cY", ImGuiDataType_Double, &camAbs[1], 0.02f, nullptr, nullptr, "%.4g"))
-    cameraTranslate[1] = camAbs[1] + gCamAnchor[1];
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(55);
-  if (ImGui::DragScalar("##cZ", ImGuiDataType_Double, &camAbs[2], 0.02f, nullptr, nullptr, "%.4g"))
-    cameraTranslate[2] = camAbs[2] + gCamAnchor[2];
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(50);
-  float prevYaw = rotation, prevPit = pitch, prevRol = roll;
-  ImGui::DragFloat("##yaw", &rotation, 0.01f, -6.28f, 6.28f, "%.1f");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(50);
-  ImGui::DragFloat("##pit", &pitch, 0.01f, -1.55f, 1.55f, "%.1f");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(50);
-  ImGui::DragFloat("##roll", &roll, 0.01f, -6.28f, 6.28f, "%.1f");
-  if (rotation != prevYaw || pitch != prevPit || roll != prevRol)
-    syncMatrixFromEuler();
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(45);
-  ImGui::DragFloat("##fov", &zoom, 0.5f, 0.002f, 120.f, "%.3f");
-  ImGui::SameLine();
-  if (ImGui::Button("Reset##cam", ImVec2(45, 0))) resetCamera();
   ImGui::SameLine();
 
   if (recording) {
@@ -3898,27 +3874,67 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
     int es = (int)elapsedSecs % 60;
     ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
         "REC %d | %d:%02d | %.0fms/f", recordedFrames, em, es, bench.recLastFrameMs);
+    ImGui::SameLine();
   }
 
+  // Separator
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+
+  // Editor viewport toggle
+  if (editorViewport) {
+    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.15f, 0.45f, 0.15f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.25f, 0.60f, 0.25f, 1.00f)));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.10f, 0.35f, 0.10f, 1.00f)));
+    if (ImGui::Button("Viewport [V]")) editorViewport = false;
+    ImGui::PopStyleColor(3);
+  } else {
+    if (ImGui::Button("Viewport [V]")) editorViewport = true;
+  }
+  ImGui::SameLine();
+
+  // Reset layout — restores the default dock arrangement (viewport mode on)
+  if (ImGui::Button("Reset Layout")) {
+    editorViewport        = true;
+    dockLayoutInitialized = false;
+  }
   ImGui::SameLine();
 
   // Separator
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 
-  // Time step (data resolution) + playback (frames per tick)
-  ImGui::Text("Step");
-  ImGui::SameLine();
-  // As wide as the row allows: everything to the right of the slider (Auto,
-  // steps/orbit, Save, Play, the view buttons) needs ~520 px. A fixed width
-  // pushed those off the window on a narrower layout.
+  // Quit
+  ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
+  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
+  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
+  if (ImGui::Button("Quit")) showQuitDialog = true;
+  ImGui::PopStyleColor(3);
+
+  ImGui::End();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Simulation row, at the top of the Timeline: a dim row label, then fields
+// that say what they are inside them ("Step 4.4 h", "Playback 1.00x").
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::DrawSimulationRow(const SceneCallbacks& cb) {
+  const float labelCol = Em(84);
+  auto rowLabel = [&](const char* t) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s", t);
+    ImGui::SameLine(labelCol);
+  };
+  auto gap = [] { ImGui::SameLine(0.0f, Em(18)); };
+
+  // ── Simulation: time step (data resolution), playback (frames per tick), merge ──
+  rowLabel("Simulation");
   {
+    // As wide as the row allows: what follows it needs ~430 px.
     const float avail = ImGui::GetContentRegionAvail().x;
-    ImGui::SetNextItemWidth(std::clamp(avail - 520.0f, 160.0f, 520.0f));
-  }
-  {
+    ImGui::SetNextItemWidth(std::clamp(avail - Em(430.0f), Em(160.0f), Em(520.0f)));
     // Log slider over eleven orders of magnitude, labelled in real time units.
-    const std::string lbl = units::FormatTimeYears(units::kDtYears * (double)pendingSimSpeed);
+    const std::string lbl = "Step  " + units::FormatTimeYears(units::kDtYears * (double)pendingSimSpeed);
     ImGui::SliderFloat("##simstep", &pendingSimSpeed, kSimSpeedMin, kSimSpeedMax,
                        lbl.c_str(), ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat);
     const ImVec2 sMin = ImGui::GetItemRectMin(), sMax = ImGui::GetItemRectMax();
@@ -3930,7 +3946,7 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
   {
     const bool canAuto = dynAutoT > 0.0;
     if (!canAuto) ImGui::BeginDisabled();
-    if (ImGui::SmallButton("Auto##step")) {
+    if (ImGui::Button("Auto##step")) {
       const double dt = dynAutoT / std::max(autoStepsPerOrbit, 10);
       pendingSimSpeed = (float)std::clamp(dt / units::kDtYears, (double)kSimSpeedMin, (double)kSimSpeedMax);
     }
@@ -3946,8 +3962,8 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
       ImGui::EndTooltip();
     }
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(52);
-    ImGui::DragInt("##stepsorbit", &autoStepsPerOrbit, 5.0f, 50, 100000, "%d/orb");
+    ImGui::SetNextItemWidth(Em(120));
+    ImGui::DragInt("##stepsorbit", &autoStepsPerOrbit, 5.0f, 50, 100000, "%d steps / orbit");
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Steps per orbit the Auto step aims for.");
   }
   if (std::abs(pendingSimSpeed - simSpeed) > 1e-4f * std::max(simSpeed, 1.0f)) {
@@ -3964,24 +3980,22 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
                         "restarts at frame 0 from the current state.");
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_Button, SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
-    if (ImGui::Button("Delete & Save", ImVec2(120, 0))) {
+    if (ImGui::Button("Delete & Save", ImVec2(Em(120), 0))) {
       simSpeed = pendingSimSpeed;
       if (cb.clearSimulation) cb.clearSimulation();
       ImGui::CloseCurrentPopup();
     }
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+    if (ImGui::Button("Cancel", ImVec2(Em(120), 0))) {
       pendingSimSpeed = simSpeed;
       ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
   }
-  ImGui::SameLine();
-  ImGui::Text("Play");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(60);
-  if (ImGui::SliderFloat("##playspeed", &playbackSpeed, minPlaybackSpeed(), 12.8f, "%.2fx",
+  gap();
+  ImGui::SetNextItemWidth(Em(120));
+  if (ImGui::SliderFloat("##playspeed", &playbackSpeed, minPlaybackSpeed(), 12.8f, "Playback  %.2fx",
                          ImGuiSliderFlags_Logarithmic))
     playbackSpeed = std::max(playbackSpeed, minPlaybackSpeed());
   if (ImGui::IsItemHovered()) {
@@ -3992,54 +4006,66 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
                       fpt, units::FormatTimeYears(rate).c_str());
   }
   ImGui::SameLine();
-
   // Galaxy merge boost: how hard galaxies pull on EACH OTHER (own halo unscaled).
-  ImGui::Text("Merge");
-  ImGui::SameLine();
-  ImGui::SetNextItemWidth(64);
-  ImGui::SliderFloat("##halomerge", &haloMergeStrength, 1.0f, 1000.0f, "%.0fx",
+  ImGui::SetNextItemWidth(Em(110));
+  ImGui::SliderFloat("##halomerge", &haloMergeStrength, 1.0f, 1000.0f, "Merge  %.0fx",
                      ImGuiSliderFlags_Logarithmic);
   if (ImGui::IsItemHovered())
     ImGui::SetTooltip("Boost how hard galaxies pull on EACH OTHER (1 = physical).\n"
                       "Higher = distant galaxies fall together and merge much faster.\n"
                       "A galaxy's own halo is never scaled, so its shape is unchanged.\n"
                       "Applies live; both galaxies must be simulating (non-LOD).");
-  ImGui::SameLine();
 
-  // Separator
-  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
+  ImGui::Spacing();
+}
 
-  // Editor viewport toggle
-  if (editorViewport) {
-    ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.15f, 0.45f, 0.15f, 1.00f)));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.25f, 0.60f, 0.25f, 1.00f)));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.10f, 0.35f, 0.10f, 1.00f)));
-    if (ImGui::Button("Viewport [V]", ImVec2(95, 0))) editorViewport = false;
-    ImGui::PopStyleColor(3);
-  } else {
-    if (ImGui::Button("Viewport [V]", ImVec2(95, 0))) editorViewport = true;
+// ─────────────────────────────────────────────────────────────────────────────
+// Camera — a tab beside Inspector and Rendering: where the free camera is, how
+// it is turned, and its field of view. Label on the left, value on the right.
+// ─────────────────────────────────────────────────────────────────────────────
+// A panel that is new to a saved layout would open floating; the first time it
+// appears it joins the Inspector's tab group instead.
+void Renderer::DockBesideInspector() {
+  ImGuiWindow* insp = ImGui::FindWindowByName("Inspector");
+  if (insp && insp->DockId != 0) ImGui::SetNextWindowDockID(insp->DockId, ImGuiCond_FirstUseEver);
+}
+
+void Renderer::DrawCameraPanel() {
+  DockBesideInspector();
+  ImGui::Begin("Camera", nullptr, ImGuiWindowFlags_NoCollapse);
+  const float labelCol = Em(70);
+  auto row = [&](const char* label) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s", label);
+    ImGui::SameLine(labelCol);
+    ImGui::SetNextItemWidth(-1);
+  };
+
+  ImGui::SeparatorText("Position");
+  double camAbs[3] = { cameraTranslate[0] - gCamAnchor[0],
+                       cameraTranslate[1] - gCamAnchor[1],
+                       cameraTranslate[2] - gCamAnchor[2] };
+  static const char* kAxis[3]   = { "X", "Y", "Z" };
+  static const char* kAxisId[3] = { "##cX", "##cY", "##cZ" };
+  for (int i = 0; i < 3; ++i) {
+    row(kAxis[i]);
+    if (ImGui::DragScalar(kAxisId[i], ImGuiDataType_Double, &camAbs[i], 0.02f, nullptr, nullptr, "%.4g"))
+      cameraTranslate[i] = camAbs[i] + gCamAnchor[i];
   }
-  ImGui::SameLine();
 
-  // Reset layout — restores the default dock arrangement (viewport mode on)
-  if (ImGui::Button("Reset Layout", ImVec2(95, 0))) {
-    editorViewport        = true;
-    dockLayoutInitialized = false;
-  }
-  ImGui::SameLine();
+  ImGui::SeparatorText("Rotation");
+  float prevYaw = rotation, prevPit = pitch, prevRol = roll;
+  row("Yaw");   ImGui::DragFloat("##yaw",  &rotation, 0.01f, -6.28f, 6.28f, "%.1f");
+  row("Pitch"); ImGui::DragFloat("##pit",  &pitch,    0.01f, -1.55f, 1.55f, "%.1f");
+  row("Roll");  ImGui::DragFloat("##roll", &roll,     0.01f, -6.28f, 6.28f, "%.1f");
+  if (rotation != prevYaw || pitch != prevPit || roll != prevRol)
+    syncMatrixFromEuler();
 
-  // Separator
-  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-  ImGui::SameLine();
+  ImGui::SeparatorText("Lens");
+  row("FOV");   ImGui::DragFloat("##fov", &zoom, 0.5f, 0.002f, 120.f, "%.3f");
 
-  // Quit
-  ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
-  ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
-  ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
-  if (ImGui::Button("Quit", ImVec2(45, 0))) showQuitDialog = true;
-  ImGui::PopStyleColor(3);
-
+  ImGui::Spacing();
+  if (ImGui::Button("Reset camera##cam", ImVec2(-1, 0))) resetCamera();
   ImGui::End();
 }
 
@@ -4049,7 +4075,7 @@ void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {
 void Renderer::DrawSettingsPanel() {
   if (!showSettingsPanel) return;
 
-  ImGui::SetNextWindowSize(ImVec2(420, 320), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(Em(420), Em(320)), ImGuiCond_FirstUseEver);
   // Own id in exploration, same reason as DrawProjectPanel.
   if (!ImGui::Begin(exploring() ? "Settings###SettingsExplore" : "Settings", &showSettingsPanel)) { ImGui::End(); return; }
 
@@ -4086,7 +4112,7 @@ void Renderer::DrawSettingsPanel() {
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
-  if (ImGui::Button("Save", ImVec2(120, 0)))
+  if (ImGui::Button("Save", ImVec2(Em(120), 0)))
     SaveAppSettings();
   ImGui::SameLine();
   ImGui::TextDisabled("writes settings.json");
@@ -4114,7 +4140,7 @@ void Renderer::DrawTextEditor() {
   // false) never leaves the flag stale and blocks camera movement.
   textEditorCaptured = false;
 
-  ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(Em(700), Em(500)), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Text Editor", nullptr, ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     return;
@@ -4326,7 +4352,7 @@ void Renderer::DrawTextEditor() {
     ImGui::TextUnformatted(vimEd.ModeName());
     std::string pending = vimEd.PendingText();
     if (!pending.empty()) {
-      ImGui::SameLine(0.0f, 24.0f);
+      ImGui::SameLine(0.0f, Em(24.0f));
       ImGui::TextDisabled("%s", pending.c_str());
     }
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 40.0f);
@@ -4373,7 +4399,8 @@ void Renderer::DrawCliPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
-  ImGui::Begin("Rendering Settings", nullptr, flags);
+  DockBesideInspector();
+  ImGui::Begin("Rendering", nullptr, flags);
 
   // 0..1 slider that maps to a real [lo,hi] range. dirty=true for compute-side
   // params (need a re-dispatch); false for post-process params (live every frame).
@@ -4391,7 +4418,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
   // ── Camera & Movement ──────────────────────────────────────────────────────
   if (ImGui::CollapsingHeader("Camera & Movement", ImGuiTreeNodeFlags_DefaultOpen)) {
     ImGui::Text("Camera Speed");
-    ImGui::SetNextItemWidth(-60);
+    ImGui::SetNextItemWidth(Em(-60));
     ImGui::SliderFloat("##camspeed", &cameraSpeedFactor, 0.05f, 10.0f, "%.2fx",
                        ImGuiSliderFlags_Logarithmic);
     ImGui::SameLine();
@@ -4406,7 +4433,7 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       sizesDirty = true;
     if (exaggeratedSizes) {
       ImGui::SameLine();
-      ImGui::SetNextItemWidth(60);
+      ImGui::SetNextItemWidth(Em(60));
       if (ImGui::DragFloat("##exagf", &sizeExagFactor, 5.0f, 10.0f, 5000.0f, "%.0fx"))
         sizesDirty = true;
     }
@@ -4937,13 +4964,13 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
     if (recordResPreset == numPresets - 1) {
       if (recording) ImGui::BeginDisabled();
-      ImGui::SetNextItemWidth(60);
+      ImGui::SetNextItemWidth(Em(60));
       if (ImGui::InputInt("##rw2", &recordWidth, 0, 0)) {
         if (recordWidth < 16) recordWidth = 16;
         if (recordWidth > 7680) recordWidth = 7680;
       }
       ImGui::SameLine(); ImGui::Text("x"); ImGui::SameLine();
-      ImGui::SetNextItemWidth(60);
+      ImGui::SetNextItemWidth(Em(60));
       if (ImGui::InputInt("##rh2", &recordHeight, 0, 0)) {
         if (recordHeight < 16) recordHeight = 16;
         if (recordHeight > 4320) recordHeight = 4320;
@@ -4970,37 +4997,37 @@ void Renderer::DrawBenchmarkPanel() {
                         ? methodLabel[raytracerMethod] : "?";
 
   // ── Live stats ──
-  ImGui::TextDisabled("Method");  ImGui::SameLine(90); ImGui::Text("%s", mLabel);
-  ImGui::TextDisabled("Objects"); ImGui::SameLine(90);
+  ImGui::TextDisabled("Method");  ImGui::SameLine(Em(90)); ImGui::Text("%s", mLabel);
+  ImGui::TextDisabled("Objects"); ImGui::SameLine(Em(90));
   ImGui::Text("%d RT", (int)rtLastObjectCount);
 
   if (cinematicViewEnabled && !cinematicRaster) {
     int lw = (rtLiveWidth  > 0) ? rtLiveWidth  : fbWidth;
     int lh = (rtLiveHeight > 0) ? rtLiveHeight : fbHeight;
-    ImGui::TextDisabled("Live res"); ImGui::SameLine(90);
+    ImGui::TextDisabled("Live res"); ImGui::SameLine(Em(90));
     ImGui::Text("%dx%d", lw, lh);
 
-    ImGui::TextDisabled("Dispatch"); ImGui::SameLine(90);
+    ImGui::TextDisabled("Dispatch"); ImGui::SameLine(Em(90));
     if (bench.dispatchMs > 0)
       ImGui::Text("%.1f ms", bench.dispatchMs);
     else
       ImGui::TextDisabled("--");
 
-    ImGui::TextDisabled("Frame");    ImGui::SameLine(90);
+    ImGui::TextDisabled("Frame");    ImGui::SameLine(Em(90));
     ImGui::Text("%.1f ms", bench.frameMs);
 
-    ImGui::TextDisabled("FPS");      ImGui::SameLine(90);
+    ImGui::TextDisabled("FPS");      ImGui::SameLine(Em(90));
     ImGui::Text("%.1f", bench.fps);
   } else if (cinematicViewEnabled && cinematicRaster) {
     int rw = 0, rh = 0;
     RasterRenderSize(sceneRenderW, sceneRenderH, rw, rh);
-    ImGui::TextDisabled("Live res"); ImGui::SameLine(90);
+    ImGui::TextDisabled("Live res"); ImGui::SameLine(Em(90));
     ImGui::Text("%dx%d", rw, rh);
 
-    ImGui::TextDisabled("Frame");    ImGui::SameLine(90);
+    ImGui::TextDisabled("Frame");    ImGui::SameLine(Em(90));
     ImGui::Text("%.1f ms", bench.frameMs);
 
-    ImGui::TextDisabled("FPS");      ImGui::SameLine(90);
+    ImGui::TextDisabled("FPS");      ImGui::SameLine(Em(90));
     ImGui::Text("%.1f", bench.fps);
   } else {
     ImGui::TextDisabled("(raytracer off)");
@@ -5018,30 +5045,30 @@ void Renderer::DrawBenchmarkPanel() {
                       ? bench.recDispatchTotal / recordedFrames : 0.0;
     double recFps  = (elapsedSecs > 0.0) ? recordedFrames / elapsedSecs : 0.0;
 
-    ImGui::TextDisabled("Rec res");  ImGui::SameLine(90);
+    ImGui::TextDisabled("Rec res");  ImGui::SameLine(Em(90));
     ImGui::Text("%dx%d", recordWidth, recordHeight);
 
-    ImGui::TextDisabled("Rec disp"); ImGui::SameLine(90);
+    ImGui::TextDisabled("Rec disp"); ImGui::SameLine(Em(90));
     if (bench.recLastFrameMs > 0)
       ImGui::Text("%.1f ms", bench.recLastFrameMs);
     else
       ImGui::TextDisabled("--");
 
-    ImGui::TextDisabled("Frames");   ImGui::SameLine(90);
+    ImGui::TextDisabled("Frames");   ImGui::SameLine(Em(90));
     ImGui::Text("%d", recordedFrames);
 
-    ImGui::TextDisabled("Elapsed");  ImGui::SameLine(90);
+    ImGui::TextDisabled("Elapsed");  ImGui::SameLine(Em(90));
     int em = (int)(elapsedSecs / 60);
     int es = (int)elapsedSecs % 60;
     ImGui::Text("%d:%02d", em, es);
 
-    ImGui::TextDisabled("Avg disp"); ImGui::SameLine(90);
+    ImGui::TextDisabled("Avg disp"); ImGui::SameLine(Em(90));
     if (avgDisp > 0)
       ImGui::Text("%.1f ms", avgDisp);
     else
       ImGui::TextDisabled("--");
 
-    ImGui::TextDisabled("Avg fps");  ImGui::SameLine(90);
+    ImGui::TextDisabled("Avg fps");  ImGui::SameLine(Em(90));
     ImGui::Text("%.2f", recFps);
   }
 }
@@ -5049,7 +5076,8 @@ void Renderer::DrawBenchmarkPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawTimeline  (docked bottom-left — timeline slider + stats)
 // ─────────────────────────────────────────────────────────────────────────────
-void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds) {
+void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds,
+                            const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
   ImGui::Begin("Timeline", nullptr, flags);
 
@@ -5059,6 +5087,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     physicsObjects.size(),
     paused ? "PAUSED" : (playingForward ? "FWD" : "REV"),
     MainSlotLabel());
+  DrawSimulationRow(cb);
 
   // Compute current / max frame. curFrame tracks the simulated bodies (all
   // advance in lockstep); anySimulated decides whether the playhead follows
@@ -5100,16 +5129,9 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   if (recStartFrame >= 0) bumpKf((unsigned int)recStartFrame);
   if (recStopFrame  >= 0) bumpKf((unsigned int)recStopFrame);
 
-  // Mouse-wheel over the timeline stretches (zoom in) / squishes (zoom out).
-  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
-      ImGui::GetIO().MouseWheel != 0.0f) {
-    float w = ImGui::GetIO().MouseWheel;
-    double factor = (w > 0.0f) ? 0.85 : 1.18;
-    long nf = std::lround((double)timelineFrames * factor);
-    if (nf < 2) nf = 2;
-    if (nf > 2000000) nf = 2000000;
-    timelineFrames = (unsigned int)nf;
-  }
+  // How many frames the ruler shows is set by the zoom control at the bottom
+  // (the mouse wheel stays free to scroll the lanes). Never below the
+  // recorded footage or a marker.
   if (timelineFrames < minDomain) timelineFrames = minDomain;
   unsigned int domain = timelineFrames;
   float denom = (float)(domain > 1 ? domain - 1 : 1);
@@ -5189,7 +5211,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     ImVec2 sMax = ImGui::GetItemRectMax();
     float stripY = sMax.y + 1.0f;
     dl->AddRectFilled(ImVec2(sMin.x, stripY), ImVec2(sMax.x, stripY + 3.0f),
-                      IM_COL32(48, 52, 62, 200));
+                      themeModern ? ImGui::GetColorU32(ImGuiCol_FrameBgActive) : IM_COL32(48, 52, 62, 200));
     if (maxBuf > 0) {
       float tEnd = (float)(maxBuf - 1) / denom;
       dl->AddRectFilled(ImVec2(sMin.x, stripY),
@@ -5212,7 +5234,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   }
   if (ImGui::BeginPopup("AddKeypoint")) {
     ImGui::Text("Add keypoint at frame %d", frameInt);
-    ImGui::SetNextItemWidth(150);
+    ImGui::SetNextItemWidth(Em(150));
     ImGui::InputText("Label##kp", keypointLabelBuf, sizeof(keypointLabelBuf));
     if (ImGui::Button("Add")) {
       std::string lbl = keypointLabelBuf[0] ? keypointLabelBuf : ("Key " + std::to_string(frameInt));
@@ -5227,13 +5249,14 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   // ── Camera keyframe lane ──
   ImGui::Spacing();
   ImGui::Separator();
+  ImGui::AlignTextToFramePadding();
   ImGui::Text("Camera");
   ImGui::SameLine();
-  if (ImGui::SmallButton("Capture [C]")) {
+  if (ImGui::Button("Capture [C]")) {
     captureRequested = true;
   }
   ImGui::SameLine();
-  if (ImGui::SmallButton("Clear [Shift+C]")) {
+  if (ImGui::Button("Clear [Shift+C]")) {
     clearCaptureRequested = true;
   }
 
@@ -5250,12 +5273,15 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     ImGui::TextColored(selected ? ImVec4(1.0f, 0.86f, 0.5f, 1.0f)
                                 : ImVec4(0.62f, 0.64f, 0.70f, 1.0f), "%s", name);
     ImVec2 laneP = ImGui::GetCursorScreenPos();
-    const float laneH = 14.0f;
+    const float laneH = ImGui::GetFrameHeight();
     ImGui::Dummy(ImVec2(sliderW, laneH));
     dl->AddRectFilled(laneP, ImVec2(laneP.x + sliderW, laneP.y + laneH),
-                      IM_COL32(30, 30, 40, 170));
+                      themeModern ? ImGui::GetColorU32(ImGuiCol_FrameBg) : IM_COL32(30, 30, 40, 170),
+                      ImGui::GetStyle().FrameRounding);
     dl->AddRect(laneP, ImVec2(laneP.x + sliderW, laneP.y + laneH),
-                selected ? IM_COL32(150, 130, 70, 200) : IM_COL32(60, 60, 72, 200));
+                selected ? IM_COL32(150, 130, 70, 200)
+                         : themeModern ? ImGui::GetColorU32(ImGuiCol_Border) : IM_COL32(60, 60, 72, 200),
+                ImGui::GetStyle().FrameRounding);
     float yMid = laneP.y + laneH * 0.5f;
     int delK = -1;
 
@@ -5506,18 +5532,19 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
   // ── Recording keyframe lane ──
   ImGui::Spacing();
   ImGui::Separator();
+  ImGui::AlignTextToFramePadding();
   ImGui::Text("Recording");
   ImGui::SameLine();
-  if (ImGui::SmallButton("Set Start [1]")) {
+  if (ImGui::Button("Set Start [1]")) {
     recStartRequested = true;
   }
   ImGui::SameLine();
-  if (ImGui::SmallButton("Set Stop [2]")) {
+  if (ImGui::Button("Set Stop [2]")) {
     recStopRequested = true;
   }
   if (recStartFrame >= 0 || recStopFrame >= 0) {
     ImGui::SameLine();
-    if (ImGui::SmallButton("Clear Rec")) {
+    if (ImGui::Button("Clear Rec")) {
       recStartFrame = -1;
       recStopFrame  = -1;
     }
@@ -5525,12 +5552,13 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
 
   if (recStartFrame >= 0 || recStopFrame >= 0) {
     ImVec2 recPos = ImGui::GetCursorScreenPos();
-    float recBarH = 14.0f;
+    float recBarH = ImGui::GetFrameHeight();
     ImGui::Dummy(ImVec2(sliderW, recBarH));
 
     // Background bar
     dl->AddRectFilled(recPos, ImVec2(recPos.x + sliderW, recPos.y + recBarH),
-                      IM_COL32(30, 30, 40, 180));
+                      themeModern ? ImGui::GetColorU32(ImGuiCol_FrameBg) : IM_COL32(30, 30, 40, 180),
+                      ImGui::GetStyle().FrameRounding);
 
     // Shaded region between start and stop
     if (recStartFrame >= 0 && recStopFrame >= 0 && recStartFrame < recStopFrame) {
@@ -5591,6 +5619,36 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
     }
   }
 
+  // ── Zoom, bottom-right as in a video editor:  -  [====o====]  + ──
+  // Right / + zooms in (fewer frames on the ruler); log scale, so each step is
+  // the same proportion. The buttons repeat while held.
+  {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const double lo = (double)std::max(2u, minDomain);
+    const double hi = std::max(lo * 2.0, 2000000.0);
+    const float h = ImGui::GetFrameHeight();
+    const float barW = Em(120);
+    const float total = h + st.ItemInnerSpacing.x + barW + st.ItemInnerSpacing.x + h;
+    const float bottomY = ImGui::GetWindowHeight() - h - st.WindowPadding.y;
+    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowContentRegionMax().x - total,
+                               std::max(ImGui::GetCursorPosY(), bottomY)));
+    auto setFrames = [&](double f) {
+      timelineFrames = (unsigned int)std::lround(std::clamp(f, lo, hi));
+    };
+    ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+    if (ImGui::Button("-##tlzoomout", ImVec2(h, h))) setFrames(timelineFrames * 1.25);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom out");
+    ImGui::SameLine(0.0f, st.ItemInnerSpacing.x);
+    float t = (float)(std::log(hi / std::max((double)timelineFrames, lo)) / std::log(hi / lo));
+    ImGui::SetNextItemWidth(barW);
+    if (ImGui::SliderFloat("##tlzoom", &t, 0.0f, 1.0f, ""))
+      setFrames(hi * std::pow(lo / hi, (double)t));
+    ImGui::SameLine(0.0f, st.ItemInnerSpacing.x);
+    if (ImGui::Button("+##tlzoomin", ImVec2(h, h))) setFrames(timelineFrames * 0.8);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom in");
+    ImGui::PopItemFlag();
+  }
+
   ImGui::End();
 }
 
@@ -5603,7 +5661,7 @@ void Renderer::DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vec
 // in a docked side panel.
 void Renderer::DrawUniversePanel() {
   if (!showUniversePanel) return;
-  ImGui::SetNextWindowSize(ImVec2(460, 760), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(Em(460), Em(760)), ImGuiCond_FirstUseEver);
   if (!ImGui::Begin("Universe Generator", &showUniversePanel)) { ImGui::End(); return; }
 
     auto todo = [&]() {
@@ -5631,7 +5689,7 @@ void Renderer::DrawUniversePanel() {
     // linear in the count regardless of how few stars each one is built at.
     if (universeGalaxyCount > 2000)
       ImGui::TextDisabled("Every galaxy draws separately — past ~2000 the frame rate drops.");
-    if (ImGui::Button("Create Universe", ImVec2(-1, 30))) {
+    if (ImGui::Button("Create Universe", ImVec2(-1, 0))) {
       if (universeCreate) universeCreate(universeForm);
     }
     ImGui::TextDisabled("Generated objects never simulate physics by default.");
@@ -5671,11 +5729,11 @@ void Renderer::DrawUniversePanel() {
 
       ImGui::Spacing();
       ImGui::Text("Data sources");
-      ImGui::Checkbox("Stars##us",      &U.srcStars);      ImGui::SameLine(140);
+      ImGui::Checkbox("Stars##us",      &U.srcStars);      ImGui::SameLine(Em(140));
       ImGui::Checkbox("Galaxies##us",   &U.srcGalaxies);
-      ImGui::Checkbox("Exoplanets##us", &U.srcExoplanets); ImGui::SameLine(140);
+      ImGui::Checkbox("Exoplanets##us", &U.srcExoplanets); ImGui::SameLine(Em(140));
       ImGui::Checkbox("Nebulae##us",    &U.srcNebulae);
-      ImGui::Checkbox("Black holes##us",&U.srcBlackHoles); ImGui::SameLine(140);
+      ImGui::Checkbox("Black holes##us",&U.srcBlackHoles); ImGui::SameLine(Em(140));
       ImGui::Checkbox("Clusters##us",   &U.srcClusters);
       ImGui::TextDisabled("Real does not mean complete — catalogues are"); todo();
       ImGui::TextDisabled("magnitude-limited and full of holes.");
@@ -5703,7 +5761,7 @@ void Renderer::DrawUniversePanel() {
     ImGui::Spacing();
     if (ImGui::CollapsingHeader("Configure Generator", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::Text("Seed");
-      ImGui::SetNextItemWidth(-90);
+      ImGui::SetNextItemWidth(Em(-90));
       int seedi = (int)U.seed;
       if (ImGui::InputInt("##uniseed", &seedi, 0, 0)) U.seed = (unsigned)seedi;
       ImGui::SameLine();
@@ -5841,7 +5899,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::TextWrapped("A universe is a container that generates its own contents "
                          "from a seed, optionally anchored to real astronomical data.");
       ImGui::Spacing();
-      if (ImGui::Button("Universe Generator", ImVec2(-1, 32)))
+      if (ImGui::Button("Universe Generator", ImVec2(-1, 0)))
         showUniversePanel = true;
       ImGui::TextDisabled("Opens the full generator in its own window.");
       ImGui::EndTabItem();
@@ -5904,12 +5962,12 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         ImGui::InputInt("##snebs", &spawnForm.nebulaSeed);
       }
       if (spawnForm.shaderType == 1) {
-        ImGui::SetNextItemWidth(-30);
+        ImGui::SetNextItemWidth(Em(-30));
         ImGui::SliderFloat("##stemp", &spawnForm.temperature, 1000.f, 50000.f, "%.0f K");
         float r, g, b;
         BlackbodyColor(spawnForm.temperature, r, g, b);
         ImGui::SameLine();
-        ImGui::ColorButton("##sbb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+        ImGui::ColorButton("##sbb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
       }
 
       // Free Model: size + OBJ mesh picker
@@ -5923,7 +5981,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         static std::vector<std::string> modelFiles;
         static bool modelsScanned = false;
         if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
-        if (ImGui::SmallButton("Rescan##sfo")) modelFiles = ScanModelFiles();
+        if (ImGui::Button("Rescan##sfo")) modelFiles = ScanModelFiles();
         ImGui::SameLine();
         ImGui::TextDisabled("%zu in models/", modelFiles.size());
         std::string curName = std::filesystem::path(spawnForm.meshPath).filename().string();
@@ -5943,7 +6001,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::Spacing();
       bool canSpawn = !freeModel || spawnForm.meshPath[0] != '\0';
       if (!canSpawn) ImGui::BeginDisabled();
-      if (ImGui::Button("Spawn", ImVec2(-1, 28))) {
+      if (ImGui::Button("Spawn", ImVec2(-1, 0))) {
         if (cb.spawnPhysicsObject) cb.spawnPhysicsObject(spawnForm);
         spawnForm.placeInFront = true;   // back to the default for the next spawn
       }
@@ -5951,7 +6009,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         ImGui::EndDisabled();
         ImGui::TextDisabled("Pick or type an .obj path first.");
       }
-      if (ImGui::Button(ghostDragActive ? "Cancel Drag" : "Place (Drag)", ImVec2(-1, 28))) {
+      if (ImGui::Button(ghostDragActive ? "Cancel Drag" : "Place (Drag)", ImVec2(-1, 0))) {
         ghostDragActive = !ghostDragActive;
         if (ghostDragActive) {
           ghostX = spawnForm.posX; ghostY = spawnForm.posY; ghostZ = spawnForm.posZ;
@@ -6037,18 +6095,18 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::Combo("##sp_rendermode", &cloudForm.renderMode, spawnRmItems, 2);
 
       // Temperature slider with colour preview
-      ImGui::SetNextItemWidth(-30);
+      ImGui::SetNextItemWidth(Em(-30));
       ImGui::SliderFloat("##sp_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K");
       float sr, sg, sb;
       BlackbodyColor(cloudForm.temperature, sr, sg, sb);
       ImGui::SameLine();
-      ImGui::ColorButton("##sp_bb", ImVec4(sr, sg, sb, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+      ImGui::ColorButton("##sp_bb", ImVec4(sr, sg, sb, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 
       ImGui::Spacing();
       if (ImGui::Button("Procedural Generator...", ImVec2(-1, 0)))
         showProceduralGen = true;
       ImGui::Spacing();
-      if (ImGui::Button("Spawn Cloud", ImVec2(-1, 28))) {
+      if (ImGui::Button("Spawn Cloud", ImVec2(-1, 0))) {
         cloudForm.enabled = true;
         if (cb.applyCloud) cb.applyCloud(cloudForm);
       }
@@ -6071,7 +6129,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::Spacing();
       ImGui::Separator();
       ImGui::Spacing();
-      if (ImGui::Button("Spawn Camera", ImVec2(-1, 28))) {
+      if (ImGui::Button("Spawn Camera", ImVec2(-1, 0))) {
         SceneCamera cam;
         cam.name     = "Camera " + std::to_string(sceneCameras.size() + 1);
         cam.position = dvec3(camSpawnPos[0], camSpawnPos[1], camSpawnPos[2]);
@@ -6149,7 +6207,7 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     }
     if (universeOpen) {
       ImGui::SameLine();
-      if (ImGui::SmallButton("Settings##uninode")) showUniversePanel = true;
+      if (ImGui::Button("Settings##uninode")) showUniversePanel = true;
     }
   }
 
@@ -6224,10 +6282,10 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     static const char* kSort[]   = { "nearest", "kind", "name", "size" };
     ImGui::Indent(14.0f);
     ImGui::TextDisabled("show"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(104.0f);
+    ImGui::SetNextItemWidth(Em(104.0f));
     ImGui::Combo("##unifilter", &uniFilterMode, kFilter, IM_ARRAYSIZE(kFilter));
     ImGui::SameLine(); ImGui::TextDisabled("sort"); ImGui::SameLine();
-    ImGui::SetNextItemWidth(86.0f);
+    ImGui::SetNextItemWidth(Em(86.0f));
     ImGui::Combo("##unisort", &uniSortMode, kSort, IM_ARRAYSIZE(kSort));
     ImGui::Unindent(14.0f);
 
@@ -6436,7 +6494,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       char descBuf[2048];
       std::strncpy(descBuf, obj.description.c_str(), sizeof(descBuf) - 1);
       descBuf[sizeof(descBuf) - 1] = '\0';
-      if (ImGui::InputTextMultiline("##idesc", descBuf, sizeof(descBuf), ImVec2(-1, 72)))
+      if (ImGui::InputTextMultiline("##idesc", descBuf, sizeof(descBuf), ImVec2(-1, Em(72))))
         obj.description = descBuf;
     }
 
@@ -6578,12 +6636,12 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     };
     // Temperature + blackbody swatch, shared by Planet and Star.
     auto temperatureEditor = [&]() {
-      ImGui::SetNextItemWidth(-30);
+      ImGui::SetNextItemWidth(Em(-30));
       ImGui::SliderFloat("##itemp", &obj.temperature, 0.f, 50000.f, "%.0f K");
       float r, g, b;
       BlackbodyColor(obj.temperature, r, g, b);
       ImGui::SameLine();
-      ImGui::ColorButton("##ibb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+      ImGui::ColorButton("##ibb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
     };
     // Image picker from assets/, shared by diffuse texture and normal map,
     // for Planet and Free Model. `normal` chooses which slot it drives.
@@ -6592,7 +6650,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     if (!imgScanned) { imgFiles = ScanTextureFiles(); imgScanned = true; }
     // kind: 0 = diffuse texture, 1 = normal map, 2 = night-lights map
     auto imagePicker = [&](const char* id, std::string& pathRef, int kind) {
-      if (ImGui::SmallButton((std::string("Rescan##r") + id).c_str())) imgFiles = ScanTextureFiles();
+      if (ImGui::Button((std::string("Rescan##r") + id).c_str())) imgFiles = ScanTextureFiles();
       ImGui::SameLine();
       ImGui::TextDisabled("(%zu)", imgFiles.size());
       float listH = 5.0f * ImGui::GetTextLineHeightWithSpacing();
@@ -6723,7 +6781,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       static std::vector<std::string> modelFiles;
       static bool modelsScanned = false;
       if (!modelsScanned) { modelFiles = ScanModelFiles(); modelsScanned = true; }
-      if (ImGui::SmallButton("Rescan##imesh")) modelFiles = ScanModelFiles();
+      if (ImGui::Button("Rescan##imesh")) modelFiles = ScanModelFiles();
       ImGui::SameLine();
       ImGui::TextDisabled("%zu in models/", modelFiles.size());
 
@@ -7000,7 +7058,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
-    if (ImGui::Button("Delete", ImVec2(-1, 28))) {
+    if (ImGui::Button("Delete", ImVec2(-1, 0))) {
       if (cb.deleteObject) cb.deleteObject(selectedIdx);
       selectedIdx = -1;
     }
@@ -7079,7 +7137,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::Spacing();
       ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
-      if (ImGui::Button("Delete", ImVec2(-1, 28))) {
+      if (ImGui::Button("Delete", ImVec2(-1, 0))) {
         sceneCameras.erase(sceneCameras.begin() + camIdx);
         if (secondaryCameraSource == camIdx) secondaryCameraSource = -1;
         else if (secondaryCameraSource > camIdx) --secondaryCameraSource;
@@ -7129,7 +7187,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         char descBuf[2048];
         std::strncpy(descBuf, cloud->description.c_str(), sizeof(descBuf) - 1);
         descBuf[sizeof(descBuf) - 1] = '\0';
-        if (ImGui::InputTextMultiline("##clouddesc", descBuf, sizeof(descBuf), ImVec2(-1, 72)))
+        if (ImGui::InputTextMultiline("##clouddesc", descBuf, sizeof(descBuf), ImVec2(-1, Em(72))))
           cloud->description = descBuf;
         ImGui::Spacing();
       }
@@ -7200,15 +7258,15 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
           float vf = hro.haloVFlat, rc = hro.haloRCore;
           ImGui::Text("Halo");
           ImGui::SameLine();
-          ImGui::SetNextItemWidth(70);
+          ImGui::SetNextItemWidth(Em(70));
           if (ImGui::DragFloat("##halov", &vf, 0.1f, 0.0f, 1.0e4f, "v %.3g", ImGuiSliderFlags_Logarithmic)) hro.haloVFlat = std::max(vf, 0.0f);
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Flat rotation speed the halo enforces (AU/yr). 0 = no halo.");
           ImGui::SameLine();
-          ImGui::SetNextItemWidth(84);
+          ImGui::SetNextItemWidth(Em(84));
           if (ImGui::DragFloat("##halor", &rc, 0.1f, 0.0f, 1.0e12f, "rc %.3g", ImGuiSliderFlags_Logarithmic)) hro.haloRCore = std::max(rc, 0.0f);
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Core radius the curve rises over (AU).");
           ImGui::SameLine();
-          if (ImGui::SmallButton("Fit##halofit")) { cloud->fitHaloFromVelocities(); cloud->clearRecording(); }
+          if (ImGui::Button("Fit##halofit")) { cloud->fitHaloFromVelocities(); cloud->clearRecording(); }
           if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit v_flat and rc to this cloud's own tangential speeds.\nClears the recording.");
         }
         const double q = cloud->virialRatio();
@@ -7357,20 +7415,20 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         }
       }
 
-      ImGui::SetNextItemWidth(-30);
+      ImGui::SetNextItemWidth(Em(-30));
       if (ImGui::SliderFloat("##ci_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K")) {
         cloud->temperature = cloudForm.temperature;
       }
       float cr, cg, cb_;
       BlackbodyColor(cloudForm.temperature, cr, cg, cb_);
       ImGui::SameLine();
-      ImGui::ColorButton("##ci_bb", ImVec4(cr, cg, cb_, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(20, 20));
+      ImGui::ColorButton("##ci_bb", ImVec4(cr, cg, cb_, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 
       ImGui::Spacing();
       ImGui::Separator();
       ImGui::Spacing();
 
-      if (ImGui::Button("Respawn", ImVec2(-1, 28))) {
+      if (ImGui::Button("Respawn", ImVec2(-1, 0))) {
         cloudForm.enabled = true;
         if (cb.respawnCloud) cb.respawnCloud(cloudIdx, cloudForm);
         lastCloudIdx = -99; // force re-sync after respawn
@@ -7378,7 +7436,7 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::PushStyleColor(ImGuiCol_Button,        SemBtn(ImVec4(0.55f, 0.10f, 0.10f, 1.00f)));
       ImGui::PushStyleColor(ImGuiCol_ButtonHovered, SemBtn(ImVec4(0.75f, 0.20f, 0.20f, 1.00f)));
       ImGui::PushStyleColor(ImGuiCol_ButtonActive,  SemBtn(ImVec4(0.90f, 0.15f, 0.15f, 1.00f)));
-      if (ImGui::Button("Remove", ImVec2(-1, 28))) {
+      if (ImGui::Button("Remove", ImVec2(-1, 0))) {
         if (cb.deleteCloud) cb.deleteCloud(cloudIdx);
         selectedIdx = -1;
         lastCloudIdx = -99;
@@ -7404,7 +7462,7 @@ void Renderer::DrawQuitDialog(const SceneCallbacks& cb) {
   ImGuiIO& io = ImGui::GetIO();
   ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
   ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(340, 140), ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(Em(340), Em(140)), ImGuiCond_Always);
 
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
                          | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar

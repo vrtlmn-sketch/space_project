@@ -677,7 +677,11 @@ private:
 
   // ImGui helpers
   void DrawControlsPanel(const SceneCallbacks& cb);
-  void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds);
+  void DrawTimeline(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds,
+                    const SceneCallbacks& cb);
+  void DrawSimulationRow(const SceneCallbacks& cb);
+  void DrawCameraPanel();
+  void DockBesideInspector();
   void DrawSpawnPanel(const SceneCallbacks& cb);
   void DrawUniversePanel();
   void DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);
@@ -974,6 +978,8 @@ public:
   // One card shows ONE of the three scales: the one that fits where you are,
   // unless a breadcrumb segment was clicked (mapKindManual).
   ImFont* exploreFont{nullptr};   // proportional sans for everything in exploration
+  ImFont* uiSansFont{nullptr};    // Inter: the modern themes (Mercury, Luna)
+  ImFont* uiMonoFont{nullptr};    // DejaVu Sans Mono: the terminal themes
   bool   atlasVisible{true};
   bool   atlasKeyPressed{false};
   float  atlasFade{0.0f};          // eased toward atlasVisible
@@ -1415,7 +1421,8 @@ public:
   bool showUniversePanel{false};   // floating universe generator
   bool showSettingsPanel{false};
   bool themeLight{false};              // active theme has light surfaces
-  char appTheme[64] = "Space wander (ImGui)";
+  bool themeModern{false};             // Mercury or Luna: rounded, airy, Inter
+  char appTheme[64] = "Mercury smooth (Gray)";
   void ApplyTheme(const char* name);   // set ImGui style by theme name
   // Semantic button colours (orange Play, red Rec, …) are tuned for dark
   // themes; on light themes this brightens them so they stay visible.

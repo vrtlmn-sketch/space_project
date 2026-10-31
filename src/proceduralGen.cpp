@@ -1,4 +1,5 @@
 #include "proceduralGen.h"
+#include "uiScale.h"
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -604,7 +605,7 @@ void ProceduralGenWindow::draw() {
 
   renderToFBO();
 
-  ImGui::SetNextWindowSize(ImVec2(1060.0f, 620.0f), ImGuiCond_Once);
+  ImGui::SetNextWindowSize(ImVec2(Em(1060.0f), Em(620.0f)), ImGuiCond_Once);
   if (!ImGui::Begin("Procedural Cloud Generator", &open,
                     ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
@@ -612,9 +613,9 @@ void ProceduralGenWindow::draw() {
   }
 
   // ── Left scrollable panel ────────────────────────────────────────────────────
-  ImGui::BeginChild("##params", ImVec2(420.0f, 0.0f),
+  ImGui::BeginChild("##params", ImVec2(Em(420.0f), 0.0f),
                     false, ImGuiWindowFlags_None);
-  ImGui::PushItemWidth(200.0f);
+  ImGui::PushItemWidth(Em(200.0f));
 
   bool changed = false;
 
@@ -828,7 +829,7 @@ void ProceduralGenWindow::draw() {
 
   ImGui::Spacing();
 
-  if (ImGui::Button("Generate", ImVec2(-1.0f, 34.0f))) {
+  if (ImGui::Button("Generate", ImVec2(-1.0f, 0))) {
     // For Generate, build the full count
     generateParticles(count, fullParticles);
     // Keep preview synced too (re-use already-generated if within cap)
@@ -847,7 +848,7 @@ void ProceduralGenWindow::draw() {
   ImGui::PopItemWidth();
   ImGui::EndChild();
 
-  ImGui::SameLine(0.0f, 12.0f);
+  ImGui::SameLine(0.0f, Em(12.0f));
 
   // ── Right: preview ───────────────────────────────────────────────────────────
   ImGui::BeginGroup();

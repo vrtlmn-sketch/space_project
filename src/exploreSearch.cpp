@@ -18,6 +18,7 @@
 // main.cpp, at the main view's size so the shared HDR and post-process targets
 // never reallocate, for a few frames after the selection changes and then held.
 #include "renderer.h"
+#include "uiScale.h"
 #include "physicsObject.h"
 #include "cloudObject.h"
 #include "units.h"
@@ -304,7 +305,7 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       dl->AddText(ImVec2(a.x + (iw - ts.x) * 0.5f, a.y + (ih - ts.y) * 0.5f), IM_COL32(150, 160, 180, 200), t);
     }
     ImGui::Spacing();
-    if (ImGui::Button("Travel", ImVec2(-1, 34))) travel = true;
+    if (ImGui::Button("Travel", ImVec2(-1, 0))) travel = true;
     ImGui::TextDisabled("Enter or double-click also travels.");
   } else {
     ImGui::TextDisabled("Nothing selected.");
