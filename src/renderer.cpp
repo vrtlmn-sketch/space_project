@@ -1617,6 +1617,11 @@ bool Renderer::UpdateInputs() {
   } else {
     if (escKeyPressed) {
       if (escStartedInSearch)       CloseExploreSearch();
+      else if (exploring()) {
+        if (showQuitDialog)       showQuitDialog = false;
+        else if (exploreMenuOpen) CloseExploreMenu();
+        else                      exploreMenuOpen = true;
+      }
       else if (!textEditorCaptured) showQuitDialog = true;
     }
     escKeyPressed = false;
@@ -1628,6 +1633,8 @@ bool Renderer::UpdateInputs() {
     glfwSetWindowShouldClose(window, 0); // cancel the close
     showQuitDialog = true;
   }
+
+  SyncFlightCapture();
 
   if (!io.WantTextInput && !textEditorCaptured) {
     // ── Distance-adaptive move speed ──
@@ -1694,7 +1701,17 @@ bool Renderer::UpdateInputs() {
     // Drag left -> look left (== Left arrow); drag up -> look up (== Up arrow).
     // The first person convention: the mouse moves the view, not the world.
     // Only begins when the press starts over the viewport (not a panel).
-    {
+    if (flightCaptured) {
+      rightLookActive = false;
+      double x, y;
+      glfwGetCursorPos(window, &x, &y);
+      const double dx = x - flightLastX, dy = y - flightLastY;
+      flightLastX = x; flightLastY = y;
+      if (dx != 0.0 || dy != 0.0) {
+        float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.00001f / 45.0f, 1.5f);
+        rotateCamera((float)dx * sens, (float)dy * sens, 0.0f);
+      }
+    } else {
       // The scene sits inside the "Viewport" ImGui window in editor mode, so
       // WantCaptureMouse is true over it — use the viewport-hover flag instead.
       bool sceneHovered = editorViewport ? viewportHovered : !io.WantCaptureMouse;
@@ -3629,6 +3646,7 @@ void Renderer::EnterExploration() {
   hoverIdx        = -1;
   ghostDragActive = false;
   rightLookActive = false;
+  exploreMenuOpen = false;
   appMode = AppMode::Exploration;
 }
 
@@ -3640,7 +3658,58 @@ void Renderer::LeaveExploration() {
   cinematicRaster      = creativeView.cinematicRaster;
   rightLookActive = false;
   CloseExploreSearch();
+  CloseExploreMenu();
   appMode = AppMode::Creative;
+  SyncFlightCapture();
+}
+
+// Panels opened from the menu close with it: with the cursor captured again
+// nothing in them could be clicked.
+void Renderer::CloseExploreMenu() {
+  exploreMenuOpen   = false;
+  showProjectPanel  = false;
+  showSettingsPanel = false;
+}
+
+// Captures or frees the cursor to match exploreFlying(). Losing window focus
+// while flying opens the menu, so alt-tab never leaves the cursor locked.
+void Renderer::SyncFlightCapture() {
+  if (exploreFlying() && !glfwGetWindowAttrib(window, GLFW_FOCUSED)) exploreMenuOpen = true;
+  const bool want = exploreFlying();
+  if (want == flightCaptured) return;
+  flightCaptured = want;
+  ImGuiIO& io = ImGui::GetIO();
+  if (want) {
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+    glfwGetCursorPos(window, &flightLastX, &flightLastY);
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
+  } else {
+    if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    int w = 0, h = 0;
+    glfwGetWindowSize(window, &w, &h);
+    glfwSetCursorPos(window, w * 0.5, h * 0.5);
+    io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
+  }
+}
+
+void Renderer::DrawExploreMenu() {
+  if (!exploreMenuOpen) return;
+  ImGuiIO& io = ImGui::GetIO();
+  ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+                          ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
+                         | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking
+                         | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize;
+  ImGui::Begin("Menu##exploreMenu", nullptr, flags);
+  const ImVec2 bs(200, 30);
+  if (ImGui::Button("Continue  (Esc)", bs)) CloseExploreMenu();
+  if (ImGui::Button("Project", bs))  showProjectPanel  = !showProjectPanel;
+  if (ImGui::Button("Settings", bs)) showSettingsPanel = !showSettingsPanel;
+  if (ImGui::Button("Creative", bs)) LeaveExploration();
+  if (ImGui::Button("Quit", bs))     showQuitDialog = true;
+  ImGui::End();
 }
 
 // The whole exploration UI: one bar across the top with the way back. The quit
@@ -3684,6 +3753,7 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
   // Creative would never show without one (see the ### titles in each panel).
   DrawExploreSearch(physicsObjects, clouds);   // before the maps: it sets their focus
   DrawExplorationMap(physicsObjects, clouds);
+  DrawExploreMenu();
   DrawProjectPanel(cb);
   DrawSettingsPanel();
   DrawQuitDialog(cb);

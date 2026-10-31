@@ -933,6 +933,18 @@ public:
   }
   void EnterExploration();
   void LeaveExploration();
+  // Flying: the cursor is captured and the mouse looks around. Esc opens the
+  // menu (cursor back, UI usable); Esc or Continue there returns to flying.
+  // Search and the quit dialog also free the cursor while they are open.
+  bool   exploreMenuOpen{false};
+  bool   flightCaptured{false};
+  double flightLastX{0.0}, flightLastY{0.0};
+  bool   exploreFlying() const {
+    return exploring() && !exploreMenuOpen && !exploreSearchOpen && !showQuitDialog;
+  }
+  void   CloseExploreMenu();
+  void   SyncFlightCapture();
+  void   DrawExploreMenu();
   void DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
                          std::vector<std::unique_ptr<CloudObject>>& clouds,
                          const SceneCallbacks& cb);
