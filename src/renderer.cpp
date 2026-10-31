@@ -93,6 +93,7 @@ bool Renderer::InitWindow(
   // Monospace font: bundled DejaVu Sans Mono, ImGui default as fallback
   if (!io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSansMono.ttf", 14.0f))
     io.Fonts->AddFontDefault();
+  exploreFont = io.Fonts->AddFontFromFileTTF("assets/fonts/DejaVuSans.ttf", 15.0f);
 
   // Theme from settings.json
   LoadAppSettings();
@@ -1759,6 +1760,16 @@ bool Renderer::UpdateInputs() {
     else {
       if (exploreKeyPressed && exploring() && !exploreSearchOpen) OpenExploreSearch();
       exploreKeyPressed = false;
+    }
+
+    // M = show / hide the atlas: the map card and the in-world labels.
+    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS)  atlasKeyPressed = true;
+    else {
+      if (atlasKeyPressed && exploring()) {
+        atlasVisible = !atlasVisible;
+        if (atlasVisible) atlasShownAt = ImGui::GetTime();
+      }
+      atlasKeyPressed = false;
     }
 
     // Toggle keys (fire on release). None of them exist in exploration: there
@@ -3647,6 +3658,7 @@ void Renderer::EnterExploration() {
   ghostDragActive = false;
   rightLookActive = false;
   exploreMenuOpen = false;
+  atlasShownAt    = ImGui::GetTime();
   appMode = AppMode::Exploration;
 }
 
@@ -3717,6 +3729,7 @@ void Renderer::DrawExploreMenu() {
 void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds,
                                  const SceneCallbacks& cb) {
+  if (exploreFont) ImGui::PushFont(exploreFont, 15.0f);
   ImGuiViewport* vp = ImGui::GetMainViewport();
   const float barH = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
   ImGui::SetNextWindowPos(vp->WorkPos);
@@ -3731,6 +3744,11 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
   if (ImGui::Button("Settings", ImVec2(75, 0))) showSettingsPanel = !showSettingsPanel;
   ImGui::SameLine();
   if (ImGui::Button("Creative", ImVec2(95, 0))) LeaveExploration();
+  ImGui::SameLine();
+  if (ImGui::Button(atlasVisible ? "Hide atlas  M" : "Show atlas  M", ImVec2(115, 0))) {
+    atlasVisible = !atlasVisible;
+    if (atlasVisible) atlasShownAt = ImGui::GetTime();
+  }
   // The Explore search box, in the middle of the bar. Clicking it (or K) opens
   // the search; the box itself is only a button, the typing happens below it.
   {
@@ -3752,11 +3770,18 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
   // Floating here: there is no dockspace in exploration, and a window docked in
   // Creative would never show without one (see the ### titles in each panel).
   DrawExploreSearch(physicsObjects, clouds);   // before the maps: it sets their focus
+  {
+    const float goal = atlasVisible ? 1.0f : 0.0f;
+    atlasFade += (goal - atlasFade) * (1.0f - std::exp(-ImGui::GetIO().DeltaTime * 10.0f));
+    if (std::fabs(goal - atlasFade) < 0.002f) atlasFade = goal;
+  }
+  DrawExplorationLabels(physicsObjects, clouds);
   DrawExplorationMap(physicsObjects, clouds);
   DrawExploreMenu();
   DrawProjectPanel(cb);
   DrawSettingsPanel();
   DrawQuitDialog(cb);
+  if (exploreFont) ImGui::PopFont();
 }
 
 void Renderer::DrawControlsPanel(const SceneCallbacks& cb) {

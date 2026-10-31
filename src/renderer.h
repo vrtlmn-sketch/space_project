@@ -25,6 +25,7 @@ class CloudObject;
 class LineObject;
 struct ImVec4;
 struct ImVec2;
+struct ImFont;
 
 // ---- Keypoint on the timeline ----
 struct Keypoint {
@@ -961,9 +962,26 @@ public:
     double lastScroll{-1e9}; // ImGui time of the last scroll on this map
     float  yawOff{0.0f};     // drag offsets from following the camera, eased back on release
     float  tiltOff{0.0f};
-    double away{0.0};        // 0 = centred on you, 1 = centred on the system/galaxy you are away from
+    double away{0.0};        // 0 = centred on you, 1 = centred on the anchor (system / galaxy)
+    // The anchor the map centres on, by identity, and the one before it, so a
+    // switch (flying from one system to the next) glides instead of jumping.
+    int    anchorObj{-1}, anchorCloud{-1};
+    int    prevObj{-1},   prevCloud{-1};
+    double anchorBlend{1.0}; // 0 = at the previous anchor, 1 = at the current one
   };
   ExplorationMapState mapState[3];   // 0 Solar, 1 Galaxy, 2 Universe
+  // The atlas: the map card plus the in-world labels, toggled together with M.
+  // One card shows ONE of the three scales: the one that fits where you are,
+  // unless a breadcrumb segment was clicked (mapKindManual).
+  ImFont* exploreFont{nullptr};   // proportional sans for everything in exploration
+  bool   atlasVisible{true};
+  bool   atlasKeyPressed{false};
+  float  atlasFade{0.0f};          // eased toward atlasVisible
+  double atlasShownAt{-1e9};       // ImGui time the atlas was last turned on: labels ripple in from it
+  int    mapKindManual{-1};        // -1 = follow where you are
+  int    mapKindAuto{2};
+  void   DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
+                               std::vector<std::unique_ptr<CloudObject>>& clouds);
   // A search selection the maps must show: every map widens to include it and
   // draws a blinking green line to it. Set each frame by DrawExploreSearch.
   bool   mapFocusActive{false};
