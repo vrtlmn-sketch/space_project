@@ -1025,11 +1025,14 @@ public:
   bool   exploreGalaxyView{false};                    // the last trip was to a galaxy
   // The description of the body you just arrived at, shown under it for a few
   // seconds, or until you move off.
-  int    exploreDescObj{-1};
+  int    exploreDescObj{-1}, exploreDescCloud{-1};
   std::string exploreDescName;
   double exploreDescAt{-1e9};
   double exploreLastMoveAt{-1e9};                     // last time a movement key was held in exploration
-  void   ShowArrivalDescription(std::vector<PhysicsObject>& physicsObjects, int obj);
+  bool   infoKeyPressed{false};
+  int    exploreInfoRequest{0};                       // i: show the highlighted object's description again
+  void   ShowArrivalDescription(std::vector<PhysicsObject>& physicsObjects,
+                                std::vector<std::unique_ptr<CloudObject>>& clouds, int obj, int cloud);
   double explorePlayHintAt{-1e9};
   bool   explorePlayKeyPressed{false};
   int    explorePlayRequest{0};

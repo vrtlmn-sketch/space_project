@@ -1948,6 +1948,13 @@ bool Renderer::UpdateInputs() {
       explorePlayKeyPressed = false;
     }
 
+    // i = show the highlighted object's description (exploration).
+    if (exploring() && glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) infoKeyPressed = true;
+    else {
+      if (infoKeyPressed && exploreFlying()) exploreInfoRequest = 1;
+      infoKeyPressed = false;
+    }
+
     // b = travel back to where the last trip started, Shift+b = jump back.
     if (exploring() && glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
       backKeyPressed = true;

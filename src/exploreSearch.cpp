@@ -163,14 +163,19 @@ static void QuatToMat(const double q[4], float m[9]) {
   m[6] = (float)(2*(x*z - w*y));     m[7] = (float)(2*(y*z + w*x));     m[8] = (float)(1 - 2*(x*x + y*y));
 }
 
-// Arrived somewhere: show what it is. Only bodies carry a description.
-void Renderer::ShowArrivalDescription(std::vector<PhysicsObject>& physicsObjects, int obj) {
-  exploreDescObj = -1;
-  if (obj < 0 || obj >= (int)physicsObjects.size()) return;
-  if (physicsObjects[(size_t)obj].description.empty()) return;
-  exploreDescObj  = obj;
-  exploreDescName = physicsObjects[(size_t)obj].name;
-  exploreDescAt   = ImGui::GetTime();
+// Arrived somewhere: show what it is — a body or a galaxy. Something with no
+// description still gets a line ("Unknown"), which is drawn where this is read.
+void Renderer::ShowArrivalDescription(std::vector<PhysicsObject>& physicsObjects,
+                                      std::vector<std::unique_ptr<CloudObject>>& clouds, int obj, int cloud) {
+  exploreDescObj = exploreDescCloud = -1;
+  if (obj >= 0 && obj < (int)physicsObjects.size()) {
+    exploreDescObj  = obj;
+    exploreDescName = physicsObjects[(size_t)obj].name;
+  } else if (cloud >= 0 && cloud < (int)clouds.size() && clouds[(size_t)cloud]) {
+    exploreDescCloud = cloud;
+    exploreDescName  = clouds[(size_t)cloud]->name;
+  } else return;
+  exploreDescAt = ImGui::GetTime();
 }
 
 // ── Play from a body's point of view ──
@@ -417,7 +422,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
       exploreTravelActive = false;
       LocateCameraOn(origin, offset, effR);
       travelBackHintAt = ImGui::GetTime();
-      ShowArrivalDescription(physicsObjects, wantObj);
+      ShowArrivalDescription(physicsObjects, clouds, wantObj, wantCloud);
       return;
     }
     travelObj = wantObj; travelCloud = wantCloud;
@@ -502,7 +507,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
     exploreTravelActive = false;
     invalidateZoomAnchor();
     travelBackHintAt = ImGui::GetTime();
-    ShowArrivalDescription(physicsObjects, travelObj);
+    ShowArrivalDescription(physicsObjects, clouds, travelObj, travelCloud);
   }
 }
 
@@ -759,7 +764,7 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       SetExploreLock(physicsObjects, clouds, exploreSelObj);
       exploreGalaxyView = (exploreSelObj < 0);
       if (exploreGalaxyView) { travelBackPose.valid = false; exploreLockObj = -1; }
-      ShowArrivalDescription(physicsObjects, exploreSelObj);
+      ShowArrivalDescription(physicsObjects, clouds, exploreSelObj, exploreSelCloud);
       LocateCameraOn(origin, offset, effR);
       CloseExploreSearch();
     }

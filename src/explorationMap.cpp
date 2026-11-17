@@ -1082,9 +1082,26 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     if (centreKey & (1LL << 40)) exploreFocusCloud = (int)(centreKey & ((1LL << 40) - 1));
     else                         exploreFocusObj   = (int)centreKey;
   }
-  const char* travelHint = exploreTripActive() ? "Travelling  -  steer to stop"
-                         : centreInside        ? "Take in [t]"
-                                               : "Travel [t]   Fast travel [T]";
+  // The line under the highlighted object: what t would do, if anything, and
+  // "Info [i]", which brings its description back whenever you want it.
+  const bool showHint = centre >= 0 && atlasVisible && exploreFlying();
+  char travelHintBuf[96];
+  if (exploreTripActive())
+    std::snprintf(travelHintBuf, sizeof(travelHintBuf), "Travelling  -  steer to stop");
+  else
+    std::snprintf(travelHintBuf, sizeof(travelHintBuf), "%s%s",
+                  !canTravel ? "" : centreInside ? "Take in [t]   " : "Travel [t]   Fast travel [T]   ", "Info [i]");
+  const char* travelHint = travelHintBuf;
+  {
+    const int infoReq = exploreInfoRequest;
+    exploreInfoRequest = 0;
+    if (infoReq != 0 && showHint && !exploreTripActive()) {
+      const bool isCloud = (centreKey & (1LL << 40)) != 0;
+      ShowArrivalDescription(physicsObjects, clouds,
+                             isCloud ? -1 : (int)centreKey,
+                             isCloud ? (int)(centreKey & ((1LL << 40) - 1)) : -1);
+    }
+  }
   if (centre >= 0) cands[(size_t)centre].prio = -1e9;
   std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.prio < b.prio; });
   if (cands.size() > (size_t)kDotBudget) cands.resize((size_t)kDotBudget);
@@ -1125,7 +1142,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     // The galaxy's circle is open: it reserves its name above, not the space
     // inside it, or whatever sits at the centre (a black hole) loses its label.
     else if (c.inside) b = Box{c.x - nsz.x * 0.5f - 4.0f, c.y - r - 5.0f - nsz.y, c.x + nsz.x * 0.5f + 4.0f, c.y - r};
-    else if (c.key == centreKey && canTravel) {        // room for the travel hint
+    else if (c.key == centreKey && showHint) {         // room for the hint line
       const ImVec2 hsz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, travelHint);
       b.x0 = std::min(b.x0, c.x - hsz.x * 0.5f - 4.0f);
       b.x1 = std::max(b.x1, c.x + hsz.x * 0.5f + 4.0f);
@@ -1227,7 +1244,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
           dl->PathStroke(C(Lighten(c.rgb, 0.6f), 0.90f * f), 0, 1.6f);
         }
       }
-      if (c.key == centreKey && canTravel) {
+      if (c.key == centreKey && showHint) {
         const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, "0");
         const ImVec2 hsz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, travelHint);
         // Below the distance line; up close there is no distance line, so
@@ -1444,10 +1461,27 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // off or look away, either of which is taken as having read enough.
   {
     const double age = now - exploreDescAt;
-    if (exploreDescObj >= 0 && exploreDescObj < (int)physicsObjects.size() && age >= 0.0 && age < 10.5 &&
+    // What it is describing: a body, or a galaxy (marked at its centre, sized
+    // by its extent). Either may have been handed to something else since.
+    const std::string* descText = nullptr; const std::string* descName = nullptr;
+    dvec3 descRel{0.0, 0.0, 0.0}; double descRadius = 0.0;
+    if (exploreDescObj >= 0 && exploreDescObj < (int)physicsObjects.size()) {
+      const PhysicsObject& b = physicsObjects[(size_t)exploreDescObj];
+      descText = &b.description; descName = &b.name;
+      descRel = CameraRelative(b.renderedObject.coordinates, b.renderedObject.localOffset);
+      descRadius = (double)b.renderedObject.sphereRadius();
+    } else if (exploreDescCloud >= 0 && exploreDescCloud < (int)clouds.size() && clouds[(size_t)exploreDescCloud]) {
+      const CloudObject& cl = *clouds[(size_t)exploreDescCloud];
+      descText = &cl.description; descName = &cl.name;
+      descRel = CameraRelative(cl.renderedObject.coordinates);
+      descRadius = CloudExtent(cl);
+    }
+    if (descText && age >= 0.0 && age < 10.5 &&
         exploreLastMoveAt < exploreDescAt && exploreFlying() && !exploreTripActive()) {
-      const PhysicsObject& o = physicsObjects[(size_t)exploreDescObj];
-      if (o.name == exploreDescName && !o.description.empty()) {
+      // Nothing written about it (anything generated, for a start): say so.
+      static const std::string kUnknown = "Unknown";
+      const std::string& text = descText->empty() ? kUnknown : *descText;
+      if (*descName == exploreDescName) {
         const float a  = (float)std::min({age / 0.3, (10.5 - age) / 0.5, 1.0}) * A;
         const float sz = fs * 1.15f, lineH = sz * 1.35f;
         const float wrapW = std::min(W * 0.50f, Em(620.0f));
@@ -1463,24 +1497,26 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
             else line = trial;
             word.clear();
           };
-          for (char ch : o.description) {
+          for (char ch : text) {
             if (ch == ' ' || ch == '\n') { put(); if (ch == '\n') flush(); }
             else word += ch;
           }
           put(); flush();
         }
-        const dvec3 rel = CameraRelative(o.renderedObject.coordinates, o.renderedObject.localOffset);
+        const dvec3 rel = descRel;
         const double dist = Len(rel);
-        const float  rpx  = (float)std::asin(std::min((double)o.renderedObject.sphereRadius() / std::max(dist, 1e-30), 1.0)) * focalPx;
+        const float  rpx  = (float)std::asin(std::min(descRadius / std::max(dist, 1e-30), 1.0)) * focalPx;
         float sx = mid.x, sy = mid.y;
         const bool onScreen = RelToScreen(rel, sx, sy);
         // Looked away: the body has left the middle of the view (by more than
         // its own size plus a fifth of the screen). Gone for good, not hidden.
         const float off = std::sqrt((sx - mid.x) * (sx - mid.x) + (sy - mid.y) * (sy - mid.y));
-        if (!onScreen || off > rpx + H * 0.22f) exploreDescObj = -1;
-        if (exploreDescObj < 0) lines.clear();
+        if (!onScreen || off > rpx + H * 0.22f) exploreDescObj = exploreDescCloud = -1;
+        if (exploreDescObj < 0 && exploreDescCloud < 0) lines.clear();
         const float blockH = lineH * (float)lines.size();
-        float y = std::min(sy + rpx + 22.0f, oy + H * 0.87f - blockH);   // never down into "Travel back"
+        // Below the object's own lines (distance, then the Travel / Info hint),
+        // which hang under it; and never down into "Travel back".
+        float y = std::min(sy + std::max(rpx, 5.0f) + 64.0f, oy + H * 0.87f - blockH);
         y = std::max(y, oy + H * 0.45f);
         for (const std::string& ln : lines) {
           const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, ln.c_str());
