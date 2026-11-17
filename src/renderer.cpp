@@ -9722,6 +9722,29 @@ GLuint Renderer::RunAeMeter(GLuint srcHDR, int role) {
     st.valid = true;
     st.advancedFrame = aeFrameCounter;
     result = st.tex[st.idx];
+    // Hand the value to the CPU a frame late (see exposureShownCpu). The 1x1
+    // target just written is still the bound framebuffer.
+    if (role == AePostLive && exploring()) {
+      if (!aeReadPbo[0]) {
+        glGenBuffers(2, aeReadPbo);
+        for (GLuint b : aeReadPbo) {
+          glBindBuffer(GL_PIXEL_PACK_BUFFER, b);
+          glBufferData(GL_PIXEL_PACK_BUFFER, sizeof(float), nullptr, GL_STREAM_READ);
+        }
+      }
+      glReadBuffer(GL_COLOR_ATTACHMENT0);
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, aeReadPbo[aeReadIdx]);
+      glReadPixels(0, 0, 1, 1, GL_RED, GL_FLOAT, nullptr);          // queued, not waited for
+      if (aeReadPrimed) {
+        float v = -1.0f;
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, aeReadPbo[1 - aeReadIdx]);   // last frame's
+        glGetBufferSubData(GL_PIXEL_PACK_BUFFER, 0, sizeof(float), &v);
+        if (v > 0.0f && std::isfinite(v)) exposureShownCpu = v;
+      }
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+      aeReadIdx = 1 - aeReadIdx;
+      aeReadPrimed = true;
+    }
   }
   if (blendWas) glEnable(GL_BLEND);
   return result;

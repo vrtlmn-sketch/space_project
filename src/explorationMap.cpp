@@ -979,6 +979,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     bool  inside;   // a galaxy you are inside, marked at its centre: t "takes it in"
     float shrink = 1.0f;   // text and dot scale: below 1 for what lies outside the galaxy you are in
     dvec3 rel{0.0, 0.0, 0.0};   // camera-relative position, to tell what is inside that galaxy
+    bool  dark = false;         // lost to the exposure: no label, and not something you can point at
   };
   struct Home { dvec3 rel; double ext; };
   std::vector<Home> homes;     // the galaxies you are inside
@@ -1045,10 +1046,47 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // Eased per label, so crossing a galaxy's edge (or taking it in) slides
   // everything between the two looks, not snaps. A label seen for the first
   // time starts where it belongs.
+  // SCOPE. What you are in decides what is "here": inside a solar system it is
+  // that star and what belongs to it; otherwise, inside a galaxy, it is what
+  // the galaxy holds. Things in scope get a slightly larger name. Everything
+  // else is plainly background: much smaller, dimmer, and without its distance
+  // until you look at it.
+  const bool inSystem = (mapKindAuto == kSolar && nearestStar >= 0);
+  dvec3  sysRel{0.0, 0.0, 0.0}; double sysReach = 0.0;
+  if (inSystem) {
+    const PhysicsObject& star = physicsObjects[(size_t)nearestStar];
+    sysRel   = CameraRelative(star.renderedObject.coordinates, star.renderedObject.localOffset);
+    sysReach = kReachAU * std::sqrt(std::max(star.data.mass, 0.01));
+  }
+  // What the exposure has turned black gets no label. Frame Earth and the
+  // exposure drops to hold the sunlit planet; every star and galaxy goes dark
+  // with it, and naming things you cannot see is noise. starVis is how visible
+  // the star field is right now: exposure times the star-field gain, 0 below
+  // the level where even bright stars are gone, 1 where the field reads
+  // normally. It is a rule for the field as a whole, not per object, and it is
+  // applied only to what is OUT of scope: your own system keeps its names.
+  float starVis = 1.0f;
+  {
+    const float e = autoExposure ? exposureShownCpu : ManualExposure();
+    if (e > 0.0f) {
+      const float v = e * std::pow(2.0f, starFieldStops);
+      starVis = std::clamp((std::log(std::max(v, 1e-12f)) - std::log(0.003f)) / (std::log(0.03f) - std::log(0.003f)), 0.0f, 1.0f);
+      starVis = starVis * starVis * (3.0f - 2.0f * starVis);
+    }
+  }
+  static float scopeAmt = 0.0f;                    // 1 while you are inside something, eased
+  {
+    const float goal = (inSystem || !homes.empty()) ? 1.0f : 0.0f;
+    scopeAmt += (goal - scopeAmt) * (1.0f - std::exp(-dt * 5.0f));
+  }
   for (Cand& c : cands) {
     bool  outside = false;
     float through = 0.0f;      // how much of your own galaxy lies along the line of sight to it
-    if (!homes.empty() && !c.inside) {
+    if (inSystem) {
+      // In a system the rule is simple: yours, or not.
+      outside = Len(Sub(c.rel, sysRel)) > sysReach;
+      through = outside ? 1.0f : 0.0f;
+    } else if (!homes.empty() && !c.inside) {
       outside = true;
       for (const Home& h : homes)
         if (Len(Sub(c.rel, h.rel)) <= h.ext * 1.05) { outside = false; break; }
@@ -1077,7 +1115,15 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     else st.far += (goal - st.far) * (1.0f - std::exp(-dt * 5.0f));
     if (std::fabs(goal - st.far) < 0.002f) st.far = goal;
     c.vis   *= 1.0f - 0.60f * st.far;
-    c.shrink = 1.0f - 0.32f * st.far;
+    // Out of scope AND on the star scale (a galaxy, or a body that is only a
+    // dot): gone when the star field is. A body you can see as a disc is lit
+    // by its own sun and stays.
+    if (c.rpx <= 1.6f) {
+      const float hidden = st.far * (1.0f - starVis);
+      c.vis *= 1.0f - hidden;
+      c.dark = hidden > 0.85f;
+    }
+    c.shrink = (1.0f - 0.14f * st.far) * (1.0f + 0.26f * scopeAmt * (1.0f - st.far));   // 0.86x outside, 1.26x in scope
     if (outside && through > 0.5f) c.prio = 3.0;  // behind local things when labels compete (added to below)
   }
 
@@ -1093,6 +1139,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     auto st = gLabelState.find(c.key);
     if (st != gLabelState.end() && st->second.alpha > 0.5f) c.prio -= 1.5;
     if (c.vis < 1.0f) c.prio += 3.0;                                   // behind a planet
+    if (c.dark) continue;                 // what you cannot see you cannot aim at, and the pointer ignores it
     const float dx = c.x - mid.x, dy = c.y - mid.y;
     nearestAimD2 = std::min(nearestAimD2, dx * dx + dy * dy);
     if (dx * dx + dy * dy < centreD2) { centreD2 = dx * dx + dy * dy; centre = (int)i; }
@@ -1105,13 +1152,13 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   const float kInsideR = Em(26.0f);
   {
     int g = -1;
-    for (size_t i = 0; i < cands.size(); ++i) if (cands[i].inside) { g = (int)i; break; }
+    for (size_t i = 0; i < cands.size(); ++i) if (cands[i].inside && !cands[i].dark) { g = (int)i; break; }
     if (g >= 0) {
       auto d2 = [](float ax, float ay, float bx, float by) { return (ax - bx) * (ax - bx) + (ay - by) * (ay - by); };
       const Cand& G = cands[(size_t)g];
       int precise = -1;
       for (size_t i = 0; i < cands.size(); ++i)
-        if (!cands[i].inside && d2(cands[i].x, cands[i].y, G.x, G.y) < 16.0f * 16.0f &&
+        if (!cands[i].inside && !cands[i].dark && d2(cands[i].x, cands[i].y, G.x, G.y) < 16.0f * 16.0f &&
             d2(cands[i].x, cands[i].y, mid.x, mid.y) <= 10.0f * 10.0f) { precise = (int)i; break; }
       const bool inCircle = d2(G.x, G.y, mid.x, mid.y) <= (kInsideR + 8.0f) * (kInsideR + 8.0f);
       if (precise >= 0) centre = precise;
@@ -1279,7 +1326,8 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     dl->AddText(font, ns, ImVec2(np.x + 1.0f, np.y + 1.0f), C(shadow, 0.55f * e), c.name);
     dl->AddText(font, ns, np, C(Lighten(c.rgb, 0.55f), nameA), c.name);
     for (int withKind = 0; withKind < 2 && !close; ++withKind) {
-      const float a = 0.78f * e * (withKind ? st.focus : 1.0f - st.focus);
+      // Out of scope there is no distance line at all until you look at it.
+      const float a = 0.78f * e * (withKind ? st.focus : (1.0f - st.focus) * (1.0f - std::max(st.far, 0.0f)));
       if (a <= 0.01f) continue;
       char sub[80]; subText(c, withKind != 0, sub, sizeof(sub));
       const float  ss  = subSizeOf(c);

@@ -452,6 +452,14 @@ private:
     unsigned long long advancedFrame{~0ull};
   };
   AeSmoothState aeLiveSmooth, aeRecSmooth;
+  // The live exposure, read back for the exploration labels (they hide what the
+  // exposure has turned black). One pixel through a pair of pixel buffers, so
+  // the value is a frame old and reading it never waits on the GPU. -1 = not
+  // known yet.
+  GLuint aeReadPbo[2]{0, 0};
+  int    aeReadIdx{0};
+  bool   aeReadPrimed{false};
+  float  exposureShownCpu{-1.0f};
   unsigned long long aeFrameCounter{0};   // bumped in EndFrame
   std::chrono::steady_clock::time_point aeLiveLastTime{};
   GLuint aeSmoothProgram{0}, aeSmoothFBO{0};
