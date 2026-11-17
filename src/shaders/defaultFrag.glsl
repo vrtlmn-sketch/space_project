@@ -173,6 +173,7 @@ void main() {
     int   nL = (uLightCount > 0) ? min(uLightCount, 8) : 0;
     vec3  Lo = vec3(0.0);
     float dayMax = -1.0;                                        // brightest geometric N·L
+    float lightLevel = (nL == 0) ? 1.0 : 0.0;                   // sunlight arriving here, 1 = the Sun at 1 AU
     if (nL == 0) {
       vec3 L = normalize(vec3(0.0, 1.0, 1.0));
       dayMax = dot(geoN, L);
@@ -181,6 +182,7 @@ void main() {
       for (int i = 0; i < nL; ++i) {
         vec3  toL   = uLightPositions[i] - vPos;
         float dist2 = dot(toL, toL);
+        lightLevel += max(uLightColors[i].r, max(uLightColors[i].g, uLightColors[i].b)) / max(dist2, 1e-9);
         vec3  L = normalize(toL);
         vec3  H = normalize(L + V);
         float NdotL = max(dot(N, L), 0.0);
@@ -220,7 +222,12 @@ void main() {
     // Limb darkening toward the silhouette.
     float limbDark = mix(0.5, 1.0, smoothstep(0.0, 0.35, NdotVg));
 
-    vec3 ambient = albedo * 0.015 * day;
+    // Fill light in PROPORTION to the sunlight arriving, not a fixed amount. A
+    // fixed fill is 1.5% of the sun at Earth and invisible; at Saturn, where
+    // the sun is ninety times weaker, it was brighter than the sunlight
+    // itself: a flat, over-lit face several times brighter than the rings
+    // beside it. Scaled, every planet has the ratio Earth always had.
+    vec3 ambient = albedo * 0.015 * day * lightLevel;
     vec3 color   = (ambient + Lo) * limbDark + night;
 
     // ── Procedural cloud layer ──

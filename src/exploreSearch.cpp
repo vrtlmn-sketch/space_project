@@ -275,6 +275,7 @@ Renderer::TravelPose Renderer::CaptureTravelPose() const {
   p.scale = (focusDistance > 0.0f) ? (double)focusDistance : 1.0;
   p.lockObj  = exploreLockObj;
   p.lockName = exploreLockName;
+  p.galaxyView = exploreGalaxyView;
   return p;
 }
 
@@ -321,6 +322,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
       SetExploreLock(physicsObjects, clouds, dest.lockObj);
     else if (dest.lockObj < 0)
       exploreLockObj = -1;
+    exploreGalaxyView = dest.galaxyView;              // home again: Play is back; forth again: it is not
     exploreTravelActive = false;
     if (backReq == 2) {
       travelBackActive = false;
@@ -414,9 +416,15 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
     travelBackPose = CaptureTravelPose();             // b comes back here
     SetExploreLock(physicsObjects, clouds, wantObj);  // play is now from this body, at its own pace
     exploreGalaxyView = (wantObj < 0);
-    if (exploreGalaxyView) {                          // a galaxy: no going back, nothing to play
-      travelBackPose.valid = false;
+    if (exploreGalaxyView) {
+      // A galaxy has nothing to play from. And TAKING IN the galaxy you are
+      // inside leaves nowhere to go back to — but a trip to ANOTHER galaxy is
+      // a trip like any other, and b brings you home from it.
       exploreLockObj = -1;
+      const double bx = (gCamAnchor[0] - origin.x) - cameraTranslate[0] - offset.x;
+      const double by = (gCamAnchor[1] - origin.y) - cameraTranslate[1] - offset.y;
+      const double bz = (gCamAnchor[2] - origin.z) - cameraTranslate[2] - offset.z;
+      if (std::sqrt(bx * bx + by * by + bz * bz) < (double)effR * 1.05) travelBackPose.valid = false;
     }
     if (req == 2) {                                   // fast travel: the search's own jump
       exploreTravelActive = false;
@@ -763,7 +771,13 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       travelBackHintAt = ImGui::GetTime();
       SetExploreLock(physicsObjects, clouds, exploreSelObj);
       exploreGalaxyView = (exploreSelObj < 0);
-      if (exploreGalaxyView) { travelBackPose.valid = false; exploreLockObj = -1; }
+      if (exploreGalaxyView) {                        // as in StepExploreTravel
+        exploreLockObj = -1;
+        const double bx = (gCamAnchor[0] - origin.x) - cameraTranslate[0] - offset.x;
+        const double by = (gCamAnchor[1] - origin.y) - cameraTranslate[1] - offset.y;
+        const double bz = (gCamAnchor[2] - origin.z) - cameraTranslate[2] - offset.z;
+        if (std::sqrt(bx * bx + by * by + bz * bz) < (double)effR * 1.05) travelBackPose.valid = false;
+      }
       ShowArrivalDescription(physicsObjects, clouds, exploreSelObj, exploreSelCloud);
       LocateCameraOn(origin, offset, effR);
       CloseExploreSearch();

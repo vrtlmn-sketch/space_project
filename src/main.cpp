@@ -1998,9 +1998,9 @@ int main(int argc, char** argv) {
       if (obj.shaderType == ObjectType::Star) {
         // Camera-relative (matches the camera-relative vertex positions)
         starPositions.push_back(vec3{
-          (float)((obj.data.position.x - gCamAnchor[0]) + renderer.cameraTranslate[0]),
-          (float)((obj.data.position.y - gCamAnchor[1]) + renderer.cameraTranslate[1]),
-          (float)((obj.data.position.z - gCamAnchor[2]) + renderer.cameraTranslate[2])});
+          (float)((obj.data.position.x - gCamAnchor[0]) + renderer.cameraTranslate[0] + obj.localOffset.x),
+          (float)((obj.data.position.y - gCamAnchor[1]) + renderer.cameraTranslate[1] + obj.localOffset.y),
+          (float)((obj.data.position.z - gCamAnchor[2]) + renderer.cameraTranslate[2] + obj.localOffset.z)});
         // Basic blackbody approximation for the light colour
         float t = obj.temperature;
         float r, g, b;
@@ -2024,14 +2024,40 @@ int main(int argc, char** argv) {
                          obj.shaderType == ObjectType::FreeModel ||
                          obj.shaderType == ObjectType::SmallBody);
       if (litSurface && !starPositions.empty()) {
-        obj.renderedObject.uploadStarLighting(starPositions, starColors);
+        // Each body gets only the stars that actually light IT: at most the
+        // eight strongest by 1/d^2, and none under a ten-thousandth of the
+        // strongest. Handing every star to every body was harmless while a
+        // project had one sun. A universe adds stars billions of light-years
+        // away, and the shaders do not all weigh a light by its distance: the
+        // day/night line, the ambient fill and the whole atmosphere go by a
+        // star's DIRECTION alone. So a far star behind a planet turned its
+        // night side into day (Saturn with no shadow, Earth's air lit all
+        // round), and a system past the eighth star in the list got no sun.
+        static std::vector<vec3> litPos, litCol;
+        static std::vector<std::pair<float, int>> ranked;
+        const float ox = (float)((obj.data.position.x - gCamAnchor[0]) + renderer.cameraTranslate[0] + obj.localOffset.x);
+        const float oy = (float)((obj.data.position.y - gCamAnchor[1]) + renderer.cameraTranslate[1] + obj.localOffset.y);
+        const float oz = (float)((obj.data.position.z - gCamAnchor[2]) + renderer.cameraTranslate[2] + obj.localOffset.z);
+        ranked.clear();
+        for (int i = 0; i < (int)starPositions.size(); ++i) {
+          const float dx = starPositions[i].x - ox, dy = starPositions[i].y - oy, dz = starPositions[i].z - oz;
+          ranked.push_back({1.0f / std::max(dx * dx + dy * dy + dz * dz, 1e-30f), i});
+        }
+        std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        litPos.clear(); litCol.clear();
+        for (const auto& r : ranked) {
+          if (litPos.size() >= 8 || r.first < ranked.front().first * 1e-4f) break;
+          litPos.push_back(starPositions[r.second]);
+          litCol.push_back(starColors[r.second]);
+        }
+        obj.renderedObject.uploadStarLighting(litPos, litCol);
         if (obj.shaderType == ObjectType::Planet && obj.atmosphereEnabled) {
           obj.EnsureAtmosphere();
-          obj.atmosphereObject.uploadStarLighting(starPositions, starColors);
+          obj.atmosphereObject.uploadStarLighting(litPos, litCol);
         }
         if (obj.shaderType == ObjectType::Planet && obj.hasVisibleRings()) {
           obj.EnsureRingMesh();
-          obj.ringMesh.uploadStarLighting(starPositions, starColors);
+          obj.ringMesh.uploadStarLighting(litPos, litCol);
         }
       }
       if (obj.shaderType == ObjectType::Star) {

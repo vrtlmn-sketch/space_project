@@ -1478,6 +1478,7 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
   }
   glBindVertexArray(vao);
   glUseProgram(program);
+  applyStarLighting();
 
   if (hasTexture && hasTextureUniform != (unsigned int)-1) {
     glActiveTexture(GL_TEXTURE0);
@@ -1753,6 +1754,7 @@ void RenderedObject::renderRing(const double cameraTranslate[3], const float vie
   }
   glBindVertexArray(vao);
   glUseProgram(program);
+  applyStarLighting();
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
   // Ring local -> world: the mean plane, then the extra tilt about the ring's
@@ -1826,6 +1828,7 @@ void RenderedObject::renderAtmosphere(const double cameraTranslate[3], const flo
   }
   glBindVertexArray(vao);
   glUseProgram(program);
+  applyStarLighting();
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
   glUniform1f(ulocCached(program, "uPlanetRadius"),     planetRadius);
@@ -2670,6 +2673,22 @@ void RenderedObject::uploadStarLighting(const std::vector<vec3>& positions,
     glUniform3fv(lightPositionsUniform, count, &positions[0].x);
   if (lightColorsUniform != (unsigned int)-1 && count > 0)
     glUniform3fv(lightColorsUniform, count, &colors[0].x);
+}
+
+// The lights live on the OBJECT; the uniforms live on a program every planet
+// shares. Uploading them only when they are set left each planet drawing with
+// whichever body set its lights last — invisible while every body had the same
+// list (one sun), wrong the moment each got its own. So every lit draw
+// re-sends this object's lights right before drawing.
+void RenderedObject::applyStarLighting()
+{
+  const int count = (int)std::min(litPositions.size(), (size_t)8);
+  if (lightCountUniform != (unsigned int)-1)
+    glUniform1i(lightCountUniform, count);
+  if (lightPositionsUniform != (unsigned int)-1 && count > 0)
+    glUniform3fv(lightPositionsUniform, count, &litPositions[0].x);
+  if (lightColorsUniform != (unsigned int)-1 && count > 0 && (int)litColors.size() >= count)
+    glUniform3fv(lightColorsUniform, count, &litColors[0].x);
 }
 
 void RenderedObject::uploadTemperature(float kelvin)

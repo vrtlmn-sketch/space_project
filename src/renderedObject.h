@@ -387,6 +387,7 @@ public:
   void uploadViewCentre(GLuint program, double cx, double cy, double cz, float fovDeg);
   void uploadStarLighting(const std::vector<vec3>& positions,
                           const std::vector<vec3>& colors);
+  void applyStarLighting();   // re-send this object's lights to the (shared) program, before a lit draw
   void uploadPlanetColor(const vec3& color);
   bool loadTexture(const std::string& path);
   bool loadTextureHDR(const std::string& path);

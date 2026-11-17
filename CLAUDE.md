@@ -1542,6 +1542,26 @@ warp exactly as the planet does.
   parameterised by (radial 0..1, azimuth); `ringVert` builds the real geometry
   — elliptical radius, centre offset, warp — from uniforms. A second ring costs
   a draw call, not memory. Measured: no change to the 700 MB / ~3 s cost.
+- **Lights are per OBJECT, re-sent at every lit draw** (`applyStarLighting` in
+  renderMesh / renderRing / renderAtmosphere), and each body only gets the
+  stars that light IT (main.cpp: the eight strongest by 1/d^2, none under 1e-4
+  of the strongest). Both were invisible with one sun and both broke the moment
+  milky_way gained a universe: the day/night line, the ambient fill and the
+  atmosphere go by a star's DIRECTION alone, so a star 3 Gly behind Saturn lit
+  its night side; and once lists differed, the uniforms on the shared program
+  were whichever body uploaded last, so Earth was shaded by a generated
+  planet's sun and came out as bare blue haze. Same shape as the next point.
+- **Nothing in the lit shaders may be a FIXED amount of light.** Sunlight goes
+  as 1/d^2; the planet's day-side fill and the rings' ambient were constants.
+  Invisible at 1 AU, where Saturn used to be parked; at its real 9.58 AU the
+  planet's fill beat the sunlight and the rings' ambient was three times the
+  lit ring, which erased the planet's shadow on them. Both scale with
+  `lightLevel` (sum of light / d^2) now, in defaultFrag and ringFrag. The RT
+  shaders still have the constants.
+- **Rings are a LAYER OF PARTICLES** (`ringLayer`, Lommel-Seeliger:
+  2 mu0 / (mu + mu0)), not a sheet lit by N.L. As a sheet, with the sun never
+  more than 27 degrees above the plane, they drew at a third of the planet's
+  brightness; real rings are about as bright as Saturn.
 - **`uRingCount` must be uploaded on EVERY `renderMesh`, including 0.** Shader
   programs are shared via `s_programCache`, so a planet with rings otherwise
   leaves its count set and stripes the next planet drawn with the same program.
@@ -1968,6 +1988,14 @@ and the raster does not. A cube map baked from the hole, backward-traced over an
 annulus just outside the shadow, is the sketched fix — not yet built.
 
 ### Test scenes and known gaps
+
+**milky_way.json carries a universe since 2026-11** (the Universe 2 recipe: 2000
+galaxies, 15 000 stars each, seed 82947291), added at the user's request with
+nothing of the Milky Way itself changed. The nearest generated galaxy is
+3.25 Gly away, so nothing overlaps it. It is also the harness's default project,
+so every default `--compare` now loads 2000 galaxies and shows them as faint
+dots behind the Milky Way: the raster reference number and load time for
+milky_way are different from the ones quoted in this file.
 
 There are **three projects**, and that is deliberate: `blackhole.json` (a hole
 inside a galaxy — the lens scene), `milky_way.json` (planets, rings, Saturn in

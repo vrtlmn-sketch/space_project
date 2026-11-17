@@ -1072,6 +1072,7 @@ public:
     double scale{1.0};                                 // focus distance there: how fast "slow" is
     int    lockObj{-1};                                // what was locked there: going back locks it again
     std::string lockName;
+    bool   galaxyView{false};                          // whether that place was a galaxy seen from outside
   };
   TravelPose CaptureTravelPose() const;
   void       ApplyTravelPose(const TravelPose& p);

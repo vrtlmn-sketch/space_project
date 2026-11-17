@@ -1348,5 +1348,24 @@
     "unresolvedSize": 63.369998931884766,
     "unresolvedStrength": 3.4000000953674316
   },
-  "unitsVersion": 2
+  "unitsVersion": 2,
+  "universes": [
+    {
+      "centralBlackHoles": true,
+      "clustering": 1.0,
+      "galaxyCount": 2000,
+      "liveObjectBudget": 256,
+      "nebulaVolumeRes": 48,
+      "nebulaePerGalaxy": 2,
+      "planetsPerSystem": 4,
+      "popElliptical": 0.27000001072883606,
+      "popIrregular": 0.15000000596046448,
+      "popSpiral": 0.5799999833106995,
+      "radiusGly": 46.0,
+      "seed": 82947291,
+      "starsPerGalaxy": 15000,
+      "overrides": [],
+      "bodyEdits": []
+    }
+  ]
 }
