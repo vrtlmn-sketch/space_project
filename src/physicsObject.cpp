@@ -179,7 +179,20 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
           // impulse that is pure garbage at this dt: skip it (its mass rides
           // with us; the barycentre wobble it would cause is not resolvable).
           if (other.dynAnalytic && other.dynIsSatelliteOf(selfIdx, physicsObjetcs)) continue;
-          dvec3 r = other.data.position - this->data.position;
+          // Where the other body was at the START of this step, not where it
+          // is now. Bodies step one after another, so one that already moved
+          // this tick is a step (or several) ahead of us; reading its current
+          // position pulls us toward where it is GOING. Harmless while the Sun
+          // stood still; with the solar system drifting at 45 AU/yr it was a
+          // steady sideways push on every planet (6% of the Sun's pull on
+          // Mercury) and it flung the Moon off Earth. Its recorded frames hold
+          // the position we need: after k steps, frame k-1.
+          dvec3 otherPos = other.data.position;
+          if (other.simulatePhysics && other.timeframe > timeframe) {
+            if (timeframe == 0) { if (other.initialCaptured) otherPos = other.initialPosition; }
+            else                other.positionAtFrame(timeframe - 1, otherPos);
+          }
+          dvec3 r = otherPos - this->data.position;
           double d2 = r.x*r.x + r.y*r.y + r.z*r.z;
           if (d2 == 0) continue;
           dvec3 dir = normalize(r);

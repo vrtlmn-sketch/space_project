@@ -732,6 +732,13 @@ simulated body a REGIME from its own dynamical time T against dt:
   an analytic satellite reads its parent's position for THIS tick — from the
   parent's recorded frames at each sub-step, so it never lags by one step
   (at galactic dt a one-step lag is millions of AU).
+- **A numeric body reads every other body at the START of its own step**
+  (`PhysicsObject::Update`, from the other's recorded frames). Bodies step one
+  after another, so reading `other.data.position` pulled each planet toward
+  where an already-stepped Sun was GOING. Invisible until the solar system was
+  given the galaxy's 45 AU/yr drift; after that Mercury fell from 0.387 to
+  0.157 AU in 0.2 yr and Earth wandered 9%. Same 400 frames after the fix:
+  0.3847 and 1.0001. Any new force loop over bodies needs the same care.
 - **`clearRecording` drops the regime** (epoch, elapsed): the analytic epoch was
   taken from a state that a reset/Apply erased; re-enter from the new state or
   the body jumps.
