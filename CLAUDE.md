@@ -717,8 +717,12 @@ simulated body a REGIME from its own dynamical time T against dt:
 - Clouds whose internal T is unresolved are **rigid**: particles frozen (they
   are phase-mixed — thousands of internal orbits per frame), the centre of mass
   on a Kepler orbit around its parent, or coasting.
-- Parent = the HEAVIER attractor whose pull is largest (never a lighter one —
-  that gave Sun-orbits-Jupiter cycles), with 1.5x hysteresis. Cloud parents
+- Parent = the HEAVIER attractor with the largest mass / distance^3 (never a
+  lighter one — that gave Sun-orbits-Jupiter cycles), with 1.5x hysteresis.
+  NOT the largest pull: the Sun pulls on the Moon twice as hard as Earth does,
+  so ranking by mass / distance^2 made the Sun the Moon's parent and an
+  analytic Moon drifted off on its own solar orbit. milky_way.json has a Moon
+  to keep this honest. Cloud parents
   are its centre of mass. Regime and parent are derived every frame, never
   saved.
 - **A numeric body skips gravity from its analytic satellites.** A planet

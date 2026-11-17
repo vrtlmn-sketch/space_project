@@ -182,9 +182,15 @@ void refreshCloudDynamics(CloudObject& c) {
   c.dynT = T;
 }
 
-// The parent of a body of mass m at position p: the heavier attractor with the
-// largest pull. Hysteresis: the incumbent keeps the job unless a rival pulls
-// 1.5x harder, so a body sitting near a boundary cannot flip every frame.
+// The parent of a body of mass m at position p: the heavier attractor whose
+// sphere of influence it is in, ranked by mass / distance^3 (the orbital
+// frequency it would have round that attractor). Ranking by raw pull, mass /
+// distance^2, gets a moon wrong: the Sun pulls on our Moon twice as hard as
+// Earth does, but it pulls on Earth just the same, so that pull cancels and it
+// is Earth the Moon goes round. With the Sun as its parent an analytic Moon was
+// put on its own orbit round the Sun and drifted away from Earth.
+// Hysteresis: the incumbent keeps the job unless a rival scores 1.5x higher,
+// so a body sitting near a boundary cannot flip every frame.
 int pickParent(const std::vector<Attractor>& atts, double m, const dvec3& p,
                int selfId, int incumbent, double& outT, double& outMu,
                dvec3& outPos, dvec3& outVel, double selfRadius = 0.0) {
@@ -199,7 +205,7 @@ int pickParent(const std::vector<Attractor>& atts, double m, const dvec3& p,
     // A cloud cannot orbit something INSIDE itself: a black hole at a galaxy's
     // centre made the whole galaxy its rigid satellite on a 1e5-yr "orbit".
     if (selfRadius > 0.0 && d < 2.0 * selfRadius) continue;
-    const double acc = units::kG * am / (d * d);
+    const double acc = units::kG * am / (d * d * d);
     if (a.id == incumbent) { incA = acc; incAt = &a; }
     if (acc > bestA) { bestA = acc; best = a.id; bestAt = &a; }
   }
