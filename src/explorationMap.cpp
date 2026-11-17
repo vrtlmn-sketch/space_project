@@ -35,6 +35,7 @@
 #include "physicsObject.h"
 #include "cloudObject.h"
 #include "units.h"
+#include "kindPalette.h"
 
 #include "imgui.h"
 
@@ -111,43 +112,7 @@ double Smooth01(double t) { t = std::clamp(t, 0.0, 1.0); return t * t * (3.0 - 2
 
 bool LiveBody(const PhysicsObject& o) { return !(o.inertSlot() || o.renderedObject.inert); }
 
-// ONE palette for everything the atlas draws (labels, map, chevrons): colour
-// says what kind of thing it is. A planet uses its own surface colour.
-enum AtlasKind { kAkGalaxy, kAkCloud, kAkStar, kAkPlanet, kAkNebula, kAkHole, kAkModel };
-struct RGB { float r, g, b; };
-const char* KindName(int k) {
-  static const char* n[] = {"Galaxy", "Cloud", "Star", "Planet", "Nebula", "Black hole", "Object"};
-  return n[k];
-}
-RGB KindRGB(int k) {
-  switch (k) {
-    case kAkGalaxy: return {0.62f, 0.75f, 1.00f};
-    case kAkCloud:  return {0.74f, 0.80f, 0.86f};
-    case kAkStar:   return {1.00f, 0.91f, 0.72f};
-    case kAkNebula: return {0.95f, 0.62f, 0.72f};
-    case kAkHole:   return {0.74f, 0.68f, 0.88f};
-    case kAkModel:  return {0.70f, 0.70f, 0.70f};
-    default:        return {0.66f, 0.82f, 0.95f};
-  }
-}
-int BodyKind(const PhysicsObject& o) {
-  switch (o.shaderType) {
-    case ObjectType::Star:      return kAkStar;
-    case ObjectType::BlackHole: return kAkHole;
-    case ObjectType::Nebula:    return kAkNebula;
-    case ObjectType::FreeModel: return kAkModel;
-    default:                    return kAkPlanet;
-  }
-}
-RGB BodyRGB(const PhysicsObject& o) {
-  const int k = BodyKind(o);
-  if (k == kAkPlanet && o.renderedObject.hasMeanColor()) {
-    const vec3 m = o.renderedObject.meanColor;
-    const float mx = std::max({m.x, m.y, m.z, 1e-4f});
-    return {0.35f + 0.65f * m.x / mx, 0.35f + 0.65f * m.y / mx, 0.35f + 0.65f * m.z / mx};
-  }
-  return KindRGB(k);
-}
+using RGB = KindRGBf;
 RGB Lighten(RGB c, float t) { return {c.r + (1 - c.r) * t, c.g + (1 - c.g) * t, c.b + (1 - c.b) * t}; }
 
 // Breadcrumb names, set by DrawExplorationMap for the card it draws.

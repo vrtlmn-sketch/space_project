@@ -19,6 +19,7 @@
 #include "imgui_internal.h"
 #include "uiScale.h"
 #include "uiRows.h"
+#include "kindPalette.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
@@ -5872,30 +5873,30 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 
     // ── Physics Object tab ──
     if (ImGui::BeginTabItem("Object")) {
-      ImGui::InputText("Name##sp", spawnForm.name, sizeof(spawnForm.name));
+      PropLabel("Name");
+      ImGui::InputText("##Name##sp", spawnForm.name, sizeof(spawnForm.name));
       {
         double mMin = 1e-12, mMax = 1e8;
-        ImGui::DragScalar("Mass", ImGuiDataType_Double, &spawnForm.mass,
+        PropLabel("Mass");
+        ImGui::DragScalar("##Mass##sp", ImGuiDataType_Double, &spawnForm.mass,
                           0.01f, &mMin, &mMax, "%.4g Ms", ImGuiSliderFlags_Logarithmic);
         ImGui::TextDisabled("= %s", units::FormatMassMsun(spawnForm.mass).c_str());
       }
       ImGui::Spacing();
 
-      ImGui::Checkbox("Spawn in front of camera##sfront", &spawnForm.placeInFront);
+      PropCheckbox("Spawn in front of camera##sfront", &spawnForm.placeInFront);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Place it ahead of the camera, framed by its size,\n"
                           "instead of at the position below.");
       ImGui::BeginDisabled(spawnForm.placeInFront);
-      ImGui::Text("Position (AU)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Position (AU)");
       float pos[3] = { spawnForm.posX, spawnForm.posY, spawnForm.posZ };
       if (ImGui::DragFloat3("##spos", pos, 0.1f, -50.f, 50.f, "%.2f")) {
         spawnForm.posX = pos[0]; spawnForm.posY = pos[1]; spawnForm.posZ = pos[2];
       }
       ImGui::EndDisabled();
 
-      ImGui::Text("Velocity (AU/yr)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Velocity (AU/yr)");
       float vel[3] = { spawnForm.velX, spawnForm.velY, spawnForm.velZ };
       if (ImGui::DragFloat3("##svel", vel, 0.01f, -10.f, 10.f, "%.3f")) {
         spawnForm.velX = vel[0]; spawnForm.velY = vel[1]; spawnForm.velZ = vel[2];
@@ -5903,7 +5904,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 
       ImGui::Spacing();
       const char* shaderItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula" };
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Type");
       if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 5)) {
         if (spawnForm.shaderType == 0)      spawnForm.mass = 3.0e-6;  // Earth
         else if (spawnForm.shaderType == 1) spawnForm.mass = 1.0;     // Sun
@@ -5915,19 +5916,17 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         ImGui::TextWrapped("A ray-marched emission volume: gas lit by its own embedded stars, "
                            "coloured by species, dust lanes carved by absorption. Everything "
                            "comes from the seed; tune it in the inspector after spawning.");
-        ImGui::Text("Radius (ly)");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Radius (ly)");
         ImGui::DragFloat("##snebr", &spawnForm.nebulaRadiusLy, 0.1f, 0.2f, 300.0f, "%.1f ly", ImGuiSliderFlags_Logarithmic);
-        ImGui::Text("Palette");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Palette");
         const char* pals[] = { "Natural (H-alpha pink, OIII teal)", "Hubble (SII red, H-alpha green, OIII blue)" };
         ImGui::Combo("##snebp", &spawnForm.nebulaPalette, pals, 2);
-        ImGui::Text("Seed");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Seed");
         ImGui::InputInt("##snebs", &spawnForm.nebulaSeed);
       }
       if (spawnForm.shaderType == 1) {
-        ImGui::SetNextItemWidth(Em(-30));
+        PropLabel("Temperature");
+        ImGui::SetNextItemWidth(-(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
         ImGui::SliderFloat("##stemp", &spawnForm.temperature, 1000.f, 50000.f, "%.0f K");
         float r, g, b;
         BlackbodyColor(spawnForm.temperature, r, g, b);
@@ -5938,8 +5937,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       // Free Model: size + OBJ mesh picker
       bool freeModel = (spawnForm.shaderType == 3);
       if (freeModel) {
-        ImGui::Text("Size (AU)");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Size (AU)");
         ImGui::DragFloat("##ssize", &spawnForm.visualRadius, 0.001f, 1e-5f, 5.0f, "%.4g AU",
                          ImGuiSliderFlags_Logarithmic);
         ImGui::SeparatorText("Mesh (.obj)");
@@ -6003,7 +6001,7 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       }
       // Build combo items: "Procedural" + all formation files
       const char* previewStr = (formIdx >= 0) ? formationFiles[formIdx].c_str() : "Procedural";
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("File");
       if (ImGui::BeginCombo("##cform", previewStr)) {
         if (ImGui::Selectable("Procedural", formIdx < 0)) {
           cloudForm.formationFile.clear();
@@ -6023,21 +6021,20 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 
       // Show procedural controls only if no formation file
       if (cloudForm.formationFile.empty()) {
-        ImGui::SliderInt("Count", &cloudForm.count, 100, 5000);
-        ImGui::Text("Size");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Count");
+        ImGui::SliderInt("##Count##sp", &cloudForm.count, 100, 5000);
+        PropLabel("Size");
         float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
         if (ImGui::DragFloat3("##csz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
           cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
         }
       } else {
-        ImGui::Text("Scale");
-        ImGui::SetNextItemWidth(-1);
+        PropLabel("Scale");
         ImGui::DragFloat("##cf_scale", &cloudForm.scale, 0.05f, 0.1f, 20.f, "%.2fx");
         ImGui::TextDisabled("Velocities adjusted for correct orbits");
       }
 
-      ImGui::Checkbox("Dark matter halo", &cloudForm.useDarkMatterHalo);
+      PropCheckbox("Dark matter halo", &cloudForm.useDarkMatterHalo);
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Invisible heavy particles that reproduce the rotation curve, so the\n"
                           "cloud stays bound and two galaxies collide/merge realistically.\n"
@@ -6056,11 +6053,12 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 
       // Render mode
       const char* spawnRmItems[] = { "Points", "Nebula" };
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Render as");
       ImGui::Combo("##sp_rendermode", &cloudForm.renderMode, spawnRmItems, 2);
 
       // Temperature slider with colour preview
-      ImGui::SetNextItemWidth(Em(-30));
+      PropLabel("Temperature");
+      ImGui::SetNextItemWidth(-(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
       ImGui::SliderFloat("##sp_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K");
       float sr, sg, sb;
       BlackbodyColor(cloudForm.temperature, sr, sg, sb);
@@ -6085,11 +6083,9 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       ImGui::TextWrapped("A viewpoint you can frame, keyframe and view in the "
                          "secondary window. Shown as a frustum in the scene.");
       ImGui::Spacing();
-      ImGui::Text("Position (AU)");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Position (AU)");
       ImGui::DragFloat3("##camspawnpos", camSpawnPos, 0.1f, -50.f, 50.f, "%.2f");
-      ImGui::Text("Field of View");
-      ImGui::SetNextItemWidth(-1);
+      PropLabel("Field of View");
       ImGui::SliderFloat("##camspawnfov", &camSpawnFov, 1.0f, 120.0f, "%.1f deg");
       ImGui::Spacing();
       ImGui::Separator();
@@ -6127,6 +6123,52 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawSceneHierarchy  (docked left-bottom — object list + save/load)
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene list rows: a dot in the kind's colour (the same palette as the
+// exploration labels), the name, and a dim detail right-aligned. One row style
+// for every kind; selection uses the theme's own highlight. Returns the
+// Selectable's click; the row is the last item, so hover / drag / context
+// menus attached after it work as with a plain Selectable.
+// ─────────────────────────────────────────────────────────────────────────────
+static bool SceneRow(const char* id, bool selected, KindRGBf dot, const char* name, const char* detail) {
+  const bool clicked = ImGui::Selectable(id, selected, ImGuiSelectableFlags_SpanAvailWidth);
+  const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float h = r1.y - r0.y, cy = (r0.y + r1.y) * 0.5f;
+  const float dotR = std::max(2.5f, h * 0.18f);
+  dl->AddCircleFilled(ImVec2(r0.x + dotR + 2.0f, cy), dotR,
+                      IM_COL32((int)(dot.r * 255), (int)(dot.g * 255), (int)(dot.b * 255), 255), 16);
+  const float textX = r0.x + dotR * 2.0f + Em(8);
+  const float textY = cy - ImGui::GetTextLineHeight() * 0.5f;
+  float nameEnd = r1.x - 4.0f;
+  if (detail && *detail) {
+    const float dw = ImGui::CalcTextSize(detail).x;
+    const float dx = r1.x - dw - 4.0f;
+    dl->AddText(ImVec2(dx, textY), ImGui::GetColorU32(ImGuiCol_TextDisabled), detail);
+    nameEnd = dx - Em(10);
+  }
+  dl->PushClipRect(ImVec2(textX, r0.y), ImVec2(std::max(textX, nameEnd), r1.y), true);
+  dl->AddText(ImVec2(textX, textY), ImGui::GetColorU32(ImGuiCol_Text), name);
+  dl->PopClipRect();
+  return clicked;
+}
+
+// "20 000": a count with a thin space every three digits.
+static std::string GroupedCount(long long n) {
+  std::string d = std::to_string(n < 0 ? -n : n), out;
+  for (size_t i = 0; i < d.size(); ++i) {
+    if (i > 0 && (d.size() - i) % 3 == 0) out += ' ';
+    out += d[i];
+  }
+  return (n < 0 ? "-" : "") + out;
+}
+
+static std::string BodyDetail(const PhysicsObject& o) {
+  if (o.shaderType == ObjectType::Nebula)    return units::FormatDistanceAU((double)o.visualRadius);
+  if (o.shaderType == ObjectType::FreeModel) return "";
+  return units::FormatMassMsun(o.data.mass);
+}
+
 void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& /*cb*/) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Scene", nullptr, flags);
@@ -6154,11 +6196,9 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
   for (const auto& o : physicsObjects) if (o.isUniverseSlot() && o.uniActive) ++universeBodies;
   bool universeOpen = false;
   if (universeCount > 0) {
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.14f, 0.10f, 0.24f, 1.f));
     universeOpen = ImGui::TreeNodeEx("##universeNode",
                        ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth,
-                       "[U] Universe  (%d galaxies, %d bodies)", universeCount, universeBodies);
-    ImGui::PopStyleColor();
+                       "Universe   %d galaxies, %d bodies", universeCount, universeBodies);
     // Drop a cloud row here to make it a universe member. Membership is a tag,
     // not a transform parent (the universe IS the coordinate space), so joining
     // never moves the object.
@@ -6184,20 +6224,17 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     if (inUniverse) ImGui::Indent(14.0f);
     int sentinel = -(2 + i);
     bool cloudSel = (selectedIdx == sentinel);
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.08f, 0.18f, 0.12f, 1.f));
-    char cloudLabel[128];
     // A galaxy reports the stars it HAS, not the LOD stand-in currently built.
     // The built count changes as you fly around; that is a rendering detail and
     // watching it jump is noise, not information.
     const RenderedObject& cro = clouds[i]->renderedObject;
     int shownCount = cro.isGalaxy ? cro.galaxyFullStars : clouds[i]->particleCount();
-    if (!clouds[i]->name.empty())
-      snprintf(cloudLabel, sizeof(cloudLabel), "%s %s  (%d)##cloud%d",
-               cro.isGalaxy ? "[G]" : "[~]", clouds[i]->name.c_str(), shownCount, i);
-    else
-      snprintf(cloudLabel, sizeof(cloudLabel), "[~] Cloud %d  (%d)##cloud%d",
-               i, shownCount, i);
-    if (ImGui::Selectable(cloudLabel, cloudSel)) {
+    char cloudId[32];   snprintf(cloudId, sizeof(cloudId), "##cloud%d", i);
+    char cloudName[96];
+    if (!clouds[i]->name.empty()) snprintf(cloudName, sizeof(cloudName), "%s", clouds[i]->name.c_str());
+    else                          snprintf(cloudName, sizeof(cloudName), "Cloud %d", i);
+    const std::string cloudDetail = GroupedCount(shownCount) + (cro.isGalaxy ? " stars" : " particles");
+    if (SceneRow(cloudId, cloudSel, KindRGB(cro.isGalaxy ? kAkGalaxy : kAkCloud), cloudName, cloudDetail.c_str())) {
       selectedIdx   = cloudSel ? -1 : sentinel;
       if (!cloudSel) focusInspectorNext = true;
       highlightMode = 0;
@@ -6232,7 +6269,6 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
       }
       ImGui::EndPopup();
     }
-    ImGui::PopStyleColor();
     if (inUniverse) ImGui::Unindent(14.0f);
   };
   if (universeOpen) {
@@ -6246,6 +6282,7 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
                                      "stars", "planets", "nebulae" };
     static const char* kSort[]   = { "nearest", "kind", "name", "size" };
     ImGui::Indent(14.0f);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("show"); ImGui::SameLine();
     ImGui::SetNextItemWidth(Em(104.0f));
     ImGui::Combo("##unifilter", &uniFilterMode, kFilter, IM_ARRAYSIZE(kFilter));
@@ -6300,22 +6337,12 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
 
     auto bodyRow = [&](int i) {
       const PhysicsObject& o = physicsObjects[i];
-      const char* icon = (o.shaderType == ObjectType::Star)      ? "[*]"
-                       : (o.shaderType == ObjectType::BlackHole) ? "[O]"
-                       : (o.shaderType == ObjectType::Nebula)    ? "[~]" : "[o]";
-      ImVec4 col = (o.shaderType == ObjectType::Star)
-                 ? ImVec4(0.25f, 0.16f, 0.04f, 1.f)
-                 : (o.shaderType == ObjectType::BlackHole)
-                 ? ImVec4(0.12f, 0.06f, 0.18f, 1.f)
-                 : (o.shaderType == ObjectType::Nebula)
-                 ? ImVec4(0.16f, 0.06f, 0.20f, 1.f)
-                 : ImVec4(0.08f, 0.14f, 0.26f, 1.f);
       ImGui::Indent(28.0f);
-      char lbl[160];
-      snprintf(lbl, sizeof(lbl), "%s %s##ub%d", icon, o.name.c_str(), i);
-      ImGui::PushStyleColor(ImGuiCol_Header, col);
-      if (ImGui::Selectable(lbl, selectedIdx == i)) { selectedIdx = i; focusInspectorNext = true; }
-      ImGui::PopStyleColor();
+      char lbl[32];
+      snprintf(lbl, sizeof(lbl), "##ub%d", i);
+      if (SceneRow(lbl, selectedIdx == i, BodyRGB(o), o.name.c_str(), BodyDetail(o).c_str())) {
+        selectedIdx = i; focusInspectorNext = true;
+      }
       if (ImGui::IsItemHovered()) {
         if (hoverIdx != i) { hoverIdx = i; hoverStartTime = ImGui::GetTime(); }
         hoverLastSeen = ImGui::GetTime();
@@ -6361,15 +6388,13 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
   for (int i = 0; i < (int)sceneCameras.size(); i++) {
     int sentinel = CameraSentinel(i);
     bool camSel = (selectedIdx == sentinel);
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.20f, 0.17f, 0.06f, 1.f));
-    char camLabel[96];
-    snprintf(camLabel, sizeof(camLabel), "[#] %s##scam%d", sceneCameras[i].name.c_str(), i);
-    if (ImGui::Selectable(camLabel, camSel)) {
+    char camId[32];
+    snprintf(camId, sizeof(camId), "##scam%d", i);
+    if (SceneRow(camId, camSel, KindRGBf{0.85f, 0.85f, 0.85f}, sceneCameras[i].name.c_str(), "camera")) {
       selectedIdx   = camSel ? -1 : sentinel;
       if (!camSel) focusInspectorNext = true;
       highlightMode = 0;
     }
-    ImGui::PopStyleColor();
   }
 
   // Object list
@@ -6379,20 +6404,10 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
     // that made them — never loose among the user's own objects. (They are
     // still ordinary objects: selectable, flyable, inspectable.)
     if (obj.isUniverseSlot()) continue;
-    const char* icon = (obj.shaderType == ObjectType::Star) ? "[*]"
-                     : (obj.shaderType == ObjectType::BlackHole) ? "[O]"
-                     : (obj.shaderType == ObjectType::FreeModel) ? "[M]" : "[ ]";
-    char label[96];
-    snprintf(label, sizeof(label), "%s %s  m=%.1f##o%d", icon, obj.name.c_str(), obj.data.mass, i);
-
+    char label[32];
+    snprintf(label, sizeof(label), "##o%d", i);
     bool sel = (selectedIdx == i);
-    ImVec4 headerCol = (obj.shaderType == ObjectType::Star)
-        ? ImVec4(0.25f, 0.16f, 0.04f, 1.f)
-        : (obj.shaderType == ObjectType::BlackHole)
-        ? ImVec4(0.12f, 0.06f, 0.18f, 1.f)
-        : ImVec4(0.08f, 0.14f, 0.26f, 1.f);
-    ImGui::PushStyleColor(ImGuiCol_Header, headerCol);
-    if (ImGui::Selectable(label, sel)) {
+    if (SceneRow(label, sel, BodyRGB(obj), obj.name.c_str(), BodyDetail(obj).c_str())) {
       selectedIdx   = sel ? -1 : i;
       if (!sel) focusInspectorNext = true;
       highlightMode = 0;
@@ -6402,7 +6417,6 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
       hoverLastSeen = ImGui::GetTime();
       hoverRowY     = ImGui::GetItemRectMin().y;
     }
-    ImGui::PopStyleColor();
   }
 
   ImGui::Spacing();
