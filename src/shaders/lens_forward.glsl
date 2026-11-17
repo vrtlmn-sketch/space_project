@@ -211,7 +211,12 @@ uniform vec3  uLfHoleDirV[4];    // unit camera->hole, VIEW axes
 uniform vec3  uLfHoleDirW[4];    // unit camera->hole, WORLD axes
 uniform float uLfHoleDist[4];    // Dl (AU)
 uniform float uLfHoleRs[4];      // rs (AU)
+// cloudVert supplies its own LF_DELTA0 (it reads the value per galaxy in the
+// far-galaxy batch); everything else reads the uniform.
+#ifndef LF_DELTA0
 uniform float uLfDelta0[4];      // PER OBJECT: (object centre - hole) . holeDir, in double on the CPU
+#define LF_DELTA0(h) uLfDelta0[h]
+#endif
 uniform float uLfMaxMu;          // cap on how far a sprite may be stretched (fill-rate guard)
 uniform float uLfHazeArc;        // separate arc budget for the HAZE pass (x uLfMaxSprite)
 uniform float uLfMaxSprite;      // largest lensed sprite, as a fraction of viewport height.
@@ -274,7 +279,7 @@ bool lfPlace(inout vec4 clipPos, vec3 offW, float fx, float fy) {
         // small and safe in float. Forming (axial distance - Dl) directly would
         // subtract two ~1e6 AU numbers in float32 and leave nothing — which is
         // exactly the near-hole term an accretion disc depends on.
-        float delta = uLfDelta0[h] + dot(offW, uLfHoleDirW[h]);
+        float delta = LF_DELTA0(h) + dot(offW, uLfHoleDirW[h]);
 
         // Skip the work where it cannot show: the largest displacement this hole
         // can produce for this source is bounded, and below a fraction of a

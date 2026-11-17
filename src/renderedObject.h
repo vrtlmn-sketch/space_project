@@ -267,6 +267,38 @@ public:
   void  releaseCloudGlObjects();
   void  drawStarfieldChunks(const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
                             const double cameraTranslate[3]);
+  // ── Far galaxies: skipped when off screen, batched when tiny ───────────────
+  // A universe is thousands of single-chunk galaxies, nearly all of them either
+  // off screen or a pixel or two across. Each used to pay for a full renderCloud
+  // (uniform uploads, four passes, four draw calls) to draw eight points or
+  // nothing. probeFarGalaxy decides per galaxy, BEFORE any GL work:
+  //   Skipped — far away and outside the view by more than the largest sprite
+  //             could reach, so no pass could have put a pixel on screen.
+  //   Batched — on screen but small enough to draw from its first
+  //             kFarBatchStars stars: its points and per-galaxy values are
+  //             appended to the caller's batch, which renderFarGalaxyBatch
+  //             draws in one call per pass (same points, same shader).
+  //   Normal  — everything else, including every galaxy you are near.
+  static constexpr int kFarBatchStars = 64;
+  struct FarGalaxyRecord { float c0[4], r0[4], r1[4], r2[4], v0[4], d0[4], d1[4], l0[4]; };
+  struct FarGalaxyVert   { short x, y, z; unsigned short vid; unsigned int gal; };
+  enum class FarGalaxyResult { Normal, Skipped, Batched };
+  FarGalaxyResult probeFarGalaxy(const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
+                                 const double cameraTranslate[3], float farFalloff,
+                                 float dustInfluenceFallback, float spriteReach,
+                                 bool allowSkip, bool allowBatch,
+                                 std::vector<FarGalaxyRecord>& recs,
+                                 std::vector<FarGalaxyVert>& verts);
+  // Called on any one batched galaxy (they share the program and every
+  // scene-wide setting). drawLight / drawDust mirror the two cloud phases.
+  void  renderFarGalaxyBatch(const std::vector<FarGalaxyRecord>& recs,
+                             const std::vector<FarGalaxyVert>& verts,
+                             const double cameraTranslate[3], const float viewRot[9],
+                             float fovDeg, int fbWidth, int fbHeight);
+  void  uploadDustInfluenceOnly(float influence);
+  void  cacheAppearance(float kelvin, int mode) { cachedTemperature = kelvin; cachedRenderMode = mode; }
+  std::vector<short> farPrefix;      // the chunk's first stars (int16 xyz), kept for the batch
+  bool  cloudFarHandled{false};      // skipped or batched this pass: no light, no dust draw of its own
   MeshType meshType{MeshType::sphere};
   dvec3 coordinates;  // world position (double: galactic coords need it)
   vec3  rotationDeg{0.0f, 0.0f, 0.0f};  // object orientation (Euler X/Y/Z degrees)
@@ -396,6 +428,7 @@ public:
   // normal, dir-to-light)) from a 48-cell density-grid gradient. Feeds the
   // density map's G channel so screen-space rims light 3D-correctly.
   void setCloudPlacementUniforms(const double cameraTranslate[3]);
+  void uploadCloudFrameUniforms(const double cameraTranslate[3], int fbHeight);
   void updateCloudRimFactors();
   void uploadRimFactors();
   // Per-particle in-scatter light (Option A): starlight reaching each dust
@@ -591,6 +624,15 @@ void GenerateMeshGrid(float cellSize, int radius, bool showX = true, bool showY 
   float dmSoftening2{0.0f};
   int   starCount() const { return (int)cloudParticles.size() - dmParticleCount; }
   float softening2() const {
+    // SOFT2=<value> freezes the softening for an A/B. It is normally DERIVED
+    // from cloudRmsRadius, which the render path measures from the live
+    // particles every frame — so a contracting cloud softens less, which makes
+    // it contract faster. This gate is how that feedback is tested.
+    static const float envSoft2 = []{
+      const char* e = std::getenv("SOFT2");
+      return e ? (float)atof(e) : -1.0f;
+    }();
+    if (envSoft2 >= 0.0f) return envSoft2;
     // Star-based spacing (unchanged for a cloud with no DM: dmParticleCount 0 →
     // nStars == size, so this is bit-identical to before).
     const double nStars = std::max(1.0, (double)(cloudParticles.size() - dmParticleCount));

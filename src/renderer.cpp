@@ -538,6 +538,7 @@ void Renderer::EndFrame() {
 
   glfwSwapBuffers(window);
   rimClouds.clear();
+  farGalaxyRecs.clear(); farGalaxyVerts.clear(); farGalaxyRep = nullptr;
   rimOccluders.clear();
   rayTracedObjects.clear();
   rayTracedObjects.reserve(20);
@@ -579,13 +580,68 @@ void Renderer::AddRimOccluder(const RenderedObject& ro) {
   rimOccluders.push_back(RimOccluder{ CameraRelative(ro.coordinates), ro.sphereRadius() });
 }
 
+// The per-frame look settings a cloud draw reads off its RenderedObject.
+void Renderer::PrepCloudLook(RenderedObject& ro) {
+  ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale;
+  ro.cineHazeStrength = unresolvedStrength;  ro.cineHazeSpread = unresolvedSize;
+  ro.cineResolvedCut  = resolvedCut;         ro.cineGasStrength = gasStrength;
+  ro.cineFarFalloff   = farFalloff;          ro.cineStarFieldGain = std::pow(2.0f, starFieldStops);
+  ro.cineStarSize     = starSize;
+}
+
+// Far galaxies never reach renderCloud: one that is off screen is skipped
+// before any GL work, one that is a few pixels across joins the batch that
+// FlushFarGalaxies draws in one call per pass. Returns true when the galaxy
+// was dealt with here. See RenderedObject::probeFarGalaxy for the rules;
+// anything near the camera always returns false and draws as it always did.
+// FAR_SKIP=0 / FAR_BATCH=0 switch the two off for an A/B.
+bool Renderer::TryFarGalaxy(RenderedObject& ro) {
+  if (rayTracerView || ro.meshType != MeshType::cloud) return false;
+  if (!ro.isStarfield || !ro.isGalaxy || ro.starChunks.size() != 1) return false;
+  static const bool allowSkip  = []{ const char* e = std::getenv("FAR_SKIP");  return !e || std::atoi(e) != 0; }();
+  static const bool allowBatch = []{ const char* e = std::getenv("FAR_BATCH"); return !e || std::atoi(e) != 0; }();
+  // How far past the edge of the view a sprite can still reach in, as a share
+  // of the half-height: the largest sprite any pass draws is 160 px at the
+  // reference height (times the SSAA scale), or the lens's own cap when a
+  // black hole is stretching them.
+  const float refH  = (spriteRefHeight > 0.0f) ? spriteRefHeight : (float)std::max(fbHeight, 1);
+  float       reach = 340.0f * std::max(currentPixelScale, 1.0f) / refH;
+  if (gLfCount > 0) reach = std::max(reach, 2.2f * gLfMaxSprite);
+  const auto r = ro.probeFarGalaxy(camMatrix, zoom, fbWidth, fbHeight, cameraTranslate, farFalloff,
+                                   dustInfluence, reach, allowSkip,
+                                   allowBatch && realisticRasterView, farGalaxyRecs, farGalaxyVerts);
+  if (r == RenderedObject::FarGalaxyResult::Normal) return false;
+  ro.cloudFarHandled = true;
+  if (r == RenderedObject::FarGalaxyResult::Batched) {
+    if (!farGalaxyRep) farGalaxyRep = &ro;
+    if (std::find(rimClouds.begin(), rimClouds.end(), &ro) == rimClouds.end())
+      rimClouds.push_back(&ro);
+  }
+  return true;
+}
+
+void Renderer::FlushFarGalaxies() {
+  if (farGalaxyRep && !farGalaxyRecs.empty()) {
+    RenderedObject& rep = *farGalaxyRep;
+    gSpriteRefHeight = spriteRefHeight;
+    PrepCloudLook(rep);
+    rep.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, starLumSpread, starLumPivot(true), starLumPivot(false), dustCoverage, dustClumpScale,
+                         rep.ownDustInfluence(dustInfluence), dustContrast);
+    rep.renderFarGalaxyBatch(farGalaxyRecs, farGalaxyVerts, cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
+  }
+  farGalaxyRecs.clear();
+  farGalaxyVerts.clear();
+  farGalaxyRep = nullptr;
+}
+
 void Renderer::Draw(RenderedObject& ro) {
+  if (TryFarGalaxy(ro)) return;
   if (!rayTracerView) {
     if (ro.meshType == MeshType::sphere)  { ro.realisticShading = realisticRasterView; ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
                                             AddRimOccluder(ro); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     gSpriteRefHeight = spriteRefHeight;
-    if (ro.meshType == MeshType::cloud)   { ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale; ro.cineHazeStrength = unresolvedStrength; ro.cineHazeSpread = unresolvedSize; ro.cineResolvedCut = resolvedCut; ro.cineGasStrength = gasStrength; ro.cineFarFalloff = farFalloff; ro.cineStarFieldGain = std::pow(2.0f, starFieldStops); ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; ro.cineStarSize = starSize; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+    if (ro.meshType == MeshType::cloud)   { PrepCloudLook(ro); ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             // Volumetric dust: (re)splat the volume now — keyed on
                                             // cloudGpuDirty, so it must run before renderCloud clears
                                             // it. The extinction march itself runs in DrawCloudDust,
@@ -1061,6 +1117,12 @@ float Renderer::starLumPivot(bool coreWeighted) const
 {
   const float R = starLumSpread;
   if (!(R > 0.0f)) return 0.0f;
+  // Called several times per cloud per frame, and the answer only changes when
+  // the slider does. Solving it afresh each time was 2048 exp() per call —
+  // with a few thousand galaxies, most of the frame.
+  static float cachedR[2] = {-1.0f, -1.0f}, cachedPivot[2] = {0.0f, 0.0f};
+  const int slot = coreWeighted ? 1 : 0;
+  if (cachedR[slot] == R) return cachedPivot[slot];
   const int N = 2048;
   double num = 0.0, den = 0.0;
   for (int i = 0; i < N; ++i) {
@@ -1071,11 +1133,24 @@ float Renderer::starLumPivot(bool coreWeighted) const
     num += base * std::exp((double)R * v);
     den += base;
   }
-  return (float)(std::log(num / std::max(den, 1e-12)) / (double)R);
+  cachedR[slot]     = R;
+  cachedPivot[slot] = (float)(std::log(num / std::max(den, 1e-12)) / (double)R);
+  return cachedPivot[slot];
 }
 
 void Renderer::DrawCloudDust(RenderedObject& ro) {
   if (rayTracerView || ro.meshType != MeshType::cloud) return;
+  // The dust loop starts once every cloud's light is down, so the first call
+  // is where the far-galaxy batch belongs: its light joins the sum, then its
+  // dust the product, and neither depends on the order among clouds.
+  FlushFarGalaxies();
+  if (ro.cloudFarHandled) {
+    ro.cloudFarHandled = false;
+    // The dust-density pass reads whatever dust scale the LAST cloud in the
+    // loop left on the shared program. Keep leaving it.
+    if (realisticRasterView) ro.uploadDustInfluenceOnly(ro.ownDustInfluence(dustInfluence));
+    return;
+  }
   if (!ro.cloudLightDrawn) return;
   ro.cloudLightDrawn = false;
   if (!ro.realisticShading) return;          // the nav path has no dust pass

@@ -17,6 +17,23 @@
 #include <algorithm>
 #include <unordered_map>
 
+// glGetUniformLocation is a string lookup inside the driver, and under Mesa's
+// GL thread it also waits for every queued call to finish first. The cloud path
+// made ~45 of them per cloud per frame, which with thousands of galaxies was
+// most of the driver time. Locations never change for a linked program and
+// programs live for the run (s_programCache), so remember them, keyed by the
+// program and the address of the name literal.
+static GLint ulocCached(GLuint program, const char* name)
+{
+  static std::unordered_map<uint64_t, GLint> cache;
+  const uint64_t key = ((uint64_t)program << 48) ^ (uint64_t)(uintptr_t)name;
+  auto it = cache.find(key);
+  if (it != cache.end()) return it->second;
+  const GLint loc = glGetUniformLocation(program, name);
+  cache.emplace(key, loc);
+  return loc;
+}
+
 float RenderedObject::sZNear = 0.001f;
 double gCamAnchor[3] = {0.0, 0.0, 0.0};
 double gViewRotD[9]  = {1,0,0, 0,1,0, 0,0,1};   // row-major double view rotation
@@ -38,19 +55,19 @@ unsigned gLfLutTex          = 0;
 
 void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz)
 {
-  GLint l = glGetUniformLocation((GLuint)program, "uLfCount");
+  GLint l = ulocCached((GLuint)program, "uLfCount");
   if (l < 0) return;                      // shader has no lens (lines, RT, post)
   glUniform1i(l, gLfCount);
   if (gLfCount <= 0) return;
-  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDirV")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirV);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDirW")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirW);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleDist")) >= 0) glUniform1fv(l, gLfCount, gLfHoleDist);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfHoleRs"))   >= 0) glUniform1fv(l, gLfCount, gLfHoleRs);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfPxPerRad")) >= 0) glUniform1f(l, gLfPxPerRad);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfMaxMu"))    >= 0) glUniform1f(l, gLfMaxMu);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfMaxSprite")) >= 0) glUniform1f(l, gLfMaxSprite);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfHazeArc")) >= 0) glUniform1f(l, gLfHazeArc);
-  if ((l = glGetUniformLocation((GLuint)program, "uLfFy"))       >= 0) glUniform1f(l, gLfFy);
+  if ((l = ulocCached((GLuint)program, "uLfHoleDirV")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirV);
+  if ((l = ulocCached((GLuint)program, "uLfHoleDirW")) >= 0) glUniform3fv(l, gLfCount, gLfHoleDirW);
+  if ((l = ulocCached((GLuint)program, "uLfHoleDist")) >= 0) glUniform1fv(l, gLfCount, gLfHoleDist);
+  if ((l = ulocCached((GLuint)program, "uLfHoleRs"))   >= 0) glUniform1fv(l, gLfCount, gLfHoleRs);
+  if ((l = ulocCached((GLuint)program, "uLfPxPerRad")) >= 0) glUniform1f(l, gLfPxPerRad);
+  if ((l = ulocCached((GLuint)program, "uLfMaxMu"))    >= 0) glUniform1f(l, gLfMaxMu);
+  if ((l = ulocCached((GLuint)program, "uLfMaxSprite")) >= 0) glUniform1f(l, gLfMaxSprite);
+  if ((l = ulocCached((GLuint)program, "uLfHazeArc")) >= 0) glUniform1f(l, gLfHazeArc);
+  if ((l = ulocCached((GLuint)program, "uLfFy"))       >= 0) glUniform1f(l, gLfFy);
   // delta0: how far THIS object's centre sits behind each hole, along that
   // hole's line of sight. Differenced in DOUBLE here so the shader only ever
   // adds a small per-particle offset to it — forming the same quantity in the
@@ -65,8 +82,8 @@ void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz
                   + ry * (double)gLfHoleDirW[h * 3 + 1]
                   + rz * (double)gLfHoleDirW[h * 3 + 2]);
   }
-  if ((l = glGetUniformLocation((GLuint)program, "uLfDelta0")) >= 0) glUniform1fv(l, gLfCount, d0);
-  if (gLfLutTex && (l = glGetUniformLocation((GLuint)program, "uLfLut")) >= 0) {
+  if ((l = ulocCached((GLuint)program, "uLfDelta0")) >= 0) glUniform1fv(l, gLfCount, d0);
+  if (gLfLutTex && (l = ulocCached((GLuint)program, "uLfLut")) >= 0) {
     glActiveTexture(GL_TEXTURE7);
     glBindTexture(GL_TEXTURE_2D, (GLuint)gLfLutTex);
     glActiveTexture(GL_TEXTURE0);
@@ -1127,9 +1144,9 @@ void RenderedObject::setCloudPlacementUniforms(const double cameraTranslate[3])
     EulerDegToMat3d(rotationDeg, R);
     for (int i = 0; i < 9; ++i) rm[i] = (float)R[i];
   }
-  GLint lo = glGetUniformLocation(program, "uCloudOrigin");
+  GLint lo = ulocCached(program, "uCloudOrigin");
   if (lo >= 0) glUniform3f(lo, (float)ox, (float)oy, (float)oz);
-  GLint lr = glGetUniformLocation(program, "uCloudRot");
+  GLint lr = ulocCached(program, "uCloudRot");
   if (lr >= 0) glUniformMatrix3fv(lr, 1, GL_TRUE, rm);   // rm is row-major
 
 
@@ -1146,18 +1163,18 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
   setCloudPlacementUniforms(cameraTranslate);
-  glUniform1i(glGetUniformLocation(program, "uRealistic"),   1);
-  glUniform1i(glGetUniformLocation(program, "uCloudPass"),   3);
-  glUniform1i(glGetUniformLocation(program, "uDensityOnly"), 1);
-  glUniform1f(glGetUniformLocation(program, "uHashScale"),   hashScale);   // per-object; the program is shared
-  glUniform3f(glGetUniformLocation(program, "uDustAxis"), dustAxis[0], dustAxis[1], dustAxis[2]);
-  glUniform1f(glGetUniformLocation(program, "uDustFlatten"), dustFlatten);
-  glUniform1f(glGetUniformLocation(program, "uDustScaleH"),  dustScaleH);
-  glUniform1f(glGetUniformLocation(program, "uDustAxisQ"),   dustAxisQ);
-  glUniform1f(glGetUniformLocation(program, "uCloudRms"),   0.5f * cloudRmsRadius);
-  glUniform1f(glGetUniformLocation(program, "uCinePixelScale"), 1.0f);
-  glUniform1f(glGetUniformLocation(program, "uViewportH"), (float)fbHeight);
-  glUniform1f(glGetUniformLocation(program, "uSpriteRefH"), gSpriteRefHeight);
+  glUniform1i(ulocCached(program, "uRealistic"),   1);
+  glUniform1i(ulocCached(program, "uCloudPass"),   3);
+  glUniform1i(ulocCached(program, "uDensityOnly"), 1);
+  glUniform1f(ulocCached(program, "uHashScale"),   hashScale);   // per-object; the program is shared
+  glUniform3f(ulocCached(program, "uDustAxis"), dustAxis[0], dustAxis[1], dustAxis[2]);
+  glUniform1f(ulocCached(program, "uDustFlatten"), dustFlatten);
+  glUniform1f(ulocCached(program, "uDustScaleH"),  dustScaleH);
+  glUniform1f(ulocCached(program, "uDustAxisQ"),   dustAxisQ);
+  glUniform1f(ulocCached(program, "uCloudRms"),   0.5f * cloudRmsRadius);
+  glUniform1f(ulocCached(program, "uCinePixelScale"), 1.0f);
+  glUniform1f(ulocCached(program, "uViewportH"), (float)fbHeight);
+  glUniform1f(ulocCached(program, "uSpriteRefH"), gSpriteRefHeight);
 
   glEnable(GL_PROGRAM_POINT_SIZE);
   glEnable(GL_BLEND);
@@ -1177,7 +1194,7 @@ void RenderedObject::renderCloudDustDensity(const double cameraTranslate[3], con
   glDisable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-  glUniform1i(glGetUniformLocation(program, "uDensityOnly"), 0);
+  glUniform1i(ulocCached(program, "uDensityOnly"), 0);
   glBindVertexArray(0);
 }
 
@@ -1411,21 +1428,21 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
   {
     // Only free OBJ meshes need two-sided lighting; spheres don't — flipping
     // their back-face normals lights the silhouette into a bright rim.
-    GLint tsLoc = glGetUniformLocation(program, "uTwoSided");
+    GLint tsLoc = ulocCached(program, "uTwoSided");
     if (tsLoc >= 0) glUniform1i(tsLoc, freeMesh ? 1 : 0);
   }
   {
     // Procedural cloud layer (coverage 0 = off). Per-draw lookup, cost-free.
-    GLint c0 = glGetUniformLocation(program, "uCloudP0");
+    GLint c0 = ulocCached(program, "uCloudP0");
     if (c0 >= 0) glUniform4f(c0, rtCloudP0.x, rtCloudP0.y, rtCloudP0.z, rtCloudP0.w);
-    GLint c1 = glGetUniformLocation(program, "uCloudP1");
+    GLint c1 = ulocCached(program, "uCloudP1");
     if (c1 >= 0) glUniform4f(c1, rtCloudP1.x, rtCloudP1.y, rtCloudP1.z, rtCloudP1.w);
   }
   {
     // Ring shadows. The count goes up on EVERY draw, not just when this object
     // has rings: the program is shared, so a planet with rings would otherwise
     // leave its uRingCount behind and stripe the next planet drawn after it.
-    GLint rcLoc = glGetUniformLocation(program, "uRingCount");
+    GLint rcLoc = ulocCached(program, "uRingCount");
     if (rcLoc >= 0) {
       const int n = (int)std::min(resolvedRings.size(), (size_t)8);
       glUniform1i(rcLoc, n);
@@ -1443,12 +1460,12 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
           pack(p1,    i, resolvedRings[i].prof1);
         }
         GLint l;
-        if ((l = glGetUniformLocation(program, "uRingRot"))    >= 0) glUniformMatrix3fv(l, n, GL_TRUE, rot);
-        if ((l = glGetUniformLocation(program, "uRingGeom"))   >= 0) glUniform4fv(l, n, geom);
-        if ((l = glGetUniformLocation(program, "uRingShape"))  >= 0) glUniform4fv(l, n, shape);
-        if ((l = glGetUniformLocation(program, "uRingCenter")) >= 0) glUniform4fv(l, n, cen);
-        if ((l = glGetUniformLocation(program, "uRingProf0"))  >= 0) glUniform4fv(l, n, p0);
-        if ((l = glGetUniformLocation(program, "uRingProf1"))  >= 0) glUniform4fv(l, n, p1);
+        if ((l = ulocCached(program, "uRingRot"))    >= 0) glUniformMatrix3fv(l, n, GL_TRUE, rot);
+        if ((l = ulocCached(program, "uRingGeom"))   >= 0) glUniform4fv(l, n, geom);
+        if ((l = ulocCached(program, "uRingShape"))  >= 0) glUniform4fv(l, n, shape);
+        if ((l = ulocCached(program, "uRingCenter")) >= 0) glUniform4fv(l, n, cen);
+        if ((l = ulocCached(program, "uRingProf0"))  >= 0) glUniform4fv(l, n, p0);
+        if ((l = ulocCached(program, "uRingProf1"))  >= 0) glUniform4fv(l, n, p1);
       }
     }
   }
@@ -1457,7 +1474,7 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
   // layer of the surface is gated on it, so a distant star costs nothing. Only
   // uploaded when the surface is actually on, so a plain star is untouched.
   if (starP0.y > 0.0f) {
-    GLint l0 = glGetUniformLocation(program, "uStarP0");
+    GLint l0 = ulocCached(program, "uStarP0");
     if (l0 >= 0) {
       float px = 0.0f;
       const double rx = (coordinates.x - gCamAnchor[0]) + cameraTranslate[0] + localOffset.x;
@@ -1468,9 +1485,9 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
       if (depth > 1e-12 && tanV > 1e-12)
         px = (float)((double)radius / (tanV * depth) * 0.5 * (double)fbHeight);
       glUniform4f(l0, starP0.x, starP0.y, starP0.z, px);
-      GLint l1 = glGetUniformLocation(program, "uStarP1");
+      GLint l1 = ulocCached(program, "uStarP1");
       if (l1 >= 0) glUniform4f(l1, starP1.x, starP1.y, starP1.z, starP1.w);
-      GLint lt = glGetUniformLocation(program, "uStarTime");
+      GLint lt = ulocCached(program, "uStarTime");
       if (lt >= 0) glUniform1f(lt, starTime);
     }
   }
@@ -1482,16 +1499,16 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     // premultiplied emission over transmittance: dst = col + T * dst.
     GLint l;
     if (!nebVolumeTex) return;                          // not baked yet (Renderer::BakeNebulaVolume)
-    if ((l = glGetUniformLocation(program, "uNebRadius"))     >= 0) glUniform1f(l, radius);
-    if ((l = glGetUniformLocation(program, "uNebExtent"))     >= 0) glUniform3f(l, nebExtent.x, nebExtent.y, nebExtent.z);
-    if ((l = glGetUniformLocation(program, "uNebSeed"))       >= 0) glUniform1f(l, nebSeed);
-    if ((l = glGetUniformLocation(program, "uNebPalette"))    >= 0) glUniform1i(l, nebPalette);
-    if ((l = glGetUniformLocation(program, "uNebEmission"))   >= 0) glUniform1f(l, nebEmission);
-    if ((l = glGetUniformLocation(program, "uNebDust"))       >= 0) glUniform1f(l, nebDust);
-    if ((l = glGetUniformLocation(program, "uNebSteps"))      >= 0) glUniform1i(l, realisticShading ? nebSteps : std::max(nebSteps / 2, 12));
+    if ((l = ulocCached(program, "uNebRadius"))     >= 0) glUniform1f(l, radius);
+    if ((l = ulocCached(program, "uNebExtent"))     >= 0) glUniform3f(l, nebExtent.x, nebExtent.y, nebExtent.z);
+    if ((l = ulocCached(program, "uNebSeed"))       >= 0) glUniform1f(l, nebSeed);
+    if ((l = ulocCached(program, "uNebPalette"))    >= 0) glUniform1i(l, nebPalette);
+    if ((l = ulocCached(program, "uNebEmission"))   >= 0) glUniform1f(l, nebEmission);
+    if ((l = ulocCached(program, "uNebDust"))       >= 0) glUniform1f(l, nebDust);
+    if ((l = ulocCached(program, "uNebSteps"))      >= 0) glUniform1i(l, realisticShading ? nebSteps : std::max(nebSteps / 2, 12));
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_3D, nebVolumeTex);
-    if ((l = glGetUniformLocation(program, "uVolume"))        >= 0) glUniform1i(l, 5);
+    if ((l = ulocCached(program, "uVolume"))        >= 0) glUniform1i(l, 5);
     glActiveTexture(GL_TEXTURE0);
     // ONE fragment per pixel, chosen WITHOUT the proxy's depth or winding — both
     // failed under this project's extreme near/far ratio (depth ties in facet
@@ -1575,7 +1592,7 @@ void RenderedObject::renderSkybox(const double cameraTranslate[3], const float v
   glBindTexture(GL_TEXTURE_2D, textureID);
   if (textureSamplerUniform != (unsigned int)-1)
     glUniform1i(textureSamplerUniform, 0);
-  GLint expLoc = glGetUniformLocation(program, "uExposure");
+  GLint expLoc = ulocCached(program, "uExposure");
   if (expLoc >= 0) glUniform1f(expLoc, exposure);
 
   // Sky is infinitely far: draw first, never write depth
@@ -1661,34 +1678,34 @@ void RenderedObject::renderRing(const double cameraTranslate[3], const float vie
                    + R[r * 3 + 1] * T[1 * 3 + c]
                    + R[r * 3 + 2] * T[2 * 3 + c];
 
-  glUniformMatrix3fv(glGetUniformLocation(program, "uRingRot"), 1, GL_TRUE, M);
-  glUniform1f(glGetUniformLocation(program, "uRingInner"),    ring.innerRadius * planetRadius);
-  glUniform1f(glGetUniformLocation(program, "uRingOuter"),    ring.outerRadius * planetRadius);
-  glUniform1f(glGetUniformLocation(program, "uRingEcc"),      ring.eccentricity);
-  glUniform1f(glGetUniformLocation(program, "uRingEccAngle"), ring.eccentricityAngle * d2r);
-  glUniform1f(glGetUniformLocation(program, "uRingWarp"),     ring.warp);
-  glUniform3f(glGetUniformLocation(program, "uRingCenter"),
+  glUniformMatrix3fv(ulocCached(program, "uRingRot"), 1, GL_TRUE, M);
+  glUniform1f(ulocCached(program, "uRingInner"),    ring.innerRadius * planetRadius);
+  glUniform1f(ulocCached(program, "uRingOuter"),    ring.outerRadius * planetRadius);
+  glUniform1f(ulocCached(program, "uRingEcc"),      ring.eccentricity);
+  glUniform1f(ulocCached(program, "uRingEccAngle"), ring.eccentricityAngle * d2r);
+  glUniform1f(ulocCached(program, "uRingWarp"),     ring.warp);
+  glUniform3f(ulocCached(program, "uRingCenter"),
               ring.centerOffset.x * planetRadius,
               ring.centerOffset.y * planetRadius,
               ring.centerOffset.z * planetRadius);
 
-  glUniform1f(glGetUniformLocation(program, "uPlanetRadius"),  planetRadius);
-  glUniform3f(glGetUniformLocation(program, "uRingColorInner"),
+  glUniform1f(ulocCached(program, "uPlanetRadius"),  planetRadius);
+  glUniform3f(ulocCached(program, "uRingColorInner"),
               ring.color.x, ring.color.y, ring.color.z);
-  glUniform3f(glGetUniformLocation(program, "uRingColorOuter"),
+  glUniform3f(ulocCached(program, "uRingColorOuter"),
               ring.colorOuter.x, ring.colorOuter.y, ring.colorOuter.z);
-  glUniform1f(glGetUniformLocation(program, "uRingOpacity"),   ring.opacity);
-  glUniform1f(glGetUniformLocation(program, "uRingEdgeSoft"),  ring.edgeSoftness);
-  glUniform4f(glGetUniformLocation(program, "uRingProf0"),
+  glUniform1f(ulocCached(program, "uRingOpacity"),   ring.opacity);
+  glUniform1f(ulocCached(program, "uRingEdgeSoft"),  ring.edgeSoftness);
+  glUniform4f(ulocCached(program, "uRingProf0"),
               ring.banding, ring.gapCount, ring.gapWidth, ring.gapDepth);
-  glUniform4f(glGetUniformLocation(program, "uRingProf1"),
+  glUniform4f(ulocCached(program, "uRingProf1"),
               ring.zoneContrast, ring.detail, ring.seed, 0.0f);
-  glUniform1f(glGetUniformLocation(program, "uRingFalloff"),   ring.verticalFalloff);
+  glUniform1f(ulocCached(program, "uRingFalloff"),   ring.verticalFalloff);
   // Thickness only ever appears as the ratio that decides where edge-on
   // thickening stops (past it the ray leaves the ring radially instead).
-  glUniform1f(glGetUniformLocation(program, "uRingMaxPath"),
+  glUniform1f(ulocCached(program, "uRingMaxPath"),
               ring.outerRadius / std::max(ring.thickness, 1e-6f));
-  glUniform1i(glGetUniformLocation(program, "uRealistic"), realistic ? 1 : 0);
+  glUniform1i(ulocCached(program, "uRealistic"), realistic ? 1 : 0);
 
   // Translucent and two-sided: depth-TESTED so the planet hides the far half,
   // but never depth-written, so the two halves blend instead of clipping.
@@ -1720,11 +1737,11 @@ void RenderedObject::renderAtmosphere(const double cameraTranslate[3], const flo
   glUseProgram(program);
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
-  glUniform1f(glGetUniformLocation(program, "uPlanetRadius"),     planetRadius);
-  glUniform1f(glGetUniformLocation(program, "uAtmosphereRadius"), atmoRadius);
-  glUniform1f(glGetUniformLocation(program, "uDensityFalloff"),   falloff);
-  glUniform1f(glGetUniformLocation(program, "uIntensity"),        intensity);
-  glUniform3f(glGetUniformLocation(program, "uScatterColor"),     scatter.x, scatter.y, scatter.z);
+  glUniform1f(ulocCached(program, "uPlanetRadius"),     planetRadius);
+  glUniform1f(ulocCached(program, "uAtmosphereRadius"), atmoRadius);
+  glUniform1f(ulocCached(program, "uDensityFalloff"),   falloff);
+  glUniform1f(ulocCached(program, "uIntensity"),        intensity);
+  glUniform3f(ulocCached(program, "uScatterColor"),     scatter.x, scatter.y, scatter.z);
 
   // Back faces only so the shell renders from inside the atmosphere too.
   // Occlusion is handled analytically in the shader; no depth interaction.
@@ -1851,6 +1868,74 @@ static float FarFieldDim(double wantSamples, int drawnSamples, float falloff)
   return (float)std::clamp(eff / (double)drawnSamples, 0.0, 1.0);
 }
 
+// One chunk against the view: is any of it on screen, and if so how much it is
+// worth. Shared by the chunk draw and by probeFarGalaxy so the two can never
+// disagree about what is visible. The view-space position is filled in even
+// when the chunk is rejected, so a caller can ask HOW far off screen it is.
+struct ChunkVis {
+  float weight; int cap; float want; float screenPx;
+  double cx, cy, cz;                 // camera-relative centre
+  float vx, vy, depth, d, r;         // view-space centre, clamped depth, bounding radius
+};
+static bool chunkVisibility(const RenderedObject::StarChunk& sc, double ox, double oy, double oz,
+                            bool hasRot, const double rotD[9], const float viewRot[9],
+                            float tanH, float tanV, int fbWidth, int fbHeight, ChunkVis& o)
+{
+  double lx = sc.center.x, ly = sc.center.y, lz = sc.center.z;
+  if (hasRot) {
+    double rx = rotD[0]*lx + rotD[1]*ly + rotD[2]*lz;
+    double ry = rotD[3]*lx + rotD[4]*ly + rotD[5]*lz;
+    double rz = rotD[6]*lx + rotD[7]*ly + rotD[8]*lz;
+    lx = rx; ly = ry; lz = rz;
+  }
+  const double wx = ox + lx, wy = oy + ly, wz = oz + lz;
+  // chunk centre in camera space (viewRot is row-major; camera looks down -Z)
+  // Camera-relative in DOUBLE, then narrowed: the difference is small even
+  // when both terms are ~1e15, which is the whole point of the hierarchy.
+  float px = (float)wx, py = (float)wy, pz = (float)wz;
+  float vx = viewRot[0]*px + viewRot[1]*py + viewRot[2]*pz;
+  float vy = viewRot[3]*px + viewRot[4]*py + viewRot[5]*pz;
+  float vz = viewRot[6]*px + viewRot[7]*py + viewRot[8]*pz;
+  float r  = sc.extent * 1.7320508f;            // cube half-diagonal
+  float depth = -vz;
+  float d = (depth > 1e-6f) ? depth : 1e-6f;
+  o.cx = wx; o.cy = wy; o.cz = wz;
+  o.vx = vx; o.vy = vy; o.depth = depth; o.d = d; o.r = r;
+  if (depth < -r) return false;                  // fully behind the camera
+  if (std::fabs(vx) > tanH * d + r) return false;    // outside left/right
+  if (std::fabs(vy) > tanV * d + r) return false;    // outside top/bottom
+  // Weight by how much of the chunk actually lands ON SCREEN, not merely how
+  // big it is. Project its bounding box to NDC and clip to the viewport: a
+  // chunk enclosing the camera covers the whole screen but spreads its stars
+  // over the entire sky, so only ~10% of anything drawn from it can ever be
+  // visible — weighting by size alone poured the budget into exactly those.
+  float ndcx = vx / (tanH * d), ndcy = vy / (tanV * d);
+  float rx   = r  / (tanH * d), ry   = r  / (tanV * d);
+  float oxw = std::min(ndcx + rx, 1.0f) - std::max(ndcx - rx, -1.0f);
+  float oyw = std::min(ndcy + ry, 1.0f) - std::max(ndcy - ry, -1.0f);
+  if (oxw < 0.0f) oxw = 0.0f;
+  if (oyw < 0.0f) oyw = 0.0f;
+  float onScreen = oxw * oyw;                                   // NDC area, max 4
+  float frac = (rx > 1e-9f && ry > 1e-9f) ? onScreen / (4.0f * rx * ry) : 1.0f;
+  if (frac > 1.0f) frac = 1.0f;
+  float w = onScreen * frac;   // area it covers, discounted by wasted draws
+  if (w <= 0.0f) return false;
+  // How many pixels does this chunk actually occupy? Drawing thousands of
+  // stars into a chunk that covers four pixels is pure waste AND sums to a
+  // blown-out white dot. Cap what it can be given by its own screen area.
+  float pixels = onScreen * 0.25f * (float)fbWidth * (float)fbHeight;
+  // What this chunk's angular size is actually worth, at the same stars-per-
+  // pixel the cap uses. The cap adds a floor on top so a chunk is never
+  // blank; the floor is what the flux correction below then pays back.
+  float want = pixels * 4.0f;
+  int   capByArea = (int)want + 8;
+  // Projected radius in pixels — the haze lobe is capped by it so a galaxy a
+  // few pixels wide is not drawn as a stack of much larger glowing sprites.
+  float screenPx = ry * 0.5f * (float)fbHeight;
+  o.weight = w; o.cap = capByArea; o.want = want; o.screenPx = screenPx;
+  return true;
+}
+
 // ── Starfield draw: frustum-cull chunks, then spend a fixed point budget ─────
 // Two jobs at once. Culling removes chunks that are off-screen or behind the
 // camera. The budget then shares the remaining points out by how much SCREEN
@@ -1885,58 +1970,11 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
   double wsum = 0.0;
 
   for (int i = 0; i < (int)starChunks.size(); ++i) {
-    const StarChunk& sc = starChunks[i];
-    double lx = sc.center.x, ly = sc.center.y, lz = sc.center.z;
-    if (hasRot) {
-      double rx = rotD[0]*lx + rotD[1]*ly + rotD[2]*lz;
-      double ry = rotD[3]*lx + rotD[4]*ly + rotD[5]*lz;
-      double rz = rotD[6]*lx + rotD[7]*ly + rotD[8]*lz;
-      lx = rx; ly = ry; lz = rz;
-    }
-    const double wx = ox + lx, wy = oy + ly, wz = oz + lz;
-    // chunk centre in camera space (viewRot is row-major; camera looks down -Z)
-    // Camera-relative in DOUBLE, then narrowed: the difference is small even
-    // when both terms are ~1e15, which is the whole point of the hierarchy.
-    float px = (float)wx, py = (float)wy, pz = (float)wz;
-    float vx = viewRot[0]*px + viewRot[1]*py + viewRot[2]*pz;
-    float vy = viewRot[3]*px + viewRot[4]*py + viewRot[5]*pz;
-    float vz = viewRot[6]*px + viewRot[7]*py + viewRot[8]*pz;
-    float r  = sc.extent * 1.7320508f;            // cube half-diagonal
-    float depth = -vz;
-    if (depth < -r) continue;                      // fully behind the camera
-    float d = (depth > 1e-6f) ? depth : 1e-6f;
-    if (std::fabs(vx) > tanH * d + r) continue;    // outside left/right
-    if (std::fabs(vy) > tanV * d + r) continue;    // outside top/bottom
-    // Weight by how much of the chunk actually lands ON SCREEN, not merely how
-    // big it is. Project its bounding box to NDC and clip to the viewport: a
-    // chunk enclosing the camera covers the whole screen but spreads its stars
-    // over the entire sky, so only ~10% of anything drawn from it can ever be
-    // visible — weighting by size alone poured the budget into exactly those.
-    float ndcx = vx / (tanH * d), ndcy = vy / (tanV * d);
-    float rx   = r  / (tanH * d), ry   = r  / (tanV * d);
-    float oxw = std::min(ndcx + rx, 1.0f) - std::max(ndcx - rx, -1.0f);
-    float oyw = std::min(ndcy + ry, 1.0f) - std::max(ndcy - ry, -1.0f);
-    if (oxw < 0.0f) oxw = 0.0f;
-    if (oyw < 0.0f) oyw = 0.0f;
-    float onScreen = oxw * oyw;                                   // NDC area, max 4
-    float frac = (rx > 1e-9f && ry > 1e-9f) ? onScreen / (4.0f * rx * ry) : 1.0f;
-    if (frac > 1.0f) frac = 1.0f;
-    float w = onScreen * frac;   // area it covers, discounted by wasted draws
-    if (w <= 0.0f) continue;
-    // How many pixels does this chunk actually occupy? Drawing thousands of
-    // stars into a chunk that covers four pixels is pure waste AND sums to a
-    // blown-out white dot. Cap what it can be given by its own screen area.
-    float pixels = onScreen * 0.25f * (float)fbWidth * (float)fbHeight;
-    // What this chunk's angular size is actually worth, at the same stars-per-
-    // pixel the cap uses. The cap adds a floor on top so a chunk is never
-    // blank; the floor is what the flux correction below then pays back.
-    float want = pixels * 4.0f;
-    int   capByArea = (int)want + 8;
-    // Projected radius in pixels — the haze lobe is capped by it so a galaxy a
-    // few pixels wide is not drawn as a stack of much larger glowing sprites.
-    float screenPx = ry * 0.5f * (float)fbHeight;
-    vis.push_back({i, w, capByArea, want, screenPx, 0, wx, wy, wz});
-    wsum += w;
+    ChunkVis cv;
+    if (!chunkVisibility(starChunks[i], ox, oy, oz, hasRot, rotD, viewRot, tanH, tanV,
+                         fbWidth, fbHeight, cv)) continue;
+    vis.push_back({i, cv.weight, cv.cap, cv.want, cv.screenPx, 0, cv.cx, cv.cy, cv.cz});
+    wsum += cv.weight;
   }
 
   lastVisibleChunks = (int)vis.size();
@@ -1946,10 +1984,10 @@ void RenderedObject::drawStarfieldChunks(const float viewRot[9], float fovDeg,
     return;
   }
 
-  GLint lc = glGetUniformLocation(program, "uChunkCenter");
-  GLint le = glGetUniformLocation(program, "uChunkExtent");
-  GLint lp = glGetUniformLocation(program, "uChunkScreenPx");
-  GLint ld = glGetUniformLocation(program, "uPointDim");
+  GLint lc = ulocCached(program, "uChunkCenter");
+  GLint le = ulocCached(program, "uChunkExtent");
+  GLint lp = ulocCached(program, "uChunkScreenPx");
+  GLint ld = ulocCached(program, "uPointDim");
 
   const int budget = (starBudget > 0) ? starBudget : 80000;
 
@@ -2138,6 +2176,7 @@ void RenderedObject::BuildGalaxyStarfield(const GalaxyDesc& d, int starCount)
     blob.push_back((short)std::clamp(std::lround((s.y - c.y) / ext * 32767.0f), -32767L, 32767L));
     blob.push_back((short)std::clamp(std::lround((s.z - c.z) / ext * 32767.0f), -32767L, 32767L));
   }
+  farPrefix.assign(blob.begin(), blob.begin() + (std::ptrdiff_t)std::min(blob.size(), (size_t)kFarBatchStars * 3));
 
   starChunks.clear();
   StarChunk sc;
@@ -2227,6 +2266,7 @@ void RenderedObject::BuildStarfieldFromParticles()
     blob.push_back((short)std::clamp(std::lround((p.position.y - c.y) / ext * 32767.0f), -32767L, 32767L));
     blob.push_back((short)std::clamp(std::lround((p.position.z - c.z) / ext * 32767.0f), -32767L, 32767L));
   }
+  farPrefix.assign(blob.begin(), blob.begin() + (std::ptrdiff_t)std::min(blob.size(), (size_t)kFarBatchStars * 3));
 
   starChunks.clear();
   StarChunk sc;
@@ -2315,30 +2355,30 @@ void RenderedObject::setupRender()
   glBindBuffer(GL_SHADER_STORAGE_BUFFER,ssboObjects);
   glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1, ssboObjects);
 
-  cameraTranslateUniform  = glGetUniformLocation(program, "uCamera");
-  viewRotUniform          = glGetUniformLocation(program, "uViewRot");
-  pointCountUniform       = glGetUniformLocation(program, "uPointCount");
-  objectCoordinateUniform = glGetUniformLocation(program, "uPointCoordinates");
-  objectCountUniform      = glGetUniformLocation(program, "uObjectCount");
-  resolutionUniform       = glGetUniformLocation(program, "uResolution");
-  temperatureUniform      = glGetUniformLocation(program, "uTemperature");
-  renderModeUniform       = glGetUniformLocation(program, "uRenderMode");
-  gridScaleUniform        = glGetUniformLocation(program, "uScale");
-  gridAlphaUniform        = glGetUniformLocation(program, "uGridAlpha");
-  gridExtentUniform       = glGetUniformLocation(program, "uGridExtent");
-  realisticUniform        = glGetUniformLocation(program, "uRealistic");
-  lightCountUniform       = glGetUniformLocation(program, "uLightCount");
-  lightPositionsUniform   = glGetUniformLocation(program, "uLightPositions");
-  lightColorsUniform      = glGetUniformLocation(program, "uLightColors");
-  planetColorUniform      = glGetUniformLocation(program, "uPlanetColor");
-  hasTextureUniform       = glGetUniformLocation(program, "uHasTexture");
-  textureSamplerUniform   = glGetUniformLocation(program, "uTexture");
-  normalMapUniform        = glGetUniformLocation(program, "uNormalMap");
-  hasNormalMapUniform     = glGetUniformLocation(program, "uHasNormalMap");
-  normalStrengthUniform   = glGetUniformLocation(program, "uNormalStrength");
-  nightMapUniform         = glGetUniformLocation(program, "uNightMap");
-  hasNightMapUniform      = glGetUniformLocation(program, "uHasNightMap");
-  nightStrengthUniform    = glGetUniformLocation(program, "uNightStrength");
+  cameraTranslateUniform  = ulocCached(program, "uCamera");
+  viewRotUniform          = ulocCached(program, "uViewRot");
+  pointCountUniform       = ulocCached(program, "uPointCount");
+  objectCoordinateUniform = ulocCached(program, "uPointCoordinates");
+  objectCountUniform      = ulocCached(program, "uObjectCount");
+  resolutionUniform       = ulocCached(program, "uResolution");
+  temperatureUniform      = ulocCached(program, "uTemperature");
+  renderModeUniform       = ulocCached(program, "uRenderMode");
+  gridScaleUniform        = ulocCached(program, "uScale");
+  gridAlphaUniform        = ulocCached(program, "uGridAlpha");
+  gridExtentUniform       = ulocCached(program, "uGridExtent");
+  realisticUniform        = ulocCached(program, "uRealistic");
+  lightCountUniform       = ulocCached(program, "uLightCount");
+  lightPositionsUniform   = ulocCached(program, "uLightPositions");
+  lightColorsUniform      = ulocCached(program, "uLightColors");
+  planetColorUniform      = ulocCached(program, "uPlanetColor");
+  hasTextureUniform       = ulocCached(program, "uHasTexture");
+  textureSamplerUniform   = ulocCached(program, "uTexture");
+  normalMapUniform        = ulocCached(program, "uNormalMap");
+  hasNormalMapUniform     = ulocCached(program, "uHasNormalMap");
+  normalStrengthUniform   = ulocCached(program, "uNormalStrength");
+  nightMapUniform         = ulocCached(program, "uNightMap");
+  hasNightMapUniform      = ulocCached(program, "uHasNightMap");
+  nightStrengthUniform    = ulocCached(program, "uNightStrength");
   uniformsCached = true;
 }
 
@@ -2561,14 +2601,14 @@ void RenderedObject::uploadDustParams(float strength, float reddening, float dar
 {
   glUseProgram(program);
   GLint l;
-  l = glGetUniformLocation(program, "uDustStrength");   if (l >= 0) glUniform1f(l, strength);
-  l = glGetUniformLocation(program, "uDustReddening");  if (l >= 0) glUniform1f(l, reddening);
-  l = glGetUniformLocation(program, "uDustDarkest");    if (l >= 0) glUniform1f(l, darkest);
-  l = glGetUniformLocation(program, "uDustSettle");     if (l >= 0) glUniform1f(l, settle);
-  l = glGetUniformLocation(program, "uPopColour");      if (l >= 0) glUniform1f(l, popColour);
-  l = glGetUniformLocation(program, "uStarLumSpread"); if (l >= 0) glUniform1f(l, lumSpread);
-  l = glGetUniformLocation(program, "uStarLumPivotC"); if (l >= 0) glUniform1f(l, lumPivot);
-  l = glGetUniformLocation(program, "uStarLumPivotH"); if (l >= 0) glUniform1f(l, lumPivotH);
+  l = ulocCached(program, "uDustStrength");   if (l >= 0) glUniform1f(l, strength);
+  l = ulocCached(program, "uDustReddening");  if (l >= 0) glUniform1f(l, reddening);
+  l = ulocCached(program, "uDustDarkest");    if (l >= 0) glUniform1f(l, darkest);
+  l = ulocCached(program, "uDustSettle");     if (l >= 0) glUniform1f(l, settle);
+  l = ulocCached(program, "uPopColour");      if (l >= 0) glUniform1f(l, popColour);
+  l = ulocCached(program, "uStarLumSpread"); if (l >= 0) glUniform1f(l, lumSpread);
+  l = ulocCached(program, "uStarLumPivotC"); if (l >= 0) glUniform1f(l, lumPivot);
+  l = ulocCached(program, "uStarLumPivotH"); if (l >= 0) glUniform1f(l, lumPivotH);
   // Per-sprite optical depth ceiling. 2.2: at the old 1.5 one maxed sprite still
   // passed 22% of the red, so a lane could never block in one layer; at 3.5 the
   // ridged lanes stacked into a solid black mass. Measured on an edge-on capture:
@@ -2598,11 +2638,11 @@ void RenderedObject::uploadDustParams(float strength, float reddening, float dar
   // threshold). Leave it at 0.22 with smooth noise and the dust all but
   // disappears; put the ridged field back without restoring 0.22 and
   // blackhole.json renders at mean 4.3 instead of 45.5.
-  l = glGetUniformLocation(program, "uDustDepth");      if (l >= 0) glUniform1f(l, 1.5f);
-  l = glGetUniformLocation(program, "uDustCoverage");   if (l >= 0) glUniform1f(l, coverage);
-  l = glGetUniformLocation(program, "uDustClumpScale"); if (l >= 0) glUniform1f(l, clumpScale);
-  l = glGetUniformLocation(program, "uDustInfluence");  if (l >= 0) glUniform1f(l, influence);
-  l = glGetUniformLocation(program, "uDustContrast");   if (l >= 0) glUniform1f(l, contrast);
+  l = ulocCached(program, "uDustDepth");      if (l >= 0) glUniform1f(l, 1.5f);
+  l = ulocCached(program, "uDustCoverage");   if (l >= 0) glUniform1f(l, coverage);
+  l = ulocCached(program, "uDustClumpScale"); if (l >= 0) glUniform1f(l, clumpScale);
+  l = ulocCached(program, "uDustInfluence");  if (l >= 0) glUniform1f(l, influence);
+  l = ulocCached(program, "uDustContrast");   if (l >= 0) glUniform1f(l, contrast);
 }
 
 void RenderedObject::uploadNebulaScatterScale(float scale)
@@ -2716,7 +2756,7 @@ void RenderedObject::setupShaders(const std::string& vertPath, const std::string
 
 void RenderedObject::uploadViewCentre(GLuint program, double cx, double cy, double cz, float fovDeg)
 {
-  GLint lh = glGetUniformLocation(program, "uHasViewCentre");
+  GLint lh = ulocCached(program, "uHasViewCentre");
   if (lh < 0) return;                       // shader doesn't use it (lines, RT, …)
   if (fovDeg >= kViewCentreFovDeg) { glUniform1i(lh, 0); return; }   // normal FOV: float path
   // View-space centre in DOUBLE (row-major gViewRotD · centre). The transverse
@@ -2727,7 +2767,7 @@ void RenderedObject::uploadViewCentre(GLuint program, double cx, double cy, doub
   double vx = R[0]*cx + R[1]*cy + R[2]*cz;
   double vy = R[3]*cx + R[4]*cy + R[5]*cz;
   double vz = R[6]*cx + R[7]*cy + R[8]*cz;
-  GLint lv = glGetUniformLocation(program, "uViewCentre");
+  GLint lv = ulocCached(program, "uViewCentre");
   if (lv >= 0) glUniform3f(lv, (float)vx, (float)vy, (float)vz);
   glUniform1i(lh, 1);
 }
@@ -2737,8 +2777,8 @@ void RenderedObject::transformPerspectiveMesh(GLuint program, const double camer
                                                 int fbWidth, int fbHeight)
 {
   //we bind the uniforms
-  GLuint projectionMatrixBuffer = glGetUniformLocation(program, "uProj");
-  GLuint worldMatrixBuffer = glGetUniformLocation(program, "uWorld");
+  GLuint projectionMatrixBuffer = ulocCached(program, "uProj");
+  GLuint worldMatrixBuffer = ulocCached(program, "uWorld");
   float proj[16];
   float aspect = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : (800.0f / 600.0f);
   float fovy   = fovDeg * M_PI / 180.0f;
@@ -2884,6 +2924,215 @@ void RenderedObject::renderLine(const double cameraTranslate[3], const float vie
   hasBeenRendered=true;
 }
 
+// Everything renderCloud uploads before its passes, apart from the projection.
+// Split out so the far-galaxy batch sets the scene-wide values exactly the way
+// an ordinary cloud draw does.
+void RenderedObject::uploadCloudFrameUniforms(const double cameraTranslate[3], int fbHeight)
+{
+  glUseProgram(program);
+  setCloudPlacementUniforms(cameraTranslate);
+  {
+    glUniform3f(ulocCached(program, "uDustAxis"), dustAxis[0], dustAxis[1], dustAxis[2]);
+    glUniform1f(ulocCached(program, "uDustFlatten"), dustFlatten);
+    glUniform1f(ulocCached(program, "uDustScaleH"),  dustScaleH);
+    glUniform1f(ulocCached(program, "uDustAxisQ"),   dustAxisQ);
+    glUniform1f(ulocCached(program, "uCloudRms"),   0.5f * cloudRmsRadius);
+    GLint hl = ulocCached(program, "uHashScale");
+    if (hl >= 0) glUniform1f(hl, hashScale);
+  }
+
+  if (realisticUniform != (unsigned int)-1)
+    glUniform1i(realisticUniform, realisticShading ? 1 : 0);
+  // Dark-matter draw flag: default OFF; the debug branch flips it on for the
+  // gray DM points only. Set every frame so the shared program never leaks it.
+  const GLint dmDrawLoc = ulocCached(program, "uDMDraw");
+  if (dmDrawLoc >= 0) glUniform1i(dmDrawLoc, 0);
+  {
+    GLint psLoc = ulocCached(program, "uCinePixelScale");
+    if (psLoc >= 0) glUniform1f(psLoc, cinePixelScale);
+    GLint hsLoc = ulocCached(program, "uUnresolvedStrength");
+    if (hsLoc >= 0) glUniform1f(hsLoc, cineHazeStrength);
+    GLint hzLoc = ulocCached(program, "uUnresolvedSize");
+    if (hzLoc >= 0) glUniform1f(hzLoc, cineHazeSpread);
+    { GLint rl = ulocCached(program, "uSpriteRefH"); if (rl >= 0) glUniform1f(rl, gSpriteRefHeight); }
+    GLint vhLoc = ulocCached(program, "uViewportH");
+    if (vhLoc >= 0) glUniform1f(vhLoc, (float)fbHeight);
+    GLint rcLoc = ulocCached(program, "uResolvedCut");
+    if (rcLoc >= 0) glUniform1f(rcLoc, cineResolvedCut);
+    GLint sfLoc = ulocCached(program, "uStarfield");
+    if (sfLoc >= 0) glUniform1i(sfLoc, 0);
+    GLint ssLoc = ulocCached(program, "uStarSize");
+    if (ssLoc >= 0) glUniform1f(ssLoc, cineStarSize);
+    GLint gsLoc = ulocCached(program, "uGasStrength");
+    if (gsLoc >= 0) glUniform1f(gsLoc, cineGasStrength);
+    // Always uploaded: an unset uniform reads 0, which would black out every star.
+    GLint sfgLoc = ulocCached(program, "uStarFieldGain");
+    if (sfgLoc >= 0) glUniform1f(sfgLoc, cineStarFieldGain);
+  }
+}
+
+RenderedObject::FarGalaxyResult RenderedObject::probeFarGalaxy(
+    const float viewRot[9], float fovDeg, int fbWidth, int fbHeight,
+    const double cameraTranslate[3], float farFalloff, float dustInfluenceFallback,
+    float spriteReach, bool allowSkip, bool allowBatch,
+    std::vector<FarGalaxyRecord>& recs, std::vector<FarGalaxyVert>& verts)
+{
+  if (!isStarfield || !isGalaxy || starChunks.size() != 1 || bufferSize <= 0 || !program)
+    return FarGalaxyResult::Normal;
+  const StarChunk& sc = starChunks[0];
+  // Same arithmetic as drawStarfieldChunks, through the same helper.
+  const double ox = (coordinates.x - gCamAnchor[0]) + cameraTranslate[0];
+  const double oy = (coordinates.y - gCamAnchor[1]) + cameraTranslate[1];
+  const double oz = (coordinates.z - gCamAnchor[2]) + cameraTranslate[2];
+  const float aspect = (fbHeight > 0) ? (float)fbWidth / (float)fbHeight : 1.7778f;
+  const float tanV   = std::tan(fovDeg * 3.14159265358979f / 180.0f * 0.5f);
+  const float tanH   = tanV * aspect;
+  double rotD[9] = {1,0,0, 0,1,0, 0,0,1};
+  const bool hasRot = (rotationDeg.x != 0.0f || rotationDeg.y != 0.0f || rotationDeg.z != 0.0f);
+  if (hasRot) EulerDegToMat3d(rotationDeg, rotD);
+
+  ChunkVis cv;
+  const bool visible = chunkVisibility(sc, ox, oy, oz, hasRot, rotD, viewRot, tanH, tanV,
+                                       fbWidth, fbHeight, cv);
+  // FAR ONLY. A galaxy the camera is in or near always takes the ordinary
+  // path, whatever the tests below would say about it.
+  const double dist = std::sqrt(cv.cx * cv.cx + cv.cy * cv.cy + cv.cz * cv.cz);
+  if (!(dist > 4.0 * (double)cv.r)) return FarGalaxyResult::Normal;
+
+  if (!visible) {
+    if (!allowSkip) return FarGalaxyResult::Normal;
+    // The chunk draw would reject it too, so nothing of it is drawn today. Skip
+    // the setup as well, but only when it is outside the view by more than the
+    // largest sprite any pass could draw: the bounding-box test alone says
+    // nothing about a sprite centred just past the edge.
+    bool off = cv.depth < -cv.r;
+    if (!off) {
+      const float reach = spriteReach * tanV * cv.d;
+      off = std::fabs(cv.vx) > tanH * cv.d + cv.r + reach ||
+            std::fabs(cv.vy) > tanV * cv.d + cv.r + reach;
+    }
+    if (!off) return FarGalaxyResult::Normal;
+    lastVisibleChunks = 0;
+    lastDrawnStars    = 0;
+    return FarGalaxyResult::Skipped;
+  }
+
+  if (!allowBatch) return FarGalaxyResult::Normal;
+  // The count the chunk draw would settle on for a galaxy whose budget is its
+  // own star count: min(built, screen-area cap).
+  if (starBudgetOverride != sc.count || sc.first != 0) return FarGalaxyResult::Normal;
+  const int n = std::min(sc.count, cv.cap);
+  if (n <= 0 || n > kFarBatchStars || (int)farPrefix.size() < n * 3)
+    return FarGalaxyResult::Normal;
+
+  // The dust-density pass still runs per galaxy and reads the cached uniform
+  // locations, so they must exist exactly as they would after a first draw.
+  if (!hasBeenRendered) { setupRender(); cloudGpuDirty = true; hasBeenRendered = true; }
+  else if (!uniformsCached) setupRender();
+
+  FarGalaxyRecord g{};
+  g.c0[0] = (float)cv.cx; g.c0[1] = (float)cv.cy; g.c0[2] = (float)cv.cz; g.c0[3] = sc.extent;
+  float rm[9] = {1,0,0, 0,1,0, 0,0,1};                 // row-major, as setCloudPlacementUniforms
+  if (hasRot) for (int i = 0; i < 9; ++i) rm[i] = (float)rotD[i];
+  g.r0[0] = rm[0]; g.r0[1] = rm[3]; g.r0[2] = rm[6]; g.r0[3] = cv.screenPx;
+  g.r1[0] = rm[1]; g.r1[1] = rm[4]; g.r1[2] = rm[7]; g.r1[3] = FarFieldDim(cv.want, n, farFalloff);
+  g.r2[0] = rm[2]; g.r2[1] = rm[5]; g.r2[2] = rm[8]; g.r2[3] = cachedTemperature;
+  const double* R = gViewRotD;                          // as uploadViewCentre
+  g.v0[0] = (float)(R[0]*cv.cx + R[1]*cv.cy + R[2]*cv.cz);
+  g.v0[1] = (float)(R[3]*cv.cx + R[4]*cv.cy + R[5]*cv.cz);
+  g.v0[2] = (float)(R[6]*cv.cx + R[7]*cv.cy + R[8]*cv.cz);
+  g.v0[3] = ownDustInfluence(dustInfluenceFallback);
+  g.d0[0] = dustAxis[0]; g.d0[1] = dustAxis[1]; g.d0[2] = dustAxis[2]; g.d0[3] = dustFlatten;
+  g.d1[0] = dustScaleH;  g.d1[1] = dustAxisQ;   g.d1[2] = 0.5f * cloudRmsRadius; g.d1[3] = hashScale;
+  for (int h = 0; h < gLfCount && h < 4; ++h) {         // as uploadLensForwardUniforms
+    const double rx = cv.cx - gLfHoleRelD[h][0];
+    const double ry = cv.cy - gLfHoleRelD[h][1];
+    const double rz = cv.cz - gLfHoleRelD[h][2];
+    g.l0[h] = (float)(rx * (double)gLfHoleDirW[h * 3 + 0]
+                    + ry * (double)gLfHoleDirW[h * 3 + 1]
+                    + rz * (double)gLfHoleDirW[h * 3 + 2]);
+  }
+  const unsigned int gal = (unsigned int)recs.size();
+  recs.push_back(g);
+  for (int i = 0; i < n; ++i)
+    verts.push_back({farPrefix[(size_t)i*3], farPrefix[(size_t)i*3+1], farPrefix[(size_t)i*3+2],
+                     (unsigned short)i, gal});
+  lastVisibleChunks = 1;
+  lastDrawnStars    = n;
+  return FarGalaxyResult::Batched;
+}
+
+void RenderedObject::renderFarGalaxyBatch(const std::vector<FarGalaxyRecord>& recs,
+                                          const std::vector<FarGalaxyVert>& verts,
+                                          const double cameraTranslate[3], const float viewRot[9],
+                                          float fovDeg, int fbWidth, int fbHeight)
+{
+  if (recs.empty() || verts.empty() || !program) return;
+  static GLuint bVao = 0, bVbo = 0, bSsbo = 0;
+  if (!bVao) {
+    glGenVertexArrays(1, &bVao);
+    glGenBuffers(1, &bVbo);
+    glGenBuffers(1, &bSsbo);
+    glBindVertexArray(bVao);
+    glBindBuffer(GL_ARRAY_BUFFER, bVbo);
+    glVertexAttribPointer(0, 3, GL_SHORT, GL_TRUE, sizeof(FarGalaxyVert), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribIPointer(4, 1, GL_UNSIGNED_SHORT, sizeof(FarGalaxyVert), (void*)offsetof(FarGalaxyVert, vid));
+    glEnableVertexAttribArray(4);
+    glVertexAttribIPointer(5, 1, GL_UNSIGNED_INT, sizeof(FarGalaxyVert), (void*)offsetof(FarGalaxyVert, gal));
+    glEnableVertexAttribArray(5);
+  }
+  glBindVertexArray(bVao);
+  glBindBuffer(GL_ARRAY_BUFFER, bVbo);
+  glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(verts.size() * sizeof(FarGalaxyVert)), verts.data(), GL_STREAM_DRAW);
+  glBindBuffer(GL_SHADER_STORAGE_BUFFER, bSsbo);
+  glBufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)(recs.size() * sizeof(FarGalaxyRecord)), recs.data(), GL_STREAM_DRAW);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, bSsbo);
+
+  uploadCloudFrameUniforms(cameraTranslate, fbHeight);
+  transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
+  const GLint batchLoc = ulocCached(program, "uBatch");
+  const GLint passLoc  = ulocCached(program, "uCloudPass");
+  if (batchLoc >= 0) glUniform1i(batchLoc, 1);
+
+  // Same state and pass order as renderCloud's realistic branch: every light
+  // pass, then the dust. The caller runs this after every cloud's light and
+  // before any cloud's dust, which is where both phases belong.
+  const GLsizei count = (GLsizei)verts.size();
+  glEnable(GL_PROGRAM_POINT_SIZE);
+  glEnable(GL_DEPTH_CLAMP);
+  glDepthFunc(GL_GEQUAL);
+  glEnable(GL_BLEND);
+  glDepthMask(GL_FALSE);
+  glBlendFunc(GL_ONE, GL_ONE);
+  if (passLoc >= 0) glUniform1i(passLoc, 0);
+  glDrawArrays(GL_POINTS, 0, count);
+  if (cineGasStrength > 0.0f) {
+    if (passLoc >= 0) glUniform1i(passLoc, 4);
+    glDrawArrays(GL_POINTS, 0, count);
+  }
+  if (passLoc >= 0) glUniform1i(passLoc, 1);
+  glDrawArrays(GL_POINTS, 0, count);
+  glBlendFunc(GL_ZERO, GL_SRC_COLOR);
+  if (passLoc >= 0) glUniform1i(passLoc, 3);
+  glDrawArrays(GL_POINTS, 0, count);
+  glDisable(GL_BLEND);
+  glDepthMask(GL_TRUE);
+  glDisable(GL_PROGRAM_POINT_SIZE);
+  glDisable(GL_DEPTH_CLAMP);
+  glDepthFunc(GL_GREATER);
+
+  if (batchLoc >= 0) glUniform1i(batchLoc, 0);
+  glBindVertexArray(0);
+}
+
+void RenderedObject::uploadDustInfluenceOnly(float influence)
+{
+  glUseProgram(program);
+  const GLint l = ulocCached(program, "uDustInfluence");
+  if (l >= 0) glUniform1f(l, influence);
+}
+
 void RenderedObject::renderCloud(const double cameraTranslate[3], const float viewRot[9], float fovDeg, int fbWidth, int fbHeight){
   // A starfield keeps no CPU-side copy: its positions live only in the static
   // VBO built by LoadStarfield, so the usual "empty buffer" guard must not fire.
@@ -2946,46 +3195,8 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   // for the bake.
   if (!isStarfield && rimVboCount < (size_t)bufferSize) uploadRimFactors();
 
-  glUseProgram(program);
-  setCloudPlacementUniforms(cameraTranslate);
-  {
-    glUniform3f(glGetUniformLocation(program, "uDustAxis"), dustAxis[0], dustAxis[1], dustAxis[2]);
-    glUniform1f(glGetUniformLocation(program, "uDustFlatten"), dustFlatten);
-    glUniform1f(glGetUniformLocation(program, "uDustScaleH"),  dustScaleH);
-    glUniform1f(glGetUniformLocation(program, "uDustAxisQ"),   dustAxisQ);
-    glUniform1f(glGetUniformLocation(program, "uCloudRms"),   0.5f * cloudRmsRadius);
-    GLint hl = glGetUniformLocation(program, "uHashScale");
-    if (hl >= 0) glUniform1f(hl, hashScale);
-  }
-
-  if (realisticUniform != (unsigned int)-1)
-    glUniform1i(realisticUniform, realisticShading ? 1 : 0);
-  // Dark-matter draw flag: default OFF; the debug branch flips it on for the
-  // gray DM points only. Set every frame so the shared program never leaks it.
-  const GLint dmDrawLoc = glGetUniformLocation(program, "uDMDraw");
-  if (dmDrawLoc >= 0) glUniform1i(dmDrawLoc, 0);
-  {
-    GLint psLoc = glGetUniformLocation(program, "uCinePixelScale");
-    if (psLoc >= 0) glUniform1f(psLoc, cinePixelScale);
-    GLint hsLoc = glGetUniformLocation(program, "uUnresolvedStrength");
-    if (hsLoc >= 0) glUniform1f(hsLoc, cineHazeStrength);
-    GLint hzLoc = glGetUniformLocation(program, "uUnresolvedSize");
-    if (hzLoc >= 0) glUniform1f(hzLoc, cineHazeSpread);
-    { GLint rl = glGetUniformLocation(program, "uSpriteRefH"); if (rl >= 0) glUniform1f(rl, gSpriteRefHeight); }
-    GLint vhLoc = glGetUniformLocation(program, "uViewportH");
-    if (vhLoc >= 0) glUniform1f(vhLoc, (float)fbHeight);
-    GLint rcLoc = glGetUniformLocation(program, "uResolvedCut");
-    if (rcLoc >= 0) glUniform1f(rcLoc, cineResolvedCut);
-    GLint sfLoc = glGetUniformLocation(program, "uStarfield");
-    if (sfLoc >= 0) glUniform1i(sfLoc, 0);
-    GLint ssLoc = glGetUniformLocation(program, "uStarSize");
-    if (ssLoc >= 0) glUniform1f(ssLoc, cineStarSize);
-    GLint gsLoc = glGetUniformLocation(program, "uGasStrength");
-    if (gsLoc >= 0) glUniform1f(gsLoc, cineGasStrength);
-    // Always uploaded: an unset uniform reads 0, which would black out every star.
-    GLint sfgLoc = glGetUniformLocation(program, "uStarFieldGain");
-    if (sfgLoc >= 0) glUniform1f(sfgLoc, cineStarFieldGain);
-  }
+  uploadCloudFrameUniforms(cameraTranslate, fbHeight);
+  const GLint dmDrawLoc = ulocCached(program, "uDMDraw");
   transformPerspectiveMesh(program, cameraTranslate, viewRot, fovDeg, fbWidth, fbHeight);
 
   // Float-path far-field cap: give the haze pass the cloud's projected radius
@@ -2996,7 +3207,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
   // rendered as a stack of 8px+ lobes — a bloated ball, the same bug the chunk
   // path already had fixed.
   if (!isStarfield) {
-    GLint spLoc = glGetUniformLocation(program, "uChunkScreenPx");
+    GLint spLoc = ulocCached(program, "uChunkScreenPx");
     if (spLoc >= 0) {
       float screenPx = 0.0f;
       if (cloudBoundRadius > 0.0f) {
@@ -3014,7 +3225,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
       // Same far-field flux rule the chunked path uses, so a hand-made cloud
       // and a galaxy seen from the same distance dim by the same amount. A
       // chunk's own pixel area works out to (2 x radius)^2, hence 16 x r^2.
-      GLint pdLoc = glGetUniformLocation(program, "uPointDim");
+      GLint pdLoc = ulocCached(program, "uPointDim");
       if (pdLoc >= 0)
         glUniform1f(pdLoc, (screenPx > 0.0f)
                              ? FarFieldDim(16.0 * (double)screenPx * (double)screenPx, bufferSize, cineFarFalloff)
@@ -3048,7 +3259,7 @@ void RenderedObject::renderCloud(const double cameraTranslate[3], const float vi
     glDepthFunc(GL_GEQUAL);     // reversed-Z: far stars sit at depth ~0 == cleared depth; GEQUAL lets them pass
     glEnable(GL_BLEND);
     glDepthMask(GL_FALSE);
-    GLint passLoc = glGetUniformLocation(program, "uCloudPass");
+    GLint passLoc = ulocCached(program, "uCloudPass");
 
     // 1. Haze — the diffuse "gas" glow (density-driven from the star field).
     //    A star catalogue runs the SAME passes as a procedural cloud: the haze

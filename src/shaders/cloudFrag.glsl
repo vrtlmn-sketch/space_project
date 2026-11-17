@@ -24,7 +24,10 @@ uniform float uGasStrength;        // glowing-gas emission brightness
 // light each sample is still entitled to (1 = full, set by the CPU from the
 // object's true angular size). Without it a galaxy 0.001 px across drew eight
 // full-brightness stars and outshone everything nearby.
-uniform float uPointDim;
+// It arrives through the vertex shader, which reads it from a uniform or, for
+// the far-galaxy batch, from that galaxy's table entry.
+flat in float vPointDim;
+#define uPointDim vPointDim
 // Brightness of the whole star field (star points, haze, glowing gas) against
 // planets, which are not drawn here. -3.6 stops = 2^-3.6 = 0.08246. FOUND BY EYE against a
 // reference photograph of a sunlit planet in front of the Milky Way, with a

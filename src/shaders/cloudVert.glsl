@@ -5,6 +5,10 @@ layout (location = 2) in float aRim;     // world-lit rim factor (3D-correct edg
 // star's identity hashes on THIS, so a physics step cannot re-roll it. Only the
 // particle path binds it (chunks hash on aLocal, which never moves for them).
 layout (location = 3) in vec3 aHashPos;
+// Far-galaxy batch only (see loadPerObject below): which galaxy this point
+// belongs to, and its index inside that galaxy.
+layout (location = 4) in uint aFarVid;
+layout (location = 5) in uint aFarGal;
 
 // Camera-relative placement of this cloud. The CPU computes ONLY these (in
 // double, once per cloud per frame) and the GPU applies them per vertex — the
@@ -75,6 +79,77 @@ uniform float uCloudRms;       // cloud RMS radius, local units (population grad
 uniform float uPopColour;      // 0 = one population everywhere, 1 = full gradient
 uniform float uDustSettle;     // scene dial: 0 = identity, 1 = full settling
 
+// ── Far-galaxy batch ─────────────────────────────────────────────────────────
+// A universe holds thousands of galaxies a pixel or two across. Drawn one by
+// one, each cost a full set of uniform uploads and four draw calls for eight
+// points. With uBatch on, all of them arrive in ONE buffer and every value that
+// used to be a per-galaxy uniform is read from a table instead. The same points
+// go through the same code below: the #defines after loadPerObject() point the
+// per-object uniform names at these copies, so nothing else in this file (or
+// in the includes) knows which path it is on.
+uniform int   uBatch;
+uniform float uPointDim;       // far-field flux correction (see cloudFrag.glsl)
+uniform float uLfDelta0[4];    // PER OBJECT: (object centre - hole) . holeDir, in double on the CPU
+struct FarGalaxy {
+  vec4 c0;   // chunk centre (camera-relative), extent
+  vec4 r0;   // rotation column 0, projected radius in pixels
+  vec4 r1;   // rotation column 1, point dim
+  vec4 r2;   // rotation column 2, temperature
+  vec4 v0;   // view-space centre (deep zoom), dust influence
+  vec4 d0;   // dust axis, dust flatten
+  vec4 d1;   // dust scale height, axis ratio, cloud rms, hash scale
+  vec4 l0;   // lens delta0 per hole
+};
+layout (std430, binding = 9) readonly buffer FarGalaxies { FarGalaxy gFar[]; };
+
+vec3  bChunkCenter;  float bChunkExtent;  float bChunkScreenPx;
+mat3  bCloudRot;     vec3  bViewCentre;   float bTemperature;
+float bDustInfluence; float bHashScale;   vec3  bDustAxis;
+float bDustFlatten;  float bDustScaleH;   float bDustAxisQ;
+float bCloudRms;     float bPointDim;     float bLfDelta0[4];
+int   bVertexId;
+
+void loadPerObject() {
+  if (uBatch != 0) {
+    FarGalaxy g = gFar[aFarGal];
+    bChunkCenter = g.c0.xyz;  bChunkExtent = g.c0.w;  bChunkScreenPx = g.r0.w;
+    bCloudRot    = mat3(g.r0.xyz, g.r1.xyz, g.r2.xyz);
+    bViewCentre  = g.v0.xyz;  bTemperature = g.r2.w;
+    bDustInfluence = g.v0.w;  bHashScale   = g.d1.w;
+    bDustAxis    = g.d0.xyz;  bDustFlatten = g.d0.w;
+    bDustScaleH  = g.d1.x;    bDustAxisQ   = g.d1.y;  bCloudRms = g.d1.z;
+    bPointDim    = g.r1.w;
+    bLfDelta0[0] = g.l0.x; bLfDelta0[1] = g.l0.y; bLfDelta0[2] = g.l0.z; bLfDelta0[3] = g.l0.w;
+    bVertexId    = int(aFarVid);
+  } else {
+    bChunkCenter = uChunkCenter;  bChunkExtent = uChunkExtent;  bChunkScreenPx = uChunkScreenPx;
+    bCloudRot    = uCloudRot;
+    bViewCentre  = uViewCentre;   bTemperature = uTemperature;
+    bDustInfluence = uDustInfluence;  bHashScale = uHashScale;
+    bDustAxis    = uDustAxis;     bDustFlatten = uDustFlatten;
+    bDustScaleH  = uDustScaleH;   bDustAxisQ   = uDustAxisQ;  bCloudRms = uCloudRms;
+    bPointDim    = uPointDim;
+    bLfDelta0[0] = uLfDelta0[0]; bLfDelta0[1] = uLfDelta0[1];
+    bLfDelta0[2] = uLfDelta0[2]; bLfDelta0[3] = uLfDelta0[3];
+    bVertexId    = gl_VertexID;
+  }
+}
+#define uChunkCenter   bChunkCenter
+#define uChunkExtent   bChunkExtent
+#define uChunkScreenPx bChunkScreenPx
+#define uCloudRot      bCloudRot
+#define uViewCentre    bViewCentre
+#define uTemperature   bTemperature
+#define uDustInfluence bDustInfluence
+#define uHashScale     bHashScale
+#define uDustAxis      bDustAxis
+#define uDustFlatten   bDustFlatten
+#define uDustScaleH    bDustScaleH
+#define uDustAxisQ     bDustAxisQ
+#define uCloudRms      bCloudRms
+#define LF_DELTA0(h)   bLfDelta0[h]
+
+flat out float vPointDim;  // per-object far-field dim, forwarded to the fragment shader
 out vec3  vColor;   // per-particle blackbody colour (stars)
 out float vMag;     // per-particle magnitude (0..1, log-ish)
 out float vDust;    // dust density at this particle (0 = not dusty)
@@ -122,6 +197,8 @@ vec3 blackbody(float T) {
 }
 
 void main() {
+  loadPerObject();
+  vPointDim = bPointDim;
   vLfSrcRad = 0.0; vLfSrcS = vec2(0.0); vLfCenterS = vec2(0.0); vLfHalfS = 0.0;
   vLfHoleN  = vec3(0.0, 0.0, -1.0); vLfGeom = vec3(0.0); vLfBetaS = 0.0;
   // Camera-relative position (double-precise from the CPU) — no huge-number cancel.
@@ -179,7 +256,7 @@ void main() {
   vSlabW = 1.0;
 
   vRim = aRim;
-  float id = float(gl_VertexID);
+  float id = float(bVertexId);
   // Star attributes hashed on a galaxy-local POSITION (not the vertex index): the
   // chunk path uses aLocal, so a star keeps its colour across LOD rungs; the
   // particle path uses the FROZEN aHashPos with the frozen scale, so a star keeps

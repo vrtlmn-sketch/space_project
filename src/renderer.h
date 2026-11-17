@@ -240,6 +240,13 @@ private:
   // Screen-space rim-lit dust (raster view): clouds drawn this frame + the
   // half-res density target the tonemap samples for edge lighting.
   std::vector<RenderedObject*> rimClouds;
+  // Far galaxies gathered during the cloud light loop, drawn together at the
+  // start of the dust loop (see TryFarGalaxy / FlushFarGalaxies).
+  std::vector<RenderedObject::FarGalaxyRecord> farGalaxyRecs;
+  std::vector<RenderedObject::FarGalaxyVert>   farGalaxyVerts;
+  RenderedObject* farGalaxyRep{nullptr};
+  void FlushFarGalaxies();
+  void PrepCloudLook(RenderedObject& ro);
   // Solid bodies drawn this frame, whose screen discs cancel the dust glow.
   // Camera-relative and in DOUBLE: an absolute world float quantises to ~1e8 AU
   // out in a universe, which would put the disc nowhere near the planet.
@@ -1176,6 +1183,7 @@ public:
   bool BeginFrame();
   void Draw(RenderedObject& ro);
   void DrawCloudDust(RenderedObject& ro);   // phase 2 of the cloud draw: call once per cloud after ALL clouds' Draw
+  bool TryFarGalaxy(RenderedObject& ro);   // far galaxy skipped or batched: nothing left to draw
   // Draw a physics object with mass+temperature+objectType (+optional velocity for Doppler)
   void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                          vec3 velocity = {0,0,0}, vec3 color = {0.55f,0.25f,0.15f});

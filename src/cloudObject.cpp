@@ -481,6 +481,35 @@ void CloudObject::SimulateSharedForward(
   // reach 0, i.e. every cloud its own frame, which is the safe direction.
   const std::vector<std::vector<size_t>> frames = GroupCloudsByFrame(sim);
   if (std::getenv("DYN_DEBUG")) {
+    // Per-cloud physics inputs, every 10 recorded frames: the numbers that
+    // decide whether a cloud holds together. softening2 is derived from
+    // cloudRmsRadius, which is measured on the RENDER path.
+    static int dbgTick = 0;
+    if ((dbgTick++ % 10) == 0) {
+      for (size_t k = 0; k < sim.size(); ++k) {
+        const auto& ro = sim[k]->renderedObject;
+        double r2 = 0; size_t n = 0;
+        for (const auto& p : ro.particles()) {
+          r2 += (double)p.position.x*p.position.x + (double)p.position.y*p.position.y
+              + (double)p.position.z*p.position.z; ++n;
+        }
+        const double trueRms = n ? std::sqrt(r2/(double)n) : 0.0;
+        const unsigned int tot = sim[k]->frameStore
+                                 ? (unsigned int)sim[k]->frameStore->totalFrames() : 0u;
+        const bool replaying = sim[k]->timeframe < tot;
+        std::cerr << "[dyn] t" << dbgTick << " "
+                  << (sim[k]->name.empty() ? "cloud" : sim[k]->name) << "[" << k << "]"
+                  << (replaying ? "  REPLAYING-NOT-SIMULATED" : "  simulating")
+                  << "  timeframe " << sim[k]->timeframe << "/" << tot
+                  << "  N " << n
+                  << "  rms " << ro.rmsRadius()
+                  << "  trueRms " << trueRms
+                  << "  soft2 " << ro.softening2()
+                  << "  theta " << sim[k]->barnesHutTheta << "\n";
+      }
+    }
+  }
+  if (std::getenv("DYN_DEBUG_GROUPS")) {
     static size_t lastFrames = SIZE_MAX, lastSim = SIZE_MAX;
     if (frames.size() != lastFrames || sim.size() != lastSim) {
       lastFrames = frames.size(); lastSim = sim.size();
@@ -750,6 +779,11 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     }
     renderedObject.coordinates = position;
     renderedObject.rotationDeg = rotationDeg;
+    // A far galaxy is skipped or batched before any of the uploads below.
+    renderedObject.cacheAppearance(temperature, renderMode);
+    renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
+    renderedObject.uploadParticleSizeSpread(particleSizeSpread);
+    if (renderer.TryFarGalaxy(renderedObject)) return;
     renderedObject.uploadTemperature(temperature);
     renderedObject.uploadRenderMode(renderMode);
     renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
