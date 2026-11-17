@@ -226,7 +226,7 @@ struct SceneSettings {
   float lensMaxStretch{1.0f};
   float lensMaxSprite{0.25f};
   float lensHazeArc{1.0f};
-  float spriteRefHeight{720.0f};
+  float spriteRefHeight{1080.0f};
   float unresolvedSize{63.37f};
   // Stars fainter than this melt into the unresolved haze instead of drawing a
   // core. The cut CONSERVES light now (cloudVert hands a skipped core's flux to

@@ -807,7 +807,7 @@ public:
   // 0 = off (absolute pixels, the old behaviour).
   // 720 is the signed-off default: at a 1080p render that draws sprites at 1.5x,
   // which is denser than the pre-calibration look, and the user picked it.
-  float spriteRefHeight{720.0f};
+  float spriteRefHeight{1080.0f};
   float unresolvedSize{63.37f};   // unresolved lobe angular width (x fixed PSF floor)
   float resolvedCut{0.0f};       // only stars brighter than this draw as sharp cores
   float gasStrength{0.5f};       // glowing-gas emission near hot young stars (0 = off)

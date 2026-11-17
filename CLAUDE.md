@@ -1860,7 +1860,9 @@ and a weak, streaky haze. Scaling dust/gas/haze alone only got the ratio from
 **19.06 vs 19.12, a ratio of 1.003**.
 
 `uSpriteRefH` (setting `spriteRefHeight`, Quality & Speed -> **Sprite Density**,
-default **720**) is the height sizes are calibrated at; everything is multiplied
+default **1080** since 2026-11, at the user's request; it was 720, and the
+reference numbers and tuned looks elsewhere in this file were measured at 720)
+is the height sizes are calibrated at; everything is multiplied
 by `uViewportH / uSpriteRefH`. 0 = off (absolute pixels, the old behaviour).
 
 - **The reference runs BACKWARDS from how it reads.** Scale is height/reference,

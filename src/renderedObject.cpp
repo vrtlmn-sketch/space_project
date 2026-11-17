@@ -50,7 +50,7 @@ float    gLfPxPerRad        = 1.0f;
 float    gLfMaxMu           = 24.0f;
 float    gLfMaxSprite       = 0.35f;
 float    gLfHazeArc         = 1.0f;
-float    gSpriteRefHeight   = 720.0f;
+float    gSpriteRefHeight   = 1080.0f;
 unsigned gLfLutTex          = 0;
 
 void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz)
