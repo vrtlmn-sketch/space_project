@@ -912,6 +912,9 @@ public:
   // faster; a galaxy's own halo is never scaled, so its structure is unchanged.
   float haloMergeStrength{1.0f};
   float playbackSpeed{0.2f};   // 1 = 5 frames per tick; the default 0.2 is ONE step per frame
+  // Simulated time since the app started, in years: every step played adds its
+  // length (backward subtracts). Shown as a date in exploration.
+  double simClockYears{0.0};
   int   framesThisTick{1};
   // Slowest useful playback: every recorded frame is displayed
   // (framesThisTick == 1).
@@ -1027,9 +1030,8 @@ public:
   bool   exploreLockHasLast{false};
   bool   exploreCanPlay{false};                       // something to play: drives the hint
   // "Take in": inside a galaxy, looking at its centre, t flies out to where the
-  // whole of it is in view. A trip to a galaxy is a look, not a place: it
-  // leaves nothing to go back to and nothing to play from, until the next trip
-  // to a body.
+  // whole of it is in view. Out there there is nothing to play from, until you
+  // go back (b, as after any trip) or travel to a body.
   bool   exploreGalaxyView{false};                    // the last trip was to a galaxy
   // The description of the body you just arrived at, shown under it for a few
   // seconds, or until you move off.
@@ -1061,6 +1063,8 @@ public:
   int    travelPendObj{-1}, travelPendCloud{-1};       // a target named by the search, used instead of the highlight
   bool   exploreTravelActive{false};
   bool   travelKeyPressed{false}, travelKeyShift{false};
+  bool   travelClickPressed{false}, travelClickShift{false}, backClickPressed{false}, backClickShift{false};
+  bool   travelClickHeld{false}, backClickHeld{false};   // button state last frame, for press edges
   int    travelObj{-1}, travelCloud{-1};
   std::string travelName;                              // a recycled universe slot is a different body
   dvec3  travelDir{0.0, 0.0, 1.0};                     // unit, target -> where the trip started
@@ -1070,8 +1074,8 @@ public:
   float  travelSeconds{3.0f};                          // how long a trip takes (Camera & Movement)
   // ── Travel back: b returns to where the last trip started ──
   // The whole pose is kept (position, facing, field of view), so you come back
-  // looking at what you were looking at. One level: going back remembers the
-  // place you left, so b toggles between the two.
+  // looking at what you were looking at. A history, not one slot: each b goes
+  // one trip further back (see travelBackStack).
   struct TravelPose {
     bool   valid{false};
     double anchor[3]{0, 0, 0}, translate[3]{0, 0, 0};
@@ -1084,7 +1088,13 @@ public:
   };
   TravelPose CaptureTravelPose() const;
   void       ApplyTravelPose(const TravelPose& p);
-  TravelPose travelBackPose;                           // where b goes
+  // Where b goes: every trip pushes the place it left, b pops the latest, so
+  // several b's retrace several trips. Bounded, oldest dropped first.
+  std::vector<TravelPose> travelBackStack;
+  void PushTravelBack() {
+    travelBackStack.push_back(CaptureTravelPose());
+    if (travelBackStack.size() > 32) travelBackStack.erase(travelBackStack.begin());
+  }
   TravelPose travelBackFrom, travelBackTo;             // the back trip in flight
   bool   travelBackActive{false};
   double travelBackT{0.0}, travelBackHeld{0.0};

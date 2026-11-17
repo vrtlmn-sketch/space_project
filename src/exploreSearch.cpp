@@ -311,9 +311,9 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
   // There is no target to ease around on the way back, only a point in space,
   // so the distance is eased from BOTH ends: speed builds from the scale of the
   // place you are leaving and falls to the scale of the place you land.
-  if (backReq != 0 && travelBackPose.valid) {
-    const TravelPose dest = travelBackPose;
-    travelBackPose = CaptureTravelPose();             // b again goes forth
+  if (backReq != 0 && !travelBackStack.empty()) {
+    const TravelPose dest = travelBackStack.back();   // the latest place left; the one before it is next
+    travelBackStack.pop_back();
     // Going back also goes back to what was locked there, not what you flew to.
     // If that body is gone, or nothing was locked, there is no lock (p then
     // picks the nearest). Frames are cleared only if the lock really changes.
@@ -330,7 +330,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
       travelBackHintAt = ImGui::GetTime();
       return;
     }
-    travelBackFrom = travelBackPose;
+    travelBackFrom = CaptureTravelPose();
     travelBackTo   = dest;
     travelBackT = 0.0; travelBackHeld = 0.0;
     travelBackActive = true;
@@ -413,18 +413,13 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
   if (req != 0 && (wantObj >= 0 || wantCloud >= 0) &&
       ExploreTarget(physicsObjects, clouds, wantObj, wantCloud, origin, offset, effR)) {
     travelBackActive = false;
-    travelBackPose = CaptureTravelPose();             // b comes back here
+    PushTravelBack();                                 // b comes back here
     SetExploreLock(physicsObjects, clouds, wantObj);  // play is now from this body, at its own pace
     exploreGalaxyView = (wantObj < 0);
     if (exploreGalaxyView) {
-      // A galaxy has nothing to play from. And TAKING IN the galaxy you are
-      // inside leaves nowhere to go back to — but a trip to ANOTHER galaxy is
-      // a trip like any other, and b brings you home from it.
+      // A galaxy has nothing to play from. Getting back is the same as after
+      // any trip, Take in included: b returns you to where you were.
       exploreLockObj = -1;
-      const double bx = (gCamAnchor[0] - origin.x) - cameraTranslate[0] - offset.x;
-      const double by = (gCamAnchor[1] - origin.y) - cameraTranslate[1] - offset.y;
-      const double bz = (gCamAnchor[2] - origin.z) - cameraTranslate[2] - offset.z;
-      if (std::sqrt(bx * bx + by * by + bz * bz) < (double)effR * 1.05) travelBackPose.valid = false;
     }
     if (req == 2) {                                   // fast travel: the search's own jump
       exploreTravelActive = false;
@@ -767,17 +762,11 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
     dvec3 origin, offset; float effR = 0.0f;
     if (ExploreTarget(physicsObjects, clouds, exploreSelObj, exploreSelCloud, origin, offset, effR)) {
       travelBackActive = exploreTravelActive = false;
-      travelBackPose = CaptureTravelPose();           // b comes back here
+      PushTravelBack();                               // b comes back here
       travelBackHintAt = ImGui::GetTime();
       SetExploreLock(physicsObjects, clouds, exploreSelObj);
       exploreGalaxyView = (exploreSelObj < 0);
-      if (exploreGalaxyView) {                        // as in StepExploreTravel
-        exploreLockObj = -1;
-        const double bx = (gCamAnchor[0] - origin.x) - cameraTranslate[0] - offset.x;
-        const double by = (gCamAnchor[1] - origin.y) - cameraTranslate[1] - offset.y;
-        const double bz = (gCamAnchor[2] - origin.z) - cameraTranslate[2] - offset.z;
-        if (std::sqrt(bx * bx + by * by + bz * bz) < (double)effR * 1.05) travelBackPose.valid = false;
-      }
+      if (exploreGalaxyView) exploreLockObj = -1;     // as in StepExploreTravel
       ShowArrivalDescription(physicsObjects, clouds, exploreSelObj, exploreSelCloud);
       LocateCameraOn(origin, offset, effR);
       CloseExploreSearch();

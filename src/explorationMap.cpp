@@ -1679,7 +1679,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // larger than the travel hint. The key keeps working after it fades.
   {
     const double age = now - travelBackHintAt;
-    if (travelBackPose.valid && paused && exploreFlying() && !exploreTripActive() && age >= 0.0 && age < 3.0) {
+    if (!travelBackStack.empty() && paused && exploreFlying() && !exploreTripActive() && age >= 0.0 && age < 3.0) {
       const float a = (float)std::min({age / 0.2, (3.0 - age) / 0.5, 1.0}) * A;
       const char* txt = "Travel back [b]";
       const float sz = fs * 1.05f;

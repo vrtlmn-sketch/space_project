@@ -1948,6 +1948,24 @@ bool Renderer::UpdateInputs() {
       explorePlayKeyPressed = false;
     }
 
+    // The mouse does the same while flying: left click = t (travel to what is
+    // highlighted), right click = b (travel back), Shift for the instant
+    // versions. Read straight from the window, since the UI ignores the mouse
+    // while the cursor is captured. A press only counts if it BEGAN while
+    // flying, so the click that closes a menu does not also start a trip.
+    {
+      const bool flying = exploreFlying() && flightCaptured;
+      const bool shift  = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                          glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+      const bool lmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT)  == GLFW_PRESS;
+      const bool rmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+      if (lmb) { if (flying && !travelClickHeld) { travelClickPressed = true; travelClickShift = shift; } }
+      else { if (travelClickPressed && flying) exploreTravelRequest = travelClickShift ? 2 : 1; travelClickPressed = false; }
+      if (rmb) { if (flying && !backClickHeld) { backClickPressed = true; backClickShift = shift; } }
+      else { if (backClickPressed && flying) exploreBackRequest = backClickShift ? 2 : 1; backClickPressed = false; }
+      travelClickHeld = lmb; backClickHeld = rmb;
+    }
+
     // i = show the highlighted object's description (exploration).
     if (exploring() && glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) infoKeyPressed = true;
     else {
@@ -2308,6 +2326,7 @@ void Renderer::ComputeFrameAdvance() {
   } else {
     accum -= (float)framesThisTick;
   }
+  simClockYears += (playingForward ? 1.0 : -1.0) * (double)framesThisTick * units::kDtYears * (double)simSpeed;
 }
 
 void Renderer::resetCamera() {
@@ -3975,6 +3994,42 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
       dl->AddText(font, sz, ImVec2(x + 1.0f, y + 1.0f), IM_COL32(0, 0, 0, 130), items[i]);
       dl->AddText(font, sz, ImVec2(x, y), IM_COL32(220, 228, 240, 150), items[i]);
       x += widths[i] + gap;
+    }
+
+    // The date, bottom centre, in the same quiet type: today's date when the
+    // app started, moved on by however much simulated time has been played.
+    // Year-month-day while the year is one a calendar can show; past that
+    // (a step sized for a galaxy covers millions of years) just the year.
+    {
+      static const long long epochDays = (long long)(std::time(nullptr) / 86400);   // days since 1970-01-01
+      const double totalDays = (double)epochDays + simClockYears * 365.2425;
+      char date[64];
+      if (std::fabs(totalDays) < 3.0e6) {              // within about +-8000 years: a real calendar date
+        // Civil date from a day count (Howard Hinnant's algorithm).
+        long long z = (long long)std::floor(totalDays) + 719468;
+        const long long era = (z >= 0 ? z : z - 146096) / 146097;
+        const unsigned doe = (unsigned)(z - era * 146097);
+        const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        long long yy = (long long)yoe + era * 400;
+        const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        const unsigned mp  = (5 * doy + 2) / 153;
+        const unsigned dd  = doy - (153 * mp + 2) / 5 + 1;
+        const unsigned mm  = mp < 10 ? mp + 3 : mp - 9;
+        if (mm <= 2) ++yy;
+        std::snprintf(date, sizeof(date), "%lld-%02u-%02u", yy, mm, dd);
+      } else {
+        std::snprintf(date, sizeof(date), "Year %.4g", 1970.0 + totalDays / 365.2425);
+      }
+      char line[96];
+      std::snprintf(line, sizeof(line), paused ? "%s" : "%s   [playing]", date);
+      const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, line);
+      // Centred on the date itself, so it does not shift when [playing] appears.
+      const float dw = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, date).x;
+      const ImVec2 tp(std::floor(vp->WorkPos.x + (vp->WorkSize.x - dw) * 0.5f),
+                      std::floor(vp->WorkPos.y + vp->WorkSize.y - Em(30.0f)));
+      (void)ts;
+      dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), IM_COL32(0, 0, 0, 130), line);
+      dl->AddText(font, sz, tp, IM_COL32(220, 228, 240, 150), line);
     }
   }
 
