@@ -587,6 +587,31 @@ Mechanics worth knowing:
   too bright. Retuned to 0.09 under the power mean. Re-tune it by eye whenever
   what the meter measures changes.
 
+## A dim lit body raises the exposure ceiling, and the star field steps aside
+
+The ceiling (2^-starFieldStops, ~115x) is what a frame of STARS needs. Sunlight
+falls as 1/d^2, so that also covers a planet out to about Saturn; past it a body
+just stayed dark (Pluto a tenth of the exposure it needs, Eris an eightieth).
+
+`Renderer::NoteLitBodyForExposure` (called from `DrawPhysicsObject` for every
+mesh-drawn planet or small body) raises the ceiling by `aeBodyLift` = what the
+body's sunlight is short of 10 AU's, capped at 128x, faded in by the body's size
+in the frame (radius 0.8% to 3% of frame height) so it does not snap.
+
+The lift is for the BODY. `StarScaleGain()` = 2^starFieldStops / the eased lift
+(`aeBodyLiftShown`, stepped in `EndFrame` at the exposure's own speed) is what
+stars, haze, nebulae, far dots and the sky are drawn with, so the raised exposure
+brings them back to exactly the look they had. Two versions that failed first:
+- **Ceiling only**: the sky went bright blue and the stars blew out.
+- **Compensating by the exposure actually shown** (CPU readback): in front of
+  the Milky Way the star band held the exposure under the old ceiling, so the
+  compensation never started and Pluto stayed black. It has to follow the lift
+  that is WANTED, not the exposure that was reached.
+
+Anything new on the star-field scale must use `StarScaleGain()`, not
+`pow(2, starFieldStops)`. With no dim body in view the lift is 1 and nothing
+changes.
+
 ## Two limits on how far over white a point can go
 
 Exposure climbs to its ceiling (x115) in a near-empty frame, points are

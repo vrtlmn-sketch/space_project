@@ -533,6 +533,15 @@ void Renderer::EndFrame() {
   // One auto-exposure step per frame (RunAeMeter). A recording that is not running
   // must start clean, so its first frame jumps to the right exposure, not fades.
   ++aeFrameCounter;
+  {
+    // Ease the star field's share of the body lift at the exposure's own
+    // speed, in stops, so the two move together.
+    const float want = std::log2(autoExposure ? std::max(aeBodyLift, 1.0f) : 1.0f);
+    const float have = std::log2(std::max(aeBodyLiftShown, 1.0f));
+    const float step = std::max(aeSpeedStops, 0.1f) * std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.1f);
+    aeBodyLiftShown  = std::pow(2.0f, have + std::clamp(want - have, -step, step));
+  }
+  aeBodyLift = 1.0f;                // rebuilt by the next frame's draws
   if (!recording) aeRecSmooth.valid = false;
   // Render ImGui on top
   ImGui::Render();
@@ -587,7 +596,7 @@ void Renderer::PrepCloudLook(RenderedObject& ro) {
   ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale;
   ro.cineHazeStrength = unresolvedStrength;  ro.cineHazeSpread = unresolvedSize;
   ro.cineResolvedCut  = resolvedCut;         ro.cineGasStrength = gasStrength;
-  ro.cineFarFalloff   = farFalloff;          ro.cineStarFieldGain = std::pow(2.0f, starFieldStops);
+  ro.cineFarFalloff   = farFalloff;          ro.cineStarFieldGain = StarScaleGain();
   ro.cineStarSize     = starSize;
   ro.cineBlazeMax     = std::pow(2.0f, nearStarStops);
 }
@@ -954,7 +963,7 @@ void Renderer::DrawNebula(PhysicsObject& obj, const std::vector<CloudParticle>* 
   ro.realisticShading = realisticRasterView;
   // A nebula is part of the galaxy's diffuse light, so its emission sits on the
   // star-field scale like the haze and the glowing gas (see renderMesh).
-  ro.cineStarFieldGain = std::pow(2.0f, starFieldStops);
+  ro.cineStarFieldGain = StarScaleGain();
   ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
 }
 
@@ -1446,7 +1455,7 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
                                           : vec3{0.825f, 0.412f, 0.425f};
     const float fill = std::cbrt(std::max(ro.nebExtent.x * ro.nebExtent.y * ro.nebExtent.z, 1e-6f));
     // On the star-field scale, exactly as the volume it stands in for.
-    const float sfGain = realisticRasterView ? std::pow(2.0f, starFieldStops) : 1.0f;
+    const float sfGain = realisticRasterView ? StarScaleGain() : 1.0f;
     const float k = ro.nebEmission * std::sqrt(std::max(ro.nebDensity, 0.0f)) * fill * kImpostorNebula * sfGain;
     S = vec3{pal.x * k, pal.y * k, pal.z * k};
   } else {                                           // Planet / free model — defaultFrag
@@ -1543,7 +1552,7 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   // The black-hole marker is not a light source, and a nebula's dot is already
   // on the star scale (its radiance carries the star-field gain above).
   if (type != 3 && !ro.isNebulaVolume) {
-    const double pointGain = std::pow(2.0, (double)starFieldStops + (double)pointObjectStops);
+    const double pointGain = (double)StarScaleGain() * std::pow(2.0, (double)pointObjectStops);
     const double lo = kImpostorStarLikePx * hScale, hi = fadeHi;
     double t = (std::log(std::max(screenPx, 1e-12)) - std::log(lo)) / (std::log(hi) - std::log(lo));
     t = std::clamp(t, 0.0, 1.0);
@@ -1566,7 +1575,7 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
     const double lum    = (starLumSpread > 0.0f)
                             ? std::exp((double)starLumSpread * (v - (double)starLumPivot(true))) : 1.0;
     const double diam   = std::max(std::clamp(2.0 + 5.0 * v, 2.0, 9.0) * (double)starSize, 1.0);
-    const double pFlux  = coreI * lum * std::pow(2.0, (double)starFieldStops)
+    const double pFlux  = coreI * lum * (double)StarScaleGain()
                         * 0.82746 * 0.25 * diam * diam;            // ref px
     const double dotRef = dotR / hScale;
     const double dotInt = M_PI * dotRef * dotRef * (1.0 - std::exp(-3.0)) / 3.0;
@@ -1676,6 +1685,44 @@ void Renderer::ResetAutoExposureTransition() {
   aeRecSmooth.valid  = false;
 }
 
+// The exposure ceiling is what a frame of STARS needs (2^-starFieldStops, about
+// 115x). Sunlight falls as 1/d^2, so that ceiling also happens to be enough for
+// a planet out to about Saturn, and past it a body simply stays dark: Pluto
+// gets a tenth of the exposure it needs, Eris an eightieth. So a lit body that
+// is big enough in the frame to be something you are looking AT raises the
+// ceiling by what its sunlight is short of 10 AU's. The meter still decides the
+// exposure; this only lets it go further. Faded in by size so a body growing
+// in the frame does not snap it.
+void Renderer::NoteLitBodyForExposure(const RenderedObject& ro) {
+  const double radius = (double)ro.sphereRadius();
+  const double rx = (ro.coordinates.x - gCamAnchor[0]) + cameraTranslate[0] + ro.localOffset.x;
+  const double ry = (ro.coordinates.y - gCamAnchor[1]) + cameraTranslate[1] + ro.localOffset.y;
+  const double rz = (ro.coordinates.z - gCamAnchor[2]) + cameraTranslate[2] + ro.localOffset.z;
+  const double vx = camMatrix[0]*rx + camMatrix[1]*ry + camMatrix[2]*rz;
+  const double vy = camMatrix[3]*rx + camMatrix[4]*ry + camMatrix[5]*rz;
+  const double depth = -(camMatrix[6]*rx + camMatrix[7]*ry + camMatrix[8]*rz);
+  const double tanV = std::tan((double)zoom * M_PI / 180.0 * 0.5);
+  if (!(depth > radius) || !(tanV > 1e-9) || fbHeight <= 0) return;
+  const double share  = radius / (tanV * depth) * 0.5;            // radius as a share of frame height
+  const double aspect = (double)fbWidth / (double)fbHeight;
+  if (std::abs(vy) > (tanV + 2.0 * share * tanV) * depth) return;  // off the top or bottom
+  if (std::abs(vx) > (tanV * aspect + 2.0 * share * tanV) * depth) return;
+  double light = 0.0;
+  const int nL = (int)std::min(ro.litPositions.size(), ro.litColors.size());
+  for (int i = 0; i < nL; ++i) {
+    const double tx = ro.litPositions[i].x - rx, ty = ro.litPositions[i].y - ry, tz = ro.litPositions[i].z - rz;
+    const double d2 = tx*tx + ty*ty + tz*tz;
+    if (!(d2 > 1e-12)) continue;
+    const vec3& c = ro.litColors[i];
+    light += (double)std::max(c.x, std::max(c.y, c.z)) / d2;
+  }
+  if (!(light > 0.0)) return;
+  const double need = std::clamp(0.01 / light, 1.0, 128.0);       // 0.01 = sunlight at 10 AU
+  double w = std::clamp((share - 0.008) / (0.03 - 0.008), 0.0, 1.0);
+  w = w * w * (3.0 - 2.0 * w);
+  aeBodyLift = std::max(aeBodyLift, (float)std::exp(std::log(need) * w));
+}
+
 void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                                   vec3 velocity, vec3 color) {
   if (ro.inert) return;            // an unassigned universe-content slot
@@ -1692,6 +1739,7 @@ void Renderer::DrawPhysicsObject(RenderedObject& ro, float mass, float temperatu
       ro.realisticShading = realisticRasterView;
       ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
       AddRimOccluder(ro);
+      if (objectType != 1.0f && objectType != 3.0f) NoteLitBodyForExposure(ro);   // RT type codes: not a star, not a black hole
     }
   }
   if (rayTracerView) {
@@ -8459,7 +8507,7 @@ void Renderer::ClearSceneTarget(bool starFieldSky) {
   // at the source, keeps bloom, dust over the sky and night sides consistent.
   vec3 bg = backgroundRGB();
   if (starFieldSky) {
-    const float g = std::pow(2.0f, starFieldStops);
+    const float g = StarScaleGain();
     bg = vec3{bg.x * g, bg.y * g, bg.z * g};
   }
   glClearColor(bg.x, bg.y, bg.z, 1.0f);
@@ -9731,7 +9779,7 @@ GLuint Renderer::RunAeMeter(GLuint srcHDR, int role) {
     glUniform1f(aeExLocFloor,    std::pow(2.0f, std::min(aeMaxDarkenStops, 0.0f)));
     // A frame of stars may rise exactly far enough to undo the star field
     // dimming (stars and sky alike). The raytracer never dims, so no rise there.
-    glUniform1f(aeExLocCeil, StarFieldLift());
+    glUniform1f(aeExLocCeil, StarFieldLift() * aeBodyLift);
     glDrawArrays(GL_TRIANGLES, 0, 6);
   }
 

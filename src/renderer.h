@@ -461,6 +461,19 @@ private:
   bool   aeReadPrimed{false};
   float  exposureShownCpu{-1.0f};
   unsigned long long aeFrameCounter{0};   // bumped in EndFrame
+  // How much further than a frame of stars auto exposure may rise this frame,
+  // because a dimly sunlit body is in view (see NoteLitBodyForExposure).
+  float aeBodyLift{1.0f};
+  // The same lift, eased (EndFrame), as the star field is drawn with it.
+  float aeBodyLiftShown{1.0f};
+  // The star field's brightness against planets, as drawn: the Star Field vs
+  // Planets setting, less the lift a dim body in view is being given. The lift
+  // is meant for the BODY. Stars, nebulae and the sky are drawn that much
+  // dimmer and the raised exposure brings them straight back, so they keep the
+  // look they always had; without this they blew out behind the body, or (in
+  // front of the Milky Way) held the exposure down and left Pluto black.
+  float StarScaleGain() const { return std::pow(2.0f, starFieldStops) / (rayTracerView ? 1.0f : aeBodyLiftShown); }
+  void  NoteLitBodyForExposure(const RenderedObject& ro);
   std::chrono::steady_clock::time_point aeLiveLastTime{};
   GLuint aeSmoothProgram{0}, aeSmoothFBO{0};
   GLint  aeSmLocTarget{-1}, aeSmLocPrev{-1}, aeSmLocMaxStep{-1}, aeSmLocReset{-1};

@@ -1078,7 +1078,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   {
     const float e = autoExposure ? exposureShownCpu : ManualExposure();
     if (e > 0.0f) {
-      const float v = e * std::pow(2.0f, starFieldStops);
+      const float v = e * StarScaleGain();
       starVis = std::clamp((std::log(std::max(v, 1e-12f)) - std::log(0.003f)) / (std::log(0.03f) - std::log(0.003f)), 0.0f, 1.0f);
       starVis = starVis * starVis * (3.0f - 2.0f * starVis);
     }
