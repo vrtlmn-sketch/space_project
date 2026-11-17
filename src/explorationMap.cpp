@@ -119,7 +119,8 @@ RGB Lighten(RGB c, float t) { return {c.r + (1 - c.r) * t, c.g + (1 - c.g) * t, 
 // Breadcrumb names, set by DrawExplorationMap for the card it draws.
 std::string gCrumbGalaxy, gCrumbStar;
 
-struct LabelState { float alpha{0.0f}; float focus{0.0f}; bool seen{false}; };
+struct LabelState { float alpha{0.0f}; float focus{0.0f}; bool seen{false};
+                    float far{-1.0f}; };   // 0 = in your galaxy, 1 = outside it; eased, -1 = not yet set
 std::unordered_map<long long, LabelState> gLabelState;
 
 }  // namespace
@@ -976,7 +977,11 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     float rpx;      // its own radius on screen, in pixels (0 for clouds)
     bool  arrived;  // already as close as a trip would bring you
     bool  inside;   // a galaxy you are inside, marked at its centre: t "takes it in"
+    float shrink = 1.0f;   // text and dot scale: below 1 for what lies outside the galaxy you are in
+    dvec3 rel{0.0, 0.0, 0.0};   // camera-relative position, to tell what is inside that galaxy
   };
+  struct Home { dvec3 rel; double ext; };
+  std::vector<Home> homes;     // the galaxies you are inside
   std::vector<Cand> cands;
   cands.reserve(256);
   // A trip stops 5.7 radii out (ComputeLocatePose); within a little more than
@@ -993,6 +998,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     }
     cands.push_back({key, kind, sx, sy, dist, t, 0.0, name, rgb, false, -1, vis, rpx,
                      radius > 0.0 && dist <= radius * 5.7 * 1.1, false});
+    cands.back().rel = rel;
   };
 
   int nearestStar = -1; double nearestStarD = 1e300;
@@ -1020,6 +1026,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       // larger name, and looking there offers "Take in": fly out to where the
       // whole of it is in view. Marking it everywhere you looked made the
       // galaxy feel like the answer to every direction.
+      homes.push_back({rel, ext});
       const size_t before = cands.size();
       add((1LL << 40) | (long long)i, cl.renderedObject.isGalaxy ? kAkGalaxy : kAkCloud, rel, dist, 1.0f,
           cl.name.c_str(), KindRGB(cl.renderedObject.isGalaxy ? kAkGalaxy : kAkCloud), 0.0);
@@ -1030,6 +1037,50 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     add((1LL << 40) | (long long)i, k, rel, dist, band(dist, std::max(ext, 1e-9), 3.0), cl.name.c_str(), KindRGB(k), ext);
   }
 
+  // Inside a galaxy, everything OUTSIDE it steps back — other galaxies, and
+  // every black hole, star, planet or nebula that is not in this one with you.
+  // They are drawn smaller and at well under half strength, and lose out to
+  // anything local when labels compete for room, so what is around you reads
+  // apart from what is merely behind it. Looking at one brings it back (below).
+  // Eased per label, so crossing a galaxy's edge (or taking it in) slides
+  // everything between the two looks, not snaps. A label seen for the first
+  // time starts where it belongs.
+  for (Cand& c : cands) {
+    bool  outside = false;
+    float through = 0.0f;      // how much of your own galaxy lies along the line of sight to it
+    if (!homes.empty() && !c.inside) {
+      outside = true;
+      for (const Home& h : homes)
+        if (Len(Sub(c.rel, h.rel)) <= h.ext * 1.05) { outside = false; break; }
+      // Only what you see THROUGH your galaxy steps back. Look out of it, the
+      // short way to the edge, and what is out there is as plain as ever; turn
+      // toward the bulk of it and what lies beyond gives way to what is in it.
+      // Measured as the length of galaxy the line of sight crosses, in radii:
+      // under 0.6 leaves a label alone, 1.3 and over dims it fully.
+      if (outside) {
+        const double dl = Len(c.rel);
+        for (const Home& h : homes) {
+          if (!(dl > 0.0) || !(h.ext > 0.0)) continue;
+          const double b    = Dot(h.rel, c.rel) / dl;                    // along the ray to the centre's closest point
+          const double disc = b * b - Dot(h.rel, h.rel) + h.ext * h.ext; // >= 0 while you are inside
+          if (disc <= 0.0) continue;
+          const double path = (b + std::sqrt(disc)) / h.ext;
+          float k = (float)std::clamp((path - 0.6) / 0.7, 0.0, 1.0);
+          k = k * k * (3.0f - 2.0f * k);
+          through = std::max(through, k);
+        }
+      }
+    }
+    LabelState& st = gLabelState[c.key];
+    const float goal = outside ? through : 0.0f;
+    if (st.far < 0.0f) st.far = goal;
+    else st.far += (goal - st.far) * (1.0f - std::exp(-dt * 5.0f));
+    if (std::fabs(goal - st.far) < 0.002f) st.far = goal;
+    c.vis   *= 1.0f - 0.60f * st.far;
+    c.shrink = 1.0f - 0.32f * st.far;
+    if (outside && through > 0.5f) c.prio = 3.0;  // behind local things when labels compete (added to below)
+  }
+
   // ── Priority: rank within its own kind, nearer first, then a closeness term ──
   std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
     return a.kind != b.kind ? a.kind < b.kind : a.dist < b.dist; });
@@ -1038,7 +1089,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   for (size_t i = 0, rank = 0; i < cands.size(); ++i, ++rank) {
     if (i > 0 && cands[i].kind != cands[i - 1].kind) rank = 0;
     Cand& c = cands[i];
-    c.prio = (double)rank + (1.0 - (double)c.t) * 4.0;
+    c.prio = c.prio + (double)rank + (1.0 - (double)c.t) * 4.0;
     auto st = gLabelState.find(c.key);
     if (st != gLabelState.end() && st->second.alpha > 0.5f) c.prio -= 1.5;
     if (c.vis < 1.0f) c.prio += 3.0;                                   // behind a planet
@@ -1107,7 +1158,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   if (cands.size() > (size_t)kDotBudget) cands.resize((size_t)kDotBudget);
 
   // ── Geometry, shared by placement and drawing ──
-  auto dotR     = [](const Cand& c) { return 1.6f + 3.2f * c.t; };
+  auto dotR     = [](const Cand& c) { return (1.6f + 3.2f * c.t) * c.shrink; };
   // A body you can see as a disc has no dot (below); its name then sits above
   // the DISC, not above where the dot would have been in the middle of it, and
   // it carries no distance — you are plainly right there.
@@ -1116,7 +1167,17 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // smaller than its dot, above the disc from the moment the disc is bigger,
   // with no jump between the two.
   auto labelR   = [&](const Cand& c) { return c.inside ? kInsideR : std::max(c.rpx, dotR(c)); };
-  auto nameSize = [&](const Cand& c) { return fs * (0.88f + 0.22f * c.t); };
+  // Looking at a shrunken one grows it back, along with its brightness.
+  auto nameSize = [&](const Cand& c) {
+    float k = c.shrink;
+    if (k < 1.0f) { auto st = gLabelState.find(c.key); if (st != gLabelState.end()) k += (1.0f - k) * st->second.focus; }
+    return fs * (0.88f + 0.22f * c.t) * k;
+  };
+  auto subSizeOf = [&](const Cand& c) {
+    float k = c.shrink;
+    if (k < 1.0f) { auto st = gLabelState.find(c.key); if (st != gLabelState.end()) k += (1.0f - k) * st->second.focus; }
+    return fs * 0.80f * k;
+  };
   const float subSize = fs * 0.80f;
   auto subText = [&](const Cand& c, bool withKind, char* buf, size_t n) {
     char d[32]; FormatDistance(c.dist, d, sizeof(d));
@@ -1133,7 +1194,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     if (c.x < ox || c.x > ox + W || c.y < oy || c.y > oy + H) continue;
     char sub[80]; subText(c, c.key == centreKey, sub, sizeof(sub));
     const ImVec2 nsz = font->CalcTextSizeA(nameSize(c), FLT_MAX, 0.0f, c.name);
-    const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, sub);
+    const ImVec2 ssz = font->CalcTextSizeA(subSizeOf(c), FLT_MAX, 0.0f, sub);
     const float hw = std::max(nsz.x, ssz.x) * 0.5f + 4.0f, r = labelR(c);
     Box b{c.x - hw, c.y - r - 5.0f - nsz.y, c.x + hw, c.y + r + 4.0f + ssz.y};
     // Up close only the name is reserved, above the disc: reserving the whole
@@ -1201,7 +1262,8 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   for (const Cand& c : cands) {
     const LabelState& st = gLabelState[c.key];
     if (st.alpha <= 0.01f) continue;
-    const float e = st.alpha * st.alpha * (3.0f - 2.0f * st.alpha) * A * c.vis;
+    const float visNow = c.vis + (1.0f - c.vis) * st.focus;     // whatever dims it, looking at it undoes
+    const float e = st.alpha * st.alpha * (3.0f - 2.0f * st.alpha) * A * visNow;
     const float rise = (1.0f - st.alpha) * 6.0f;
     const bool  close = isClose(c);
     const float r = labelR(c), ns = nameSize(c);
@@ -1220,10 +1282,11 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       const float a = 0.78f * e * (withKind ? st.focus : 1.0f - st.focus);
       if (a <= 0.01f) continue;
       char sub[80]; subText(c, withKind != 0, sub, sizeof(sub));
-      const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, sub);
+      const float  ss  = subSizeOf(c);
+      const ImVec2 ssz = font->CalcTextSizeA(ss, FLT_MAX, 0.0f, sub);
       const ImVec2 sp(std::floor(c.x - ssz.x * 0.5f), std::floor(c.y + r + 3.0f + rise + ringGap));
-      dl->AddText(font, subSize, ImVec2(sp.x + 1.0f, sp.y + 1.0f), C(shadow, 0.5f * a), sub);
-      dl->AddText(font, subSize, sp, C(subRGB, a), sub);
+      dl->AddText(font, ss, ImVec2(sp.x + 1.0f, sp.y + 1.0f), C(shadow, 0.5f * a), sub);
+      dl->AddText(font, ss, sp, C(subRGB, a), sub);
     }
     if (st.focus > 0.01f) {
       // The highlight: a steady inner ring, and four arcs that turn slowly and
