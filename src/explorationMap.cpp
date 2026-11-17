@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "uiScale.h"
 #include <unordered_map>
 #include <vector>
 
@@ -1002,6 +1003,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     if (dx * dx + dy * dy < centreD2) { centreD2 = dx * dx + dy * dy; centre = (int)i; }
   }
   long long centreKey = (centre >= 0) ? cands[(size_t)centre].key : -1;
+  const double centreDist = (centre >= 0) ? cands[(size_t)centre].dist : -1.0;   // for the scale bar
   // What t / Shift+t act on (StepExploreTravel). Only while the atlas is up.
   const bool canTravel = centre >= 0 && atlasVisible && exploreFlying();
   if (canTravel) {
@@ -1175,6 +1177,66 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const PhysicsObject& s = physicsObjects[(size_t)nearestStar];
     edgeMarker(CameraRelative(s.renderedObject.coordinates, s.renderedObject.localOffset),
                s.name.c_str(), nearestStarD, BodyRGB(s));
+  }
+
+  // ── Scale bar, bottom right ──
+  // A bar of fixed length and what it spans: the ANGLE (which depends only on
+  // the zoom, as a telescope reports it) and the LENGTH that angle covers at
+  // the distance of what you are looking at — the highlighted object, else
+  // whatever is straight ahead. With nothing ahead there is no distance to
+  // measure at, so only the angle shows.
+  {
+    const float  barPx   = Em(140.0f);
+    const double angle   = 2.0 * std::atan((double)barPx * 0.5 / (double)focalPx);
+    const double atDist  = (centreDist > 0.0) ? centreDist
+                         : (forwardTargetDist > 0.0f ? (double)forwardTargetDist : -1.0);
+    char lenTxt[48] = "";
+    if (atDist > 0.0) {
+      const double au = 2.0 * atDist * std::tan(angle * 0.5);
+      const double km = au * 1.495978707e8, ly = au / 63241.077;
+      double v; const char* unit;
+      if      (km < 1.0)      { v = km * 1000.0; unit = "m"; }
+      else if (km < 1.5e6)    { v = km;          unit = "km"; }
+      else if (au < 1000.0)   { v = au;          unit = "AU"; }
+      else if (ly < 1.0e3)    { v = ly;          unit = "ly"; }
+      else if (ly < 1.0e6)    { v = ly / 1.0e3;  unit = "kly"; }
+      else if (ly < 1.0e9)    { v = ly / 1.0e6;  unit = "Mly"; }
+      else                    { v = ly / 1.0e9;  unit = "Gly"; }
+      // Two significant figures: steady enough not to flicker, never wrong.
+      const double mag = std::pow(10.0, std::floor(std::log10(std::max(v, 1e-30))) - 1.0);
+      v = std::round(v / mag) * mag;
+      if (v >= 1000.0) {                                  // group the thousands: 10 000 km
+        const long long n = (long long)std::llround(v);
+        if (n >= 1000000) std::snprintf(lenTxt, sizeof(lenTxt), "%lld %03lld %03lld %s", n / 1000000, (n / 1000) % 1000, n % 1000, unit);
+        else              std::snprintf(lenTxt, sizeof(lenTxt), "%lld %03lld %s", n / 1000, n % 1000, unit);
+      } else std::snprintf(lenTxt, sizeof(lenTxt), "%.2g %s", v, unit);
+    }
+    char angTxt[32];
+    const double deg = angle * 180.0 / M_PI;
+    if      (deg >= 10.0)        std::snprintf(angTxt, sizeof(angTxt), "%.0f\xC2\xB0", deg);
+    else if (deg >= 1.0)         std::snprintf(angTxt, sizeof(angTxt), "%.1f\xC2\xB0", deg);
+    else if (deg * 60.0 >= 1.0)  std::snprintf(angTxt, sizeof(angTxt), "%.1f'", deg * 60.0);
+    else if (deg * 3600.0 >= 1.0)std::snprintf(angTxt, sizeof(angTxt), "%.1f\"", deg * 3600.0);
+    else                         std::snprintf(angTxt, sizeof(angTxt), "%.2g\"", deg * 3600.0);
+    char txt[96];
+    if (lenTxt[0]) std::snprintf(txt, sizeof(txt), "%s  \xC2\xB7  %s", lenTxt, angTxt);
+    else           std::snprintf(txt, sizeof(txt), "%s", angTxt);
+
+    const float  sz = fs * 0.92f;
+    const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
+    const float  right = ox + W - 18.0f, base = oy + H - 22.0f;
+    const float  x1 = right - ts.x - 10.0f, x0 = x1 - barPx, tick = 5.0f;
+    const ImU32  line = C(RGB{0.86f, 0.90f, 0.96f}, 0.85f * A), dark = C(shadow, 0.5f * A);
+    for (int pass = 0; pass < 2; ++pass) {               // shadow, then the bar
+      const float o = pass ? 0.0f : 1.0f;
+      const ImU32 col = pass ? line : dark;
+      dl->AddLine(ImVec2(x0 + o, base + o), ImVec2(x1 + o, base + o), col, 1.5f);
+      dl->AddLine(ImVec2(x0 + o, base - tick + o), ImVec2(x0 + o, base + tick + o), col, 1.5f);
+      dl->AddLine(ImVec2(x1 + o, base - tick + o), ImVec2(x1 + o, base + tick + o), col, 1.5f);
+    }
+    const ImVec2 tp(std::floor(right - ts.x), std::floor(base - ts.y * 0.5f));
+    dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), dark, txt);
+    dl->AddText(font, sz, tp, line, txt);
   }
 
   // "Travel back [b]": shown for three seconds after a trip ends, a little
