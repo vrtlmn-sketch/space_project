@@ -1119,8 +1119,12 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     }
   }
 
-  // ── Off screen: a chevron at the edge, for the search target and the nearest star ──
-  auto edgeMarker = [&](const dvec3& rel, const char* name, double dist, RGB rgb) {
+  // ── Off screen: a chevron at the edge, for the search target, the nearest
+  // star and, inside a solar system, everything that belongs to it ──
+  // The name is dropped (the chevron stays) when it would sit on a marker that
+  // was placed before it, so two bodies in the same direction do not smear.
+  std::vector<Box> edgeBoxes;
+  auto edgeMarker = [&](const dvec3& rel, const char* name, double dist, RGB rgb, float scale = 1.0f) {
     float sx = 0.0f, sy = 0.0f;
     if (RelToScreen(rel, sx, sy) && sx >= ox && sx <= ox + W && sy >= oy && sy <= oy + H) return false;
     const double vx = camMatrix[0] * rel.x + camMatrix[1] * rel.y + camMatrix[2] * rel.z;
@@ -1133,9 +1137,10 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const float ty = dy > 0 ? (H * 0.5f - inset) / dy : dy < 0 ? (inset - H * 0.5f) / dy : 1e9f;
     const float t = std::min(tx, ty);
     const ImVec2 p(mid.x + dx * t, mid.y + dy * t), perp(-dy, dx);
-    dl->AddTriangleFilled(ImVec2(p.x + dx * 7.0f, p.y + dy * 7.0f),
-                          ImVec2(p.x - dx * 4.0f + perp.x * 6.0f, p.y - dy * 4.0f + perp.y * 6.0f),
-                          ImVec2(p.x - dx * 4.0f - perp.x * 6.0f, p.y - dy * 4.0f - perp.y * 6.0f),
+    const float k = scale;
+    dl->AddTriangleFilled(ImVec2(p.x + dx * 7.0f * k, p.y + dy * 7.0f * k),
+                          ImVec2(p.x - dx * 4.0f * k + perp.x * 6.0f * k, p.y - dy * 4.0f * k + perp.y * 6.0f * k),
+                          ImVec2(p.x - dx * 4.0f * k - perp.x * 6.0f * k, p.y - dy * 4.0f * k - perp.y * 6.0f * k),
                           C(Lighten(rgb, 0.3f), 0.85f * A));
     char d[32]; FormatDistance(dist, d, sizeof(d));
     char txt[160]; std::snprintf(txt, sizeof(txt), "%s  %s", name, d);
@@ -1143,6 +1148,10 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     ImVec2 tp(p.x - dx * 14.0f - ts.x * 0.5f - dx * ts.x * 0.5f, p.y - dy * 14.0f - ts.y * 0.5f - dy * ts.y * 0.5f);
     tp.x = std::clamp(tp.x, ox + 6.0f, ox + W - ts.x - 6.0f);
     tp.y = std::clamp(tp.y, oy + 6.0f, oy + H - ts.y - 6.0f);
+    const Box b{tp.x - 4.0f, tp.y - 2.0f, tp.x + ts.x + 4.0f, tp.y + ts.y + 2.0f};
+    for (const Box& o : edgeBoxes)
+      if (b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0) return true;   // chevron only
+    edgeBoxes.push_back(b);
     dl->AddText(font, subSize, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.5f * A), txt);
     dl->AddText(font, subSize, tp, C(Lighten(rgb, 0.5f), 0.85f * A), txt);
     return true;
@@ -1165,5 +1174,35 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const PhysicsObject& s = physicsObjects[(size_t)nearestStar];
     edgeMarker(CameraRelative(s.renderedObject.coordinates, s.renderedObject.localOffset),
                s.name.c_str(), nearestStarD, BodyRGB(s));
+  }
+
+  // Inside a solar system: its planets and moons too, nearest first, so you can
+  // always tell which way everything is. Only this star's own bodies — marking
+  // every star in the galaxy would bury the edges.
+  if (nearestStar >= 0 && mapKindAuto == kSolar) {
+    const PhysicsObject& star = physicsObjects[(size_t)nearestStar];
+    const dvec3  starRel = CameraRelative(star.renderedObject.coordinates, star.renderedObject.localOffset);
+    const double reach   = kReachAU * std::sqrt(std::max(star.data.mass, 0.01));
+    struct Off { int idx; dvec3 rel; double dist; };
+    std::vector<Off> offs;
+    for (int i = 0; i < (int)physicsObjects.size(); ++i) {
+      const PhysicsObject& o = physicsObjects[(size_t)i];
+      if (i == nearestStar || !LiveBody(o) || o.name.empty()) continue;
+      const int k = BodyKind(o);
+      if (k != kAkPlanet && k != kAkModel) continue;
+      const RenderedObject& ro = o.renderedObject;
+      const dvec3  rel  = CameraRelative(ro.coordinates, ro.localOffset);
+      const double dist = Len(rel);
+      if (dist <= (double)ro.sphereRadius() * 1.5) continue;           // you are at it
+      if (Len(Sub(rel, starRel)) > reach) continue;                    // not this star's
+      offs.push_back({i, rel, dist});
+    }
+    std::sort(offs.begin(), offs.end(), [](const Off& a, const Off& b) { return a.dist < b.dist; });
+    int shown = 0;
+    for (const Off& f : offs) {
+      if (shown >= 10) break;
+      const PhysicsObject& o = physicsObjects[(size_t)f.idx];
+      if (edgeMarker(f.rel, o.name.c_str(), f.dist, BodyRGB(o), 0.8f)) ++shown;
+    }
   }
 }
