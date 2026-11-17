@@ -163,7 +163,7 @@ void Renderer::DrawExplorationMap(std::vector<PhysicsObject>& physicsObjects,
 
   ImGuiViewport* vp = ImGui::GetMainViewport();
   const float margin = 12.0f;
-  const float top = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;  // under the bar
+  const float top = 0.0f;                         // there is no bar any more: the map sits at the top
   const float side = std::clamp(vp->WorkSize.y * 0.36f, 220.0f, 400.0f);
   const float x = vp->WorkPos.x + vp->WorkSize.x - side - margin;
   gMapAlpha = atlasFade;
@@ -1274,7 +1274,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     // Up close the name stands a little further off the limb.
     const ImVec2 np(std::floor(c.x - nsz.x * 0.5f),
                     std::max(std::floor(c.y - r - (close ? 14.0f : 4.0f) - nsz.y + rise - ringGap),
-                             std::floor(oy + Em(84.0f))));
+                             std::floor(oy + Em(62.0f))));
     const float nameA = (0.62f + 0.38f * std::max(c.t, st.focus)) * e;
     dl->AddText(font, ns, ImVec2(np.x + 1.0f, np.y + 1.0f), C(shadow, 0.55f * e), c.name);
     dl->AddText(font, ns, np, C(Lighten(c.rgb, 0.55f), nameA), c.name);
@@ -1405,7 +1405,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const char*  txt   = paused ? "Play [p]" : "Pause [p]";
     const float  sz    = fs * 1.05f;
     const ImVec2 ts    = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
-    const ImVec2 tp(std::floor(mid.x - ts.x * 0.5f), std::floor(oy + Em(58.0f)));
+    const ImVec2 tp(std::floor(mid.x - ts.x * 0.5f), std::floor(oy + Em(40.0f)));   // under the key line
     dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.55f * a), txt);
     dl->AddText(font, sz, tp, C(RGB{0.90f, 0.93f, 0.98f}, 0.92f * a), txt);
   }

@@ -3946,7 +3946,7 @@ void Renderer::DrawExploreMenu() {
   if (ImGui::Button("Continue  (Esc)", bs)) CloseExploreMenu();
   if (ImGui::Button("Project", bs))  showProjectPanel  = !showProjectPanel;
   if (ImGui::Button("Settings", bs)) showSettingsPanel = !showSettingsPanel;
-  if (ImGui::Button("Creative", bs)) LeaveExploration();
+  if (ImGui::Button("Editor", bs)) LeaveExploration();
   if (ImGui::Button("Quit", bs))     showQuitDialog = true;
   ImGui::End();
 }
@@ -3957,42 +3957,26 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds,
                                  const SceneCallbacks& cb) {
   if (exploreFont) ImGui::PushFont(exploreFont, 15.0f);
-  ImGuiViewport* vp = ImGui::GetMainViewport();
-  const float barH = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
-  ImGui::SetNextWindowPos(vp->WorkPos);
-  ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, barH));
-  ImGui::SetNextWindowViewport(vp->ID);
-  ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
-                         | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings
-                         | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNav;
-  ImGui::Begin("##ExplorationBar", nullptr, flags);
-  if (ImGui::Button("Project", ImVec2(Em(70), 0))) showProjectPanel = !showProjectPanel;
-  ImGui::SameLine();
-  if (ImGui::Button("Settings", ImVec2(Em(75), 0))) showSettingsPanel = !showSettingsPanel;
-  ImGui::SameLine();
-  if (ImGui::Button("Creative", ImVec2(Em(95), 0))) LeaveExploration();
-  ImGui::SameLine();
-  if (ImGui::Button(atlasVisible ? "Hide atlas  M" : "Show atlas  M", ImVec2(Em(115), 0))) {
-    atlasVisible = !atlasVisible;
-    if (atlasVisible) atlasShownAt = ImGui::GetTime();
-  }
-  // The Explore search box, in the middle of the bar. Clicking it (or K) opens
-  // the search; the box itself is only a button, the typing happens below it.
-  {
-    const float w = std::clamp(vp->WorkSize.x * 0.28f, 220.0f, 460.0f);
-    ImGui::SameLine(std::max(ImGui::GetCursorPosX(), (vp->WorkSize.x - w) * 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
-    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_FrameBg));
-    char lbl[96];
-    std::snprintf(lbl, sizeof(lbl), "  %s##exploreBox",
-                  exploreSearchOpen ? "Exploring...  (Esc to close)" : "Explore  -  K");
-    if (ImGui::Button(lbl, ImVec2(w, 0))) {
-      if (exploreSearchOpen) CloseExploreSearch(); else OpenExploreSearch();
+  // No bar: the view runs edge to edge. What the bar's buttons did is on three
+  // keys, named in one quiet line at the top (Project and Settings live in the
+  // Esc menu; the atlas is on M). The line steps aside whenever a menu is up.
+  if (exploreFlying()) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    ImFont* font = ImGui::GetFont();
+    const float sz = ImGui::GetFontSize() * 1.08f, gap = Em(56.0f);
+    const char* items[3] = { "Search [k]", "Editor [e]", "Menu [esc]" };
+    float widths[3], total = 0.0f;
+    for (int i = 0; i < 3; ++i) { widths[i] = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, items[i]).x; total += widths[i]; }
+    total += gap * 2.0f;
+    float x = std::floor(vp->WorkPos.x + (vp->WorkSize.x - total) * 0.5f);
+    const float y = std::floor(vp->WorkPos.y + Em(12.0f));
+    for (int i = 0; i < 3; ++i) {
+      dl->AddText(font, sz, ImVec2(x + 1.0f, y + 1.0f), IM_COL32(0, 0, 0, 130), items[i]);
+      dl->AddText(font, sz, ImVec2(x, y), IM_COL32(220, 228, 240, 150), items[i]);
+      x += widths[i] + gap;
     }
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
   }
-  ImGui::End();
 
   // Floating here: there is no dockspace in exploration, and a window docked in
   // Creative would never show without one (see the ### titles in each panel).
@@ -7807,14 +7791,21 @@ void Renderer::DrawQuitDialog(const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize
                          | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar
                          | ImGuiWindowFlags_NoDocking;
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowTitleAlign, ImVec2(0.5f, 0.5f));   // title, question and buttons all centred
   ImGui::Begin("Quit##qd", nullptr, flags);
+  ImGui::PopStyleVar();
 
-  ImGui::TextWrapped("Save before quitting?");
+  {
+    const char* q = "Save before quitting?";
+    ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - ImGui::CalcTextSize(q).x) * 0.5f));
+    ImGui::TextUnformatted(q);
+  }
   ImGui::Spacing();
   ImGui::Separator();
   ImGui::Spacing();
 
-  float bw = 95.f;
+  float bw = Em(95.0f);
+  ImGui::SetCursorPosX(std::max(0.0f, (ImGui::GetWindowWidth() - (bw * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f)) * 0.5f));
   if (ImGui::Button("Save & Quit", ImVec2(bw, 30))) {
     if (cb.saveProject) cb.saveProject();
     quitConfirmed = true;
