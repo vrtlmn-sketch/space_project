@@ -1254,6 +1254,22 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const ImVec2 tp(std::floor(right - ts.x), std::floor(base - ts.y * 0.5f));
     dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), dark, txt);
     dl->AddText(font, sz, tp, line, txt);
+
+    // A tick that travels along the bar as you zoom, so the scale reacts the
+    // moment the wheel moves. It crosses the bar once for every doubling of
+    // magnification: zooming in carries it right, and when it runs off one end
+    // the next one comes in at the other. It follows the zoom alone, so it does
+    // not jump when you look at something nearer or farther.
+    {
+      const double turns = -std::log2(std::max(angle, 1e-30));
+      const float  f     = (float)(turns - std::floor(turns));          // 0..1 along the bar
+      const float  edge  = std::min(f, 1.0f - f);
+      const float  fadeT = std::clamp(edge / 0.07f, 0.0f, 1.0f);        // soft in and out at the ends
+      const float  tx    = x0 + barPx * f;
+      const ImU32  tcol  = C(RGB{0.86f, 0.90f, 0.96f}, 0.85f * A * fadeT);
+      dl->AddLine(ImVec2(tx + 1.0f, base - tick + 1.0f), ImVec2(tx + 1.0f, base + tick + 1.0f), C(shadow, 0.5f * A * fadeT), 1.5f);
+      dl->AddLine(ImVec2(tx, base - tick), ImVec2(tx, base + tick), tcol, 1.5f);
+    }
   }
 
   // "Travel back [b]": shown for three seconds after a trip ends, a little
