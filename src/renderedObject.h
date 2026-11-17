@@ -389,14 +389,20 @@ public:
                           const std::vector<vec3>& colors);
   void applyStarLighting();   // re-send this object's lights to the (shared) program, before a lit draw
   void uploadPlanetColor(const vec3& color);
-  bool loadTexture(const std::string& path);
+  // mirrorU: flip the image left to right as it loads. The sphere's texture
+  // coordinates run east-to-LEFT seen from outside, so an ordinary map (east to
+  // the right) came out mirrored: Earth with Asia where America should be. A
+  // planet's maps are loaded mirrored to undo that; a model's are not, since
+  // it brings its own coordinates. (A normal map also has its sideways tilt
+  // reversed, or its bumps would be lit from the wrong side.)
+  bool loadTexture(const std::string& path, bool mirrorU = false);
   bool loadTextureHDR(const std::string& path);
   void clearTexture();
   bool textureLoaded() const { return hasTexture; }
-  bool loadNormalMap(const std::string& path);
+  bool loadNormalMap(const std::string& path, bool mirrorU = false);
   void clearNormalMap();
   bool normalMapLoaded() const { return hasNormalMap; }
-  bool loadNightMap(const std::string& path);
+  bool loadNightMap(const std::string& path, bool mirrorU = false);
   void clearNightMap();
   bool nightMapLoaded() const { return hasNightMap; }
   GLuint textureHandle() const { return textureID; }

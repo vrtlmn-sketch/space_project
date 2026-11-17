@@ -2501,7 +2501,22 @@ void RenderedObject::uploadPlanetColor(const vec3& color)
     glUniform3f(planetColorUniform, color.x, color.y, color.z);
 }
 
-bool RenderedObject::loadTexture(const std::string& path)
+// Flip an RGBA8 image left to right, in place (see loadTexture's mirrorU).
+static void MirrorRowsRGBA(unsigned char* data, int w, int h, bool flipNormalX)
+{
+  for (int y = 0; y < h; ++y) {
+    unsigned char* row = data + (size_t)y * w * 4;
+    for (int x = 0; x < w / 2; ++x) {
+      unsigned char* a = row + (size_t)x * 4;
+      unsigned char* b = row + (size_t)(w - 1 - x) * 4;
+      for (int c = 0; c < 4; ++c) std::swap(a[c], b[c]);
+    }
+    if (flipNormalX)
+      for (int x = 0; x < w; ++x) row[(size_t)x * 4] = (unsigned char)(255 - row[(size_t)x * 4]);
+  }
+}
+
+bool RenderedObject::loadTexture(const std::string& path, bool mirrorU)
 {
   // Release any previously loaded texture
   clearTexture();
@@ -2514,6 +2529,7 @@ bool RenderedObject::loadTexture(const std::string& path)
     std::cerr << "[texture] failed to load '" << path << "': " << stbi_failure_reason() << "\n";
     return false;
   }
+  if (mirrorU) MirrorRowsRGBA(data, w, h, false);
 
   glGenTextures(1, &textureID);
   glBindTexture(GL_TEXTURE_2D, textureID);
@@ -2589,7 +2605,7 @@ void RenderedObject::clearTexture()
   hasTexture = false;
 }
 
-bool RenderedObject::loadNormalMap(const std::string& path)
+bool RenderedObject::loadNormalMap(const std::string& path, bool mirrorU)
 {
   clearNormalMap();
 
@@ -2600,6 +2616,7 @@ bool RenderedObject::loadNormalMap(const std::string& path)
     std::cerr << "[normalmap] failed to load '" << path << "': " << stbi_failure_reason() << "\n";
     return false;
   }
+  if (mirrorU) MirrorRowsRGBA(data, w, h, true);
 
   glGenTextures(1, &normalMapID);
   glBindTexture(GL_TEXTURE_2D, normalMapID);
@@ -2625,7 +2642,7 @@ void RenderedObject::clearNormalMap()
   hasNormalMap = false;
 }
 
-bool RenderedObject::loadNightMap(const std::string& path)
+bool RenderedObject::loadNightMap(const std::string& path, bool mirrorU)
 {
   clearNightMap();
 
@@ -2636,6 +2653,7 @@ bool RenderedObject::loadNightMap(const std::string& path)
     std::cerr << "[nightmap] failed to load '" << path << "': " << stbi_failure_reason() << "\n";
     return false;
   }
+  if (mirrorU) MirrorRowsRGBA(data, w, h, false);
 
   glGenTextures(1, &nightMapID);
   glBindTexture(GL_TEXTURE_2D, nightMapID);

@@ -1060,8 +1060,8 @@ void Renderer::UpdateProceduralSurfaces(std::vector<PhysicsObject>& physicsObjec
       if (o.surfaceBakedHash != 0) {             // switched off: back to the files, if any
         ro.clearTexture();
         ro.clearNormalMap();
-        if (!o.texturePath.empty())   ro.loadTexture(o.texturePath);
-        if (!o.normalMapPath.empty()) ro.loadNormalMap(o.normalMapPath);
+        if (!o.texturePath.empty())   ro.loadTexture(o.texturePath, !ro.isFreeMesh());
+        if (!o.normalMapPath.empty()) ro.loadNormalMap(o.normalMapPath, !ro.isFreeMesh());
         o.surfaceBakedHash = 0; o.surfaceBakedRes = 0;
         rtDirty = true;
       }
@@ -7065,9 +7065,10 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
           std::string full = "assets/" + f;
           if (ImGui::Selectable((PrettyTexLabel(f) + "##" + id).c_str(), pathRef == full)) {
             pathRef = full;
-            if (kind == 1)      obj.renderedObject.loadNormalMap(full);
-            else if (kind == 2) obj.renderedObject.loadNightMap(full);
-            else                obj.renderedObject.loadTexture(full);
+            const bool mirror = !obj.renderedObject.isFreeMesh();   // planets: see loadTexture
+            if (kind == 1)      obj.renderedObject.loadNormalMap(full, mirror);
+            else if (kind == 2) obj.renderedObject.loadNightMap(full, mirror);
+            else                obj.renderedObject.loadTexture(full, mirror);
           }
         }
         ImGui::EndListBox();
@@ -8275,7 +8276,7 @@ void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
     if (obj.texturePath.empty())
       previewSphere.clearTexture();
     else
-      previewSphere.loadTexture(obj.texturePath);
+      previewSphere.loadTexture(obj.texturePath, true);
     previewTexPath = obj.texturePath;
   }
   preview.uploadPlanetColor(obj.data.color);

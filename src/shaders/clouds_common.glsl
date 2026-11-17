@@ -30,15 +30,8 @@ float cwFbm(vec3 p) {
     return s / 0.9375;
 }
 
-// Cloud density (0..1) at an OBJECT-space unit normal on the sphere.
-float cloudField(vec3 n, vec4 cp0, vec4 cp1) {
-    float coverage = cp0.x, scale = cp0.y, banded = cp0.z, turb = cp0.w;
-    float soft = max(cp1.x, 0.01), drift = cp1.w;
-
-    float lat = asin(clamp(n.y, -1.0, 1.0));
-    float lon = atan(n.z, n.x);
-    // Drift with differential rotation: gas-giant bands shear past each other.
-    lon += drift * (1.0 + banded * 1.5 * cos(lat * 3.0));
+// The raw cloud noise at a latitude and (already drifted) longitude.
+float cloudNoiseAt(float lat, float lon, float scale, float banded, float turb) {
     float cl = cos(lat);
     vec3  p  = vec3(cl * cos(lon), sin(lat), cl * sin(lon));
 
@@ -49,7 +42,44 @@ float cloudField(vec3 n, vec4 cp0, vec4 cp1) {
 
     // Domain warp → turbulent flow, storm swirls, band irregularity.
     vec3 w = vec3(cwFbm(q * 1.9 + 7.3), cwFbm(q * 1.9 + 13.1), 0.0) - 0.35;
-    float nse = cwFbm(q + vec3(w.x, w.y, w.x - w.y) * (turb * 2.2));
+    return cwFbm(q + vec3(w.x, w.y, w.x - w.y) * (turb * 2.2));
+}
+
+// Cloud density (0..1) at an OBJECT-space unit normal on the sphere.
+float cloudField(vec3 n, vec4 cp0, vec4 cp1) {
+    float coverage = cp0.x, scale = cp0.y, banded = cp0.z, turb = cp0.w;
+    float soft = max(cp1.x, 0.01), drift = cp1.w;
+
+    float lat = asin(clamp(n.y, -1.0, 1.0));
+    // The whole deck turns with the drift: a rigid rotation, which can run for
+    // ever without changing the pattern.
+    float lon = atan(n.z, n.x) + drift;
+
+    // Differential rotation: bands at different latitudes slide past each
+    // other. Applied straight, as it used to be (lon += drift * shear), that
+    // slide never stops growing, and after enough simulated time every cloud
+    // is wound round the planet into hair-thin parallel lines — at ANY
+    // bandedness above zero, only later for small ones. So the slide is kept
+    // bounded the way a flow map is: two copies of the field, each sheared by
+    // at most half of kMaxShear and half a cycle apart, cross-faded so that
+    // whichever is about to snap back is invisible when it does. The motion
+    // reads as continuous shear; the pattern is never more wound than this.
+    const float kMaxShear = 1.4;                       // radians, pole to equator, at most
+    float shear = drift * banded * 1.5;                // what the old code applied in full
+    float nse;
+    if (abs(shear) < 1e-4) {
+        nse = cloudNoiseAt(lat, lon, scale, banded, turb);
+    } else {
+        float c3 = cos(lat * 3.0);
+        float t  = shear / kMaxShear;
+        float tA = fract(t), tB = fract(t + 0.5);
+        float nA = cloudNoiseAt(lat, lon + (tA - 0.5) * kMaxShear * c3, scale, banded, turb);
+        float nB = cloudNoiseAt(lat, lon + (tB - 0.5) * kMaxShear * c3, scale, banded, turb);
+        float wA = 1.0 - abs(2.0 * tA - 1.0);
+        // A blend of two fields has less contrast than either; put it back, or
+        // the cloud cover would thin and thicken once per cycle.
+        nse = 0.5 + (mix(nB, nA, wA) - 0.5) / sqrt(wA * wA + (1.0 - wA) * (1.0 - wA));
+    }
 
     float thr = 0.78 - clamp(coverage, 0.0, 1.0) * 0.62;   // coverage 1 → everything cloud
     return smoothstep(thr - soft, thr + soft, nse);

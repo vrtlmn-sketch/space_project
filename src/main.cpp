@@ -150,15 +150,15 @@ static void buildScene(
     }
     if (!pod.texturePath.empty()) {
       physicsObjects.back().texturePath = pod.texturePath;
-      physicsObjects.back().renderedObject.loadTexture(pod.texturePath);
+      physicsObjects.back().renderedObject.loadTexture(pod.texturePath, pod.meshPath.empty());   // a planet's map is mirrored, a model's is not
     }
     if (!pod.normalMapPath.empty()) {
       physicsObjects.back().normalMapPath = pod.normalMapPath;
-      physicsObjects.back().renderedObject.loadNormalMap(pod.normalMapPath);
+      physicsObjects.back().renderedObject.loadNormalMap(pod.normalMapPath, pod.meshPath.empty());
     }
     if (!pod.nightMapPath.empty()) {
       physicsObjects.back().nightMapPath = pod.nightMapPath;
-      physicsObjects.back().renderedObject.loadNightMap(pod.nightMapPath);
+      physicsObjects.back().renderedObject.loadNightMap(pod.nightMapPath, pod.meshPath.empty());
     }
     physicsObjects.back().normalMapStrength = pod.normalMapStrength;
     physicsObjects.back().nightMapStrength = pod.nightMapStrength;
