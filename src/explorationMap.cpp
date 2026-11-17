@@ -186,7 +186,9 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
   ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_Alpha, gMapAlpha);
-  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.035f, 0.040f, 0.055f, 0.62f));
+  // No panel behind the map: a tinted square reads as a box on the screen
+  // however faint it is. The lines carry it on their own, drawn stronger.
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
   ImGui::Begin("##ExplorationMap", nullptr, flags);
   ImGui::PopStyleColor();
   ImGui::PopStyleVar(3);     // Alpha stays pushed for the card's widgets, popped after End
@@ -484,9 +486,9 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
     }
     if (n > 1) dl->AddPolyline(pts, n, col, 0, 1.0f);
   };
-  ring(1.0,       Col(0.60f, 0.66f, 0.78f, 0.30f));
-  ring(2.0 / 3.0, Col(0.60f, 0.66f, 0.78f, 0.18f));
-  ring(1.0 / 3.0, Col(0.60f, 0.66f, 0.78f, 0.12f));
+  ring(1.0,       Col(0.66f, 0.72f, 0.84f, 0.60f));
+  ring(2.0 / 3.0, Col(0.66f, 0.72f, 0.84f, 0.42f));
+  ring(1.0 / 3.0, Col(0.66f, 0.72f, 0.84f, 0.32f));
   // Each ring says how far it is, so the scale reads at a glance.
   for (int i = 1; i <= 3; ++i) {
     const double f = (double)i / 3.0;
@@ -494,7 +496,7 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
     if (!project(f, 0.0, 0.0, x, y, d)) continue;
     char rb[32]; FormatDistance(ms.radius * f, rb, sizeof(rb));
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.82f, ImVec2(x + 3.0f, y - 13.0f),
-                Col(0.66f, 0.71f, 0.80f, 0.55f), rb);
+                Col(0.72f, 0.77f, 0.86f, 0.80f), rb);
   }
 
   // ── Orbits: each owned planet's two-body ellipse around the anchor star ──
@@ -528,12 +530,12 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
       double mx, my, mz; toMap(w, mx, my, mz);
       float x = 0.0f, y = 0.0f, d = 0.0f;
       if (farFade(std::sqrt(mx * mx + my * my + mz * mz)) <= 0.0f || !project(mx, my, mz, x, y, d)) {
-        if (n > 1) dl->AddPolyline(pts, n, Col(oc.r, oc.g, oc.b, 0.28f), 0, 1.0f);
+        if (n > 1) dl->AddPolyline(pts, n, Col(oc.r, oc.g, oc.b, 0.50f), 0, 1.0f);
         n = 0; continue;
       }
       pts[n++] = ImVec2(x, y);
     }
-    if (n > 1) dl->AddPolyline(pts, n, Col(oc.r, oc.g, oc.b, 0.28f), 0, 1.0f);
+    if (n > 1) dl->AddPolyline(pts, n, Col(oc.r, oc.g, oc.b, 0.50f), 0, 1.0f);
   }
 
   // ── World axes, from you ──
@@ -949,10 +951,15 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   struct Cand {
     long long key; int kind; float x, y; double dist; float t; double prio;
     const char* name; RGB rgb; bool placed; int order; float vis;
+    float rpx;      // its own radius on screen, in pixels (0 for clouds)
+    bool  arrived;  // already as close as a trip would bring you
   };
   std::vector<Cand> cands;
   cands.reserve(256);
-  auto add = [&](long long key, int kind, const dvec3& rel, double dist, float t, const char* name, RGB rgb) {
+  // A trip stops 5.7 radii out (ComputeLocatePose); within a little more than
+  // that there is nowhere left to travel to.
+  auto add = [&](long long key, int kind, const dvec3& rel, double dist, float t, const char* name, RGB rgb,
+                 double radius, float rpx = 0.0f) {
     float sx = 0.0f, sy = 0.0f;
     if (!RelToScreen(rel, sx, sy)) return;
     if (sx < ox - 20.0f || sx > ox + W + 20.0f || sy < oy - 20.0f || sy > oy + H + 20.0f) return;
@@ -961,7 +968,8 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       const float dx = sx - o.x, dy = sy - o.y;
       if (o.dist < dist * 0.999 && dx * dx + dy * dy < o.r * o.r) { vis = 0.3f; break; }
     }
-    cands.push_back({key, kind, sx, sy, dist, t, 0.0, name, rgb, false, -1, vis});
+    cands.push_back({key, kind, sx, sy, dist, t, 0.0, name, rgb, false, -1, vis, rpx,
+                     radius > 0.0 && dist <= radius * 5.7 * 1.1});
   };
 
   int nearestStar = -1; double nearestStarD = 1e300;
@@ -975,7 +983,8 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const int k = BodyKind(o);
     if (k == kAkStar && dist < nearestStarD) { nearestStarD = dist; nearestStar = i; }
     const float t = (k == kAkPlanet || k == kAkModel) ? band(dist, 0.05, 3.5) : band(dist, 100.0, 5.0);
-    add((long long)i, k, rel, dist, t, o.name.c_str(), BodyRGB(o));
+    add((long long)i, k, rel, dist, t, o.name.c_str(), BodyRGB(o), (double)ro.sphereRadius(),
+        (float)std::asin(std::min((double)ro.sphereRadius() / std::max(dist, 1e-30), 1.0)) * focalPx);
   }
   for (int i = 0; i < (int)clouds.size(); ++i) {
     if (!clouds[(size_t)i] || clouds[(size_t)i]->name.empty()) continue;
@@ -985,7 +994,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const double ext = CloudExtent(cl);
     if (ext > 0.0 && dist < ext * 1.05) continue;                    // inside it: it is all around you
     const int k = cl.renderedObject.isGalaxy ? kAkGalaxy : kAkCloud;
-    add((1LL << 40) | (long long)i, k, rel, dist, band(dist, std::max(ext, 1e-9), 3.0), cl.name.c_str(), KindRGB(k));
+    add((1LL << 40) | (long long)i, k, rel, dist, band(dist, std::max(ext, 1e-9), 3.0), cl.name.c_str(), KindRGB(k), ext);
   }
 
   // ── Priority: rank within its own kind, nearer first, then a closeness term ──
@@ -1005,7 +1014,9 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   long long centreKey = (centre >= 0) ? cands[(size_t)centre].key : -1;
   const double centreDist = (centre >= 0) ? cands[(size_t)centre].dist : -1.0;   // for the scale bar
   // What t / Shift+t act on (StepExploreTravel). Only while the atlas is up.
-  const bool canTravel = centre >= 0 && atlasVisible && exploreFlying() && paused;   // no trips while playing
+  // No trips while playing, and none offered to something you are already at.
+  const bool canTravel = centre >= 0 && atlasVisible && exploreFlying() && paused
+                      && !cands[(size_t)centre].arrived;
   if (canTravel) {
     if (centreKey & (1LL << 40)) exploreFocusCloud = (int)(centreKey & ((1LL << 40) - 1));
     else                         exploreFocusObj   = (int)centreKey;
@@ -1018,6 +1029,14 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
 
   // ── Geometry, shared by placement and drawing ──
   auto dotR     = [](const Cand& c) { return 1.6f + 3.2f * c.t; };
+  // A body you can see as a disc has no dot (below); its name then sits above
+  // the DISC, not above where the dot would have been in the middle of it, and
+  // it carries no distance — you are plainly right there.
+  auto isClose  = [](const Cand& c) { return c.rpx > 8.0f; };
+  // The name always clears the body itself: above the dot while the body is
+  // smaller than its dot, above the disc from the moment the disc is bigger,
+  // with no jump between the two.
+  auto labelR   = [&](const Cand& c) { return std::max(c.rpx, dotR(c)); };
   auto nameSize = [&](const Cand& c) { return fs * (0.88f + 0.22f * c.t); };
   const float subSize = fs * 0.80f;
   auto subText = [&](const Cand& c, bool withKind, char* buf, size_t n) {
@@ -1036,9 +1055,12 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     char sub[80]; subText(c, c.key == centreKey, sub, sizeof(sub));
     const ImVec2 nsz = font->CalcTextSizeA(nameSize(c), FLT_MAX, 0.0f, c.name);
     const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, sub);
-    const float hw = std::max(nsz.x, ssz.x) * 0.5f + 4.0f, r = dotR(c);
+    const float hw = std::max(nsz.x, ssz.x) * 0.5f + 4.0f, r = labelR(c);
     Box b{c.x - hw, c.y - r - 5.0f - nsz.y, c.x + hw, c.y + r + 4.0f + ssz.y};
-    if (c.key == centreKey && canTravel) {             // room for the travel hint
+    // Up close only the name is reserved, above the disc: reserving the whole
+    // disc would knock out the label of a moon passing in front of its planet.
+    if (isClose(c)) b = Box{c.x - nsz.x * 0.5f - 4.0f, c.y - r - 15.0f - nsz.y, c.x + nsz.x * 0.5f + 4.0f, c.y - r - 10.0f};
+    else if (c.key == centreKey && canTravel) {        // room for the travel hint
       const ImVec2 hsz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, travelHint);
       b.x0 = std::min(b.x0, c.x - hsz.x * 0.5f - 4.0f);
       b.x1 = std::max(b.x1, c.x + hsz.x * 0.5f + 4.0f);
@@ -1074,7 +1096,19 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // ── Draw: dots first (far to near in priority), then labels on top ──
   for (auto it = cands.rbegin(); it != cands.rend(); ++it) {
     const Cand& c = *it;
-    dl->AddCircleFilled(ImVec2(c.x, c.y), dotR(c), C(Lighten(c.rgb, 0.15f), (0.40f + 0.60f * c.t) * A * c.vis), 16);
+    // A quieter sky: the dot is full size only on the highlighted object.
+    // Everything else gets a smaller one that fades out away from the middle
+    // of the view (a named one keeps half, so its label is never orphaned),
+    // and a body you can already see as a disc gets none at all.
+    if (c.rpx > 8.0f) continue;
+    const bool  isCentre = (c.key == centreKey);
+    const float dc  = std::sqrt((c.x - mid.x) * (c.x - mid.x) + (c.y - mid.y) * (c.y - mid.y));
+    float       cf  = 1.0f - std::clamp((dc - H * 0.20f) / (H * 0.22f), 0.0f, 1.0f);
+    cf = cf * cf * (3.0f - 2.0f * cf);
+    const float da  = isCentre ? 1.0f : (c.placed ? std::max(cf, 0.5f) : cf);
+    if (da <= 0.01f) continue;
+    dl->AddCircleFilled(ImVec2(c.x, c.y), dotR(c) * (isCentre ? 1.0f : 0.65f),
+                        C(Lighten(c.rgb, 0.15f), (0.40f + 0.60f * c.t) * A * c.vis * da), 16);
   }
   const RGB shadow{0.0f, 0.0f, 0.0f};
   const RGB subRGB{0.72f, 0.76f, 0.82f};
@@ -1083,14 +1117,20 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     if (st.alpha <= 0.01f) continue;
     const float e = st.alpha * st.alpha * (3.0f - 2.0f * st.alpha) * A * c.vis;
     const float rise = (1.0f - st.alpha) * 6.0f;
-    const float r = dotR(c), ns = nameSize(c);
+    const bool  close = isClose(c);
+    const float r = labelR(c), ns = nameSize(c);
     const ImVec2 nsz = font->CalcTextSizeA(ns, FLT_MAX, 0.0f, c.name);
     const float  ringGap = 6.0f * st.focus;            // the highlight ring sits between dot and text
-    const ImVec2 np(std::floor(c.x - nsz.x * 0.5f), std::floor(c.y - r - 4.0f - nsz.y + rise - ringGap));
+    // Kept on screen (and under the bar and the Play hint) when the disc is so
+    // large its top edge is out of view.
+    // Up close the name stands a little further off the limb.
+    const ImVec2 np(std::floor(c.x - nsz.x * 0.5f),
+                    std::max(std::floor(c.y - r - (close ? 14.0f : 4.0f) - nsz.y + rise - ringGap),
+                             std::floor(oy + Em(84.0f))));
     const float nameA = (0.62f + 0.38f * std::max(c.t, st.focus)) * e;
     dl->AddText(font, ns, ImVec2(np.x + 1.0f, np.y + 1.0f), C(shadow, 0.55f * e), c.name);
     dl->AddText(font, ns, np, C(Lighten(c.rgb, 0.55f), nameA), c.name);
-    for (int withKind = 0; withKind < 2; ++withKind) {
+    for (int withKind = 0; withKind < 2 && !close; ++withKind) {
       const float a = 0.78f * e * (withKind ? st.focus : 1.0f - st.focus);
       if (a <= 0.01f) continue;
       char sub[80]; subText(c, withKind != 0, sub, sizeof(sub));
@@ -1106,16 +1146,25 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       const ImVec2 cp(c.x, c.y);
       const float  rr  = r + 7.0f + 1.5f * std::sin((float)now * 3.2f);
       const float  rot = (float)now * 1.4f;
-      dl->AddCircle(cp, r + 3.5f, C(Lighten(c.rgb, 0.4f), 0.40f * f), 24, 1.0f);
-      for (int k = 0; k < 4; ++k) {
-        const float a0 = rot + (float)k * 1.5707963f;
-        dl->PathArcTo(cp, rr, a0, a0 + 0.95f, 10);
-        dl->PathStroke(C(Lighten(c.rgb, 0.6f), 0.90f * f), 0, 1.6f);
+      // Round a disc, the ring needs more segments to stay round; round one
+      // that fills the view it would only be a stray curve, so it is left out.
+      const int segs = std::clamp((int)(r * 0.3f), 10, 64);
+      if (r < H * 0.6f) {
+        dl->AddCircle(cp, r + 3.5f, C(Lighten(c.rgb, 0.4f), 0.40f * f), close ? 0 : 24, 1.0f);
+        for (int k = 0; k < 4; ++k) {
+          const float a0 = rot + (float)k * 1.5707963f;
+          dl->PathArcTo(cp, rr, a0, a0 + 0.95f, segs);
+          dl->PathStroke(C(Lighten(c.rgb, 0.6f), 0.90f * f), 0, 1.6f);
+        }
       }
       if (c.key == centreKey && canTravel) {
         const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, "0");
         const ImVec2 hsz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, travelHint);
-        const ImVec2 hp(std::floor(c.x - hsz.x * 0.5f), std::floor(c.y + r + 3.0f + ringGap + ssz.y + 3.0f));
+        // Below the distance line; up close there is no distance line, so
+        // straight under the disc. Never pushed off the bottom of the view.
+        const ImVec2 hp(std::floor(c.x - hsz.x * 0.5f),
+                        std::min(std::floor(c.y + r + 3.0f + ringGap + (close ? 6.0f : ssz.y + 3.0f)),
+                                 std::floor(oy + H - Em(64.0f))));
         dl->AddText(font, subSize, ImVec2(hp.x + 1.0f, hp.y + 1.0f), C(shadow, 0.5f * f), travelHint);
         dl->AddText(font, subSize, hp, C(RGB{0.86f, 0.90f, 0.96f}, 0.85f * f), travelHint);
       }
@@ -1135,6 +1184,21 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     float dx = (float)vx, dy = (float)-vy;
     const float l = std::sqrt(dx * dx + dy * dy);
     if (l < 1e-12f) { dx = 0.0f; dy = 1.0f; } else { dx /= l; dy /= l; }
+    // How far outside the view it is: 0 right at the edge, 1 two screen-halves
+    // out or anywhere behind you. A marker at the edge looks as it always did;
+    // the further off it is, the smaller and fainter, so the ones that matter
+    // least pull the eye least.
+    float away = 1.0f;
+    {
+      const double vz = camMatrix[6] * rel.x + camMatrix[7] * rel.y + camMatrix[8] * rel.z;
+      const double depth = -vz, tanV = std::tan((double)zoom * M_PI / 360.0), tanH = tanV * (double)W / (double)H;
+      if (depth > 0.0 && tanV > 1e-12) {
+        const double over = std::max(std::fabs(vx) / (depth * tanH), std::fabs(vy) / (depth * tanV)) - 1.0;
+        away = (float)std::clamp(over / 2.0, 0.0, 1.0);
+      }
+    }
+    scale *= 1.0f - 0.45f * away;
+    const float seen = 1.0f - 0.65f * away;
     const float inset = 34.0f;
     const float tx = dx > 0 ? (W * 0.5f - inset) / dx : dx < 0 ? (inset - W * 0.5f) / dx : 1e9f;
     const float ty = dy > 0 ? (H * 0.5f - inset) / dy : dy < 0 ? (inset - H * 0.5f) / dy : 1e9f;
@@ -1144,7 +1208,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     dl->AddTriangleFilled(ImVec2(p.x + dx * 7.0f * k, p.y + dy * 7.0f * k),
                           ImVec2(p.x - dx * 4.0f * k + perp.x * 6.0f * k, p.y - dy * 4.0f * k + perp.y * 6.0f * k),
                           ImVec2(p.x - dx * 4.0f * k - perp.x * 6.0f * k, p.y - dy * 4.0f * k - perp.y * 6.0f * k),
-                          C(Lighten(rgb, 0.3f), 0.85f * A));
+                          C(Lighten(rgb, 0.3f), 0.85f * A * seen));
     char d[32]; FormatDistance(dist, d, sizeof(d));
     char txt[160]; std::snprintf(txt, sizeof(txt), "%s  %s", name, d);
     const ImVec2 ts = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, txt);
@@ -1155,8 +1219,8 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     for (const Box& o : edgeBoxes)
       if (b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0) return true;   // chevron only
     edgeBoxes.push_back(b);
-    dl->AddText(font, subSize, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.5f * A), txt);
-    dl->AddText(font, subSize, tp, C(Lighten(rgb, 0.5f), 0.85f * A), txt);
+    dl->AddText(font, subSize, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.5f * A * seen), txt);
+    dl->AddText(font, subSize, tp, C(Lighten(rgb, 0.5f), 0.85f * A * seen), txt);
     return true;
   };
 

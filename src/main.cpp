@@ -1782,6 +1782,10 @@ int main(int argc, char** argv) {
       applyLoadedUniverses(data, loadPath);
       applySettingsToRenderer(data.settings);
       applyProjectMeta(data, loadPath);
+      // Opening a project from the menu lands in exploration; Creative is one
+      // key or the Esc menu away. (A new empty project stays in Creative: there
+      // is nothing in it to explore yet.)
+      renderer.EnterExploration();
     } else {
       // SC::Empty → create grid with defaults
       grid.emplace(currentGrid.cellSize, currentGrid.radius,
