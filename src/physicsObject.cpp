@@ -276,7 +276,15 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
   // Forward the cloud-layer params (both views read the same packing). Drift
   // phase is computed here so a zero drift keeps the RT snapshot unchanged.
   if (shaderType == ObjectType::Planet && cloudsEnabled) {
-    float phase = (cloudDrift != 0.0f) ? cloudDrift * (float)glfwGetTime() : 0.0f;
+    // Clouds drift with the animation, not with the wall clock: paused means
+    // still, and playing backward runs them backward. (A still frame is also
+    // what lets the raytracer finish accumulating.)
+    const double now = glfwGetTime();
+    const double dt  = (cloudLastTime > 0.0) ? std::min(now - cloudLastTime, 0.1) : 0.0;
+    cloudLastTime = now;
+    if (!renderer.paused)
+      cloudPhase += cloudDrift * (float)dt * (renderer.playingForward ? 1.0f : -1.0f);
+    float phase = (cloudDrift != 0.0f) ? cloudPhase : 0.0f;
     renderedObject.rtCloudP0 = vec4{cloudCoverage, cloudScale, cloudBanded, cloudTurbulence};
     renderedObject.rtCloudP1 = vec4{cloudSoftness, cloudAltitude, cloudWhiteness, phase};
   } else {

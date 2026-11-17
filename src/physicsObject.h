@@ -208,6 +208,8 @@ public:
   float cloudAltitude{0.02f};   // deck height (terminator offset, shadows)
   float cloudWhiteness{1.0f};   // 1 = white clouds; 0 = tinted by planet colour (bands)
   float cloudDrift{0.0f};       // drift speed (0 = static → RT stays cacheable)
+  float  cloudPhase{0.0f};      // how far the clouds have drifted; only advances while playing
+  double cloudLastTime{0.0};
 
   // ---- Procedural surface (stars only) ----
   // Granulation, convection and a slow evolution, drawn in the RASTER view
