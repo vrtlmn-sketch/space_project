@@ -172,7 +172,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds) {
   const int req = exploreTravelRequest;
   exploreTravelRequest = 0;
-  if (!exploreFlying()) { exploreTravelActive = false; return; }
+  if (!exploreFlying()) { exploreTravelActive = false; travelPendObj = travelPendCloud = -1; return; }
 
   auto nameOf = [&](int obj, int cloud) -> std::string {
     if (obj >= 0 && obj < (int)physicsObjects.size()) return physicsObjects[(size_t)obj].name;
@@ -180,15 +180,21 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
     return std::string();
   };
 
+  // The search names its own target; otherwise it is whatever is highlighted.
+  const bool pend = (travelPendObj >= 0 || travelPendCloud >= 0);
+  const int  wantObj   = pend ? travelPendObj   : exploreFocusObj;
+  const int  wantCloud = pend ? travelPendCloud : exploreFocusCloud;
+  travelPendObj = travelPendCloud = -1;
+
   dvec3 origin, offset; float effR = 0.0f;
-  if (req != 0 && (exploreFocusObj >= 0 || exploreFocusCloud >= 0) &&
-      ExploreTarget(physicsObjects, clouds, exploreFocusObj, exploreFocusCloud, origin, offset, effR)) {
+  if (req != 0 && (wantObj >= 0 || wantCloud >= 0) &&
+      ExploreTarget(physicsObjects, clouds, wantObj, wantCloud, origin, offset, effR)) {
     if (req == 2) {                                   // fast travel: the search's own jump
       exploreTravelActive = false;
       LocateCameraOn(origin, offset, effR);
       return;
     }
-    travelObj = exploreFocusObj; travelCloud = exploreFocusCloud;
+    travelObj = wantObj; travelCloud = wantCloud;
     travelName = nameOf(travelObj, travelCloud);
     // Target -> camera, differenced against the origin first (never an absolute).
     const dvec3 back{ (gCamAnchor[0] - origin.x) - cameraTranslate[0] - offset.x,
@@ -356,6 +362,7 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
   if (q != lastQuery) { if (!list.empty() && !q.empty()) sel = 0; lastQuery = q; }
   bool scrollToSel = false;
   bool travel = false;
+  bool travelSlow = false;      // fly there instead of jumping
   if (!list.empty()) {
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) { sel = std::min(sel + 1, (int)list.size() - 1); scrollToSel = true; }
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   { sel = std::max(sel - 1, 0);                    scrollToSel = true; }
@@ -440,8 +447,15 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       dl->AddText(ImVec2(a.x + (iw - ts.x) * 0.5f, a.y + (ih - ts.y) * 0.5f), IM_COL32(150, 160, 180, 200), t);
     }
     ImGui::Spacing();
-    if (ImGui::Button("Travel", ImVec2(-1, 0))) travel = true;
-    ImGui::TextDisabled("Enter or double-click also travels.");
+    {
+      const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+      if (ImGui::Button("Travel", ImVec2(bw, 0))) travelSlow = true;
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fly there, at the Travel Speed set in Camera & Movement.");
+      ImGui::SameLine();
+      if (ImGui::Button("Fast travel", ImVec2(bw, 0))) travel = true;
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump straight there.");
+    }
+    ImGui::TextDisabled("Enter or double-click fast travels.");
   } else {
     ImGui::TextDisabled("Nothing selected.");
     ImGui::TextWrapped("Type a name, or use the arrow keys to pick something from the list.");
@@ -497,7 +511,14 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       mapFocusOffset = dvec3{0.0, 0.0, 0.0};
     }
   }
-  if (travel && sel >= 0) {
+  if (travelSlow && sel >= 0) {
+    // Hand the target to StepExploreTravel, which runs later this frame once
+    // the search is closed and flight is back.
+    travelPendObj   = exploreSelObj;
+    travelPendCloud = exploreSelCloud;
+    exploreTravelRequest = 1;
+    CloseExploreSearch();
+  } else if (travel && sel >= 0) {
     dvec3 origin, offset; float effR = 0.0f;
     if (ExploreTarget(physicsObjects, clouds, exploreSelObj, exploreSelCloud, origin, offset, effR)) {
       LocateCameraOn(origin, offset, effR);

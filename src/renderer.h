@@ -1008,6 +1008,7 @@ public:
                          std::vector<std::unique_ptr<CloudObject>>& clouds);
   int    exploreFocusObj{-1}, exploreFocusCloud{-1};   // the highlighted object, set by the labels
   int    exploreTravelRequest{0};                      // 1 = travel, 2 = fast travel (set by the key)
+  int    travelPendObj{-1}, travelPendCloud{-1};       // a target named by the search, used instead of the highlight
   bool   exploreTravelActive{false};
   bool   travelKeyPressed{false}, travelKeyShift{false};
   int    travelObj{-1}, travelCloud{-1};
