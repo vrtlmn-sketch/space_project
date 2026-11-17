@@ -1932,6 +1932,14 @@ bool Renderer::UpdateInputs() {
       travelKeyPressed = travelKeyShift = false;
     }
 
+    // p = play / pause from the locked body's point of view (exploration; the
+    // Creative P below is switched off there). StepExplorePlay acts on it.
+    if (exploring() && glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) explorePlayKeyPressed = true;
+    else {
+      if (explorePlayKeyPressed && exploreFlying()) explorePlayRequest = 1;
+      explorePlayKeyPressed = false;
+    }
+
     // b = travel back to where the last trip started, Shift+b = jump back.
     if (exploring() && glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
       backKeyPressed = true;
@@ -2270,7 +2278,10 @@ void Renderer::ComputeFrameAdvance() {
   // constant as the frame advance, so it always tracks the sim speed.
   playbackSpeed = std::max(playbackSpeed, minPlaybackSpeed());
 
-  float framesPerTick = kBaseFramesPerTick * playbackSpeed;
+  // Exploration always plays one step per frame, whatever the project's
+  // Playback slider says: there is no speed control there, and every step
+  // shown is what makes an orbit read as motion rather than a blur.
+  float framesPerTick = kBaseFramesPerTick * (exploring() ? minPlaybackSpeed() : playbackSpeed);
   framesPerTickExact = framesPerTick;   // exact rate for the continuous camera playhead
   accum += framesPerTick;
   framesThisTick = (int)accum;
@@ -3857,6 +3868,8 @@ void Renderer::LeaveExploration() {
   rightLookActive = false;
   CloseExploreSearch();
   CloseExploreMenu();
+  paused = true;                 // exploration's play does not carry into Creative
+  exploreLockObj = -1;
   appMode = AppMode::Creative;
   SyncFlightCapture();
 }
@@ -3974,6 +3987,7 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
     if (std::fabs(goal - atlasFade) < 0.002f) atlasFade = goal;
   }
   DrawExplorationLabels(physicsObjects, clouds);
+  StepExplorePlay(physicsObjects, clouds);     // before travel: a trip may not start while playing
   StepExploreTravel(physicsObjects, clouds);   // after the labels: they say what is highlighted
   DrawExplorationMap(physicsObjects, clouds);
   DrawExploreMenu();
@@ -7239,6 +7253,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         PropLabel("Drift Speed");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = static (RT stays cached); >0 animates (RT re-renders per frame).");
         ImGui::SliderFloat("##iclddrift", &obj.cloudDrift, 0.0f, 0.2f, "%.3f");
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("How fast the clouds circle the planet while the simulation plays.\n"
+                            "0.01 = once every 10 days; 0.1 = once a day. 0 = still.");
       }
       }
 

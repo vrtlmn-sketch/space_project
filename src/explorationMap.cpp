@@ -1005,7 +1005,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   long long centreKey = (centre >= 0) ? cands[(size_t)centre].key : -1;
   const double centreDist = (centre >= 0) ? cands[(size_t)centre].dist : -1.0;   // for the scale bar
   // What t / Shift+t act on (StepExploreTravel). Only while the atlas is up.
-  const bool canTravel = centre >= 0 && atlasVisible && exploreFlying();
+  const bool canTravel = centre >= 0 && atlasVisible && exploreFlying() && paused;   // no trips while playing
   if (canTravel) {
     if (centreKey & (1LL << 40)) exploreFocusCloud = (int)(centreKey & ((1LL << 40) - 1));
     else                         exploreFocusObj   = (int)centreKey;
@@ -1179,6 +1179,23 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
                s.name.c_str(), nearestStarD, BodyRGB(s));
   }
 
+  // ── "Play [p]" / "Pause [p]", top centre ──
+  // Full brightness for three seconds after it appears or is used, then it
+  // settles to about half and flashes briefly every three seconds. It never
+  // goes away while there is something to play.
+  if (exploreCanPlay && exploreFlying() && !exploreTripActive()) {
+    const double age   = std::max(now - explorePlayHintAt, 0.0);
+    const float  base  = (age < 3.0) ? 1.0f : 0.45f + 0.55f * (float)std::exp(-(age - 3.0) * 4.0);
+    const float  flash = (age < 3.0) ? 0.0f : 0.55f * (float)std::exp(-std::fmod(age, 3.0) * 5.0);
+    const float  a     = std::min(1.0f, base + flash) * A;
+    const char*  txt   = paused ? "Play [p]" : "Pause [p]";
+    const float  sz    = fs * 1.05f;
+    const ImVec2 ts    = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
+    const ImVec2 tp(std::floor(mid.x - ts.x * 0.5f), std::floor(oy + Em(58.0f)));
+    dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.55f * a), txt);
+    dl->AddText(font, sz, tp, C(RGB{0.90f, 0.93f, 0.98f}, 0.92f * a), txt);
+  }
+
   // ── Scale bar, bottom right ──
   // A bar of fixed length and what it spans: the ANGLE (which depends only on
   // the zoom, as a telescope reports it) and the LENGTH that angle covers at
@@ -1243,7 +1260,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // larger than the travel hint. The key keeps working after it fades.
   {
     const double age = now - travelBackHintAt;
-    if (travelBackPose.valid && exploreFlying() && !exploreTripActive() && age >= 0.0 && age < 3.0) {
+    if (travelBackPose.valid && paused && exploreFlying() && !exploreTripActive() && age >= 0.0 && age < 3.0) {
       const float a = (float)std::min({age / 0.2, (3.0 - age) / 0.5, 1.0}) * A;
       const char* txt = "Travel back [b]";
       const float sz = fs * 1.05f;

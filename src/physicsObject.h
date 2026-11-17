@@ -208,8 +208,7 @@ public:
   float cloudAltitude{0.02f};   // deck height (terminator offset, shadows)
   float cloudWhiteness{1.0f};   // 1 = white clouds; 0 = tinted by planet colour (bands)
   float cloudDrift{0.0f};       // drift speed (0 = static → RT stays cacheable)
-  float  cloudPhase{0.0f};      // how far the clouds have drifted; only advances while playing
-  double cloudLastTime{0.0};
+  float  cloudPhase{0.0f};      // how far the clouds have drifted; advances with simulated time
 
   // ---- Procedural surface (stars only) ----
   // Granulation, convection and a slow evolution, drawn in the RASTER view
@@ -272,9 +271,13 @@ public:
   void  EnsureAtmosphere(float sizeExag = 1.0f); // (re)build shell mesh + shaders
 
   void SetVelocity(const vec3& velocity);
+  // draw = false steps the body without drawing it; DrawOnly then draws it.
+  // The split exists for the exploration camera lock: every body has to have
+  // moved before the camera is carried along, and only then may any be drawn.
   void Update(const std::vector<PhysicsObject>& physicsObjetcs,
               const std::vector<PhysicsObjectStructure>& cloudSources,
-              Renderer& renderer);
+              Renderer& renderer, bool draw = true);
+  void DrawOnly(Renderer& renderer);
   PhysicsObject(const dvec3& velocity, const dvec3& position, double mass,
                 const std::string& name = "Object",
                 ObjectType shaderType = ObjectType::Planet,

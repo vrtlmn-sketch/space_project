@@ -163,6 +163,93 @@ static void QuatToMat(const double q[4], float m[9]) {
   m[6] = (float)(2*(x*z - w*y));     m[7] = (float)(2*(y*z + w*x));     m[8] = (float)(1 - 2*(x*x + y*y));
 }
 
+// ── Play from a body's point of view ──
+static bool CanPlayFrom(const PhysicsObject& o) {
+  return !o.inertSlot() && o.simulatePhysics && o.dynT > 0.0;
+}
+
+bool Renderer::SetExploreLock(std::vector<PhysicsObject>& physicsObjects,
+                              std::vector<std::unique_ptr<CloudObject>>& clouds, int obj) {
+  // Something that cannot play (a galaxy, a generated universe body) leaves
+  // the lock where it was.
+  if (obj < 0 || obj >= (int)physicsObjects.size() || !CanPlayFrom(physicsObjects[(size_t)obj])) return false;
+  const PhysicsObject& o = physicsObjects[(size_t)obj];
+  if (obj == exploreLockObj && o.name == exploreLockName) return true;      // same body: keep the frames
+  exploreLockObj = obj;
+  exploreLockName = o.name;
+  exploreLockHasLast = false;
+  // The Auto step, for this body's own orbit, applied without the popup.
+  const double dt = o.dynT / (double)std::max(autoStepsPerOrbit, 10);
+  simSpeed = (float)std::clamp(dt / units::kDtYears, (double)kSimSpeedMin, (double)kSimSpeedMax);
+  pendingSimSpeed = simSpeed;
+  paused = true;
+  // A new step makes the recorded frames meaningless, so they go — but the
+  // world stays where it is. (The editor's reset rewinds every body to where
+  // the recording began, which here would pull the scene out from under you.)
+  for (auto& b : physicsObjects) b.clearRecording();
+  for (auto& c : clouds) if (c) c->clearRecording();
+  explorePlayHintAt = ImGui::GetTime();
+  return true;
+}
+
+void Renderer::StepExplorePlay(std::vector<PhysicsObject>& physicsObjects,
+                               std::vector<std::unique_ptr<CloudObject>>& clouds) {
+  const int req = explorePlayRequest;
+  explorePlayRequest = 0;
+  exploreCanPlay = false;
+  if (!exploring()) return;
+
+  // The locked body is gone, or no longer something that moves.
+  if (exploreLockObj >= 0 &&
+      (exploreLockObj >= (int)physicsObjects.size() ||
+       physicsObjects[(size_t)exploreLockObj].name != exploreLockName ||
+       !CanPlayFrom(physicsObjects[(size_t)exploreLockObj]))) {
+    exploreLockObj = -1;
+    paused = true;
+  }
+  // Nothing locked (a project just loaded, say): the nearest simulated body
+  // is what p would lock. By distance to its surface, so beside a moon it is
+  // the moon and not its planet.
+  int cand = exploreLockObj;
+  if (cand < 0) {
+    double best = 1e300;
+    for (int i = 0; i < (int)physicsObjects.size(); ++i) {
+      const PhysicsObject& o = physicsObjects[(size_t)i];
+      if (!CanPlayFrom(o)) continue;
+      const dvec3 rel = CameraRelative(o.renderedObject.coordinates, o.renderedObject.localOffset);
+      const double d = std::sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z)
+                     - (double)o.renderedObject.sphereRadius();
+      if (d < best) { best = d; cand = i; }
+    }
+  }
+  exploreCanPlay = cand >= 0;
+
+  if (req != 0 && cand >= 0 && exploreFlying() && !exploreTripActive()) {
+    if (exploreLockObj < 0) SetExploreLock(physicsObjects, clouds, cand);    // leaves it paused
+    paused = !paused;
+    if (!paused) playingForward = true;
+    explorePlayHintAt = ImGui::GetTime();
+  }
+}
+
+// Carry the camera along with the locked body. Called once every body has been
+// stepped and before any is drawn (main.cpp), so nothing is a frame behind.
+void Renderer::ApplyExploreLock(std::vector<PhysicsObject>& physicsObjects) {
+  if (exploreLockObj < 0 || exploreLockObj >= (int)physicsObjects.size()) return;
+  const PhysicsObject& o = physicsObjects[(size_t)exploreLockObj];
+  if (o.name != exploreLockName || o.inertSlot()) return;                    // StepExplorePlay drops it
+  const dvec3 cur{ o.data.position.x + o.localOffset.x, o.data.position.y + o.localOffset.y,
+                   o.data.position.z + o.localOffset.z };
+  if (exploreLockHasLast) {
+    // position = anchor - translate, so moving the camera by +d is translate -= d.
+    cameraTranslate[0] -= cur.x - exploreLockLast.x;
+    cameraTranslate[1] -= cur.y - exploreLockLast.y;
+    cameraTranslate[2] -= cur.z - exploreLockLast.z;
+  }
+  exploreLockLast = cur;
+  exploreLockHasLast = true;
+}
+
 Renderer::TravelPose Renderer::CaptureTravelPose() const {
   TravelPose p;
   p.valid = true;
@@ -170,6 +257,8 @@ Renderer::TravelPose Renderer::CaptureTravelPose() const {
   for (int i = 0; i < 9; ++i) p.rot[i] = camMatrix[i];
   p.zoom  = zoom;
   p.scale = (focusDistance > 0.0f) ? (double)focusDistance : 1.0;
+  p.lockObj  = exploreLockObj;
+  p.lockName = exploreLockName;
   return p;
 }
 
@@ -189,10 +278,12 @@ void Renderer::ApplyTravelPose(const TravelPose& p) {
 // approach is exact at any distance (see "Large-world coordinates").
 void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds) {
-  const int req = exploreTravelRequest;
+  // No travelling while the simulation plays: pause first.
+  const int req = paused ? exploreTravelRequest : 0;
   exploreTravelRequest = 0;
-  const int backReq = exploreBackRequest;
+  const int backReq = paused ? exploreBackRequest : 0;
   exploreBackRequest = 0;
+  if (!paused) travelPendObj = travelPendCloud = -1;
   if (!exploreFlying()) {
     exploreTravelActive = travelBackActive = false;
     travelPendObj = travelPendCloud = -1;
@@ -206,6 +297,14 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
   if (backReq != 0 && travelBackPose.valid) {
     const TravelPose dest = travelBackPose;
     travelBackPose = CaptureTravelPose();             // b again goes forth
+    // Going back also goes back to what was locked there, not what you flew to.
+    // If that body is gone, or nothing was locked, there is no lock (p then
+    // picks the nearest). Frames are cleared only if the lock really changes.
+    if (dest.lockObj >= 0 && dest.lockObj < (int)physicsObjects.size() &&
+        physicsObjects[(size_t)dest.lockObj].name == dest.lockName)
+      SetExploreLock(physicsObjects, clouds, dest.lockObj);
+    else if (dest.lockObj < 0)
+      exploreLockObj = -1;
     exploreTravelActive = false;
     if (backReq == 2) {
       travelBackActive = false;
@@ -296,6 +395,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
       ExploreTarget(physicsObjects, clouds, wantObj, wantCloud, origin, offset, effR)) {
     travelBackActive = false;
     travelBackPose = CaptureTravelPose();             // b comes back here
+    SetExploreLock(physicsObjects, clouds, wantObj);  // play is now from this body, at its own pace
     if (req == 2) {                                   // fast travel: the search's own jump
       exploreTravelActive = false;
       LocateCameraOn(origin, offset, effR);
@@ -558,13 +658,16 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
     ImGui::Spacing();
     {
       const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+      if (!paused) ImGui::BeginDisabled();          // no travelling while the simulation plays
       if (ImGui::Button("Travel", ImVec2(bw, 0))) travelSlow = true;
       if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fly there, at the Travel Speed set in Camera & Movement.");
       ImGui::SameLine();
       if (ImGui::Button("Fast travel", ImVec2(bw, 0))) travel = true;
       if (ImGui::IsItemHovered()) ImGui::SetTooltip("Jump straight there.");
+      if (!paused) ImGui::EndDisabled();
     }
-    ImGui::TextDisabled("Enter or double-click fast travels.");
+    ImGui::TextDisabled(paused ? "Enter or double-click fast travels."
+                               : "Pause the simulation (p) to travel.");
   } else {
     ImGui::TextDisabled("Nothing selected.");
     ImGui::TextWrapped("Type a name, or use the arrow keys to pick something from the list.");
@@ -620,6 +723,7 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       mapFocusOffset = dvec3{0.0, 0.0, 0.0};
     }
   }
+  if (!paused) travel = travelSlow = false;       // Enter and double-click too
   if (travelSlow && sel >= 0) {
     // Hand the target to StepExploreTravel, which runs later this frame once
     // the search is closed and flight is back.
@@ -633,6 +737,7 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       travelBackActive = exploreTravelActive = false;
       travelBackPose = CaptureTravelPose();           // b comes back here
       travelBackHintAt = ImGui::GetTime();
+      SetExploreLock(physicsObjects, clouds, exploreSelObj);
       LocateCameraOn(origin, offset, effR);
       CloseExploreSearch();
     }

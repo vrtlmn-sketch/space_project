@@ -2107,8 +2107,13 @@ int main(int argc, char** argv) {
     renderer.UpdateSceneScale(physicsObjects, clouds);
 
     // Physics objects + trail lines, parents first
+    // With the exploration camera locked to a body, step everything first, carry
+    // the camera along with that body, and only then draw (below). Drawn as
+    // they are stepped, bodies ahead of the locked one in the order would be
+    // one step behind the camera and jitter at large time steps.
+    const bool lockPass = renderer.ExploreLockActive();
     for (int i : objectOrder) {
-      physicsObjects[i].Update(physicsObjects, cloudSources, renderer);
+      physicsObjects[i].Update(physicsObjects, cloudSources, renderer, !lockPass);
       // Trails are an editor overlay: still grown below so none are missing on
       // the way back, but not drawn while exploring.
       if (!renderer.exploring()) lineObjects[i].Update(renderer);
@@ -2120,6 +2125,11 @@ int main(int argc, char** argv) {
       if (physicsObjects[i].shaderType == ObjectType::BlackHole) {
         renderer.bhSchwarzschildRadius = physicsObjects[i].schwarzschildRadius;
       }
+    }
+
+    if (lockPass) {
+      renderer.ApplyExploreLock(physicsObjects);
+      for (int i : objectOrder) physicsObjects[i].DrawOnly(renderer);
     }
 
     // Gather physics data for grid/cloud

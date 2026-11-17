@@ -903,7 +903,7 @@ public:
   // (1 = physical). Higher makes distant galaxies fall together and merge much
   // faster; a galaxy's own halo is never scaled, so its structure is unchanged.
   float haloMergeStrength{1.0f};
-  float playbackSpeed{1.0f};   // 1 = 5 frames per tick
+  float playbackSpeed{0.2f};   // 1 = 5 frames per tick; the default 0.2 is ONE step per frame
   int   framesThisTick{1};
   // Slowest useful playback: every recorded frame is displayed
   // (framesThisTick == 1).
@@ -1007,6 +1007,27 @@ public:
   dvec3  mapFocusOrigin{0.0, 0.0, 0.0}, mapFocusOffset{0.0, 0.0, 0.0};
   std::string mapFocusName;
 
+  // ── Play from a body's point of view (exploreSearch.cpp) ──
+  // p plays and pauses the simulation in exploration. The camera is LOCKED to
+  // one body: it is carried along as that body moves, so you keep your place
+  // beside it and still fly and look freely. Travelling to a body locks onto
+  // it, sets the time step from its own orbit and clears the recorded frames;
+  // with nothing locked, p locks the nearest simulated body first.
+  int    exploreLockObj{-1};
+  std::string exploreLockName;                        // a slot handed to another body is not the same thing
+  dvec3  exploreLockLast{0.0, 0.0, 0.0};              // where the locked body was last frame
+  bool   exploreLockHasLast{false};
+  bool   exploreCanPlay{false};                       // something to play: drives the hint
+  double explorePlayHintAt{-1e9};
+  bool   explorePlayKeyPressed{false};
+  int    explorePlayRequest{0};
+  bool   SetExploreLock(std::vector<PhysicsObject>& physicsObjects,
+                        std::vector<std::unique_ptr<CloudObject>>& clouds, int obj);
+  void   StepExplorePlay(std::vector<PhysicsObject>& physicsObjects,
+                         std::vector<std::unique_ptr<CloudObject>>& clouds);
+  void   ApplyExploreLock(std::vector<PhysicsObject>& physicsObjects);
+  bool   ExploreLockActive() const { return exploring() && exploreLockObj >= 0; }
+
   // ── Travel to what you are looking at (exploreSearch.cpp) ──
   // t flies there along a straight line, easing out and back in; Shift+t jumps.
   // The target is whatever the atlas labels currently highlight.
@@ -1034,6 +1055,8 @@ public:
     float  rot[9]{1,0,0, 0,1,0, 0,0,1};
     float  zoom{45.0f};
     double scale{1.0};                                 // focus distance there: how fast "slow" is
+    int    lockObj{-1};                                // what was locked there: going back locks it again
+    std::string lockName;
   };
   TravelPose CaptureTravelPose() const;
   void       ApplyTravelPose(const TravelPose& p);

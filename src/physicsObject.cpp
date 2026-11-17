@@ -107,9 +107,16 @@ void PhysicsObject::resetToInitial()
   clearRecording();
 }
 
+void PhysicsObject::DrawOnly(Renderer& renderer)
+{
+  if (inertSlot()) return;
+  renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, RtObjectType(shaderType),
+                             data.velocity, data.color);
+}
+
 void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
                            const std::vector<PhysicsObjectStructure>& cloudSources,
-                           Renderer& renderer)
+                           Renderer& renderer, bool draw)
 {
   // A free slot in the universe content pool: no physics, no trail, no draw.
   // One early-out here covers every site that calls Update.
@@ -276,14 +283,21 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
   // Forward the cloud-layer params (both views read the same packing). Drift
   // phase is computed here so a zero drift keeps the RT snapshot unchanged.
   if (shaderType == ObjectType::Planet && cloudsEnabled) {
-    // Clouds drift with the animation, not with the wall clock: paused means
-    // still, and playing backward runs them backward. (A still frame is also
-    // what lets the raytracer finish accumulating.)
-    const double now = glfwGetTime();
-    const double dt  = (cloudLastTime > 0.0) ? std::min(now - cloudLastTime, 0.1) : 0.0;
-    cloudLastTime = now;
-    if (!renderer.paused)
-      cloudPhase += cloudDrift * (float)dt * (renderer.playingForward ? 1.0f : -1.0f);
+    // Clouds drift with SIMULATED time, in physical terms: the phase is an
+    // offset in longitude, and at a Drift of 0.01 the pattern circles the
+    // planet once every ten days (period = 0.1 / Drift days). So paused means
+    // still, playing backward runs them backward, and a month-long lunar orbit
+    // sees them go round nearly three times.
+    // Capped at 0.12 rad a frame (about one turn a second): at a step where a
+    // frame is weeks or more, the true motion is many turns per frame, which
+    // on screen is just strobing noise. Past the cap they churn as fast as
+    // they can still be read.
+    if (!renderer.paused) {
+      const double years = (double)renderer.framesThisTick * units::kDtYears * (double)renderer.simSpeed;
+      const double turnsPerYear = 365.25 / (0.1 / std::max((double)cloudDrift, 1e-9));
+      const float  adv = (float)std::min(6.283185307 * turnsPerYear * years, 0.12);
+      if (cloudDrift > 0.0f) cloudPhase += renderer.playingForward ? adv : -adv;
+    }
     float phase = (cloudDrift != 0.0f) ? cloudPhase : 0.0f;
     renderedObject.rtCloudP0 = vec4{cloudCoverage, cloudScale, cloudBanded, cloudTurbulence};
     renderedObject.rtCloudP1 = vec4{cloudSoftness, cloudAltitude, cloudWhiteness, phase};
@@ -345,7 +359,8 @@ void PhysicsObject::Update(const std::vector<PhysicsObject>& physicsObjetcs,
 
   // The raster lens draws this hole's shadow itself. Drawing the event-horizon
   // sphere too leaves its near hemisphere inside the shadow (depth-gated as a
-  renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType, data.velocity, data.color);
+  if (draw)
+    renderer.DrawPhysicsObject(renderedObject, data.mass, temperature, objectType, data.velocity, data.color);
 }
 
 

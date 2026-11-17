@@ -1305,7 +1305,7 @@
     "lensMaxStretch": 1.0,
     "lensingEnabled": true,
     "nebulaDetail": 0.0,
-    "playbackSpeed": 1.0,
+    "playbackSpeed": 0.2,
     "popColour": 0.0,
     "ramBudgetGB": 1.0,
     "rasterLiveHeight": 0,

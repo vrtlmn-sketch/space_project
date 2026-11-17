@@ -823,7 +823,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
 
     // Simulation
     st.simSpeed      = s.value("simSpeed",      1.0f);
-    st.playbackSpeed = s.value("playbackSpeed", 1.0f);
+    st.playbackSpeed = s.value("playbackSpeed", SceneSettings{}.playbackSpeed);
     st.haloMergeStrength = s.value("haloMergeStrength", SceneSettings{}.haloMergeStrength);
     st.exaggeratedSizes = s.value("exaggeratedSizes", false);
     st.sizeExagFactor   = s.value("sizeExagFactor",   750.0f);

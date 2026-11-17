@@ -305,7 +305,7 @@ struct SceneSettings {
 
   // Simulation
   float simSpeed{1.0f};
-  float playbackSpeed{1.0f};
+  float playbackSpeed{0.2f};   // one simulation step per frame
   float haloMergeStrength{1.0f};   // boost on cross-galaxy halo attraction (1 = physical)
 
   // Visual size exaggeration
