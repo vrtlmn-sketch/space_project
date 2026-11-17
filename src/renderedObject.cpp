@@ -1746,12 +1746,15 @@ void RenderedObject::renderAtmosphere(const double cameraTranslate[3], const flo
   glUniform3f(ulocCached(program, "uScatterColor"),     scatter.x, scatter.y, scatter.z);
 
   // Back faces only so the shell renders from inside the atmosphere too.
-  // Occlusion is handled analytically in the shader; no depth interaction.
+  // Its own planet is handled analytically in the shader. Other bodies hide it
+  // through the depth test: the shader writes the depth of the ray's ENTRY into
+  // the shell (not the back face being rasterised), tested but never written.
   glEnable(GL_BLEND);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glEnable(GL_CULL_FACE);
   glCullFace(GL_FRONT);
-  glDisable(GL_DEPTH_TEST);
+  glEnable(GL_DEPTH_TEST);
+  glDepthFunc(GL_GREATER);   // reversed-Z
   glDepthMask(GL_FALSE);
 
   glDrawArrays(GL_TRIANGLES, 0, bufferSize);

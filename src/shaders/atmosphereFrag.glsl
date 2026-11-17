@@ -4,6 +4,8 @@ out vec4 FragColor;
 in vec3 vPos;
 
 uniform vec3  uCamera;
+uniform mat3  uViewRot;            // world -> view (camera looks down -Z)
+uniform mat4  uProj;
 uniform vec3  uPointCoordinates;   // planet centre (world space)
 uniform float uPlanetRadius;
 uniform float uAtmosphereRadius;
@@ -70,6 +72,17 @@ void main()
     if (ph.x < ph.y && ph.y > 0.0 && ph.x > 0.0) t1 = min(t1, ph.x);
 
     if (t1 <= t0) discard;
+
+    // Depth of the point where the ray ENTERS the shell, so the draw can be
+    // depth-tested: a body in front of the atmosphere hides it (Earth's glow
+    // used to show straight through the Moon), while the planet underneath,
+    // always behind the entry point, never does. Reversed-Z, as
+    // RenderedObject::perspective builds it: depth = out14 / d - out10. Inside
+    // the shell the entry point is the camera, which clamps to the near plane.
+    // The floor stays just ABOVE 0: the buffer is cleared to 0 and the test is
+    // GL_GREATER, so a far atmosphere sitting exactly at 0 would vanish.
+    float dView = -(uViewRot * (rd * t0)).z;
+    gl_FragDepth = (dView > 0.0) ? clamp(uProj[3][2] / dView - uProj[2][2], 1e-7, 1.0) : 1.0;
 
     float thickness = uAtmosphereRadius - uPlanetRadius;
     float stepLen   = (t1 - t0) / float(VIEW_SAMPLES);
