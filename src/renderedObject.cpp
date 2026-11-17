@@ -301,6 +301,95 @@ void RenderedObject::SetFreeMeshRadius(float radius)
   }
 }
 
+void RenderedObject::adoptBakedTextures(GLuint albedo, GLuint normal, vec3 mean)
+{
+  clearTexture();
+  clearNormalMap();
+  textureID   = albedo;  hasTexture   = (albedo != 0);
+  normalMapID = normal;  hasNormalMap = (normal != 0);
+  meanColor   = mean;
+}
+
+void RenderedObject::BuildMeshFromRadiusMap(const std::vector<float>& radiusMap, int mapW, int mapH,
+                                            vec3 axes, float radius)
+{
+  if (mapW < 2 || mapH < 2 || radiusMap.size() < (size_t)mapW * mapH) return;
+  constexpr int stacks = 64, sectors = 128;
+  constexpr float kPi = 3.14159265358979f;
+
+  auto sample = [&](float u, float v) {                 // bilinear; u wraps, v clamps
+    const float fx = u * (float)mapW - 0.5f, fy = std::clamp(v * (float)mapH - 0.5f, 0.0f, (float)(mapH - 1));
+    const int   x0 = (int)std::floor(fx), y0 = (int)std::floor(fy);
+    const float tx = fx - (float)x0, ty = fy - (float)y0;
+    auto at = [&](int x, int y) {
+      x = ((x % mapW) + mapW) % mapW;
+      y = std::clamp(y, 0, mapH - 1);
+      return radiusMap[(size_t)y * mapW + x];
+    };
+    return (at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx) * (1 - ty)
+         + (at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx) * ty;
+  };
+  auto rowMean = [&](int y) {                           // one value for a whole pole
+    double s = 0; for (int x = 0; x < mapW; ++x) s += radiusMap[(size_t)y * mapW + x];
+    return (float)(s / mapW);
+  };
+
+  // Grid of positions, then normals from the grid itself so shading follows
+  // the real shape (a sphere's normals would light a potato like a ball).
+  const int cols = sectors + 1, rows = stacks + 1;
+  std::vector<vec3> P((size_t)cols * rows), Nn((size_t)cols * rows);
+  float maxLen = 0.0f;
+  const float north = rowMean(0), south = rowMean(mapH - 1);
+  for (int i = 0; i < rows; ++i) {
+    const float v = (float)i / (float)stacks, theta = kPi * v;
+    for (int j = 0; j < cols; ++j) {
+      const float u = (float)j / (float)sectors, phi = 2.0f * kPi * u;
+      const float st = std::sin(theta), ct = std::cos(theta);
+      const float R = (i == 0) ? north : (i == stacks) ? south : sample(u, v);
+      const vec3 p{ st * std::cos(phi) * R * axes.x, ct * R * axes.y, st * std::sin(phi) * R * axes.z };
+      P[(size_t)i * cols + j] = p;
+      maxLen = std::max(maxLen, std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z));
+    }
+  }
+  if (!(maxLen > 0.0f)) return;
+  for (vec3& p : P) { p.x /= maxLen; p.y /= maxLen; p.z /= maxLen; }
+  for (int i = 0; i < rows; ++i)
+    for (int j = 0; j < cols; ++j) {
+      const vec3& p = P[(size_t)i * cols + j];
+      vec3 n;
+      if (i == 0 || i == stacks) {
+        n = vec3{ p.x / (axes.x * axes.x), p.y / (axes.y * axes.y), p.z / (axes.z * axes.z) };
+      } else {
+        const int jl = (j == 0) ? sectors - 1 : j - 1, jr = (j == sectors) ? 1 : j + 1;
+        const vec3& a = P[(size_t)i * cols + jl]; const vec3& b = P[(size_t)i * cols + jr];
+        const vec3& c = P[(size_t)(i - 1) * cols + j]; const vec3& d = P[(size_t)(i + 1) * cols + j];
+        const vec3 du{ b.x - a.x, b.y - a.y, b.z - a.z }, dv{ d.x - c.x, d.y - c.y, d.z - c.z };
+        n = vec3{ du.y * dv.z - du.z * dv.y, du.z * dv.x - du.x * dv.z, du.x * dv.y - du.y * dv.x };
+        if (n.x * p.x + n.y * p.y + n.z * p.z < 0.0f) { n.x = -n.x; n.y = -n.y; n.z = -n.z; }
+      }
+      const float l = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+      Nn[(size_t)i * cols + j] = (l > 1e-12f) ? vec3{ n.x / l, n.y / l, n.z / l } : vec3{ 0, 1, 0 };
+    }
+
+  freeUnitBuffer.clear();
+  freeUnitBuffer.reserve((size_t)stacks * sectors * 6 * 8);
+  auto emit = [&](int i, int j) {
+    const vec3& p = P[(size_t)i * cols + j]; const vec3& n = Nn[(size_t)i * cols + j];
+    const float v[8] = { p.x, p.y, p.z, n.x, n.y, n.z, (float)j / (float)sectors, (float)i / (float)stacks };
+    freeUnitBuffer.insert(freeUnitBuffer.end(), v, v + 8);
+  };
+  for (int i = 0; i < stacks; ++i)
+    for (int j = 0; j < sectors; ++j) {           // same winding as GenerateMeshSphere
+      emit(i, j); emit(i + 1, j + 1); emit(i + 1, j);
+      emit(i, j); emit(i, j + 1);     emit(i + 1, j + 1);
+    }
+  freeMesh   = true;
+  meshType   = MeshType::sphere;
+  bufferSize = (int)(freeUnitBuffer.size() / 8);
+  SetFreeMeshRadius(radius);
+  BuildBVH();
+}
+
 // Parse a Wavefront OBJ into the pos(3)+normal(3)+uv(2) triangle buffer.
 // Faces are fan-triangulated; smooth normals are generated when the file has
 // none. The mesh is centered and normalized to a unit bounding radius, then

@@ -82,6 +82,10 @@ struct SpawnFormState {
   // coordinate is invisible, and after visiting a universe the camera is ~1e15
   // AU from the origin. Ghost-drag placement clears this (it IS a placement).
   bool   placeInFront  = true;
+  // Procedural surface: -1 = none (plain colour, textures added later), else a
+  // preset from surfaceGen.h. A Small Body (shaderType 5) always has one.
+  int    surfacePreset = -1;
+  int    surfaceSeed   = 1;
   // Nebula (shaderType 4)
   float  nebulaRadiusLy = 6.0f;
   int    nebulaSeed     = 7;
@@ -1553,6 +1557,9 @@ public:
   // layer and assigns renderedObject.rtTexLayer. Rebuilds when the set of
   // texture paths changes. Call once per frame before any RT dispatch.
   void UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects);
+  // Bake (or drop) procedural surfaces whose recipe changed. One bake a frame.
+  void UpdateProceduralSurfaces(std::vector<PhysicsObject>& physicsObjects);
+  uint64_t previewSurfaceHash{0};       // recipe currently baked onto the inspector preview
 
   // Draw ALL UI for one frame — call after all scene rendering
   void DrawUI(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb);

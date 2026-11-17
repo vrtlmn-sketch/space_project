@@ -29,6 +29,7 @@ struct PhysicsObjectData {
   float normalMapStrength{1.0f};     // normal-map relief scale
   float nightMapStrength{1.6f};      // night-lights emissive brightness
   float visualRadius{0.0f};          // real visual radius in AU (0 = derive from mass)
+  SurfaceRecipe surface{};           // procedural surface; written only when enabled
   bool  atmosphereEnabled{false};
   float atmosphereHeight{0.06f};
   float atmosphereFalloff{4.0f};

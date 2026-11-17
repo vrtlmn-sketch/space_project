@@ -467,6 +467,16 @@ void UpdateCloudPhysics(const std::vector<PhysicsObjectStructure>& bigBodies, fl
   // centered and normalized to a unit bounding radius, then scaled by `radius`.
   // Returns false if the file can't be parsed (caller should fall back).
   bool LoadMeshFromOBJ(const std::string& path, float radius);
+  // ── Procedural surfaces (surfaceGen.cpp) ──
+  // Take ownership of two freshly baked textures as this object's colour map
+  // and normal map, exactly as if they had been loaded from files.
+  void adoptBakedTextures(GLuint albedo, GLuint normal, vec3 mean);
+  // Build a small body's mesh: a sphere whose radius follows `radiusMap` (an
+  // equirectangular grid of radius factors, row 0 = north pole), stretched by
+  // `axes`, normalised to a unit bounding radius and scaled to `radius`. It is
+  // a free mesh from then on (BVH for the raytracer, UVs matching the bake).
+  void BuildMeshFromRadiusMap(const std::vector<float>& radiusMap, int mapW, int mapH,
+                              vec3 axes, float radius);
   // Rescale an already-loaded free mesh to a new bounding radius.
   void SetFreeMeshRadius(float radius);
   bool isFreeMesh() const { return freeMesh; }

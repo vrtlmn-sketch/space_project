@@ -114,7 +114,7 @@ bool sphereHitRange(vec3 ro, vec3 rd, vec3 cen, float rad, float maxT) {
     float r2 = rad * rad;
     if (d2 > r2) return false;
     float thc = sqrt(r2 - d2);
-    return (tca + thc > 1e-4) && (tca - thc < maxT);
+    return (tca + thc > 1e-4 * min(rad, 1.0)) && (tca - thc < maxT);
 }struct BVHNode { vec4 bmin; vec4 bmax; };
 layout(std430, binding = 5) buffer NodeBuf { BVHNode nodes[]; };
 
@@ -198,7 +198,7 @@ float rayMesh(vec3 ro, vec3 rd, int oi, out vec3 outN, out vec2 outUV, out vec3 
                 Tri T = tris[first + k];
                 float u, v;
                 float t = rayTri(lo, ld, T.v0.xyz, T.v1.xyz, T.v2.xyz, u, v);
-                if (t > 1e-4 && t < best) {
+                if (t > 1e-4 * min(scale, 1.0) && t < best) {   // relative: a fixed 1e-4 AU hid any mesh nearer than 15 000 km
                     best = t;
                     float w = 1.0 - u - v;
                     bestN  = w*T.n0.xyz + u*T.n1.xyz + v*T.n2.xyz;

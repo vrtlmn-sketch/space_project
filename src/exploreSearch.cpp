@@ -338,7 +338,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
   const double t = std::min(travelT, 1.0);
   const double e = t * t * t * (t * (6.0 * t - 15.0) + 10.0);          // ease in and out
 
-  const double d1   = std::max((double)effR * 5.7, 1e-4);              // Locate's standoff
+  const double d1   = std::max((double)effR * 5.7, 1e-8);              // Locate's standoff
   const double dist = std::exp(std::log(travelD0) + (std::log(d1) - std::log(travelD0)) * e);
   gCamAnchor[0] = origin.x; gCamAnchor[1] = origin.y; gCamAnchor[2] = origin.z;
   cameraTranslate[0] = -(offset.x + travelDir.x * dist);

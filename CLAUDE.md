@@ -1423,6 +1423,50 @@ constant as it shrinks, i.e. per-pixel brightness rising as d². Removed.
 Never add a floor to a size or a count on a render path without asking what it
 does to flux at the small end.
 
+## Procedural surfaces: a recipe, baked ONCE into the same two textures
+
+`SurfaceRecipe` (surfaceGen.h) is ~40 numbers. `BakeSurface` runs
+`surfaceBakeFrag.glsl` once and hands the object a colour map and a normal map
+through `adoptBakedTextures`, exactly as if they had been loaded from files — so
+the surface shader, the RT texture arrays, the inspector preview and the far
+dot's colour all work unchanged, and a procedural planet costs what a textured
+one does to draw. Nothing per frame. The noise is 3D on the unit sphere: no
+date-line seam, no pinched poles.
+
+- **The recipe is what is saved** (`"surface"` on the object, only when enabled).
+  No image files: a universe has thousands of planets and derives each recipe
+  from the planet's seed (`SurfaceFromSeed`, by size and distance from its
+  star), so the in-memory bake has to exist anyway.
+- **`Renderer::UpdateProceduralSurfaces` decides WHEN**, by comparing
+  `SurfaceHash` with `surfaceBakedHash`: one bake a frame, half resolution while
+  the mouse is held, and a universe body waits until it is over 3 px. A slot
+  handed to another body drops its textures in `ConfigureUniverseSlot`.
+- **RT texture arrays are keyed on PATHS**; a baked surface has none, so
+  `UpdateRtPlanetTextures` keys it on `"proc:<hash>:<res>"`. Anything else that
+  finds a texture by path needs the same treatment.
+- **`ObjectType::SmallBody`** (type code 5) is the same recipe plus real
+  geometry: a second bake pass writes a radius map, read back once, and
+  `BuildMeshFromRadiusMap` turns it into a free mesh (UVs match the bake, BVH
+  for RT). Only the two COARSEST crater octaves go into the geometry — the fine
+  ones alias into spikes along the outline at mesh resolution and belong in the
+  normal map. `GenerateMeshSphere` clears `freeMesh`, which is how the update
+  notices a size change reset the mesh.
+- **Scale floors assumed nothing was smaller than a planet.** Atlas is 15 km
+  (1e-7 AU). The near plane floor (1e-7), Locate's standoff floor (1e-4), the
+  focus-distance floor (1e-6), the minimum move step (1e-7) and three
+  `clipW > 1e-6` label tests all hid it or flew through it; they are 1e-9 /
+  1e-8 / 1e-9 / 1e-10 / 1e-10 now. The RT mesh test had the same disease in
+  WORLD units: `t > 1e-4` and `sphereHitRange`'s `> 1e-4` rejected any mesh
+  nearer than 15 000 km. Both are relative to the object's radius now, in all
+  six compute shaders.
+- **Not done:** sun glint on liquid (the bake writes a liquid mask into the
+  colour map's alpha; nothing reads it yet), and vertex displacement on
+  spherical planets (their relief is the normal map only).
+
+milky_way.json: Saturn is the real planet now (it was a 1%-mass prop parked
+0.85 AU from the Sun with no orbital speed), with Atlas, Mimas, Titan, Hyperion
+and Iapetus in its ring plane — three small bodies and two procedural spheres.
+
 ## Planetary rings are a LIST, and RASTER ONLY
 
 Defaults describe a Saturn-like system in ONE ring, so "Add Ring" already looks

@@ -1038,6 +1038,57 @@ static GLuint packTextureArray(const std::vector<GLuint>& sources, int LW, int L
   return arr;
 }
 
+// Procedural surfaces: keep what is on the GPU in step with each object's
+// recipe. A bake is a one-off pass (surfaceGen.cpp), so drawing costs what a
+// textured planet costs; this only decides WHEN to bake.
+//  - at most one a frame, so loading a scene full of them never hitches
+//  - half resolution while the mouse is held (dragging a slider), full on release
+//  - a generated universe body waits until it is more than a dot on screen
+//  - a small body whose mesh was reset to a sphere (size change) is rebuilt
+void Renderer::UpdateProceduralSurfaces(std::vector<PhysicsObject>& physicsObjects) {
+  const bool dragging = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  bool baked = false;
+  for (auto& o : physicsObjects) {
+    if (o.inertSlot()) continue;
+    const bool small = (o.shaderType == ObjectType::SmallBody);
+    if (small) o.surface.enabled = true;
+    const bool want = o.surface.enabled && (small || o.shaderType == ObjectType::Planet);
+    RenderedObject& ro = o.renderedObject;
+    if (!want) {
+      if (o.surfaceBakedHash != 0) {             // switched off: back to the files, if any
+        ro.clearTexture();
+        ro.clearNormalMap();
+        if (!o.texturePath.empty())   ro.loadTexture(o.texturePath);
+        if (!o.normalMapPath.empty()) ro.loadNormalMap(o.normalMapPath);
+        o.surfaceBakedHash = 0; o.surfaceBakedRes = 0;
+        rtDirty = true;
+      }
+      continue;
+    }
+    if (baked) continue;
+    const uint64_t h = SurfaceHash(o.surface) ^ (small ? 0x5bd1e995ULL : 0ULL);
+    const int wantRes = dragging ? 512 : 1024;
+    const bool stale = h != o.surfaceBakedHash || (!dragging && o.surfaceBakedRes < 1024)
+                    || (small && !ro.isFreeMesh());
+    if (!stale) continue;
+    if (o.isUniverseSlot()) {
+      const dvec3  rel = CameraRelative(ro.coordinates, ro.localOffset);
+      const double d   = std::sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z);
+      const double tanV = std::tan((double)zoom * M_PI / 360.0);
+      const double px  = (d > 0.0 && tanV > 1e-9)
+                           ? (double)o.visualRadius * (double)activeSizeExag() / (tanV * d) * 0.5 * (double)fbHeight
+                           : 1e9;
+      if (px < 3.0) continue;
+    }
+    if (BakeSurface(o.surface, ro, small, o.visualRadius * activeSizeExag(), wantRes)) {
+      o.surfaceBakedHash = h;
+      o.surfaceBakedRes  = wantRes;
+      rtDirty = true;
+      baked = true;
+    }
+  }
+}
+
 // Packs each object's diffuse texture and normal map into two GL_TEXTURE_2D_ARRAYs
 // (one layer each) and assigns rtTexLayer / rtNormalLayer. Rebuilds only when the
 // set of source images changes. Covers both planets and free models.
@@ -1048,10 +1099,12 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
   {
     std::vector<GLuint> src; std::vector<std::string> sig;
     for (auto& obj : physicsObjects) {
-      if (obj.renderedObject.textureLoaded() && !obj.texturePath.empty()) {
+      const bool baked = obj.surfaceBakedHash != 0;   // a procedural surface has no path: key on its hash
+      if (obj.renderedObject.textureLoaded() && (baked || !obj.texturePath.empty())) {
         obj.renderedObject.rtTexLayer = (int)src.size();
         src.push_back(obj.renderedObject.textureHandle());
-        sig.push_back(obj.texturePath);
+        sig.push_back(baked ? "proc:" + std::to_string(obj.surfaceBakedHash) + ":" + std::to_string(obj.surfaceBakedRes)
+                            : obj.texturePath);
       } else {
         obj.renderedObject.rtTexLayer = -1;
       }
@@ -1068,10 +1121,12 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
   {
     std::vector<GLuint> src; std::vector<std::string> sig;
     for (auto& obj : physicsObjects) {
-      if (obj.renderedObject.normalMapLoaded() && !obj.normalMapPath.empty()) {
+      const bool baked = obj.surfaceBakedHash != 0;
+      if (obj.renderedObject.normalMapLoaded() && (baked || !obj.normalMapPath.empty())) {
         obj.renderedObject.rtNormalLayer = (int)src.size();
         src.push_back(obj.renderedObject.normalMapHandle());
-        sig.push_back(obj.normalMapPath);
+        sig.push_back(baked ? "proc:" + std::to_string(obj.surfaceBakedHash) + ":" + std::to_string(obj.surfaceBakedRes)
+                            : obj.normalMapPath);
       } else {
         obj.renderedObject.rtNormalLayer = -1;
       }
@@ -1741,7 +1796,7 @@ bool Renderer::UpdateInputs() {
       constexpr float kExponent = 1.0f;
       // Caps scale with the focus distance: approaching a true-scale planet
       // needs micro-steps, crossing 26,000 ly needs comically large ones.
-      float lo = 1e-7f;
+      float lo = 1e-10f;   // was 1e-7 (15 km a frame): faster than a small moon is wide
       // The cap used to ignore the speed slider, so "10x" did nothing once the
       // clamp bit — which is why max speed still felt frozen in a scene 1e10 AU
       // across. Let the user's factor raise the ceiling too.
@@ -2041,7 +2096,7 @@ void Renderer::DrawCameraFrustums() {
     float pz = (float)((cam.position.z - gCamAnchor[2]) + cameraTranslate[2]);
     float vz = camMatrix[6]*px + camMatrix[7]*py + camMatrix[8]*pz;
     float clipW = -vz;
-    if (clipW <= 1e-6f) continue;
+    if (clipW <= 1e-10f) continue;
     float fovy = zoom * (float)M_PI / 180.0f;
     float f    = 1.0f / std::tan(fovy * 0.5f);
     float depth = 90.0f * 2.0f * clipW / (f * (float)sceneRenderH);
@@ -2873,7 +2928,9 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
     // (streaks/holes). Scaling far to the scene keeps the ratio small → hundreds
     // of depth levels, no z-fight, no back-face culling needed. Galaxies/clouds
     // draw with GL_DEPTH_CLAMP so a smaller far never clips them.
-    RenderedObject::sZNear = (float)std::clamp(nearestSurface * 0.1, 1e-7, 0.5);
+    // The floor is 1e-9 AU (150 m): at the old 1e-7 (15 km) the near plane was
+    // as large as a small moon, so one could not be approached at all.
+    RenderedObject::sZNear = (float)std::clamp(nearestSurface * 0.1, 1e-9, 0.5);
     RenderedObject::sZFar  = (float)std::clamp(nearestSurface * 1.0e5, 1.0e3, 1.0e10);
     forwardTargetDist = (fwdDist > 0.0) ? (float)fwdDist : -1.0f;
     forwardTargetRad  = (float)fwdRad;
@@ -2908,7 +2965,7 @@ void Renderer::UpdateSceneScale(std::vector<PhysicsObject>& physicsObjects, std:
     // cloud. This used to be "nearest planet if any planet exists, else scan
     // clouds", so a single far-away planet in a universe set the speed for
     // 3555 galaxies and approaching one never slowed you down.
-    double scale = std::max(nearestSurface, 1e-6);
+    double scale = std::max(nearestSurface, 1e-9);   // was 1e-6: too coarse beside a 15 km moon
     // Standing inside a diffuse field, the nearest surface is a poor scale for
     // TRAVEL — crossing it would take tens of thousands of keypresses. Allow
     // field-scale movement, but only when a field really is the closest thing;
@@ -3245,7 +3302,7 @@ bool Renderer::RelToScreen(dvec3 rel, float& sx, float& sy) {
   float vz = camMatrix[6]*px + camMatrix[7]*py + camMatrix[8]*pz;
 
   float clipW = -vz;
-  if (clipW <= 1e-6f) return false;   // just "in front of camera" (true-scale planets get very close)
+  if (clipW <= 1e-10f) return false;   // just "in front of camera" (true-scale planets get very close)
 
   float fovy   = zoom * (float)M_PI / 180.0f;
   float f      = 1.0f / std::tan(fovy * 0.5f);
@@ -3336,7 +3393,7 @@ void Renderer::DrawGizmoAndPick(std::vector<PhysicsObject>& physicsObjects,
 
     // Any positive depth: the old 0.01 floor hid the gizmo when you got close
     // to a true-scale (tiny) planet — exactly when you want fine control.
-    if (clipW > 1e-6f) {
+    if (clipW > 1e-10f) {
       float fovy = zoom * (float)M_PI / 180.0f;
       float f    = 1.0f / std::tan(fovy * 0.5f);
 
@@ -6081,10 +6138,12 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
       }
 
       ImGui::Spacing();
-      const char* shaderItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula" };
+      const char* shaderItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula", "Small Body" };
       PropLabel("Type");
-      if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 5)) {
-        if (spawnForm.shaderType == 0)      spawnForm.mass = 3.0e-6;  // Earth
+      if (ImGui::Combo("##stype", &spawnForm.shaderType, shaderItems, 6)) {
+        spawnForm.surfacePreset = (spawnForm.shaderType == 5) ? 7 : -1;
+        if (spawnForm.shaderType == 5)      { spawnForm.mass = 1.0e-13; spawnForm.visualRadius = 2.0e-7f; }  // a ~30 km moonlet
+        else if (spawnForm.shaderType == 0) spawnForm.mass = 3.0e-6;  // Earth
         else if (spawnForm.shaderType == 1) spawnForm.mass = 1.0;     // Sun
         else if (spawnForm.shaderType == 2) spawnForm.mass = 4.15e6;  // Sgr A*
         else if (spawnForm.shaderType == 4) spawnForm.mass = 1.0e-9;  // Nebula: a volume, no pull to speak of
@@ -6110,6 +6169,29 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
         BlackbodyColor(spawnForm.temperature, r, g, b);
         ImGui::SameLine();
         ImGui::ColorButton("##sbb", ImVec4(r, g, b, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
+      }
+
+      // Planet / Small Body: an optional (planet) or required (small body)
+      // generated surface. Everything else is tuned in the inspector afterwards.
+      if (spawnForm.shaderType == 0 || spawnForm.shaderType == 5) {
+        const bool small = (spawnForm.shaderType == 5);
+        if (small) {
+          PropLabel("Size (AU)");
+          ImGui::DragFloat("##sbsize", &spawnForm.visualRadius, 1e-8f, 1e-9f, 1e-3f, "%.3g AU",
+                           ImGuiSliderFlags_Logarithmic);
+        }
+        PropLabel("Surface");
+        const char* cur = (spawnForm.surfacePreset < 0) ? "Plain colour" : SurfacePresetName(spawnForm.surfacePreset);
+        if (ImGui::BeginCombo("##ssurf", cur)) {
+          if (!small && ImGui::Selectable("Plain colour", spawnForm.surfacePreset < 0)) spawnForm.surfacePreset = -1;
+          for (int p = small ? 6 : 0; p < (small ? kSurfacePresetCount : kSurfacePlanetPresets); ++p)
+            if (ImGui::Selectable(SurfacePresetName(p), spawnForm.surfacePreset == p)) spawnForm.surfacePreset = p;
+          ImGui::EndCombo();
+        }
+        if (spawnForm.surfacePreset >= 0) {
+          PropLabel("Seed");
+          ImGui::InputInt("##ssurfseed", &spawnForm.surfaceSeed);
+        }
       }
 
       // Free Model: size + OBJ mesh picker
@@ -6626,6 +6708,83 @@ void Renderer::DrawSceneHierarchy(std::vector<PhysicsObject>& physicsObjects, st
 // ─────────────────────────────────────────────────────────────────────────────
 // DrawInspector  (docked right — properties of selected object)
 // ─────────────────────────────────────────────────────────────────────────────
+// The dials of a procedural surface (surfaceGen.h). Nothing here bakes: the
+// recipe is edited in place and Renderer::UpdateProceduralSurfaces notices.
+static void DrawSurfaceEditor(SurfaceRecipe& r, bool small) {
+  ImGui::PushID(small ? "sfsmall" : "sfplanet");
+  PropLabel("Preset");
+  if (ImGui::BeginCombo("##preset", "Start from...")) {
+    for (int p = small ? 6 : 0; p < (small ? kSurfacePresetCount : kSurfacePlanetPresets); ++p)
+      if (ImGui::Selectable(SurfacePresetName(p))) ApplySurfacePreset(r, p);
+    ImGui::EndCombo();
+  }
+  PropLabel("Seed");
+  {
+    int sd = (int)r.seed;
+    ImGui::SetNextItemWidth(-(Em(64) + ImGui::GetStyle().ItemSpacing.x));
+    if (ImGui::InputInt("##seed", &sd)) r.seed = (uint32_t)std::max(sd, 1);
+    ImGui::SameLine();
+    if (ImGui::Button("Random", ImVec2(Em(64), 0))) r.seed = (uint32_t)(1 + std::rand() % 99991);
+  }
+  auto slider = [](const char* label, const char* id, float* v, float lo, float hi) {
+    PropLabel(label);
+    ImGui::SliderFloat(id, v, lo, hi, "%.2f");
+  };
+  auto colour = [](const char* label, const char* id, vec3& c) {
+    PropLabel(label);
+    ImGui::ColorEdit3(id, &c.x, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+  };
+
+  if (small && PropSection("Shape", ImGuiTreeNodeFlags_DefaultOpen)) {
+    slider("Height", "##axy", &r.axes.y, 0.25f, 1.0f);
+    slider("Depth", "##axz", &r.axes.z, 0.25f, 1.0f);
+    slider("Lumpiness", "##lumps", &r.lumps, 0.0f, 1.0f);
+    slider("Lump size", "##lumpscale", &r.lumpScale, 0.5f, 4.0f);
+    slider("Equator ridge", "##ridge", &r.ridge, 0.0f, 1.5f);
+  }
+  if (PropSection("Terrain", ImGuiTreeNodeFlags_DefaultOpen)) {
+    slider(small ? "Large features" : "Continents", "##cont", &r.continents, 0.0f, 1.0f);
+    slider(small ? "Feature count" : "Islands", "##contscale", &r.continentScale, 0.5f, 6.0f);
+    slider("Mountains", "##mnt", &r.mountains, 0.0f, 1.0f);
+    slider("Mountain size", "##mntscale", &r.mountainScale, 2.0f, 16.0f);
+    slider("Roughness", "##rough", &r.roughness, 0.0f, 1.0f);
+    slider("Bump strength", "##relief", &r.relief, 0.0f, 3.0f);
+  }
+  if (PropSection("Craters", ImGuiTreeNodeFlags_DefaultOpen)) {
+    slider("Amount", "##cr", &r.craters, 0.0f, 1.0f);
+    slider("Size", "##crsize", &r.craterSize, 0.0f, 1.0f);
+    slider("Depth", "##crdepth", &r.craterDepth, 0.0f, 2.0f);
+  }
+  if (!small && PropSection("Liquid and ice", ImGuiTreeNodeFlags_DefaultOpen)) {
+    PropCheckbox("Liquid##liq", &r.liquid);
+    if (r.liquid) {
+      slider("Level", "##sea", &r.seaLevel, 0.0f, 1.0f);
+      slider("Depth shading", "##seadepth", &r.liquidDepth, 0.0f, 1.0f);
+      colour("Liquid colour", "##colliq", r.colLiquid);
+    }
+    slider("Ice caps", "##ice", &r.ice, 0.0f, 0.8f);
+    if (r.ice > 0.001f) colour("Ice colour", "##colice", r.colIce);
+  }
+  if (!small && PropSection("Gas giant")) {
+    slider("Banding", "##bands", &r.bands, 0.0f, 1.0f);
+    slider("Band count", "##bandcount", &r.bandCount, 2.0f, 24.0f);
+    slider("Storms", "##storms", &r.storms, 0.0f, 1.0f);
+  }
+  if (PropSection("Colours", ImGuiTreeNodeFlags_DefaultOpen)) {
+    colour("Low ground", "##collow", r.colLow);
+    colour("Middle", "##colmid", r.colMid);
+    colour("High ground", "##colhigh", r.colHigh);
+    slider("Patches", "##tint", &r.tint, 0.0f, 1.0f);
+    if (r.tint > 0.001f || r.bands > 0.001f) {
+      colour(r.bands > 0.001f ? "Patch / storm colour" : "Patch colour", "##coltint", r.colTint);
+      slider("Patch size", "##tintscale", &r.tintScale, 0.5f, 10.0f);
+    }
+    slider("Two-tone", "##hemi", &r.hemi, 0.0f, 1.0f);
+    if (r.hemi > 0.001f) colour("Second side", "##colhemi", r.colHemi);
+  }
+  ImGui::PopID();
+}
+
 void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::vector<std::unique_ptr<CloudObject>>& clouds, const SceneCallbacks& cb) {
   ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
   ImGui::Begin("Inspector", nullptr, flags);
@@ -6658,15 +6817,18 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
     ImGui::Spacing();
 
     // Type — Planet / Star / Black Hole / Free Model / Nebula
-    const ObjectType typeOrder[5] =
-      { ObjectType::Planet, ObjectType::Star, ObjectType::BlackHole, ObjectType::FreeModel, ObjectType::Nebula };
+    const ObjectType typeOrder[6] =
+      { ObjectType::Planet, ObjectType::Star, ObjectType::BlackHole, ObjectType::FreeModel, ObjectType::Nebula,
+        ObjectType::SmallBody };
     int typeIdx = 0;
-    for (int k = 0; k < 5; ++k) if (obj.shaderType == typeOrder[k]) typeIdx = k;
-    const char* typeItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula" };
+    for (int k = 0; k < 6; ++k) if (obj.shaderType == typeOrder[k]) typeIdx = k;
+    const char* typeItems[] = { "Planet", "Star", "Black Hole", "Free Model", "Nebula", "Small Body" };
     PropLabel("Type");
-    if (ImGui::Combo("##itype", &typeIdx, typeItems, 5)) {
+    if (ImGui::Combo("##itype", &typeIdx, typeItems, 6)) {
       ObjectType newType = typeOrder[typeIdx];
-      bool wasFree = (obj.shaderType == ObjectType::FreeModel);
+      bool wasFree = (obj.shaderType == ObjectType::FreeModel || obj.shaderType == ObjectType::SmallBody);
+      if (newType == ObjectType::SmallBody && !obj.surface.enabled) ApplySurfacePreset(obj.surface, 7);
+      if (newType != ObjectType::SmallBody && newType != ObjectType::Planet) obj.surface.enabled = false;
       obj.shaderType = newType;
       ApplyShaderForType(obj.renderedObject, newType);
       obj.SyncNebulaToRender();
@@ -6690,9 +6852,9 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
     // Size — visual radius in AU (real, before exaggeration)
     PropLabel("Size");
-    if (ImGui::DragFloat("##Size##i", &obj.visualRadius, 0.01f, 1e-7f, 2.0f, "%.4g AU",
+    if (ImGui::DragFloat("##Size##i", &obj.visualRadius, 0.01f, 1e-9f, 2.0f, "%.4g AU",
                          ImGuiSliderFlags_Logarithmic)) {
-      if (obj.shaderType == ObjectType::FreeModel && !obj.meshPath.empty())
+      if (obj.renderedObject.isFreeMesh())
         obj.renderedObject.SetFreeMeshRadius(obj.visualRadius * activeSizeExag());
       else
         obj.renderedObject.GenerateMeshSphere(obj.visualRadius * activeSizeExag(), 32, 32);
@@ -6991,6 +7153,15 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
         }
       }
     }
+    else if (obj.shaderType == ObjectType::SmallBody) {
+      ImGui::Spacing();
+      if (PropSection("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextDisabled("Generated shape and surface. Edits show on the body itself.");
+        DrawSurfaceEditor(obj.surface, true);
+        PropLabel("Relief");
+        ImGui::SliderFloat("##sbnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
+      }
+    }
     else { // Planet
       temperatureEditor();
       ImGui::Spacing();
@@ -6998,14 +7169,24 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
 
       ImGui::Spacing();
       if (PropSection("Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
-      ImGui::Text("Texture");
       previewImage();
+      if (PropCheckbox("Procedural##psurf", &obj.surface.enabled) && obj.surface.enabled) {
+        SurfaceRecipe untouched; untouched.enabled = true;
+        if (SurfaceHash(obj.surface) == SurfaceHash(untouched)) ApplySurfacePreset(obj.surface, 0);   // first time: start from Rocky
+      }
+      if (obj.surface.enabled) {
+        DrawSurfaceEditor(obj.surface, false);
+        PropLabel("Relief");
+        ImGui::SliderFloat("##pprocnorm", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
+      } else {
+      ImGui::Text("Texture");
       imagePicker("ptex", obj.texturePath, 0);
       ImGui::Text("Normal Map");
       imagePicker("pnrm", obj.normalMapPath, 1);
       if (!obj.normalMapPath.empty()) {
         PropLabel("Strength");
         ImGui::SliderFloat("##pnormstr", &obj.normalMapStrength, 0.0f, 5.0f, "%.2f");
+      }
       }
       ImGui::Text("Night Lights");
       imagePicker("pnight", obj.nightMapPath, 2);
@@ -7866,8 +8047,8 @@ void Renderer::UseFixedUiState(const char* iniPath) {
 }
 
 void Renderer::ClampNearPlaneFor(double radius) {
-  const double dist = std::max(radius * 5.7, 1.0e-5);
-  RenderedObject::sZNear = (float)std::clamp((dist - radius) * 0.1, 1e-7, 0.05);
+  const double dist = std::max(radius * 5.7, 1.0e-8);
+  RenderedObject::sZNear = (float)std::clamp((dist - radius) * 0.1, 1e-9, 0.05);
 }
 
 void Renderer::LocateCamera(dvec3 target, float effRadius) {
@@ -7905,7 +8086,9 @@ void Renderer::LocateCameraOn(dvec3 origin, dvec3 offset, float effRadius) {
 // The pose LocateCameraOn applies, computed without touching the camera, so the
 // Explore search can render "what Travel would show" from it.
 void Renderer::ComputeLocatePose(dvec3 origin, dvec3 offset, float effRadius, LocatePose& out) const {
-  double dist = std::max((double)effRadius * 5.7, 1e-4);
+  // The floor was 1e-4 AU (15 000 km), which left a small moon a dot in the
+  // middle of the frame. 1e-8 only guards against a zero radius.
+  double dist = std::max((double)effRadius * 5.7, 1e-8);
 
   // Vector from the body to the camera, built without ever forming an absolute
   // position: (anchor - origin) is a difference of two nearby large doubles,
@@ -7983,8 +8166,17 @@ void Renderer::RenderPlanetPreview(PhysicsObject& obj) {
   }
   RenderedObject& preview = useMesh ? previewMesh : previewSphere;
 
+  // A procedural planet: bake its recipe onto the preview sphere too (half
+  // resolution is plenty at this size). Leaving procedural forces a reload.
+  const uint64_t wantHash = (!useMesh && obj.surface.enabled && obj.shaderType == ObjectType::Planet)
+                              ? SurfaceHash(obj.surface) : 0;
+  if (wantHash != previewSurfaceHash) {
+    if (wantHash) BakeSurface(obj.surface, previewSphere, false, 1.0f, 512);
+    else { previewSphere.clearTexture(); previewSphere.clearNormalMap(); previewTexPath = "\x01reload"; }
+    previewSurfaceHash = wantHash;
+  }
   // Sync texture with the inspected object (reload only on change)
-  if (!useMesh && obj.texturePath != previewTexPath) {
+  if (!wantHash && !useMesh && obj.texturePath != previewTexPath) {
     if (obj.texturePath.empty())
       previewSphere.clearTexture();
     else

@@ -103,6 +103,7 @@ static std::vector<int> NebulaDrawOrder(const std::vector<PhysicsObject>& objs, 
 // Map a serialized/spawn-form type code to an ObjectType. A non-empty meshPath
 // always means FreeModel (also upgrades legacy free objects saved as planets).
 static ObjectType typeFromCode(int code, const std::string& meshPath) {
+  if (code == 5) return ObjectType::SmallBody;
   if (code == 4) return ObjectType::Nebula;
   if (code == 3 || !meshPath.empty()) return ObjectType::FreeModel;
   if (code == 1) return ObjectType::Star;
@@ -162,6 +163,8 @@ static void buildScene(
     physicsObjects.back().normalMapStrength = pod.normalMapStrength;
     physicsObjects.back().nightMapStrength = pod.nightMapStrength;
     auto& po = physicsObjects.back();
+    po.surface = pod.surface;                       // baked by UpdateProceduralSurfaces
+    if (st == ObjectType::SmallBody) po.surface.enabled = true;
     if (pod.visualRadius > 0.0f) {
       po.visualRadius = pod.visualRadius;
       po.renderedObject.GenerateMeshSphere(pod.visualRadius, 32, 32);
@@ -276,6 +279,12 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
   o.cloudsEnabled     = false;
   o.keyframes.clear();
   o.clearRecording();
+  // The slot is being handed to another body: whatever was baked for the last
+  // one goes. A planet gets its own recipe below.
+  o.renderedObject.clearTexture();
+  o.renderedObject.clearNormalMap();
+  o.surface = SurfaceRecipe{};
+  o.surfaceBakedHash = 0; o.surfaceBakedRes = 0;
 
   // A remembered edit wins over the recipe.
   if (const UniBodyEdit* e = FindUniEdit(rec, gal, gc.key)) {
@@ -308,9 +317,14 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
     o.name        = nm;
     o.shaderType  = ObjectType::Planet;
     o.data.mass   = gc.mass;
-    o.data.color  = gc.color;
     o.temperature = 0.0f;
     o.visualRadius = gc.radius;
+    // A generated surface from the planet's own seed, by its size and how far
+    // out it orbits. Until it is baked (it waits to be more than a dot) the
+    // plain colour stands in, so take that from the recipe too.
+    o.surface = SurfaceFromSeed(gc.seed, gc.radius,
+                                (float)std::sqrt(gc.offset.x * gc.offset.x + gc.offset.y * gc.offset.y + gc.offset.z * gc.offset.z));
+    o.data.color = o.surface.colMid;
     o.renderedObject.isNebulaVolume = false;
   } else {
     snprintf(nm, sizeof(nm), "Nebula %d", gc.key);
@@ -1009,6 +1023,16 @@ int main(int argc, char** argv) {
       po.renderedObject.GenerateMeshSphere(po.visualRadius * renderer.activeSizeExag(), 32, 32);
       po.simulatePhysics = false;
       po.SyncNebulaToRender();
+    }
+    if (st == ObjectType::SmallBody || (st == ObjectType::Planet && form.surfacePreset >= 0)) {
+      // A generated surface; Renderer::UpdateProceduralSurfaces bakes it (and
+      // builds a small body's mesh) on the next frame.
+      po.surface.seed = (uint32_t)std::max(form.surfaceSeed, 1);
+      ApplySurfacePreset(po.surface, form.surfacePreset >= 0 ? form.surfacePreset : 7);
+      if (st == ObjectType::SmallBody) {
+        po.visualRadius = form.visualRadius;
+        po.renderedObject.GenerateMeshSphere(po.visualRadius * renderer.activeSizeExag(), 32, 32);
+      }
     }
     if (st == ObjectType::FreeModel) {
       po.visualRadius = form.visualRadius;
@@ -1788,7 +1812,7 @@ int main(int argc, char** argv) {
     if (renderer.sizesDirty) {
       for (auto& obj : physicsObjects) {
         if (obj.inertSlot()) continue;
-        if (!obj.meshPath.empty())
+        if (obj.renderedObject.isFreeMesh())
           obj.renderedObject.SetFreeMeshRadius(obj.visualRadius * renderer.activeSizeExag());
         else
           obj.renderedObject.GenerateMeshSphere(
@@ -1800,6 +1824,7 @@ int main(int argc, char** argv) {
 
     // Keep the RT planet texture array in sync (no-op unless textures changed).
     // Must run before BindViewportFBO — it binds its own FBOs while blitting.
+    renderer.UpdateProceduralSurfaces(physicsObjects);   // before the RT arrays: they pack what this bakes
     renderer.UpdateRtPlanetTextures(physicsObjects);
 
     // ── Keyframed cameras: pose them BEFORE anything is drawn ─────────────
@@ -1992,7 +2017,8 @@ int main(int argc, char** argv) {
     for (auto& obj : physicsObjects) {
       if (obj.inertSlot()) continue;
       bool litSurface = (obj.shaderType == ObjectType::Planet ||
-                         obj.shaderType == ObjectType::FreeModel);
+                         obj.shaderType == ObjectType::FreeModel ||
+                         obj.shaderType == ObjectType::SmallBody);
       if (litSurface && !starPositions.empty()) {
         obj.renderedObject.uploadStarLighting(starPositions, starColors);
         if (obj.shaderType == ObjectType::Planet && obj.atmosphereEnabled) {

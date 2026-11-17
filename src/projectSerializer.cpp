@@ -14,6 +14,46 @@ static json vec3ToJson(const vec3& v) {
 static vec3 jsonToVec3(const json& j) {
   return vec3{j[0].get<float>(), j[1].get<float>(), j[2].get<float>()};
 }
+// A procedural surface. Every key falls back to the struct default, so a
+// recipe saved before a dial existed loads with that dial at its default.
+static json surfaceToJson(const SurfaceRecipe& r) {
+  return json{
+    {"seed", r.seed},
+    {"continents", r.continents}, {"continentScale", r.continentScale},
+    {"mountains", r.mountains}, {"mountainScale", r.mountainScale},
+    {"roughness", r.roughness}, {"relief", r.relief},
+    {"craters", r.craters}, {"craterSize", r.craterSize}, {"craterDepth", r.craterDepth},
+    {"bands", r.bands}, {"bandCount", r.bandCount}, {"storms", r.storms},
+    {"liquid", r.liquid}, {"seaLevel", r.seaLevel}, {"liquidDepth", r.liquidDepth}, {"ice", r.ice},
+    {"colLow", vec3ToJson(r.colLow)}, {"colMid", vec3ToJson(r.colMid)}, {"colHigh", vec3ToJson(r.colHigh)},
+    {"colIce", vec3ToJson(r.colIce)}, {"colLiquid", vec3ToJson(r.colLiquid)},
+    {"colTint", vec3ToJson(r.colTint)}, {"tint", r.tint}, {"tintScale", r.tintScale},
+    {"colHemi", vec3ToJson(r.colHemi)}, {"hemi", r.hemi},
+    {"axes", vec3ToJson(r.axes)}, {"lumps", r.lumps}, {"lumpScale", r.lumpScale}, {"ridge", r.ridge}
+  };
+}
+static SurfaceRecipe jsonToSurface(const json& j) {
+  SurfaceRecipe r, d;
+  r.enabled = true;
+  auto col = [&](const char* k, const vec3& def) { return j.contains(k) ? jsonToVec3(j[k]) : def; };
+  r.seed = j.value("seed", d.seed);
+  r.continents = j.value("continents", d.continents); r.continentScale = j.value("continentScale", d.continentScale);
+  r.mountains = j.value("mountains", d.mountains);    r.mountainScale = j.value("mountainScale", d.mountainScale);
+  r.roughness = j.value("roughness", d.roughness);    r.relief = j.value("relief", d.relief);
+  r.craters = j.value("craters", d.craters);          r.craterSize = j.value("craterSize", d.craterSize);
+  r.craterDepth = j.value("craterDepth", d.craterDepth);
+  r.bands = j.value("bands", d.bands); r.bandCount = j.value("bandCount", d.bandCount); r.storms = j.value("storms", d.storms);
+  r.liquid = j.value("liquid", d.liquid); r.seaLevel = j.value("seaLevel", d.seaLevel);
+  r.liquidDepth = j.value("liquidDepth", d.liquidDepth); r.ice = j.value("ice", d.ice);
+  r.colLow = col("colLow", d.colLow); r.colMid = col("colMid", d.colMid); r.colHigh = col("colHigh", d.colHigh);
+  r.colIce = col("colIce", d.colIce); r.colLiquid = col("colLiquid", d.colLiquid);
+  r.colTint = col("colTint", d.colTint); r.tint = j.value("tint", d.tint); r.tintScale = j.value("tintScale", d.tintScale);
+  r.colHemi = col("colHemi", d.colHemi); r.hemi = j.value("hemi", d.hemi);
+  r.axes = col("axes", d.axes); r.lumps = j.value("lumps", d.lumps);
+  r.lumpScale = j.value("lumpScale", d.lumpScale); r.ridge = j.value("ridge", d.ridge);
+  return r;
+}
+
 static json dvec3ToJson(const dvec3& v) {
   return json::array({v.x, v.y, v.z});
 }
@@ -177,6 +217,7 @@ bool ProjectSerializer::Save(const std::string& path,
     o["nightMapPath"]        = obj.nightMapPath;
     o["normalMapStrength"]   = obj.normalMapStrength;
     o["nightMapStrength"]    = obj.nightMapStrength;
+    if (obj.surface.enabled) o["surface"] = surfaceToJson(obj.surface);
     objsArr.push_back(o);
   }
   root["physicsObjects"] = objsArr;
@@ -551,6 +592,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       pod.nightMapPath        = o.value("nightMapPath", std::string{});
       pod.normalMapStrength   = o.value("normalMapStrength", 1.0f);
       pod.nightMapStrength    = o.value("nightMapStrength", 1.6f);
+      if (o.contains("surface") && o["surface"].is_object()) pod.surface = jsonToSurface(o["surface"]);
       data.objects.push_back(pod);
     }
   }

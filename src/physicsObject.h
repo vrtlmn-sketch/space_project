@@ -8,6 +8,7 @@
 #include "renderer.h"
 #include "physicsObjectStructure.h"
 #include "frameStore.h"
+#include "surfaceGen.h"
 
 // The kind of body. Drives shader selection, the RT object-type code, and which
 // inspector/spawn settings apply. FreeModel renders a user OBJ mesh (lit, like a
@@ -15,7 +16,10 @@
 // Nebula = a VOLUME, not a mesh and not particles: its sphere is only the
 // bounds a ray-march runs inside (nebulaFrag.glsl). It never enters the RT
 // object list (RT would hit its bounding sphere as a solid).
-enum class ObjectType { Planet, Star, BlackHole, FreeModel, Nebula };
+// SmallBody = an irregular moon or asteroid: a procedural surface that also
+// shapes real geometry (surfaceGen.h). Lit like a planet, drawn and raytraced as
+// a free mesh, and never has an atmosphere, clouds, rings or liquid.
+enum class ObjectType { Planet, Star, BlackHole, FreeModel, Nebula, SmallBody };
 
 // RT object-type code handed to the compute shaders (0=planet, 1=star,
 // 3=black hole, 5=free mesh). Single source of truth for the mapping.
@@ -24,6 +28,7 @@ inline float RtObjectType(ObjectType t) {
     case ObjectType::Star:      return 1.0f;
     case ObjectType::BlackHole: return 3.0f;
     case ObjectType::FreeModel: return 5.0f;
+    case ObjectType::SmallBody: return 5.0f;   // a generated mesh goes down the free-mesh path
     case ObjectType::Nebula:    return 6.0f;   // never pushed to RT; the code exists so nothing maps it to a planet
     default:                    return 0.0f; // Planet
   }
@@ -36,6 +41,7 @@ inline const char* TypeLabel(ObjectType t) {
     case ObjectType::BlackHole: return "Black Hole";
     case ObjectType::FreeModel: return "Free Model";
     case ObjectType::Nebula:    return "Nebula";
+    case ObjectType::SmallBody: return "Small Body";
     default:                    return "Planet";
   }
 }
@@ -174,6 +180,12 @@ public:
   std::string meshPath{};
   float schwarzschildRadius{0.05f}; // event horizon radius (editable, default = 2*G*250)
   std::string texturePath{};    // path to optional surface texture (empty = none)
+  // Procedural surface (planets optionally, small bodies always). When enabled
+  // it replaces the texture and normal map above; Renderer::UpdateProceduralSurfaces
+  // rebakes whenever the recipe's hash differs from what is on the GPU.
+  SurfaceRecipe surface{};
+  uint64_t surfaceBakedHash{0};  // 0 = nothing baked
+  int      surfaceBakedRes{0};
   std::string normalMapPath{};  // path to optional tangent-space normal map (empty = none)
   std::string nightMapPath{};   // path to optional night-lights map (empty = none)
   float normalMapStrength{1.0f}; // normal-map relief scale (shader applies a 4x)

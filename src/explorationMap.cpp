@@ -702,7 +702,8 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
   if (kind != kUniverse) {
     for (const auto& o : physicsObjects) {
       if (!LiveBody(o)) continue;
-      const bool planetLike = (o.shaderType == ObjectType::Planet || o.shaderType == ObjectType::FreeModel);
+      const bool planetLike = (o.shaderType == ObjectType::Planet || o.shaderType == ObjectType::FreeModel ||
+                               o.shaderType == ObjectType::SmallBody);
       if (kind == kGalaxy && planetLike) continue;
       const RenderedObject& ro = o.renderedObject;
       const dvec3 rel = CameraRelative(ro.coordinates, ro.localOffset);
