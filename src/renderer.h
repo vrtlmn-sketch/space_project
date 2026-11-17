@@ -817,6 +817,8 @@ public:
   // dimming plus this many stops. 0 = exactly star scale. Applied only to the dot,
   // fading out by the mesh handover so resolving into a disc never pops. Not saved.
   float pointObjectStops{1.7f};
+  float glareLimit{6.0f};      // times over white a pixel may feed into bloom and spikes (0 = off)
+  float nearStarStops{4.0f};   // cap on a near star particle's brightness gain, in stops
   // How far exposure rises to undo the star field dimming: what auto exposure
   // gives a frame of stars, and what manual Exposure always applies, so turning
   // auto off leaves the star field as auto shows it. The raytracer never dims.

@@ -587,6 +587,7 @@ void Renderer::PrepCloudLook(RenderedObject& ro) {
   ro.cineResolvedCut  = resolvedCut;         ro.cineGasStrength = gasStrength;
   ro.cineFarFalloff   = farFalloff;          ro.cineStarFieldGain = std::pow(2.0f, starFieldStops);
   ro.cineStarSize     = starSize;
+  ro.cineBlazeMax     = std::pow(2.0f, nearStarStops);
 }
 
 // Far galaxies never reach renderCloud: one that is off screen is skipped
@@ -4629,6 +4630,30 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
       ImGui::SetTooltip("How bright a far planet or star that is only a dot comes out, against\n"
                         "the star field. 0 = exactly star brightness; a little above 0 = barely\n"
                         "brighter than the stars. Resolved planets are unaffected.");
+    PropLabel("Glare Limit");
+    {
+      char lbl[48];
+      if (glareLimit > 0.0f) std::snprintf(lbl, sizeof(lbl), "%.1fx white", glareLimit);
+      else                   std::snprintf(lbl, sizeof(lbl), "Off");
+      ImGui::SliderFloat("##glarelimit", &glareLimit, 0.0f, 64.0f, lbl,
+                         ImGuiSliderFlags_NoRoundToFormat);
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How far over white a point may go before its spikes and glow stop\n"
+                        "growing. Stops one star in a dark frame from throwing a cross across\n"
+                        "the whole screen. Lower = smaller spikes on the very brightest things;\n"
+                        "ordinary stars are not affected. 0 = off.");
+    PropLabel("Near Star Limit");
+    {
+      char lbl[48];
+      std::snprintf(lbl, sizeof(lbl), "%.1f stops  (x%.4g)", nearStarStops, std::pow(2.0f, nearStarStops));
+      ImGui::SliderFloat("##nearstarstops", &nearStarStops, 0.0f, 12.0f, lbl,
+                         ImGuiSliderFlags_NoRoundToFormat);
+    }
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How much brighter a star in a galaxy may get when you are right next\n"
+                        "to it. Past its largest size a star turns extra closeness into\n"
+                        "brightness; this is the ceiling on that.");
 
     if (autoExposure) {
       ImGui::SeparatorText("Auto Exposure");
@@ -9508,6 +9533,18 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
   glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, srcHDR);
   glUniform1i(bloomPreLocTex, 0);
   glUniform1f(bloomPreLocThreshold, bloomThreshold);
+  {
+    // Glare limit (see bloomPrefilterFrag). GLARE_LIMIT overrides it headlessly.
+    static const float envGlare = []{ const char* e = std::getenv("GLARE_LIMIT"); return e ? (float)std::atof(e) : -1.0f; }();
+    GLint l;
+    if ((l = glGetUniformLocation(bloomPrefilterProgram, "uGlareLimit")) >= 0)
+      glUniform1f(l, envGlare >= 0.0f ? envGlare : glareLimit);
+    if ((l = glGetUniformLocation(bloomPrefilterProgram, "uExposure")) >= 0) glUniform1f(l, ManualExposure());
+    if ((l = glGetUniformLocation(bloomPrefilterProgram, "uAutoExposure")) >= 0) glUniform1i(l, aeLive ? 1 : 0);
+    if ((l = glGetUniformLocation(bloomPrefilterProgram, "uAeExposure")) >= 0) glUniform1i(l, 5);
+    glActiveTexture(GL_TEXTURE5); glBindTexture(GL_TEXTURE_2D, aeTex);
+    glActiveTexture(GL_TEXTURE0);
+  }
   glDrawArrays(GL_TRIANGLES, 0, 6);
 
   // Diffraction spikes. Two cheap passes before the blur overwrites tex0:

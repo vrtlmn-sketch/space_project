@@ -587,6 +587,27 @@ Mechanics worth knowing:
   too bright. Retuned to 0.09 under the power mean. Re-tune it by eye whenever
   what the meter measures changes.
 
+## Two limits on how far over white a point can go
+
+Exposure climbs to its ceiling (x115) in a near-empty frame, points are
+deliberately not metered, and neither the spike pass nor a near star particle
+had an upper bound. One star dot in a dark frame came out ~40x over white and
+its spikes crossed the screen; parked next to Sagittarius A* it never recovered.
+
+- **Glare Limit** (`glareLimit`, default 6, Light & Exposure -> Advanced): times
+  over white, on the EXPOSED image, a pixel may hand to the bloom and spike
+  passes. Applied in `bloomPrefilterFrag` (the spike source reads that pass's
+  output, so one limit covers both). Unchanged below 0.75x the limit, then a
+  smooth roll-off. The scene itself is never touched. 0 = off;
+  `GLARE_LIMIT=<x>` overrides headlessly.
+- **Near Star Limit** (`nearStarStops`, default 4 stops): caps `vDistGain` in
+  cloudVert, the brightness a star particle gains once it can no longer grow.
+
+6 was chosen as the tightest value that leaves milky_way and blackhole
+byte-identical (their glare sources sit under 4x white; at a limit of 4 with
+the old 0.5 knee, blackhole moved 1125 px). Lower it and the tuned crosses
+start to shrink. Both are saved in projects.
+
 ## Look defaults: two back at 0, two taken from the tuned milky_way
 
 `resolvedCut` and `popColour` default to **0**, the pre-2026-09-06 look.

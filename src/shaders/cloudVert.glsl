@@ -59,6 +59,7 @@ uniform float uViewportH;          // framebuffer height (px) → perspective du
 // FRACTION of the frame at any resolution. 0 = absolute pixels (old behaviour).
 uniform float uSpriteRefH;
 uniform float uResolvedCut;        // only stars brighter than this draw as sharp cores
+uniform float uBlazeMax;           // most a near star may gain in brightness past its size cap (0 = no limit)
 uniform float uGasStrength;        // glowing-gas emission near hot stars (0 = off)
 
 // One unified dust system: a filamentary density field (FBM over galaxy-local
@@ -381,6 +382,9 @@ void main() {
       gl_PointSize = drawPx;
       float over   = max(truePx / drawPx, 1.0);   // >1 only past the cap
       vDistGain    = over * over;                 // area it could not have -> brightness
+      // ...up to a limit. Unbounded, a star you are parked next to came out
+      // hundreds of times over white and stayed there.
+      if (uBlazeMax > 0.0) vDistGain = min(vDistGain, uBlazeMax);
     }
   } else if (uCloudPass == 4) {
     // Glowing gas: only hot young stars seed emission nebulosity. Large soft

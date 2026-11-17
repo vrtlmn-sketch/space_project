@@ -1360,6 +1360,8 @@ int main(int argc, char** argv) {
     renderer.spikeThreshold     = s.spikeThreshold;
     renderer.starFieldStops     = s.starFieldStops;
     renderer.pointObjectStops   = s.pointObjectStops;
+    renderer.glareLimit         = s.glareLimit;
+    renderer.nearStarStops      = s.nearStarStops;
     renderer.autoExposure       = s.autoExposure;
     renderer.aeLimit            = s.aeLimit;
     renderer.aeMaxDarkenStops   = s.aeMaxDarkenStops;
@@ -1592,6 +1594,8 @@ int main(int argc, char** argv) {
     s.spikeThreshold     = renderer.spikeThreshold;
     s.starFieldStops     = renderer.starFieldStops;
     s.pointObjectStops   = renderer.pointObjectStops;
+    s.glareLimit         = renderer.glareLimit;
+    s.nearStarStops      = renderer.nearStarStops;
     s.autoExposure       = renderer.autoExposure;
     s.aeLimit            = renderer.aeLimit;
     s.aeMaxDarkenStops   = renderer.aeMaxDarkenStops;

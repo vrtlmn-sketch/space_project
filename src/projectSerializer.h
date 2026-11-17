@@ -277,6 +277,12 @@ struct SceneSettings {
   // then auto exposure. Mirrors Renderer's members of the same names.
   float starFieldStops{-6.851f};
   float pointObjectStops{1.7f};
+  // Limits on how far over white things may go. glareLimit: times over white,
+  // on the exposed image, a pixel may feed into bloom and spikes (0 = off).
+  // nearStarStops: most a star particle right next to the camera may gain in
+  // brightness once it can no longer grow, in stops.
+  float glareLimit{6.0f};
+  float nearStarStops{4.0f};
   bool  autoExposure{true};
   float aeLimit{0.18f};
   float aeMaxDarkenStops{-16.0f};

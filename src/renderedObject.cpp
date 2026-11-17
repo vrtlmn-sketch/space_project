@@ -2961,6 +2961,8 @@ void RenderedObject::uploadCloudFrameUniforms(const double cameraTranslate[3], i
     if (vhLoc >= 0) glUniform1f(vhLoc, (float)fbHeight);
     GLint rcLoc = ulocCached(program, "uResolvedCut");
     if (rcLoc >= 0) glUniform1f(rcLoc, cineResolvedCut);
+    GLint bzLoc = ulocCached(program, "uBlazeMax");
+    if (bzLoc >= 0) glUniform1f(bzLoc, cineBlazeMax);
     GLint sfLoc = ulocCached(program, "uStarfield");
     if (sfLoc >= 0) glUniform1i(sfLoc, 0);
     GLint ssLoc = ulocCached(program, "uStarSize");

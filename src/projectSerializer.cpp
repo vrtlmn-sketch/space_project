@@ -355,6 +355,8 @@ bool ProjectSerializer::Save(const std::string& path,
     s["spikeThreshold"]    = settings.spikeThreshold;
     s["starFieldStops"]    = settings.starFieldStops;
     s["pointObjectStops"]  = settings.pointObjectStops;
+    s["glareLimit"]        = settings.glareLimit;
+    s["nearStarStops"]     = settings.nearStarStops;
     s["autoExposure"]      = settings.autoExposure;
     s["aeLimit"]           = settings.aeLimit;
     s["aeMaxDarkenStops"]  = settings.aeMaxDarkenStops;
@@ -756,6 +758,8 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     st.spikeThreshold     = s.value("spikeThreshold",     SceneSettings{}.spikeThreshold);
     st.starFieldStops     = s.value("starFieldStops",     SceneSettings{}.starFieldStops);
     st.pointObjectStops   = s.value("pointObjectStops",   SceneSettings{}.pointObjectStops);
+    st.glareLimit         = s.value("glareLimit",         SceneSettings{}.glareLimit);
+    st.nearStarStops      = s.value("nearStarStops",      SceneSettings{}.nearStarStops);
     st.autoExposure       = s.value("autoExposure",       SceneSettings{}.autoExposure);
     st.aeLimit            = s.value("aeLimit",            SceneSettings{}.aeLimit);
     st.aeMaxDarkenStops   = s.value("aeMaxDarkenStops",   SceneSettings{}.aeMaxDarkenStops);
