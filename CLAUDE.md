@@ -423,7 +423,10 @@ mean can hide a large local change.
 
 `cloudFrag.glsl` multiplies every star point, haze lobe and glowing-gas sprite
 by `uStarFieldGain` = 2^-6.851 = **0.008661** (was -3.6 when first found; retuned by
-the user once auto exposure worked). Planets, star objects, nebulae and
+the user once auto exposure worked). Nebula volumes take the same gain on their
+emission (`DrawNebula` -> `renderMesh`, cinematic view only): a nebula is part
+of the galaxy's diffuse light, and left on the planet scale it blew out and
+pulled the exposure down in any frame of stars. Planets, star objects and
 the raytracer are untouched. The empty SKY is dimmed by the same stops
 (`ClearSceneTarget(true)`, only in the two cinematic raster clears:
 `CineBeginIfActive` and `BeginRecordRaster`), because the sky is part of what a
@@ -475,8 +478,11 @@ crosses and dragged the exposure down.
   particle's own core terms so Dynamic Range, Star Size and Star Field vs
   Planets move both together. The floor takes over at ~1e4 AU (0.15 ly).
   Planets are not floored.
-- The black-hole marker and nebula dots are excluded (not light sources of this
-  kind). **Point Objects vs Stars** (Light & Exposure -> Advanced, stops, saved) sets how
+- The black-hole marker is excluded. **A far nebula is not a point light at
+  all**: its dot carries the volume's own radiance (star-field gain included)
+  over the dot's disc at the handover, then dims with `farFalloff` like a
+  galaxy. Run through the flux law it peaked ~1000x above the stars around it
+  and threw a cross over the whole galaxy. **Point Objects vs Stars** (Light & Exposure -> Advanced, stops, saved) sets how
   much brighter than a star a dot comes out. Default **+1.7** (tuned by the user; +4 and +3 were too bright): at 0 the user found
   planets nowhere near as bright as stars, while an estimate from the impostor
   constants had predicted the opposite — tune it by eye, not from the formula.

@@ -949,6 +949,9 @@ void Renderer::DrawNebula(PhysicsObject& obj, const std::vector<CloudParticle>* 
     glViewport(0, 0, nebFboW, nebFboH);
   }
   ro.realisticShading = realisticRasterView;
+  // A nebula is part of the galaxy's diffuse light, so its emission sits on the
+  // star-field scale like the haze and the glowing gas (see renderMesh).
+  ro.cineStarFieldGain = std::pow(2.0f, starFieldStops);
   ro.renderMesh(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
 }
 
@@ -1384,7 +1387,9 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
     const vec3 pal = (ro.nebPalette == 1) ? vec3{0.503f, 0.736f, 0.561f}
                                           : vec3{0.825f, 0.412f, 0.425f};
     const float fill = std::cbrt(std::max(ro.nebExtent.x * ro.nebExtent.y * ro.nebExtent.z, 1e-6f));
-    const float k = ro.nebEmission * std::sqrt(std::max(ro.nebDensity, 0.0f)) * fill * kImpostorNebula;
+    // On the star-field scale, exactly as the volume it stands in for.
+    const float sfGain = realisticRasterView ? std::pow(2.0f, starFieldStops) : 1.0f;
+    const float k = ro.nebEmission * std::sqrt(std::max(ro.nebDensity, 0.0f)) * fill * kImpostorNebula * sfGain;
     S = vec3{pal.x * k, pal.y * k, pal.z * k};
   } else {                                           // Planet / free model — defaultFrag
     // Albedo: the texture's average when there is one, because that is what the
@@ -1438,6 +1443,17 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
     const double ratio = screenPx / spriteR;
     amp = kImpostorFluxNorm * kImpostorMarkerGain
         * std::min(1.0, std::pow(ratio, 2.0 * kImpostorMarkerFalloff));
+  } else if (ro.isNebulaVolume) {
+    // A nebula is DIFFUSE, not a point light. The flux law below compresses a
+    // body's light so hard that a nebula 8 kly away peaked a thousand times
+    // above the stars around it and threw a cross over the whole galaxy. So it
+    // follows the rule galaxies do: at the handover size the dot carries the
+    // volume's own light (same radiance over the same disc, so nothing jumps
+    // when one takes over from the other), and below it dims with the same
+    // Distance falloff as everything else too small to resolve.
+    const double ratio = screenPx / spriteR;
+    const double g = std::clamp((double)farFalloff, 0.05, 1.0);
+    amp = kImpostorFluxNorm * std::min(1.0, std::pow(ratio, 2.0 * g));
   } else {
     // Exact flux: radiance x solid angle. screenPx is divided back out to the
     // reference height first, so the number is a property of the OBJECT and not
@@ -1466,7 +1482,8 @@ bool Renderer::DrawObjectImpostor(const RenderedObject& ro, float temperature,
   // ~2000x brighter than a star particle: Sun-sized crosses on Mars, and the
   // exposure pulled down by a dot. The gain fades out by the handover, so at the
   // moment the mesh takes over the dot is exactly as bright as it always was.
-  // The black-hole marker and nebula dots are not light sources of that kind.
+  // The black-hole marker is not a light source, and a nebula's dot is already
+  // on the star scale (its radiance carries the star-field gain above).
   if (type != 3 && !ro.isNebulaVolume) {
     const double pointGain = std::pow(2.0, (double)starFieldStops + (double)pointObjectStops);
     const double lo = kImpostorStarLikePx * hScale, hi = fadeHi;

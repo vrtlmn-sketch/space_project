@@ -1503,7 +1503,9 @@ void RenderedObject::renderMesh(const double cameraTranslate[3], const float vie
     if ((l = ulocCached(program, "uNebExtent"))     >= 0) glUniform3f(l, nebExtent.x, nebExtent.y, nebExtent.z);
     if ((l = ulocCached(program, "uNebSeed"))       >= 0) glUniform1f(l, nebSeed);
     if ((l = ulocCached(program, "uNebPalette"))    >= 0) glUniform1i(l, nebPalette);
-    if ((l = ulocCached(program, "uNebEmission"))   >= 0) glUniform1f(l, nebEmission);
+    // Emission on the star-field scale in the cinematic view (the nav view has
+    // no such scale: its clouds are plain points). Absorption is untouched.
+    if ((l = ulocCached(program, "uNebEmission"))   >= 0) glUniform1f(l, nebEmission * (realisticShading ? cineStarFieldGain : 1.0f));
     if ((l = ulocCached(program, "uNebDust"))       >= 0) glUniform1f(l, nebDust);
     if ((l = ulocCached(program, "uNebSteps"))      >= 0) glUniform1i(l, realisticShading ? nebSteps : std::max(nebSteps / 2, 12));
     glActiveTexture(GL_TEXTURE5);
