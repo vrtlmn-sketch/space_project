@@ -907,6 +907,7 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
 // window, over the scene.
 void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
                                      std::vector<std::unique_ptr<CloudObject>>& clouds) {
+  exploreFocusObj = exploreFocusCloud = -1;
   if (atlasFade <= 0.001f) { gLabelState.clear(); return; }
   if (sceneRenderW <= 0 || sceneRenderH <= 0) return;
 
@@ -1000,6 +1001,14 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     if (dx * dx + dy * dy < centreD2) { centreD2 = dx * dx + dy * dy; centre = (int)i; }
   }
   long long centreKey = (centre >= 0) ? cands[(size_t)centre].key : -1;
+  // What t / Shift+t act on (StepExploreTravel). Only while the atlas is up.
+  const bool canTravel = centre >= 0 && atlasVisible && exploreFlying();
+  if (canTravel) {
+    if (centreKey & (1LL << 40)) exploreFocusCloud = (int)(centreKey & ((1LL << 40) - 1));
+    else                         exploreFocusObj   = (int)centreKey;
+  }
+  const char* travelHint = exploreTravelActive ? "Travelling  -  steer to stop"
+                                               : "Travel [t]   Fast travel [T]";
   if (centre >= 0) cands[(size_t)centre].prio = -1e9;
   std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.prio < b.prio; });
   if (cands.size() > (size_t)kDotBudget) cands.resize((size_t)kDotBudget);
@@ -1025,7 +1034,14 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const ImVec2 nsz = font->CalcTextSizeA(nameSize(c), FLT_MAX, 0.0f, c.name);
     const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, sub);
     const float hw = std::max(nsz.x, ssz.x) * 0.5f + 4.0f, r = dotR(c);
-    const Box b{c.x - hw, c.y - r - 5.0f - nsz.y, c.x + hw, c.y + r + 4.0f + ssz.y};
+    Box b{c.x - hw, c.y - r - 5.0f - nsz.y, c.x + hw, c.y + r + 4.0f + ssz.y};
+    if (c.key == centreKey && canTravel) {             // room for the travel hint
+      const ImVec2 hsz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, travelHint);
+      b.x0 = std::min(b.x0, c.x - hsz.x * 0.5f - 4.0f);
+      b.x1 = std::max(b.x1, c.x + hsz.x * 0.5f + 4.0f);
+      b.y0 -= 6.0f;
+      b.y1 += hsz.y + 3.0f + 6.0f;
+    }
     bool clear = true;
     for (const Box& o : boxes)
       if (b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0) { clear = false; break; }
@@ -1066,7 +1082,8 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const float rise = (1.0f - st.alpha) * 6.0f;
     const float r = dotR(c), ns = nameSize(c);
     const ImVec2 nsz = font->CalcTextSizeA(ns, FLT_MAX, 0.0f, c.name);
-    const ImVec2 np(std::floor(c.x - nsz.x * 0.5f), std::floor(c.y - r - 4.0f - nsz.y + rise));
+    const float  ringGap = 6.0f * st.focus;            // the highlight ring sits between dot and text
+    const ImVec2 np(std::floor(c.x - nsz.x * 0.5f), std::floor(c.y - r - 4.0f - nsz.y + rise - ringGap));
     const float nameA = (0.62f + 0.38f * std::max(c.t, st.focus)) * e;
     dl->AddText(font, ns, ImVec2(np.x + 1.0f, np.y + 1.0f), C(shadow, 0.55f * e), c.name);
     dl->AddText(font, ns, np, C(Lighten(c.rgb, 0.55f), nameA), c.name);
@@ -1075,12 +1092,31 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       if (a <= 0.01f) continue;
       char sub[80]; subText(c, withKind != 0, sub, sizeof(sub));
       const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, sub);
-      const ImVec2 sp(std::floor(c.x - ssz.x * 0.5f), std::floor(c.y + r + 3.0f + rise));
+      const ImVec2 sp(std::floor(c.x - ssz.x * 0.5f), std::floor(c.y + r + 3.0f + rise + ringGap));
       dl->AddText(font, subSize, ImVec2(sp.x + 1.0f, sp.y + 1.0f), C(shadow, 0.5f * a), sub);
       dl->AddText(font, subSize, sp, C(subRGB, a), sub);
     }
-    if (st.focus > 0.01f)
-      dl->AddCircle(ImVec2(c.x, c.y), r + 4.0f, C(Lighten(c.rgb, 0.4f), 0.55f * st.focus * e), 24, 1.0f);
+    if (st.focus > 0.01f) {
+      // The highlight: a steady inner ring, and four arcs that turn slowly and
+      // breathe, so it reads as "this one" even on a busy sky.
+      const float  f   = st.focus * e;
+      const ImVec2 cp(c.x, c.y);
+      const float  rr  = r + 7.0f + 1.5f * std::sin((float)now * 3.2f);
+      const float  rot = (float)now * 1.4f;
+      dl->AddCircle(cp, r + 3.5f, C(Lighten(c.rgb, 0.4f), 0.40f * f), 24, 1.0f);
+      for (int k = 0; k < 4; ++k) {
+        const float a0 = rot + (float)k * 1.5707963f;
+        dl->PathArcTo(cp, rr, a0, a0 + 0.95f, 10);
+        dl->PathStroke(C(Lighten(c.rgb, 0.6f), 0.90f * f), 0, 1.6f);
+      }
+      if (c.key == centreKey && canTravel) {
+        const ImVec2 ssz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, "0");
+        const ImVec2 hsz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, travelHint);
+        const ImVec2 hp(std::floor(c.x - hsz.x * 0.5f), std::floor(c.y + r + 3.0f + ringGap + ssz.y + 3.0f));
+        dl->AddText(font, subSize, ImVec2(hp.x + 1.0f, hp.y + 1.0f), C(shadow, 0.5f * f), travelHint);
+        dl->AddText(font, subSize, hp, C(RGB{0.86f, 0.90f, 0.96f}, 0.85f * f), travelHint);
+      }
+    }
   }
 
   // ── Off screen: a chevron at the edge, for the search target and the nearest star ──

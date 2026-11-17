@@ -1001,6 +1001,26 @@ public:
   dvec3  mapFocusOrigin{0.0, 0.0, 0.0}, mapFocusOffset{0.0, 0.0, 0.0};
   std::string mapFocusName;
 
+  // ── Travel to what you are looking at (exploreSearch.cpp) ──
+  // t flies there along a straight line, easing out and back in; Shift+t jumps.
+  // The target is whatever the atlas labels currently highlight.
+  void StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
+                         std::vector<std::unique_ptr<CloudObject>>& clouds);
+  int    exploreFocusObj{-1}, exploreFocusCloud{-1};   // the highlighted object, set by the labels
+  int    exploreTravelRequest{0};                      // 1 = travel, 2 = fast travel (set by the key)
+  bool   exploreTravelActive{false};
+  bool   travelKeyPressed{false}, travelKeyShift{false};
+  int    travelObj{-1}, travelCloud{-1};
+  std::string travelName;                              // a recycled universe slot is a different body
+  dvec3  travelDir{0.0, 0.0, 1.0};                     // unit, target -> where the trip started
+  double travelD0{1.0}, travelT{0.0}, travelHeld{0.0};
+  float  travelFromRot[9]{1,0,0, 0,1,0, 0,0,1};
+  float  travelFromZoom{45.0f}, travelToYaw{0.0f}, travelToPitch{0.0f};
+  float  travelSeconds{3.0f};                          // how long a trip takes (Camera & Movement)
+  // View share of the galaxy most in need of a detail rebuild this frame (0 =
+  // every galaxy in view is as detailed as its size calls for). A trip waits on it.
+  float  exploreLodBehind{0.0f};
+
   // ── Explore search (exploreSearch.cpp): K opens, Esc closes ──
   void OpenExploreSearch();
   void CloseExploreSearch();

@@ -137,6 +137,141 @@ bool Renderer::ExploreTarget(std::vector<PhysicsObject>& physicsObjects,
   return false;
 }
 
+// ── Travel to the highlighted object ──
+// Rotations as quaternions (w, x, y, z) so the turn toward the target is one
+// smooth arc whatever the camera's roll was.
+static void MatToQuat(const float m[9], double q[4]) {
+  const double tr = (double)m[0] + m[4] + m[8];
+  if (tr > 0.0) {
+    const double s = std::sqrt(tr + 1.0) * 2.0;
+    q[0] = 0.25 * s; q[1] = (m[7] - m[5]) / s; q[2] = (m[2] - m[6]) / s; q[3] = (m[3] - m[1]) / s;
+  } else if (m[0] > m[4] && m[0] > m[8]) {
+    const double s = std::sqrt(1.0 + m[0] - m[4] - m[8]) * 2.0;
+    q[0] = (m[7] - m[5]) / s; q[1] = 0.25 * s; q[2] = (m[1] + m[3]) / s; q[3] = (m[2] + m[6]) / s;
+  } else if (m[4] > m[8]) {
+    const double s = std::sqrt(1.0 + m[4] - m[0] - m[8]) * 2.0;
+    q[0] = (m[2] - m[6]) / s; q[1] = (m[1] + m[3]) / s; q[2] = 0.25 * s; q[3] = (m[5] + m[7]) / s;
+  } else {
+    const double s = std::sqrt(1.0 + m[8] - m[0] - m[4]) * 2.0;
+    q[0] = (m[3] - m[1]) / s; q[1] = (m[2] + m[6]) / s; q[2] = (m[5] + m[7]) / s; q[3] = 0.25 * s;
+  }
+}
+static void QuatToMat(const double q[4], float m[9]) {
+  const double w = q[0], x = q[1], y = q[2], z = q[3];
+  m[0] = (float)(1 - 2*(y*y + z*z)); m[1] = (float)(2*(x*y - w*z));     m[2] = (float)(2*(x*z + w*y));
+  m[3] = (float)(2*(x*y + w*z));     m[4] = (float)(1 - 2*(x*x + z*z)); m[5] = (float)(2*(y*z - w*x));
+  m[6] = (float)(2*(x*z - w*y));     m[7] = (float)(2*(y*z + w*x));     m[8] = (float)(1 - 2*(x*x + y*y));
+}
+
+// The trip is a straight line from where you are to the pose Locate would give,
+// with the DISTANCE eased in log space: one motion has to cover 1e15 AU down to
+// a planet's surface, and only a constant rate per decade shows both the launch
+// and the arrival. The camera is re-anchored on the target every frame, so the
+// approach is exact at any distance (see "Large-world coordinates").
+void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
+                                 std::vector<std::unique_ptr<CloudObject>>& clouds) {
+  const int req = exploreTravelRequest;
+  exploreTravelRequest = 0;
+  if (!exploreFlying()) { exploreTravelActive = false; return; }
+
+  auto nameOf = [&](int obj, int cloud) -> std::string {
+    if (obj >= 0 && obj < (int)physicsObjects.size()) return physicsObjects[(size_t)obj].name;
+    if (cloud >= 0 && cloud < (int)clouds.size() && clouds[(size_t)cloud]) return clouds[(size_t)cloud]->name;
+    return std::string();
+  };
+
+  dvec3 origin, offset; float effR = 0.0f;
+  if (req != 0 && (exploreFocusObj >= 0 || exploreFocusCloud >= 0) &&
+      ExploreTarget(physicsObjects, clouds, exploreFocusObj, exploreFocusCloud, origin, offset, effR)) {
+    if (req == 2) {                                   // fast travel: the search's own jump
+      exploreTravelActive = false;
+      LocateCameraOn(origin, offset, effR);
+      return;
+    }
+    travelObj = exploreFocusObj; travelCloud = exploreFocusCloud;
+    travelName = nameOf(travelObj, travelCloud);
+    // Target -> camera, differenced against the origin first (never an absolute).
+    const dvec3 back{ (gCamAnchor[0] - origin.x) - cameraTranslate[0] - offset.x,
+                      (gCamAnchor[1] - origin.y) - cameraTranslate[1] - offset.y,
+                      (gCamAnchor[2] - origin.z) - cameraTranslate[2] - offset.z };
+    const double blen = getLength(back);
+    travelDir = (blen > 1e-9) ? dvec3{back.x / blen, back.y / blen, back.z / blen} : dvec3{0.0, 0.0, 1.0};
+    travelD0  = std::max(blen, 1e-9);
+    LocatePose p;
+    ComputeLocatePose(origin, offset, effR, p);
+    travelToYaw = p.rotation; travelToPitch = p.pitch;
+    for (int i = 0; i < 9; ++i) travelFromRot[i] = camMatrix[i];
+    travelFromZoom = zoom;
+    travelT = 0.0; travelHeld = 0.0;
+    exploreTravelActive = true;
+    invalidateZoomAnchor();
+  }
+  if (!exploreTravelActive) return;
+
+  // Still the same thing? A universe slot can be handed to another body.
+  if (nameOf(travelObj, travelCloud) != travelName ||
+      !ExploreTarget(physicsObjects, clouds, travelObj, travelCloud, origin, offset, effR)) {
+    exploreTravelActive = false;
+    return;
+  }
+
+  // Do not outrun the stars: while a galaxy of visible size is still behind
+  // the detail its size calls for, hold position. Normally a frame or two;
+  // capped so nothing can stall the trip for good.
+  const double dt = (double)ImGui::GetIO().DeltaTime;
+  if (exploreLodBehind > 0.05f && travelHeld < 2.0) travelHeld += dt;
+  else travelT += dt / std::max((double)travelSeconds, 0.1);
+  const double t = std::min(travelT, 1.0);
+  const double e = t * t * t * (t * (6.0 * t - 15.0) + 10.0);          // ease in and out
+
+  const double d1   = std::max((double)effR * 5.7, 1e-4);              // Locate's standoff
+  const double dist = std::exp(std::log(travelD0) + (std::log(d1) - std::log(travelD0)) * e);
+  gCamAnchor[0] = origin.x; gCamAnchor[1] = origin.y; gCamAnchor[2] = origin.z;
+  cameraTranslate[0] = -(offset.x + travelDir.x * dist);
+  cameraTranslate[1] = -(offset.y + travelDir.y * dist);
+  cameraTranslate[2] = -(offset.z + travelDir.z * dist);
+
+  // Turn to face it early, so most of the trip is spent watching it grow.
+  double u = std::min(t / 0.4, 1.0);
+  u = u * u * (3.0 - 2.0 * u);
+  float toRot[9];
+  {
+    const float cy = std::cos(travelToYaw), sy = std::sin(travelToYaw);
+    const float cp = std::cos(travelToPitch), sp = std::sin(travelToPitch);
+    toRot[0] = cy;  toRot[1] = sy * sp; toRot[2] = sy * cp;            // syncMatrixFromEuler, roll 0
+    toRot[3] = 0;   toRot[4] = cp;      toRot[5] = -sp;
+    toRot[6] = -sy; toRot[7] = cy * sp; toRot[8] = cy * cp;
+  }
+  double qa[4], qb[4], q[4];
+  MatToQuat(travelFromRot, qa);
+  MatToQuat(toRot, qb);
+  double dot = qa[0]*qb[0] + qa[1]*qb[1] + qa[2]*qb[2] + qa[3]*qb[3];
+  if (dot < 0.0) { dot = -dot; for (double& v : qb) v = -v; }
+  if (dot > 0.9995) {
+    for (int i = 0; i < 4; ++i) q[i] = qa[i] + (qb[i] - qa[i]) * u;
+  } else {
+    const double th = std::acos(std::min(dot, 1.0)), sn = std::sin(th);
+    const double wa = std::sin((1.0 - u) * th) / sn, wb = std::sin(u * th) / sn;
+    for (int i = 0; i < 4; ++i) q[i] = qa[i] * wa + qb[i] * wb;
+  }
+  const double ql = std::sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+  for (double& v : q) v /= std::max(ql, 1e-12);
+  QuatToMat(q, camMatrix);
+  for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];
+  syncEulerFromMatrix();
+
+  const float angDeg = (float)(2.0 * std::atan((double)effR / d1) * 180.0 / M_PI);
+  const float toZoom = std::clamp(angDeg / 0.4f, 5.0f, 45.0f);        // as ComputeLocatePose
+  zoom = (float)std::exp(std::log((double)travelFromZoom)
+                         + (std::log((double)toZoom) - std::log((double)travelFromZoom)) * e);
+  rtDirty = true;
+
+  if (travelT >= 1.0) {
+    exploreTravelActive = false;
+    invalidateZoomAnchor();
+  }
+}
+
 void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds) {
   mapFocusActive = false;

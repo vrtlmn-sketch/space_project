@@ -1760,6 +1760,13 @@ bool Renderer::UpdateInputs() {
                                cameraRotationSpeed * (0.00001f / 45.0f),
                                cameraRotationSpeed * 2.0f);
 
+    // Steering ends a trip where you are.
+    if (exploreTravelActive) {
+      for (int k : {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_SPACE,
+                    GLFW_KEY_LEFT, GLFW_KEY_RIGHT, GLFW_KEY_UP, GLFW_KEY_DOWN})
+        if (glfwGetKey(window, k) == GLFW_PRESS) { exploreTravelActive = false; break; }
+    }
+
     // WASD = position movement (yaw-aware, horizontal plane)
     if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  moveStep});
     if (glfwGetKey(window, GLFW_KEY_S)          == GLFW_PRESS) move(vec3{0,  0, -moveStep});
@@ -1792,7 +1799,7 @@ bool Renderer::UpdateInputs() {
       glfwGetCursorPos(window, &x, &y);
       const double dx = x - flightLastX, dy = y - flightLastY;
       flightLastX = x; flightLastY = y;
-      if (dx != 0.0 || dy != 0.0) {
+      if ((dx != 0.0 || dy != 0.0) && !exploreTravelActive) {   // a trip steers itself
         float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.00001f / 45.0f, 1.5f);
         rotateCamera((float)dx * sens, (float)dy * sens, 0.0f);
       }
@@ -1844,6 +1851,17 @@ bool Renderer::UpdateInputs() {
     else {
       if (exploreKeyPressed && exploring() && !exploreSearchOpen) OpenExploreSearch();
       exploreKeyPressed = false;
+    }
+
+    // t = travel to the highlighted object, Shift+t = jump there (exploration
+    // only, fires on release; StepExploreTravel acts on the request).
+    if (exploring() && glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS) {
+      travelKeyPressed = true;
+      if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+          glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) travelKeyShift = true;
+    } else {
+      if (travelKeyPressed && exploreFlying()) exploreTravelRequest = travelKeyShift ? 2 : 1;
+      travelKeyPressed = travelKeyShift = false;
     }
 
     // M = show / hide the atlas: the map card and the in-world labels.
@@ -3864,6 +3882,7 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
     if (std::fabs(goal - atlasFade) < 0.002f) atlasFade = goal;
   }
   DrawExplorationLabels(physicsObjects, clouds);
+  StepExploreTravel(physicsObjects, clouds);   // after the labels: they say what is highlighted
   DrawExplorationMap(physicsObjects, clouds);
   DrawExploreMenu();
   DrawProjectPanel(cb);
@@ -4511,6 +4530,14 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                        ImGuiSliderFlags_Logarithmic);
     ImGui::SameLine();
     if (ImGui::Button("Reset##camspeed")) cameraSpeedFactor = 1.0f;
+    ImGui::Text("Travel Speed");
+    ImGui::SetNextItemWidth(Em(-60));
+    ImGui::SliderFloat("##travelsecs", &travelSeconds, 0.5f, 20.0f, "%.1f s",
+                       ImGuiSliderFlags_Logarithmic);
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("How long a trip takes in exploration (t on the highlighted object).");
+    ImGui::SameLine();
+    if (ImGui::Button("Reset##travelsecs")) travelSeconds = 3.0f;
     if (focusDistance > 0.0f)
       ImGui::TextDisabled("Adaptive: scaling with focus distance");
     else

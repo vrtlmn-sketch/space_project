@@ -718,8 +718,9 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
 // the only number anyone should have to think about is the galaxy's real size.
 static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clouds,
                                  const double camT[3], float fovDeg, int fbHeight,
-                                 const float fwd[3])
+                                 const float fwd[3], float& behindShare)
 {
+  behindShare = 0.0f;
   // A galaxy is only worth detailing if it is actually IN the view cone. frac
   // below is angular SIZE / FOV — it says nothing about WHERE the galaxy is, so
   // at a deep zoom every galaxy in the sky has a huge frac and they ALL promote
@@ -891,6 +892,7 @@ static void UpdateUniverseDetail(std::vector<std::unique_ptr<CloudObject>>& clou
   // One rebuild per frame. A full 50k-star galaxy costs ~4.9 ms to generate,
   // and doing several in a frame turns a hitch into a freeze.
   if (!rebuild) return;
+  behindShare = bestFrac;      // a trip in exploration waits while this is large
   RenderedObject& ro = rebuild->renderedObject;
   GalaxyDesc desc = ro.galaxyDesc;          // copy: BuildGalaxyStarfield overwrites it
   const int before = ro.galaxyStarCount;
@@ -2105,7 +2107,7 @@ int main(int argc, char** argv) {
       float fwd[3] = { cf.x, cf.y, cf.z };
       UpdateUniverseDetail(clouds, renderer.cameraTranslate, renderer.zoom,
                            renderer.viewportHeight() > 0 ? renderer.viewportHeight() : 1080,
-                           fwd); }
+                           fwd, renderer.exploreLodBehind); }
 
     // Step all GPU Barnes-Hut clouds together against one shared octree so
     // separate formations gravitate on each other, then draw each cloud.
