@@ -120,7 +120,8 @@ RGB Lighten(RGB c, float t) { return {c.r + (1 - c.r) * t, c.g + (1 - c.g) * t, 
 std::string gCrumbGalaxy, gCrumbStar;
 
 struct LabelState { float alpha{0.0f}; float focus{0.0f}; bool seen{false};
-                    float far{-1.0f}; };   // 0 = in your galaxy, 1 = outside it; eased, -1 = not yet set
+                    float far{-1.0f};      // 0 = in your galaxy, 1 = outside it; eased, -1 = not yet set
+                    int   mode{0}; };      // where its label sat last frame (0 = above), tried first so it stays put
 std::unordered_map<long long, LabelState> gLabelState;
 
 }  // namespace
@@ -980,9 +981,14 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     float shrink = 1.0f;   // text and dot scale: below 1 for what lies outside the galaxy you are in
     dvec3 rel{0.0, 0.0, 0.0};   // camera-relative position, to tell what is inside that galaxy
     bool  dark = false;         // lost to the exposure: no label, and not something you can point at
+    bool  local = false;        // belongs to the solar system you are in: its name is always found room
+    int   mode = 0;             // 0 = name above, distance below; else a block beside the dot at (bx, by)
+    float bx = 0.0f, by = 0.0f;
   };
   struct Home { dvec3 rel; double ext; };
   std::vector<Home> homes;     // the galaxies you are inside
+  Home   nearHome{dvec3{0.0, 0.0, 0.0}, 0.0};   // else the nearest one you are beside
+  double nearHomeKey = 1e300;
   std::vector<Cand> cands;
   cands.reserve(256);
   // A trip stops 5.7 radii out (ComputeLocatePose); within a little more than
@@ -1035,6 +1041,9 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       continue;
     }
     const int k = cl.renderedObject.isGalaxy ? kAkGalaxy : kAkCloud;
+    if (ext > 0.0 && dist < ext * 8.0 && (nearHome.ext <= 0.0 || dist / ext < nearHomeKey)) {
+      nearHome = Home{rel, ext}; nearHomeKey = dist / ext;        // the galaxy you are beside
+    }
     add((1LL << 40) | (long long)i, k, rel, dist, band(dist, std::max(ext, 1e-9), 3.0), cl.name.c_str(), KindRGB(k), ext);
   }
 
@@ -1047,8 +1056,8 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // everything between the two looks, not snaps. A label seen for the first
   // time starts where it belongs.
   // SCOPE. What you are in decides what is "here": inside a solar system it is
-  // that star and what belongs to it; otherwise, inside a galaxy, it is what
-  // the galaxy holds. Things in scope get a slightly larger name. Everything
+  // that star and what belongs to it; otherwise, in or beside a galaxy, it is
+  // what the galaxy holds. Things in scope get a slightly larger name. Everything
   // else is plainly background: much smaller, dimmer, and without its distance
   // until you look at it.
   const bool inSystem = (mapKindAuto == kSolar && nearestStar >= 0);
@@ -1074,9 +1083,15 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       starVis = starVis * starVis * (3.0f - 2.0f * starVis);
     }
   }
+  // The galaxy in scope: the one you are inside, or failing that the one you
+  // are beside (within eight of its radii — taking a galaxy in leaves you 5.7
+  // out, looking at it, and what is IN it should still read apart from the
+  // galaxies behind it).
+  std::vector<Home> scopes = homes;
+  if (scopes.empty() && nearHome.ext > 0.0) scopes.push_back(nearHome);
   static float scopeAmt = 0.0f;                    // 1 while you are inside something, eased
   {
-    const float goal = (inSystem || !homes.empty()) ? 1.0f : 0.0f;
+    const float goal = (inSystem || !scopes.empty()) ? 1.0f : 0.0f;
     scopeAmt += (goal - scopeAmt) * (1.0f - std::exp(-dt * 5.0f));
   }
   for (Cand& c : cands) {
@@ -1086,28 +1101,13 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       // In a system the rule is simple: yours, or not.
       outside = Len(Sub(c.rel, sysRel)) > sysReach;
       through = outside ? 1.0f : 0.0f;
-    } else if (!homes.empty() && !c.inside) {
+      c.local = !outside;
+    } else if (!scopes.empty() && !c.inside) {
+      // In (or beside) a galaxy the rule is the same: in it, or not.
       outside = true;
-      for (const Home& h : homes)
+      for (const Home& h : scopes)
         if (Len(Sub(c.rel, h.rel)) <= h.ext * 1.05) { outside = false; break; }
-      // Only what you see THROUGH your galaxy steps back. Look out of it, the
-      // short way to the edge, and what is out there is as plain as ever; turn
-      // toward the bulk of it and what lies beyond gives way to what is in it.
-      // Measured as the length of galaxy the line of sight crosses, in radii:
-      // under 0.6 leaves a label alone, 1.3 and over dims it fully.
-      if (outside) {
-        const double dl = Len(c.rel);
-        for (const Home& h : homes) {
-          if (!(dl > 0.0) || !(h.ext > 0.0)) continue;
-          const double b    = Dot(h.rel, c.rel) / dl;                    // along the ray to the centre's closest point
-          const double disc = b * b - Dot(h.rel, h.rel) + h.ext * h.ext; // >= 0 while you are inside
-          if (disc <= 0.0) continue;
-          const double path = (b + std::sqrt(disc)) / h.ext;
-          float k = (float)std::clamp((path - 0.6) / 0.7, 0.0, 1.0);
-          k = k * k * (3.0f - 2.0f * k);
-          through = std::max(through, k);
-        }
-      }
+      through = outside ? 1.0f : 0.0f;
     }
     LabelState& st = gLabelState[c.key];
     const float goal = outside ? through : 0.0f;
@@ -1257,13 +1257,44 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       b.y0 -= 6.0f;
       b.y1 += hsz.y + 3.0f + 6.0f;
     }
-    bool clear = true;
-    for (const Box& o : boxes)
-      if (b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0) { clear = false; break; }
+    auto hits = [&](const Box& t) {
+      for (const Box& o : boxes)
+        if (t.x0 < o.x1 && t.x1 > o.x0 && t.y0 < o.y1 && t.y1 > o.y0) return true;
+      return false;
+    };
+    bool clear = !hits(b);
+    // Everything in your own solar system gets its name, even bunched up
+    // against the sun as the inner planets are from the outer ones. If the
+    // usual spot is taken, the label goes beside the dot instead: right, left,
+    // below, then the four diagonals. The spot it had last frame is tried
+    // first, so labels do not hop about as things drift.
+    if (!clear && c.local && !isClose(c) && !c.inside && c.key != centreKey) {
+      const float bw = std::max(nsz.x, ssz.x), bh = nsz.y + ssz.y;
+      auto spot = [&](int m, float& x, float& y) {
+        switch (m) {
+          case 1: x = c.x + r + 6.0f;      y = c.y - bh * 0.5f;      break;   // right
+          case 2: x = c.x - r - 6.0f - bw; y = c.y - bh * 0.5f;      break;   // left
+          case 3: x = c.x - bw * 0.5f;     y = c.y + r + 4.0f;       break;   // below
+          case 4: x = c.x + r + 2.0f;      y = c.y - r - 2.0f - bh;  break;   // up right
+          case 5: x = c.x + r + 2.0f;      y = c.y + r + 2.0f;       break;   // down right
+          case 6: x = c.x - r - 2.0f - bw; y = c.y - r - 2.0f - bh;  break;   // up left
+          default: x = c.x - r - 2.0f - bw; y = c.y + r + 2.0f;      break;   // down left
+        }
+      };
+      const int last = gLabelState[c.key].mode;
+      for (int k = 0; k < 8 && !clear; ++k) {
+        const int m = (k == 0) ? last : k;
+        if (m < 1 || m > 7 || (k > 0 && m == last)) continue;
+        float x, y; spot(m, x, y);
+        const Box t{x - 2.0f, y - 1.0f, x + bw + 2.0f, y + bh + 1.0f};
+        if (!hits(t)) { clear = true; b = t; c.mode = m; c.bx = x; c.by = y; }
+      }
+    }
     if (!clear) continue;
     boxes.push_back(b);
     c.placed = true;
     c.order = placedCount++;
+    gLabelState[c.key].mode = c.mode;
   }
 
   // ── Fades: in when placed (rippling out after the atlas opens), out when not ──
@@ -1319,9 +1350,11 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     // Kept on screen (and under the bar and the Play hint) when the disc is so
     // large its top edge is out of view.
     // Up close the name stands a little further off the limb.
-    const ImVec2 np(std::floor(c.x - nsz.x * 0.5f),
-                    std::max(std::floor(c.y - r - (close ? 14.0f : 4.0f) - nsz.y + rise - ringGap),
-                             std::floor(oy + Em(62.0f))));
+    const ImVec2 np = (c.mode != 0)
+        ? ImVec2(std::floor(c.bx), std::floor(c.by + rise))             // beside the dot (see placement)
+        : ImVec2(std::floor(c.x - nsz.x * 0.5f),
+                 std::max(std::floor(c.y - r - (close ? 14.0f : 4.0f) - nsz.y + rise - ringGap),
+                          std::floor(oy + Em(62.0f))));
     const float nameA = (0.62f + 0.38f * std::max(c.t, st.focus)) * e;
     dl->AddText(font, ns, ImVec2(np.x + 1.0f, np.y + 1.0f), C(shadow, 0.55f * e), c.name);
     dl->AddText(font, ns, np, C(Lighten(c.rgb, 0.55f), nameA), c.name);
@@ -1332,7 +1365,9 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       char sub[80]; subText(c, withKind != 0, sub, sizeof(sub));
       const float  ss  = subSizeOf(c);
       const ImVec2 ssz = font->CalcTextSizeA(ss, FLT_MAX, 0.0f, sub);
-      const ImVec2 sp(std::floor(c.x - ssz.x * 0.5f), std::floor(c.y + r + 3.0f + rise + ringGap));
+      const ImVec2 sp = (c.mode != 0)
+          ? ImVec2(std::floor(c.bx), std::floor(c.by + nsz.y + rise))   // under its name, in the same block
+          : ImVec2(std::floor(c.x - ssz.x * 0.5f), std::floor(c.y + r + 3.0f + rise + ringGap));
       dl->AddText(font, ss, ImVec2(sp.x + 1.0f, sp.y + 1.0f), C(shadow, 0.5f * a), sub);
       dl->AddText(font, ss, sp, C(subRGB, a), sub);
     }
