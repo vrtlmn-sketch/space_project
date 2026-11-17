@@ -37,6 +37,17 @@ constexpr double kUnresolvedSteps = 400.0;   // above this: back to numeric
 // dt, e.g. a small cloud deep inside a far larger galaxy).
 constexpr int    kMaxSubsteps     = 32;
 
+// The other end: a cloud so SLOW at this step that simulating it shows nothing.
+// At a step chosen for a planet's year, a galaxy has ~1e10 steps per orbit —
+// hours of continuous play would turn it a fraction of a degree — yet stepping
+// its 20 000 stars on the GPU and reading them back cost 65 ms a frame, five
+// times everything else put together. Past kStillSteps a cloud is STILL: its
+// particles are left alone, exactly as if paused, and it wakes (hysteresis)
+// when the step grows enough for it to move. Its pull on the bodies is
+// unaffected: that comes from its mass and halo, not from stepping it.
+constexpr double kStillSteps     = 1.0e8;
+constexpr double kStillWakeSteps = 5.0e7;
+
 // EXPERIMENT: when false, clouds NEVER freeze — an unresolved cloud sub-steps
 // up to kMaxSubsteps and then runs best-effort at that resolution instead of
 // going rigid. This trades the freeze (particles held, cloud moves as one

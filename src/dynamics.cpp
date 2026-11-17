@@ -280,7 +280,7 @@ void UpdateSceneDynamics(std::vector<PhysicsObject>& objects,
   for (int k = 0; k < (int)clouds.size(); ++k) {
     if (!clouds[k]) continue;
     CloudObject& c = *clouds[k];
-    if (!c.simulatePhysics || c.dynMass <= 0.0) { c.dynRigid = false; c.dynParent = -1; continue; }
+    if (!c.simulatePhysics || c.dynMass <= 0.0) { c.dynRigid = false; c.dynStill = false; c.dynParent = -1; continue; }
     noteT(c.dynT);
     double Tp = 0.0, mu = 0.0; dvec3 ppos{}, pvel{};
     const int parent = pickParent(atts, c.dynMass, c.dynComWorld, -2 - k, c.dynParent, Tp, mu, ppos, pvel,
@@ -293,6 +293,15 @@ void UpdateSceneDynamics(std::vector<PhysicsObject>& objects,
     // freezes when even kMaxSubsteps cannot resolve it.
     const double steps    = (c.dynT > 0.0 && dt > 0.0) ? c.dynT / dt : 1e300;
     const double capSteps = steps * (double)kMaxSubsteps;
+    if (!c.dynStill) {
+      if (steps > kStillSteps) {
+        c.dynStill = true;
+        if (debug) std::cerr << "[dyn] cloud " << k << " -> still (" << steps << " steps/orbit)\n";
+      }
+    } else if (steps < kStillWakeSteps) {
+      c.dynStill = false;
+      if (debug) std::cerr << "[dyn] cloud " << k << " -> moving again (" << steps << " steps/orbit)\n";
+    }
     if (!kFreezeUnresolvedClouds) {
       // EXPERIMENT: freezing off — clouds never go rigid. An unresolved cloud
       // sub-steps up to the cap and then runs best-effort at that resolution.
@@ -373,7 +382,9 @@ void TransportRigidClouds(std::vector<PhysicsObject>& objects,
   for (int k = 0; k < (int)clouds.size(); ++k) {
     if (!clouds[k]) continue;
     CloudObject& c = *clouds[k];
-    if (!c.simulatePhysics || !c.dynRigid) continue;
+    if (!c.simulatePhysics) continue;
+    if (c.dynStill && !c.dynRigid) { c.timeframe += (unsigned int)steps; continue; }   // not stepped, but time passes
+    if (!c.dynRigid) continue;
     dvec3 ppos{0,0,0};
     if (c.dynParent >= 0 && c.dynParent < (int)objects.size()) ppos = objects[c.dynParent].data.position;
     else if (c.dynParent <= -2 && (-2 - c.dynParent) < (int)clouds.size() && clouds[-2 - c.dynParent])

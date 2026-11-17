@@ -429,6 +429,7 @@ void CloudObject::SimulateSharedForward(
     if (c->computeMethod != CloudComputeMethod::BarnesHutGPU) continue;
     if (!c->simulatePhysics) continue;
     if (c->dynRigid) continue;   // unresolved at this step: transported as one body instead
+    if (c->dynStill) continue;   // far too slow to see at this step: left alone
     // Dark matter is the ANALYTIC halo (see dispatch + the halo list), not
     // particles: a particle DM halo NaN'd at galaxy scale and poisoned the whole
     // shared octree. Strip any stale DM from an older session.
@@ -807,7 +808,7 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     // their per-cloud forward stepping here so they aren't stepped twice.
     bool sharedHandled = (computeMethod == CloudComputeMethod::BarnesHutGPU
                           && gpuInitialized && renderer.playingForward);
-    if(sharedHandled || dynRigid)
+    if(sharedHandled || dynRigid || dynStill)
     {
       // physics already advanced by the shared coordinator this frame — or the
       // cloud is RIGID at this step (dyn::TransportRigidClouds moves it as one
@@ -918,6 +919,7 @@ void CloudObject::clearRecording()
   if (frameStore) frameStore->clear();
   timeframe = 0;
   dynRigid   = false;   // same as PhysicsObject::clearRecording: re-enter from the current state
+  dynStill   = false;
   dynSubsteps = 1;
   dynElapsed = 0.0;
   dynMass    = 0.0;     // and re-measure
