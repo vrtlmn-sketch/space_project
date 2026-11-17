@@ -1007,7 +1007,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     if (centreKey & (1LL << 40)) exploreFocusCloud = (int)(centreKey & ((1LL << 40) - 1));
     else                         exploreFocusObj   = (int)centreKey;
   }
-  const char* travelHint = exploreTravelActive ? "Travelling  -  steer to stop"
+  const char* travelHint = exploreTripActive() ? "Travelling  -  steer to stop"
                                                : "Travel [t]   Fast travel [T]";
   if (centre >= 0) cands[(size_t)centre].prio = -1e9;
   std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.prio < b.prio; });
@@ -1174,6 +1174,21 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const PhysicsObject& s = physicsObjects[(size_t)nearestStar];
     edgeMarker(CameraRelative(s.renderedObject.coordinates, s.renderedObject.localOffset),
                s.name.c_str(), nearestStarD, BodyRGB(s));
+  }
+
+  // "Travel back [b]": shown for three seconds after a trip ends, a little
+  // larger than the travel hint. The key keeps working after it fades.
+  {
+    const double age = now - travelBackHintAt;
+    if (travelBackPose.valid && exploreFlying() && !exploreTripActive() && age >= 0.0 && age < 3.0) {
+      const float a = (float)std::min({age / 0.2, (3.0 - age) / 0.5, 1.0}) * A;
+      const char* txt = "Travel back [b]";
+      const float sz = fs * 1.05f;
+      const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
+      const ImVec2 tp(std::floor(mid.x - ts.x * 0.5f), std::floor(oy + H * 0.80f));
+      dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.55f * a), txt);
+      dl->AddText(font, sz, tp, C(RGB{0.90f, 0.93f, 0.98f}, 0.90f * a), txt);
+    }
   }
 
   // Inside a solar system: its planets and moons too, nearest first, so you can

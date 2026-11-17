@@ -1772,10 +1772,10 @@ bool Renderer::UpdateInputs() {
     const float rollStep = cameraRotationSpeed * frameScale;
 
     // Steering ends a trip where you are.
-    if (exploreTravelActive) {
+    if (exploreTripActive()) {
       for (int k : {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_SPACE,
                     GLFW_KEY_LEFT, GLFW_KEY_RIGHT, GLFW_KEY_UP, GLFW_KEY_DOWN})
-        if (glfwGetKey(window, k) == GLFW_PRESS) { exploreTravelActive = false; break; }
+        if (glfwGetKey(window, k) == GLFW_PRESS) { exploreTravelActive = travelBackActive = false; break; }
     }
 
     // WASD = position movement (yaw-aware, horizontal plane)
@@ -1810,7 +1810,7 @@ bool Renderer::UpdateInputs() {
       glfwGetCursorPos(window, &x, &y);
       const double dx = x - flightLastX, dy = y - flightLastY;
       flightLastX = x; flightLastY = y;
-      if ((dx != 0.0 || dy != 0.0) && !exploreTravelActive) {   // a trip steers itself
+      if ((dx != 0.0 || dy != 0.0) && !exploreTripActive()) {   // a trip steers itself
         float sens = 0.0035f * std::clamp(zoom / 45.0f, 0.00001f / 45.0f, 1.5f);
         rotateCamera((float)dx * sens, (float)dy * sens, 0.0f);
       }
@@ -1875,6 +1875,16 @@ bool Renderer::UpdateInputs() {
     } else {
       if (travelKeyPressed && exploreFlying()) exploreTravelRequest = travelKeyShift ? 2 : 1;
       travelKeyPressed = travelKeyShift = false;
+    }
+
+    // b = travel back to where the last trip started, Shift+b = jump back.
+    if (exploring() && glfwGetKey(window, GLFW_KEY_B) == GLFW_PRESS) {
+      backKeyPressed = true;
+      if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+          glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) backKeyShift = true;
+    } else {
+      if (backKeyPressed && exploreFlying()) exploreBackRequest = backKeyShift ? 2 : 1;
+      backKeyPressed = backKeyShift = false;
     }
 
     // M = show / hide the atlas: the map card and the in-world labels.

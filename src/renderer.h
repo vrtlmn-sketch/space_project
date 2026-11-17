@@ -1020,6 +1020,27 @@ public:
   float  travelFromRot[9]{1,0,0, 0,1,0, 0,0,1};
   float  travelFromZoom{45.0f}, travelToYaw{0.0f}, travelToPitch{0.0f};
   float  travelSeconds{3.0f};                          // how long a trip takes (Camera & Movement)
+  // ── Travel back: b returns to where the last trip started ──
+  // The whole pose is kept (position, facing, field of view), so you come back
+  // looking at what you were looking at. One level: going back remembers the
+  // place you left, so b toggles between the two.
+  struct TravelPose {
+    bool   valid{false};
+    double anchor[3]{0, 0, 0}, translate[3]{0, 0, 0};
+    float  rot[9]{1,0,0, 0,1,0, 0,0,1};
+    float  zoom{45.0f};
+    double scale{1.0};                                 // focus distance there: how fast "slow" is
+  };
+  TravelPose CaptureTravelPose() const;
+  void       ApplyTravelPose(const TravelPose& p);
+  TravelPose travelBackPose;                           // where b goes
+  TravelPose travelBackFrom, travelBackTo;             // the back trip in flight
+  bool   travelBackActive{false};
+  double travelBackT{0.0}, travelBackHeld{0.0};
+  double travelBackHintAt{-1e9};                       // when the "Travel back" hint last appeared
+  int    exploreBackRequest{0};                        // 1 = travel back, 2 = jump back
+  bool   backKeyPressed{false}, backKeyShift{false};
+  bool   exploreTripActive() const { return exploreTravelActive || travelBackActive; }
   // View share of the galaxy most in need of a detail rebuild this frame (0 =
   // every galaxy in view is as detailed as its size calls for). A trip waits on it.
   float  exploreLodBehind{0.0f};

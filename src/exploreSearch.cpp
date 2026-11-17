@@ -163,6 +163,25 @@ static void QuatToMat(const double q[4], float m[9]) {
   m[6] = (float)(2*(x*z - w*y));     m[7] = (float)(2*(y*z + w*x));     m[8] = (float)(1 - 2*(x*x + y*y));
 }
 
+Renderer::TravelPose Renderer::CaptureTravelPose() const {
+  TravelPose p;
+  p.valid = true;
+  for (int i = 0; i < 3; ++i) { p.anchor[i] = gCamAnchor[i]; p.translate[i] = cameraTranslate[i]; }
+  for (int i = 0; i < 9; ++i) p.rot[i] = camMatrix[i];
+  p.zoom  = zoom;
+  p.scale = (focusDistance > 0.0f) ? (double)focusDistance : 1.0;
+  return p;
+}
+
+void Renderer::ApplyTravelPose(const TravelPose& p) {
+  for (int i = 0; i < 3; ++i) { gCamAnchor[i] = p.anchor[i]; cameraTranslate[i] = p.translate[i]; }
+  for (int i = 0; i < 9; ++i) { camMatrix[i] = p.rot[i]; gViewRotD[i] = (double)p.rot[i]; }
+  syncEulerFromMatrix();
+  zoom = p.zoom;
+  rtDirty = true;
+  invalidateZoomAnchor();
+}
+
 // The trip is a straight line from where you are to the pose Locate would give,
 // with the DISTANCE eased in log space: one motion has to cover 1e15 AU down to
 // a planet's surface, and only a constant rate per decade shows both the launch
@@ -172,7 +191,93 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds) {
   const int req = exploreTravelRequest;
   exploreTravelRequest = 0;
-  if (!exploreFlying()) { exploreTravelActive = false; travelPendObj = travelPendCloud = -1; return; }
+  const int backReq = exploreBackRequest;
+  exploreBackRequest = 0;
+  if (!exploreFlying()) {
+    exploreTravelActive = travelBackActive = false;
+    travelPendObj = travelPendCloud = -1;
+    return;
+  }
+
+  // ── Travel back ──
+  // There is no target to ease around on the way back, only a point in space,
+  // so the distance is eased from BOTH ends: speed builds from the scale of the
+  // place you are leaving and falls to the scale of the place you land.
+  if (backReq != 0 && travelBackPose.valid) {
+    const TravelPose dest = travelBackPose;
+    travelBackPose = CaptureTravelPose();             // b again goes forth
+    exploreTravelActive = false;
+    if (backReq == 2) {
+      travelBackActive = false;
+      ApplyTravelPose(dest);
+      travelBackHintAt = ImGui::GetTime();
+      return;
+    }
+    travelBackFrom = travelBackPose;
+    travelBackTo   = dest;
+    travelBackT = 0.0; travelBackHeld = 0.0;
+    travelBackActive = true;
+    invalidateZoomAnchor();
+  }
+  if (travelBackActive && req == 0) {
+    const TravelPose& A = travelBackFrom;
+    const TravelPose& B = travelBackTo;
+    const double dt = (double)ImGui::GetIO().DeltaTime;
+    if (exploreLodBehind > 0.05f && travelBackHeld < 2.0) travelBackHeld += dt;
+    else travelBackT += dt / std::max((double)travelSeconds, 0.1);
+    const double t = std::min(travelBackT, 1.0);
+    const double e = t * t * t * (t * (6.0 * t - 15.0) + 10.0);
+
+    // From -> to, anchors differenced first (position = anchor - translate).
+    const dvec3 D{ (B.anchor[0] - A.anchor[0]) - (B.translate[0] - A.translate[0]),
+                   (B.anchor[1] - A.anchor[1]) - (B.translate[1] - A.translate[1]),
+                   (B.anchor[2] - A.anchor[2]) - (B.translate[2] - A.translate[2]) };
+    const double L = getLength(D);
+    auto half = [&](double x, double scale) {         // 0..1 -> 0..L/2, geometric from `scale`
+      const double h = (0.5 * L) / std::max(scale, 1e-12);
+      if (!(h > 1.0001)) return 0.5 * L * x;
+      return 0.5 * L * (std::pow(h, x) - 1.0) / (h - 1.0);
+    };
+    double f = 1.0;                                   // fraction of the way there
+    if (L > 0.0) f = (e < 0.5) ? half(2.0 * e, A.scale) / L
+                               : 1.0 - half(2.0 * (1.0 - e), B.scale) / L;
+    // Each half is written against its own end, so the small numbers near the
+    // start and near the landing are never added to the whole distance.
+    if (f < 0.5) for (int i = 0; i < 3; ++i) {
+      gCamAnchor[i] = A.anchor[i];
+      cameraTranslate[i] = A.translate[i] - (i == 0 ? D.x : i == 1 ? D.y : D.z) * f;
+    } else for (int i = 0; i < 3; ++i) {
+      gCamAnchor[i] = B.anchor[i];
+      cameraTranslate[i] = B.translate[i] + (i == 0 ? D.x : i == 1 ? D.y : D.z) * (1.0 - f);
+    }
+
+    double qa[4], qb[4], q[4];
+    MatToQuat(A.rot, qa);
+    MatToQuat(B.rot, qb);
+    double dot = qa[0]*qb[0] + qa[1]*qb[1] + qa[2]*qb[2] + qa[3]*qb[3];
+    if (dot < 0.0) { dot = -dot; for (double& v : qb) v = -v; }
+    if (dot > 0.9995) {
+      for (int i = 0; i < 4; ++i) q[i] = qa[i] + (qb[i] - qa[i]) * e;
+    } else {
+      const double th = std::acos(std::min(dot, 1.0)), sn = std::sin(th);
+      const double wa = std::sin((1.0 - e) * th) / sn, wb = std::sin(e * th) / sn;
+      for (int i = 0; i < 4; ++i) q[i] = qa[i] * wa + qb[i] * wb;
+    }
+    const double ql = std::sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+    for (double& v : q) v /= std::max(ql, 1e-12);
+    QuatToMat(q, camMatrix);
+    for (int i = 0; i < 9; ++i) gViewRotD[i] = (double)camMatrix[i];
+    syncEulerFromMatrix();
+    zoom = (float)std::exp(std::log((double)A.zoom) + (std::log((double)B.zoom) - std::log((double)A.zoom)) * e);
+    rtDirty = true;
+
+    if (travelBackT >= 1.0) {
+      travelBackActive = false;
+      ApplyTravelPose(B);                             // land exactly
+      travelBackHintAt = ImGui::GetTime();
+    }
+    return;
+  }
 
   auto nameOf = [&](int obj, int cloud) -> std::string {
     if (obj >= 0 && obj < (int)physicsObjects.size()) return physicsObjects[(size_t)obj].name;
@@ -189,9 +294,12 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
   dvec3 origin, offset; float effR = 0.0f;
   if (req != 0 && (wantObj >= 0 || wantCloud >= 0) &&
       ExploreTarget(physicsObjects, clouds, wantObj, wantCloud, origin, offset, effR)) {
+    travelBackActive = false;
+    travelBackPose = CaptureTravelPose();             // b comes back here
     if (req == 2) {                                   // fast travel: the search's own jump
       exploreTravelActive = false;
       LocateCameraOn(origin, offset, effR);
+      travelBackHintAt = ImGui::GetTime();
       return;
     }
     travelObj = wantObj; travelCloud = wantCloud;
@@ -275,6 +383,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
   if (travelT >= 1.0) {
     exploreTravelActive = false;
     invalidateZoomAnchor();
+    travelBackHintAt = ImGui::GetTime();
   }
 }
 
@@ -521,6 +630,9 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
   } else if (travel && sel >= 0) {
     dvec3 origin, offset; float effR = 0.0f;
     if (ExploreTarget(physicsObjects, clouds, exploreSelObj, exploreSelCloud, origin, offset, effR)) {
+      travelBackActive = exploreTravelActive = false;
+      travelBackPose = CaptureTravelPose();           // b comes back here
+      travelBackHintAt = ImGui::GetTime();
       LocateCameraOn(origin, offset, effR);
       CloseExploreSearch();
     }
