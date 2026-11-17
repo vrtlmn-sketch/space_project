@@ -163,6 +163,16 @@ static void QuatToMat(const double q[4], float m[9]) {
   m[6] = (float)(2*(x*z - w*y));     m[7] = (float)(2*(y*z + w*x));     m[8] = (float)(1 - 2*(x*x + y*y));
 }
 
+// Arrived somewhere: show what it is. Only bodies carry a description.
+void Renderer::ShowArrivalDescription(std::vector<PhysicsObject>& physicsObjects, int obj) {
+  exploreDescObj = -1;
+  if (obj < 0 || obj >= (int)physicsObjects.size()) return;
+  if (physicsObjects[(size_t)obj].description.empty()) return;
+  exploreDescObj  = obj;
+  exploreDescName = physicsObjects[(size_t)obj].name;
+  exploreDescAt   = ImGui::GetTime();
+}
+
 // ── Play from a body's point of view ──
 static bool CanPlayFrom(const PhysicsObject& o) {
   return !o.inertSlot() && o.simulatePhysics && o.dynT > 0.0;
@@ -198,6 +208,7 @@ void Renderer::StepExplorePlay(std::vector<PhysicsObject>& physicsObjects,
   explorePlayRequest = 0;
   exploreCanPlay = false;
   if (!exploring()) return;
+  if (exploreGalaxyView) { paused = true; return; }   // nothing to play from out here
 
   // The locked body is gone, or no longer something that moves.
   if (exploreLockObj >= 0 &&
@@ -384,7 +395,8 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
     return std::string();
   };
 
-  // The search names its own target; otherwise it is whatever is highlighted.
+  // The search names its own target; otherwise it is whatever is highlighted
+  // (which, inside a galaxy and looking at its centre, is the galaxy itself).
   const bool pend = (travelPendObj >= 0 || travelPendCloud >= 0);
   const int  wantObj   = pend ? travelPendObj   : exploreFocusObj;
   const int  wantCloud = pend ? travelPendCloud : exploreFocusCloud;
@@ -396,10 +408,16 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
     travelBackActive = false;
     travelBackPose = CaptureTravelPose();             // b comes back here
     SetExploreLock(physicsObjects, clouds, wantObj);  // play is now from this body, at its own pace
+    exploreGalaxyView = (wantObj < 0);
+    if (exploreGalaxyView) {                          // a galaxy: no going back, nothing to play
+      travelBackPose.valid = false;
+      exploreLockObj = -1;
+    }
     if (req == 2) {                                   // fast travel: the search's own jump
       exploreTravelActive = false;
       LocateCameraOn(origin, offset, effR);
       travelBackHintAt = ImGui::GetTime();
+      ShowArrivalDescription(physicsObjects, wantObj);
       return;
     }
     travelObj = wantObj; travelCloud = wantCloud;
@@ -484,6 +502,7 @@ void Renderer::StepExploreTravel(std::vector<PhysicsObject>& physicsObjects,
     exploreTravelActive = false;
     invalidateZoomAnchor();
     travelBackHintAt = ImGui::GetTime();
+    ShowArrivalDescription(physicsObjects, travelObj);
   }
 }
 
@@ -738,6 +757,9 @@ void Renderer::DrawExploreSearch(std::vector<PhysicsObject>& physicsObjects,
       travelBackPose = CaptureTravelPose();           // b comes back here
       travelBackHintAt = ImGui::GetTime();
       SetExploreLock(physicsObjects, clouds, exploreSelObj);
+      exploreGalaxyView = (exploreSelObj < 0);
+      if (exploreGalaxyView) { travelBackPose.valid = false; exploreLockObj = -1; }
+      ShowArrivalDescription(physicsObjects, exploreSelObj);
       LocateCameraOn(origin, offset, effR);
       CloseExploreSearch();
     }

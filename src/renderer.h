@@ -1018,6 +1018,18 @@ public:
   dvec3  exploreLockLast{0.0, 0.0, 0.0};              // where the locked body was last frame
   bool   exploreLockHasLast{false};
   bool   exploreCanPlay{false};                       // something to play: drives the hint
+  // "Take in": inside a galaxy, looking at its centre, t flies out to where the
+  // whole of it is in view. A trip to a galaxy is a look, not a place: it
+  // leaves nothing to go back to and nothing to play from, until the next trip
+  // to a body.
+  bool   exploreGalaxyView{false};                    // the last trip was to a galaxy
+  // The description of the body you just arrived at, shown under it for a few
+  // seconds, or until you move off.
+  int    exploreDescObj{-1};
+  std::string exploreDescName;
+  double exploreDescAt{-1e9};
+  double exploreLastMoveAt{-1e9};                     // last time a movement key was held in exploration
+  void   ShowArrivalDescription(std::vector<PhysicsObject>& physicsObjects, int obj);
   double explorePlayHintAt{-1e9};
   bool   explorePlayKeyPressed{false};
   int    explorePlayRequest{0};
@@ -1502,6 +1514,11 @@ public:
   bool themeLight{false};              // active theme has light surfaces
   bool themeModern{false};             // Mercury or Luna: rounded, airy, Inter
   char appTheme[64] = "Mercury smooth (Gray)";
+  // Exploration's render height (Settings -> Display). The view is drawn at
+  // this height or the window's, whichever is SMALLER, so a small window never
+  // renders more than it shows. 0 = always the window's own size. Creative
+  // ignores it: Rendering -> Raster Resolution does exactly what it is told.
+  int  exploreResolutionH = 720;
   void ApplyTheme(const char* name);   // set ImGui style by theme name
   // Semantic button colours (orange Play, red Rec, …) are tuned for dark
   // themes; on light themes this brightens them so they stay visible.

@@ -469,7 +469,11 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
   };
 
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->PushClipRect(p0, ImVec2(p0.x + sz.x, p0.y + sz.y), true);
+  // Not clipped to the card: an orbit that runs past it used to be cut off on
+  // a straight line, which is what gave the map visible edges. Everything is
+  // drawn in full and then faded with distance from the middle (below).
+  dl->PushClipRectFullScreen();
+  const int mapVtx0 = dl->VtxBuffer.Size;
   const ImVec2 uv = ImGui::GetFontTexUvWhitePixel();
   auto withAlpha = [](ImU32 rgb, float a) {
     return rgb | ((ImU32)(std::clamp(a * gMapAlpha, 0.0f, 1.0f) * 255.0f) << IM_COL32_A_SHIFT);
@@ -869,7 +873,25 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
     }
   }
 
-  // ── Readouts ──
+  // Fade everything drawn so far out past the card, by its distance from the
+  // middle: full inside, gone at 1.7 half-widths. Done on the vertices, so it
+  // covers every line, dot and label without each having to know about it.
+  {
+    const ImVec2 mc(p0.x + sz.x * 0.5f, p0.y + sz.y * 0.5f);
+    const float  r0 = half * 1.0f, r1 = half * 1.7f;
+    for (int i = mapVtx0; i < dl->VtxBuffer.Size; ++i) {
+      ImDrawVert& v = dl->VtxBuffer[i];
+      const float dx = v.pos.x - mc.x, dy = v.pos.y - mc.y;
+      float f = 1.0f - std::clamp((std::sqrt(dx * dx + dy * dy) - r0) / (r1 - r0), 0.0f, 1.0f);
+      if (f >= 1.0f) continue;
+      f = f * f * (3.0f - 2.0f * f);
+      const ImU32 a = (ImU32)((float)((v.col >> IM_COL32_A_SHIFT) & 0xFF) * f);
+      v.col = (v.col & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+    }
+  }
+
+  // The readouts sit at the TOP, under the breadcrumb, and are drawn after the
+  // fade: text along the bottom marked exactly where the card ended.
   {
     static const char* nothing[3] = {"no planet", "no star", "no galaxy"};
     char line[160];
@@ -879,7 +901,7 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
     } else {
       std::snprintf(line, sizeof(line), "Looking at: %s", nothing[kind]);
     }
-    dl->AddText(ImVec2(p0.x + 10, p0.y + sz.y - 40), Col(0.92f, 0.95f, 1.0f, 0.90f), line);
+    dl->AddText(ImVec2(p0.x + 10, p0.y + 2.0f), Col(0.92f, 0.95f, 1.0f, 0.90f), line);
   }
   {
     char rbuf[32]; FormatDistance(R, rbuf, sizeof(rbuf));
@@ -888,7 +910,7 @@ void Renderer::DrawExplorationMapPanel(int kind, float winX, float winY, float s
       std::snprintf(footer, sizeof(footer), "around %s   radius %s", anchorName, rbuf);
     else
       std::snprintf(footer, sizeof(footer), "radius %s", rbuf);
-    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.9f, ImVec2(p0.x + 10, p0.y + sz.y - 21),
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.9f, ImVec2(p0.x + 10, p0.y + 21.0f),
                 Col(0.66f, 0.71f, 0.80f, 0.70f), footer);
   }
   dl->PopClipRect();
@@ -953,6 +975,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const char* name; RGB rgb; bool placed; int order; float vis;
     float rpx;      // its own radius on screen, in pixels (0 for clouds)
     bool  arrived;  // already as close as a trip would bring you
+    bool  inside;   // a galaxy you are inside, marked at its centre: t "takes it in"
   };
   std::vector<Cand> cands;
   cands.reserve(256);
@@ -969,7 +992,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       if (o.dist < dist * 0.999 && dx * dx + dy * dy < o.r * o.r) { vis = 0.3f; break; }
     }
     cands.push_back({key, kind, sx, sy, dist, t, 0.0, name, rgb, false, -1, vis, rpx,
-                     radius > 0.0 && dist <= radius * 5.7 * 1.1});
+                     radius > 0.0 && dist <= radius * 5.7 * 1.1, false});
   };
 
   int nearestStar = -1; double nearestStarD = 1e300;
@@ -992,7 +1015,17 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     const dvec3 rel = CameraRelative(cl.renderedObject.coordinates);
     const double dist = Len(rel);
     const double ext = CloudExtent(cl);
-    if (ext > 0.0 && dist < ext * 1.05) continue;                    // inside it: it is all around you
+    if (ext > 0.0 && dist < ext * 1.05) {
+      // Inside it, it is all around you — so it is marked at its CENTRE, in a
+      // larger name, and looking there offers "Take in": fly out to where the
+      // whole of it is in view. Marking it everywhere you looked made the
+      // galaxy feel like the answer to every direction.
+      const size_t before = cands.size();
+      add((1LL << 40) | (long long)i, cl.renderedObject.isGalaxy ? kAkGalaxy : kAkCloud, rel, dist, 1.0f,
+          cl.name.c_str(), KindRGB(cl.renderedObject.isGalaxy ? kAkGalaxy : kAkCloud), 0.0);
+      if (cands.size() > before) cands.back().inside = true;
+      continue;
+    }
     const int k = cl.renderedObject.isGalaxy ? kAkGalaxy : kAkCloud;
     add((1LL << 40) | (long long)i, k, rel, dist, band(dist, std::max(ext, 1e-9), 3.0), cl.name.c_str(), KindRGB(k), ext);
   }
@@ -1000,6 +1033,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // ── Priority: rank within its own kind, nearer first, then a closeness term ──
   std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) {
     return a.kind != b.kind ? a.kind < b.kind : a.dist < b.dist; });
+  float nearestAimD2 = 1e30f;                        // how close the middle of the view is to anything
   int centre = -1; float centreD2 = (H * 0.09f) * (H * 0.09f);
   for (size_t i = 0, rank = 0; i < cands.size(); ++i, ++rank) {
     if (i > 0 && cands[i].kind != cands[i - 1].kind) rank = 0;
@@ -1009,9 +1043,36 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     if (st != gLabelState.end() && st->second.alpha > 0.5f) c.prio -= 1.5;
     if (c.vis < 1.0f) c.prio += 3.0;                                   // behind a planet
     const float dx = c.x - mid.x, dy = c.y - mid.y;
+    nearestAimD2 = std::min(nearestAimD2, dx * dx + dy * dy);
     if (dx * dx + dy * dy < centreD2) { centreD2 = dx * dx + dy * dy; centre = (int)i; }
   }
+  // The galaxy you are inside is a CIRCLE round its centre, not a dot, and the
+  // circle is its target: look anywhere inside it for "Take in". A galaxy's
+  // centre usually has a black hole sitting exactly on it, and that keeps its
+  // own dot in the middle — aim precisely at the dot and it is the hole you
+  // get, as with anything that has something behind it.
+  const float kInsideR = Em(26.0f);
+  {
+    int g = -1;
+    for (size_t i = 0; i < cands.size(); ++i) if (cands[i].inside) { g = (int)i; break; }
+    if (g >= 0) {
+      auto d2 = [](float ax, float ay, float bx, float by) { return (ax - bx) * (ax - bx) + (ay - by) * (ay - by); };
+      const Cand& G = cands[(size_t)g];
+      int precise = -1;
+      for (size_t i = 0; i < cands.size(); ++i)
+        if (!cands[i].inside && d2(cands[i].x, cands[i].y, G.x, G.y) < 16.0f * 16.0f &&
+            d2(cands[i].x, cands[i].y, mid.x, mid.y) <= 10.0f * 10.0f) { precise = (int)i; break; }
+      const bool inCircle = d2(G.x, G.y, mid.x, mid.y) <= (kInsideR + 8.0f) * (kInsideR + 8.0f);
+      if (precise >= 0) centre = precise;
+      else if (inCircle) {
+        // Something else, well away from the middle, may still be the nearer pick.
+        if (centre < 0 || centre == g ||
+            d2(cands[(size_t)centre].x, cands[(size_t)centre].y, G.x, G.y) < 16.0f * 16.0f) centre = g;
+      } else if (centre == g) centre = -1;
+    }
+  }
   long long centreKey = (centre >= 0) ? cands[(size_t)centre].key : -1;
+  const bool centreInside = (centre >= 0) && cands[(size_t)centre].inside;
   const double centreDist = (centre >= 0) ? cands[(size_t)centre].dist : -1.0;   // for the scale bar
   // What t / Shift+t act on (StepExploreTravel). Only while the atlas is up.
   // No trips while playing, and none offered to something you are already at.
@@ -1022,6 +1083,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     else                         exploreFocusObj   = (int)centreKey;
   }
   const char* travelHint = exploreTripActive() ? "Travelling  -  steer to stop"
+                         : centreInside        ? "Take in [t]"
                                                : "Travel [t]   Fast travel [T]";
   if (centre >= 0) cands[(size_t)centre].prio = -1e9;
   std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.prio < b.prio; });
@@ -1036,7 +1098,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
   // The name always clears the body itself: above the dot while the body is
   // smaller than its dot, above the disc from the moment the disc is bigger,
   // with no jump between the two.
-  auto labelR   = [&](const Cand& c) { return std::max(c.rpx, dotR(c)); };
+  auto labelR   = [&](const Cand& c) { return c.inside ? kInsideR : std::max(c.rpx, dotR(c)); };
   auto nameSize = [&](const Cand& c) { return fs * (0.88f + 0.22f * c.t); };
   const float subSize = fs * 0.80f;
   auto subText = [&](const Cand& c, bool withKind, char* buf, size_t n) {
@@ -1060,6 +1122,9 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     // Up close only the name is reserved, above the disc: reserving the whole
     // disc would knock out the label of a moon passing in front of its planet.
     if (isClose(c)) b = Box{c.x - nsz.x * 0.5f - 4.0f, c.y - r - 15.0f - nsz.y, c.x + nsz.x * 0.5f + 4.0f, c.y - r - 10.0f};
+    // The galaxy's circle is open: it reserves its name above, not the space
+    // inside it, or whatever sits at the centre (a black hole) loses its label.
+    else if (c.inside) b = Box{c.x - nsz.x * 0.5f - 4.0f, c.y - r - 5.0f - nsz.y, c.x + nsz.x * 0.5f + 4.0f, c.y - r};
     else if (c.key == centreKey && canTravel) {        // room for the travel hint
       const ImVec2 hsz = font->CalcTextSizeA(subSize, FLT_MAX, 0.0f, travelHint);
       b.x0 = std::min(b.x0, c.x - hsz.x * 0.5f - 4.0f);
@@ -1101,6 +1166,10 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     // of the view (a named one keeps half, so its label is never orphaned),
     // and a body you can already see as a disc gets none at all.
     if (c.rpx > 8.0f) continue;
+    if (c.inside) {                                   // the galaxy you are in: an open circle
+      dl->AddCircle(ImVec2(c.x, c.y), kInsideR, C(Lighten(c.rgb, 0.25f), 0.55f * A * c.vis), 48, 1.2f);
+      continue;
+    }
     const bool  isCentre = (c.key == centreKey);
     const float dc  = std::sqrt((c.x - mid.x) * (c.x - mid.x) + (c.y - mid.y) * (c.y - mid.y));
     float       cf  = 1.0f - std::clamp((dc - H * 0.20f) / (H * 0.22f), 0.0f, 1.0f);
@@ -1146,14 +1215,15 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       const ImVec2 cp(c.x, c.y);
       const float  rr  = r + 7.0f + 1.5f * std::sin((float)now * 3.2f);
       const float  rot = (float)now * 1.4f;
-      // Round a disc, the ring needs more segments to stay round; round one
-      // that fills the view it would only be a stray curve, so it is left out.
-      const int segs = std::clamp((int)(r * 0.3f), 10, 64);
-      if (r < H * 0.6f) {
-        dl->AddCircle(cp, r + 3.5f, C(Lighten(c.rgb, 0.4f), 0.40f * f), close ? 0 : 24, 1.0f);
+      // Up close the turning arcs are too much round a whole disc: a single
+      // thin line says "this one" quietly enough.
+      if (close) {
+        if (r < H * 0.6f) dl->AddCircle(cp, r + 4.0f, C(Lighten(c.rgb, 0.4f), 0.30f * f), 0, 1.0f);
+      } else {
+        dl->AddCircle(cp, r + 3.5f, C(Lighten(c.rgb, 0.4f), 0.40f * f), 24, 1.0f);
         for (int k = 0; k < 4; ++k) {
           const float a0 = rot + (float)k * 1.5707963f;
-          dl->PathArcTo(cp, rr, a0, a0 + 0.95f, segs);
+          dl->PathArcTo(cp, rr, a0, a0 + 0.95f, 10);
           dl->PathStroke(C(Lighten(c.rgb, 0.6f), 0.90f * f), 0, 1.6f);
         }
       }
@@ -1260,6 +1330,39 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     dl->AddText(font, sz, tp, C(RGB{0.90f, 0.93f, 0.98f}, 0.92f * a), txt);
   }
 
+  // ── Pointer, at the middle of the view ──
+  // A small dot while there is nothing near the middle of the view. As you
+  // swing toward something it opens into a circle, and the moment that thing
+  // is highlighted it steps aside (the highlight is then the pointer). Inside
+  // a galaxy its big circle is a region, not a thing you are on, so there the
+  // pointer stays, as the circle.
+  {
+    static float ring = 0.0f, shown = 0.0f;
+    const float pickR = H * 0.09f, near = std::sqrt(nearestAimD2);
+    float approach = 1.0f - std::clamp((near - pickR * 1.2f) / (pickR * 1.8f), 0.0f, 1.0f);   // 1 close, 0 by 3 pick radii
+    approach = approach * approach * (3.0f - 2.0f * approach);
+    const bool  onThing  = centreKey >= 0 && !centreInside;
+    const float ringGoal = centreInside ? 1.0f : approach;
+    const float showGoal = (exploreFlying() && !onThing) ? 1.0f : 0.0f;
+    const float k = 1.0f - std::exp(-dt * 14.0f);
+    ring  += (ringGoal - ring) * k;
+    shown += (showGoal - shown) * k;
+    const ImVec2 pc(mid.x + 0.5f, mid.y + 0.5f);
+    const float  a = shown * A;
+    if (a > 0.01f) {
+      const RGB pale{0.90f, 0.93f, 0.98f};
+      if (ring < 0.99f) {                               // the dot, fading as the circle opens
+        dl->AddCircleFilled(pc, 2.3f, C(shadow, 0.35f * a * (1.0f - ring)), 12);
+        dl->AddCircleFilled(pc, 1.5f, C(pale, 0.65f * a * (1.0f - ring)), 12);
+      }
+      if (ring > 0.01f) {                               // the circle, growing out of it
+        const float r = 1.5f + 3.5f * ring;
+        dl->AddCircle(pc, r, C(shadow, 0.35f * a * ring), 20, 2.5f);
+        dl->AddCircle(pc, r, C(pale, 0.60f * a * ring), 20, 1.2f);
+      }
+    }
+  }
+
   // ── Scale bar, bottom right ──
   // A bar of fixed length and what it spans: the ANGLE (which depends only on
   // the zoom, as a telescope reports it) and the LENGTH that angle covers at
@@ -1336,6 +1439,60 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
     }
   }
 
+  // ── The description of where you have just arrived ──
+  // Under the body, above "Travel back", for ten seconds — or until you move
+  // off or look away, either of which is taken as having read enough.
+  {
+    const double age = now - exploreDescAt;
+    if (exploreDescObj >= 0 && exploreDescObj < (int)physicsObjects.size() && age >= 0.0 && age < 10.5 &&
+        exploreLastMoveAt < exploreDescAt && exploreFlying() && !exploreTripActive()) {
+      const PhysicsObject& o = physicsObjects[(size_t)exploreDescObj];
+      if (o.name == exploreDescName && !o.description.empty()) {
+        const float a  = (float)std::min({age / 0.3, (10.5 - age) / 0.5, 1.0}) * A;
+        const float sz = fs * 1.15f, lineH = sz * 1.35f;
+        const float wrapW = std::min(W * 0.50f, Em(620.0f));
+        // Word-wrap by hand so each line can be centred.
+        std::vector<std::string> lines;
+        {
+          std::string line, word;
+          auto flush = [&]() { if (!line.empty()) { lines.push_back(line); line.clear(); } };
+          auto put = [&]() {
+            if (word.empty()) return;
+            const std::string trial = line.empty() ? word : line + " " + word;
+            if (!line.empty() && font->CalcTextSizeA(sz, FLT_MAX, 0.0f, trial.c_str()).x > wrapW) { flush(); line = word; }
+            else line = trial;
+            word.clear();
+          };
+          for (char ch : o.description) {
+            if (ch == ' ' || ch == '\n') { put(); if (ch == '\n') flush(); }
+            else word += ch;
+          }
+          put(); flush();
+        }
+        const dvec3 rel = CameraRelative(o.renderedObject.coordinates, o.renderedObject.localOffset);
+        const double dist = Len(rel);
+        const float  rpx  = (float)std::asin(std::min((double)o.renderedObject.sphereRadius() / std::max(dist, 1e-30), 1.0)) * focalPx;
+        float sx = mid.x, sy = mid.y;
+        const bool onScreen = RelToScreen(rel, sx, sy);
+        // Looked away: the body has left the middle of the view (by more than
+        // its own size plus a fifth of the screen). Gone for good, not hidden.
+        const float off = std::sqrt((sx - mid.x) * (sx - mid.x) + (sy - mid.y) * (sy - mid.y));
+        if (!onScreen || off > rpx + H * 0.22f) exploreDescObj = -1;
+        if (exploreDescObj < 0) lines.clear();
+        const float blockH = lineH * (float)lines.size();
+        float y = std::min(sy + rpx + 22.0f, oy + H * 0.87f - blockH);   // never down into "Travel back"
+        y = std::max(y, oy + H * 0.45f);
+        for (const std::string& ln : lines) {
+          const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, ln.c_str());
+          const ImVec2 tp(std::floor(sx - ts.x * 0.5f), std::floor(y));   // under the body, wherever you look
+          dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.6f * a), ln.c_str());
+          dl->AddText(font, sz, tp, C(RGB{0.84f, 0.88f, 0.94f}, 0.88f * a), ln.c_str());
+          y += lineH;
+        }
+      }
+    }
+  }
+
   // "Travel back [b]": shown for three seconds after a trip ends, a little
   // larger than the travel hint. The key keeps working after it fades.
   {
@@ -1345,7 +1502,7 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
       const char* txt = "Travel back [b]";
       const float sz = fs * 1.05f;
       const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
-      const ImVec2 tp(std::floor(mid.x - ts.x * 0.5f), std::floor(oy + H * 0.80f));
+      const ImVec2 tp(std::floor(mid.x - ts.x * 0.5f), std::floor(oy + H * 0.89f));   // low: the description sits above it
       dl->AddText(font, sz, ImVec2(tp.x + 1.0f, tp.y + 1.0f), C(shadow, 0.55f * a), txt);
       dl->AddText(font, sz, tp, C(RGB{0.90f, 0.93f, 0.98f}, 0.90f * a), txt);
     }

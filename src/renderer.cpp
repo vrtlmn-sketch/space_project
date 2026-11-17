@@ -129,6 +129,7 @@ void Renderer::LoadAppSettings() {
     std::strncpy(appTheme, theme.c_str(), sizeof(appTheme) - 1);
     appTheme[sizeof(appTheme) - 1] = '\0';
     vimMode = root.value("vimMode", false);
+    exploreResolutionH = std::max(0, root.value("exploreResolution", 720));
   } catch (...) {
     std::cerr << "[Settings] Failed to parse settings.json\n";
   }
@@ -138,6 +139,7 @@ void Renderer::SaveAppSettings() {
   nlohmann::json root;
   root["theme"]   = std::string(appTheme);
   root["vimMode"] = vimMode;
+  root["exploreResolution"] = exploreResolutionH;
   std::ofstream f("settings.json");
   if (!f.is_open()) {
     std::cerr << "[Settings] Cannot write settings.json\n";
@@ -1832,6 +1834,12 @@ bool Renderer::UpdateInputs() {
                     GLFW_KEY_LEFT, GLFW_KEY_RIGHT, GLFW_KEY_UP, GLFW_KEY_DOWN})
         if (glfwGetKey(window, k) == GLFW_PRESS) { exploreTravelActive = travelBackActive = false; break; }
     }
+
+    // Remember when you last moved under your own power: it dismisses the
+    // arrival description (looking around does not).
+    if (exploring())
+      for (int k : {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_SPACE, GLFW_KEY_LEFT_SHIFT})
+        if (glfwGetKey(window, k) == GLFW_PRESS) { exploreLastMoveAt = ImGui::GetTime(); break; }
 
     // WASD = position movement (yaw-aware, horizontal plane)
     if (glfwGetKey(window, GLFW_KEY_W)          == GLFW_PRESS) move(vec3{0,  0,  moveStep});
@@ -3870,6 +3878,7 @@ void Renderer::LeaveExploration() {
   CloseExploreMenu();
   paused = true;                 // exploration's play does not carry into Creative
   exploreLockObj = -1;
+  exploreGalaxyView = false;
   appMode = AppMode::Creative;
   SyncFlightCapture();
 }
@@ -4308,6 +4317,22 @@ void Renderer::DrawSettingsPanel() {
         appTheme[sizeof(appTheme) - 1] = '\0';
         ApplyTheme(appTheme);
       }
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Display")) {
+      ImGui::Spacing();
+      ImGui::Text("Exploration resolution");
+      static const int   kHeights[] = { 480, 720, 1080, 1440, 0 };
+      static const char* kNames[]   = { "480p", "720p", "1080p", "1440p", "Window size" };
+      int cur = 1;
+      for (int i = 0; i < (int)IM_ARRAYSIZE(kHeights); ++i)
+        if (exploreResolutionH == kHeights[i]) cur = i;
+      ImGui::SetNextItemWidth(-1);
+      if (ImGui::Combo("##exploreres", &cur, kNames, IM_ARRAYSIZE(kNames)))
+        exploreResolutionH = kHeights[cur];
+      ImGui::TextDisabled("How sharp exploration is drawn. It never draws more than\n"
+                          "the window can show, so a small window stays cheap.\n"
+                          "Creative uses Rendering -> Raster Resolution.");
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Editor")) {
@@ -8402,6 +8427,14 @@ void Renderer::CineBlankIfNeeded() {
 void Renderer::RasterRenderSize(int w, int h, int& outW, int& outH) const {
   outW = std::max(1, w);
   outH = std::max(1, h);
+  if (exploring()) {
+    // Exploration has its own height, capped by the window: never more pixels
+    // than are shown. The project's Raster Resolution is for Creative.
+    if (exploreResolutionH <= 0 || w <= 0 || h <= exploreResolutionH) return;
+    outH = exploreResolutionH;
+    outW = std::max(16, (int)std::lround((double)outH * w / h));
+    return;
+  }
   if (rasterLiveHeight <= 0 || w <= 0 || h <= 0) return;
   outH = rasterLiveHeight;
   outW = std::max(16, (int)std::lround((double)outH * w / h));
