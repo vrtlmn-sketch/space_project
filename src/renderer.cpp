@@ -1761,6 +1761,16 @@ bool Renderer::UpdateInputs() {
                                cameraRotationSpeed * (0.00001f / 45.0f),
                                cameraRotationSpeed * 2.0f);
 
+    // ── Real time, not frames ──
+    // Every step below was "per frame", so a laggy frame rate meant a slow
+    // camera. frameScale is how many 60 fps frames this frame is worth: 1 at
+    // 60 fps (the feel everything was tuned at), 2 at 30 fps. One frame never
+    // counts for more than 0.1 s, so a hitch cannot throw you across the scene.
+    const float frameScale = std::clamp(io.DeltaTime, 0.0f, 0.1f) * 60.0f;
+    moveStep *= frameScale;
+    rotStep  *= frameScale;
+    const float rollStep = cameraRotationSpeed * frameScale;
+
     // Steering ends a trip where you are.
     if (exploreTravelActive) {
       for (int k : {GLFW_KEY_W, GLFW_KEY_A, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_SPACE,
@@ -1785,8 +1795,8 @@ bool Renderer::UpdateInputs() {
     if (glfwGetKey(window, GLFW_KEY_RIGHT)  == GLFW_PRESS) dyaw   += rotStep;
     if (glfwGetKey(window, GLFW_KEY_UP)     == GLFW_PRESS) dpitch -= rotStep;
     if (glfwGetKey(window, GLFW_KEY_DOWN)   == GLFW_PRESS) dpitch += rotStep;
-    if (glfwGetKey(window, GLFW_KEY_COMMA)  == GLFW_PRESS) droll  -= cameraRotationSpeed;
-    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) droll  += cameraRotationSpeed;
+    if (glfwGetKey(window, GLFW_KEY_COMMA)  == GLFW_PRESS) droll  -= rollStep;
+    if (glfwGetKey(window, GLFW_KEY_PERIOD) == GLFW_PRESS) droll  += rollStep;
     if (dyaw != 0 || dpitch != 0 || droll != 0)
       rotateCamera(dyaw, dpitch, droll);
 
@@ -1828,13 +1838,15 @@ bool Renderer::UpdateInputs() {
     // Zoom: scroll (accumulated, eased in for momentum) + the =/- keys, all via
     // applyZoom — narrows FOV, then seamlessly continues as a forward dolly.
     if (std::abs(zoomScrollAccum) > 1e-4) {
-      double eased = zoomScrollAccum * 0.30;   // ease a fraction per call (smooth)
+      // 30% of what is left per 60 fps frame, as a rate, so the ease takes the
+      // same time at any frame rate.
+      double eased = zoomScrollAccum * (1.0 - std::pow(0.70, (double)frameScale));
       zoomScrollAccum -= eased;
       if (std::abs(zoomScrollAccum) < 5e-3) { eased += zoomScrollAccum; zoomScrollAccum = 0.0; }
       applyZoom((float)eased);
     }
-    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  applyZoom( 0.25f); // + / = : zoom in
-    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  applyZoom(-0.25f); // -     : zoom out
+    if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS)  applyZoom( 0.25f * frameScale); // + / = : zoom in
+    if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS)  applyZoom(-0.25f * frameScale); // -     : zoom out
     // Safety clamp only at the top — applyZoom owns the deep-zoom floor.
     if (zoom < 0.00001f) zoom = 0.00001f;
     if (zoom > 120.0f)   zoom = 120.0f;
@@ -3799,6 +3811,17 @@ void Renderer::SyncFlightCapture() {
   flightCaptured = want;
   ImGuiIO& io = ImGui::GetIO();
   if (want) {
+    // Under sway the pointer locks but its picture can stay on screen: the
+    // "no cursor" request that comes with the lock does not always take. So
+    // swap in an empty cursor image first, while cursor changes still work the
+    // ordinary way; whatever is left showing after the lock is then invisible.
+    static GLFWcursor* blankCursor = nullptr;
+    if (!blankCursor) {
+      static unsigned char px[16 * 16 * 4] = {0};
+      GLFWimage img{16, 16, px};
+      blankCursor = glfwCreateCursor(&img, 0, 0);
+    }
+    if (blankCursor) glfwSetCursor(window, blankCursor);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
     glfwGetCursorPos(window, &flightLastX, &flightLastY);
@@ -3806,6 +3829,7 @@ void Renderer::SyncFlightCapture() {
   } else {
     if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetCursor(window, nullptr);            // back to the ordinary arrow
     int w = 0, h = 0;
     glfwGetWindowSize(window, &w, &h);
     glfwSetCursorPos(window, w * 0.5, h * 0.5);

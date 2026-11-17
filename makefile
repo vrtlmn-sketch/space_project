@@ -57,7 +57,14 @@ $(OUT): $(OBJS)
 # Pull in the generated header dependencies (silent on first build).
 -include $(DEPS)
 
+# Touchpads ignore movement while keys are held ("disable while typing"), which
+# blocks mouse look during WASD. Under sway, switch that off for the run and put
+# it back when the app exits, however it exits. Without swaymsg this just runs.
 run: build
+	@DWT=$$(swaymsg -t get_inputs 2>/dev/null | grep -m1 '"dwt"' | grep -o 'enabled\|disabled'); \
+	restore() { [ "$$DWT" = enabled ] && swaymsg 'input type:touchpad dwt enabled' >/dev/null 2>&1; true; }; \
+	trap restore EXIT; trap 'exit 130' INT TERM; \
+	swaymsg 'input type:touchpad dwt disabled' >/dev/null 2>&1 || true; \
 	./$(OUT)
 
 clean:
