@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "cloudLook.h"
 #include "mathStructs.h"
 #include "physicsObject.h"
 #include "renderer.h"
@@ -85,6 +86,7 @@ struct CloudData {
   int   renderMode{0};         // 0=Points, 1=Nebula
   float nebulaScatterScale{0.4f};
   float particleSizeSpread{0.0f};
+  CloudLook look;              // only what this cloud sets apart from the project (see cloudLook.h)
   float scale{1.0f};
   bool  simulatePhysics{true};
   // Dark-matter halo (see RenderedObject::haloVFlat). haloSet = the file had
@@ -116,6 +118,7 @@ struct UniverseOverride {
   int   renderMode{0};
   float nebulaScatterScale{0.4f};
   float particleSizeSpread{0.0f};
+  CloudLook look;
   int   computeMethod{1};
   float theta{0.5f};
   int   fullStars{0};

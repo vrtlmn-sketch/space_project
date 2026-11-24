@@ -601,13 +601,52 @@ void Renderer::AddRimOccluder(const RenderedObject& ro) {
 }
 
 // The per-frame look settings a cloud draw reads off its RenderedObject.
+float Renderer::ProjectLookValue(int key) const {
+  switch (key) {
+    case CloudLook::DustStrength:    return dustStrength;
+    case CloudLook::DustCoverage:    return dustCoverage;
+    case CloudLook::DustContrast:    return dustContrast;
+    case CloudLook::DustClumpScale:  return dustClumpScale;
+    case CloudLook::DustReddening:   return dustReddening;
+    case CloudLook::DustDarkest:     return dustDarkest;
+    case CloudLook::DustSettle:      return dustSettle;
+    case CloudLook::StarLumSpread:   return starLumSpread;
+    case CloudLook::StarSize:        return starSize;
+    case CloudLook::ResolvedCut:     return resolvedCut;
+    case CloudLook::PopColour:       return popColour;
+    case CloudLook::HazeStrength:    return unresolvedStrength;
+    case CloudLook::HazeSize:        return unresolvedSize;
+    case CloudLook::GasStrength:     return gasStrength;
+    case CloudLook::FarFalloff:      return farFalloff;
+    case CloudLook::NearStarStops:   return nearStarStops;
+    case CloudLook::StarFieldOffset: return 0.0f;                 // an offset on the project's stops
+    case CloudLook::SpriteRefHeight: return spriteRefHeight;
+    default: return 0.0f;
+  }
+}
+
 void Renderer::PrepCloudLook(RenderedObject& ro) {
   ro.realisticShading = realisticRasterView; ro.cinePixelScale = currentPixelScale;
-  ro.cineHazeStrength = unresolvedStrength;  ro.cineHazeSpread = unresolvedSize;
-  ro.cineResolvedCut  = resolvedCut;         ro.cineGasStrength = gasStrength;
-  ro.cineFarFalloff   = farFalloff;          ro.cineStarFieldGain = StarScaleGain();
-  ro.cineStarSize     = starSize;
-  ro.cineBlazeMax     = std::pow(2.0f, nearStarStops);
+  ro.cineHazeStrength = LookValue(ro, CloudLook::HazeStrength);
+  ro.cineHazeSpread   = LookValue(ro, CloudLook::HazeSize);
+  ro.cineResolvedCut  = LookValue(ro, CloudLook::ResolvedCut);
+  ro.cineGasStrength  = LookValue(ro, CloudLook::GasStrength);
+  ro.cineFarFalloff   = LookValue(ro, CloudLook::FarFalloff);
+  ro.cineStarFieldGain = StarScaleGain() * std::pow(2.0f, LookValue(ro, CloudLook::StarFieldOffset));
+  ro.cineStarSize     = LookValue(ro, CloudLook::StarSize);
+  ro.cineBlazeMax     = std::pow(2.0f, LookValue(ro, CloudLook::NearStarStops));
+  // Sprite density is read from this global at upload time (renderCloud).
+  gSpriteRefHeight    = LookValue(ro, CloudLook::SpriteRefHeight);
+}
+
+void Renderer::UploadCloudLook(RenderedObject& ro) {
+  const float spread = LookValue(ro, CloudLook::StarLumSpread);
+  ro.uploadDustParams(LookValue(ro, CloudLook::DustStrength), LookValue(ro, CloudLook::DustReddening),
+                      LookValue(ro, CloudLook::DustDarkest),  LookValue(ro, CloudLook::DustSettle),
+                      LookValue(ro, CloudLook::PopColour),    spread,
+                      starLumPivot(true, spread), starLumPivot(false, spread),
+                      LookValue(ro, CloudLook::DustCoverage), LookValue(ro, CloudLook::DustClumpScale),
+                      ro.ownDustInfluence(dustInfluence),     LookValue(ro, CloudLook::DustContrast));
 }
 
 // Far galaxies never reach renderCloud: one that is off screen is skipped
@@ -625,12 +664,19 @@ bool Renderer::TryFarGalaxy(RenderedObject& ro) {
   // of the half-height: the largest sprite any pass draws is 160 px at the
   // reference height (times the SSAA scale), or the lens's own cap when a
   // black hole is stretching them.
-  const float refH  = (spriteRefHeight > 0.0f) ? spriteRefHeight : (float)std::max(fbHeight, 1);
+  const float ownRefH = LookValue(ro, CloudLook::SpriteRefHeight);
+  const float refH  = (ownRefH > 0.0f) ? ownRefH : (float)std::max(fbHeight, 1);
   float       reach = 340.0f * std::max(currentPixelScale, 1.0f) / refH;
   if (gLfCount > 0) reach = std::max(reach, 2.2f * gLfMaxSprite);
-  const auto r = ro.probeFarGalaxy(camMatrix, zoom, fbWidth, fbHeight, cameraTranslate, farFalloff,
+  // The batch draws every far galaxy with ONE set of look uniforms, the
+  // project's. A galaxy that has been given a look of its own therefore stays
+  // out of it and draws alone, through the ordinary path with its own values
+  // (one draw call, as every galaxy cost before batching). It may still be
+  // skipped when off screen.
+  const auto r = ro.probeFarGalaxy(camMatrix, zoom, fbWidth, fbHeight, cameraTranslate,
+                                   LookValue(ro, CloudLook::FarFalloff),
                                    dustInfluence, reach, allowSkip,
-                                   allowBatch && realisticRasterView, farGalaxyRecs, farGalaxyVerts);
+                                   allowBatch && realisticRasterView && !ro.look.any(), farGalaxyRecs, farGalaxyVerts);
   if (r == RenderedObject::FarGalaxyResult::Normal) return false;
   ro.cloudFarHandled = true;
   if (r == RenderedObject::FarGalaxyResult::Batched) {
@@ -644,10 +690,8 @@ bool Renderer::TryFarGalaxy(RenderedObject& ro) {
 void Renderer::FlushFarGalaxies() {
   if (farGalaxyRep && !farGalaxyRecs.empty()) {
     RenderedObject& rep = *farGalaxyRep;
-    gSpriteRefHeight = spriteRefHeight;
-    PrepCloudLook(rep);
-    rep.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, starLumSpread, starLumPivot(true), starLumPivot(false), dustCoverage, dustClumpScale,
-                         rep.ownDustInfluence(dustInfluence), dustContrast);
+    PrepCloudLook(rep);              // the representative has no look of its own: these are the project's
+    UploadCloudLook(rep);
     rep.renderFarGalaxyBatch(farGalaxyRecs, farGalaxyVerts, cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   farGalaxyRecs.clear();
@@ -662,7 +706,7 @@ void Renderer::Draw(RenderedObject& ro) {
                                             AddRimOccluder(ro); }
     if (ro.meshType == MeshType::line)    ro.renderLine(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
     gSpriteRefHeight = spriteRefHeight;
-    if (ro.meshType == MeshType::cloud)   { PrepCloudLook(ro); ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
+    if (ro.meshType == MeshType::cloud)   { PrepCloudLook(ro); UploadCloudLook(ro); ro.starBudget = (ro.starBudgetOverride > 0) ? ro.starBudgetOverride : starBudget; if (realisticRasterView && edgeLightStrength > 0.0f) ro.updateCloudRimFactors();
                                             // Volumetric dust: (re)splat the volume now — keyed on
                                             // cloudGpuDirty, so it must run before renderCloud clears
                                             // it. The extinction march itself runs in DrawCloudDust,
@@ -1192,16 +1236,20 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
 // rise with v), so the naive E[exp(R*(v-p))] = 1 does not preserve the mean —
 // it came out 2.9x too bright, which would have made the spread untunable
 // because every galaxy would change brightness as you widened it.
-float Renderer::starLumPivot(bool coreWeighted) const
+float Renderer::starLumPivot(bool coreWeighted, float spread) const
 {
-  const float R = starLumSpread;
+  const float R = spread;
   if (!(R > 0.0f)) return 0.0f;
   // Called several times per cloud per frame, and the answer only changes when
-  // the slider does. Solving it afresh each time was 2048 exp() per call —
-  // with a few thousand galaxies, most of the frame.
-  static float cachedR[2] = {-1.0f, -1.0f}, cachedPivot[2] = {0.0f, 0.0f};
-  const int slot = coreWeighted ? 1 : 0;
-  if (cachedR[slot] == R) return cachedPivot[slot];
+  // a slider does. Solving it afresh each time was 2048 exp() per call — with
+  // a few thousand galaxies, most of the frame. Clouds can each have their own
+  // range now, so the cache holds a handful of values per kind, not one.
+  constexpr int kSlots = 8;
+  static float cachedR[2][kSlots], cachedPivot[2][kSlots];
+  static int   cachedN[2] = {0, 0}, cachedNext[2] = {0, 0};
+  const int kind = coreWeighted ? 1 : 0;
+  for (int i = 0; i < cachedN[kind]; ++i)
+    if (cachedR[kind][i] == R) return cachedPivot[kind][i];
   const int N = 2048;
   double num = 0.0, den = 0.0;
   for (int i = 0; i < N; ++i) {
@@ -1212,9 +1260,12 @@ float Renderer::starLumPivot(bool coreWeighted) const
     num += base * std::exp((double)R * v);
     den += base;
   }
-  cachedR[slot]     = R;
-  cachedPivot[slot] = (float)(std::log(num / std::max(den, 1e-12)) / (double)R);
-  return cachedPivot[slot];
+  const int slot = cachedNext[kind];
+  cachedNext[kind] = (slot + 1) % kSlots;
+  cachedN[kind]    = std::min(cachedN[kind] + 1, kSlots);
+  cachedR[kind][slot]     = R;
+  cachedPivot[kind][slot] = (float)(std::log(num / std::max(den, 1e-12)) / (double)R);
+  return cachedPivot[kind][slot];
 }
 
 void Renderer::DrawCloudDust(RenderedObject& ro) {
@@ -1227,7 +1278,7 @@ void Renderer::DrawCloudDust(RenderedObject& ro) {
     ro.cloudFarHandled = false;
     // The dust-density pass reads whatever dust scale the LAST cloud in the
     // loop left on the shared program. Keep leaving it.
-    if (realisticRasterView) ro.uploadDustInfluenceOnly(ro.ownDustInfluence(dustInfluence));
+    if (realisticRasterView) { dustLoopInfluence = ro.ownDustInfluence(dustInfluence); ro.uploadDustInfluenceOnly(dustLoopInfluence); }
     return;
   }
   if (!ro.cloudLightDrawn) return;
@@ -1238,8 +1289,9 @@ void Renderer::DrawCloudDust(RenderedObject& ro) {
   // the black-hole lens march (and future per-star/depth consumers). The full
   // marched-screen look was built and measured: the honest column through a
   // galaxy is smooth saturated fog — the granular look lives in the sprites.
-  ro.uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, starLumSpread, starLumPivot(true), starLumPivot(false), dustCoverage, dustClumpScale,
-                      ro.ownDustInfluence(dustInfluence), dustContrast);
+  PrepCloudLook(ro);                 // another cloud's draw has been through the shared program since
+  UploadCloudLook(ro);
+  dustLoopInfluence = ro.ownDustInfluence(dustInfluence);
   ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::Dust;
   ro.renderCloud(cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   ro.cloudDrawPhase = RenderedObject::CloudDrawPhase::All;
@@ -5202,17 +5254,6 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "growing. Stops one star in a dark frame from throwing a cross across\n"
                         "the whole screen. Lower = smaller spikes on the very brightest things;\n"
                         "ordinary stars are not affected. 0 = off.");
-    PropLabel("Near Star Limit");
-    {
-      char lbl[48];
-      std::snprintf(lbl, sizeof(lbl), "%.1f stops  (x%.4g)", nearStarStops, std::pow(2.0f, nearStarStops));
-      ImGui::SliderFloat("##nearstarstops", &nearStarStops, 0.0f, 12.0f, lbl,
-                         ImGuiSliderFlags_NoRoundToFormat);
-    }
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("How much brighter a star in a galaxy may get when you are right next\n"
-                        "to it. Past its largest size a star turns extra closeness into\n"
-                        "brightness; this is the ceiling on that.");
 
     if (autoExposure) {
       ImGui::SeparatorText("Auto Exposure");
@@ -5261,25 +5302,10 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
   // ── Stars ──────────────────────────────────────────────────────────────────
   if (PropSection("Stars")) {
-    ImGui::SeparatorText("Star Haze");
-    ImGui::TextDisabled("Smooth glow from stars too dense to resolve as points.");
-    norm01("Brightness", "##unrstr",  &unresolvedStrength, 0.0f, 10.0f,  true);
-    norm01("Spread",     "##unrsize", &unresolvedSize,     1.0f, 100.0f, true);
-    norm01("Resolved",   "##rescut",  &resolvedCut,        0.0f, 1.0f,   true);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("How many stars resolve as sharp points. Higher = fewer sharp\n"
-                        "stars, more unresolved glow (real telescope look).\n"
-                        "Light is CONSERVED: a star that stops resolving hands its\n"
-                        "core's flux to its own haze lobe, so this trades sparkle\n"
-                        "for a smooth sheet rather than just dimming the galaxy.");
-    norm01("Dynamic Range","##lumspread", &starLumSpread,  0.0f, 9.2f,  true);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("How far stellar brightness spreads. 0 = every star within 12.7x\n"
-                        "of every other (the old look). 4.6 = about 1000x, so a few stars\n"
-                        "saturate and spike while the rest stay small points - one model\n"
-                        "that gives both a Milky Way band and a JWST cluster, with\n"
-                        "EXPOSURE choosing between them. Mean flux is held constant, but\n"
-                        "bloom and spikes are additive, so widening wants exposure down.");
+    ImGui::TextDisabled("Haze, dynamic range, star size and colour mix belong to each\n"
+                        "cloud now: select a cloud and see its settings.");
+    ImGui::Spacing();
+    ImGui::SeparatorText("Diffraction Spikes");
     norm01("Spike Onset","##spiketh", &spikeThreshold,       0.0f, 3.0f,  true);
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("How far over saturation a source must be before it gets diffraction\n"
@@ -5287,20 +5313,6 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
                         "artefact: exposed for a planet only the planet and the Sun spike,\n"
                         "exposed for stars the bright stars do. 0 = every local maximum\n"
                         "spikes (the old look). Pair with Dynamic Range for a few crosses.");
-    norm01("Populations","##popcol",  &popColour,          0.0f, 1.0f,   true);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("Stellar population colour: an old red-yellow bulge and young\n"
-                        "blue stars in the thin disc, instead of one colour everywhere.\n"
-                        "A spheroidal cloud keeps only the radial part, which is right -\n"
-                        "ellipticals redden inward and have no thin disc.");
-    norm01("Distance",   "##farfall", &farFalloff,          0.05f, 1.0f, false);
-    if (ImGui::IsItemHovered())
-      ImGui::SetTooltip("How fast a galaxy dims as it gets far enough away to stop\n"
-                        "shrinking on screen. Higher = the deep field falls off toward\n"
-                        "black (1 = physically exact); lower keeps distant galaxies lit.");
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("Diffraction Spikes");
     ImGui::TextDisabled("Synthetic PSF - telescope star spikes on bright points.");
     norm01("Intensity",  "##spkstr",   &spikeStrength, 0.0f, 2.0f, false);
     ImGui::SliderInt("Spikes",     &spikeCount, 2, 8);
@@ -5355,22 +5367,8 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
   // ── Dust & Gas Clouds ──────────────────────────────────────────────────────
   if (PropSection("Dust & Gas Clouds")) {
-    ImGui::SeparatorText("Dust Shape");
-    ImGui::TextDisabled("Dense regions dim + redden the light behind them.");
-    norm01("Amount",        "##duststr",   &dustStrength,   0.0f,  2.0f,  true);
-    norm01("Reddening",     "##dustred",   &dustReddening,  0.0f,  4.0f,  true);
-    ImGui::TextDisabled("1.0 = the real Milky Way curve; 0 = dust dims without colouring.");
-    norm01("Darkest",       "##dustdark",  &dustDarkest,    0.001f, 0.3f, true);
-    ImGui::TextDisabled("What the thickest dust still lets through. Low = a true silhouette.");
-    norm01("Settle",        "##dustsettle",&dustSettle,     0.0f,  1.0f, true);
-    ImGui::TextDisabled("Dust sinks toward the cloud's own plane, as gas does. No effect on a sphere.");
-    norm01("Concentration", "##dustcon",   &dustContrast,   1.0f,  4.0f,  true);
-    ImGui::TextDisabled("Higher packs dust into tighter, darker lanes.");
-    norm01("Patchiness",    "##dustcov",   &dustCoverage,   0.0f,  1.0f,  true);
-    ImGui::TextDisabled("How broken-up the dust is (lower = more gaps).");
-    norm01("Patch Size",    "##dustclump", &dustClumpScale, 0.04f, 1.5f,  true);
-    ImGui::TextDisabled("Lane fineness - smaller hugs the star shape more tightly.");
-
+    ImGui::TextDisabled("Dust amount, shape and colour, and gas amount, belong to each\n"
+                        "cloud now: select a cloud and see its settings.");
     ImGui::Spacing();
     ImGui::SeparatorText("Dust Lighting");
     // These four are consumed ONLY by the RT/geodesic compute shaders — grep
@@ -5400,7 +5398,6 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
     ImGui::Spacing();
     ImGui::SeparatorText("Nebula Gas");
     ImGui::TextDisabled("Glowing emission gas near hot young stars.");
-    norm01("Amount##gas", "##gasstr", &gasStrength, 0.0f, 2.0f, true);
     PropLabel("Detail");
     if (ImGui::SliderFloat("##nebuladetail", &nebulaDetail, 0.0f, 1.0f, "%.2f"))
       rtDirty = true;
@@ -5561,8 +5558,6 @@ void Renderer::DrawRenderingSettings(const SceneCallbacks& cb) {
 
     ImGui::Spacing();
     if (PropSection("Star Catalogue", ImGuiTreeNodeFlags_DefaultOpen)) {
-      norm01("Star Size", "##starsize", &starSize, 0.05f, 2.0f, false);
-      ImGui::TextDisabled("Size of resolved star sprites. Lower = pinpoint stars.");
       PropLabel("Star Budget");
       ImGui::SliderInt("##starbudget", &starBudget, 5000, 400000, "%d", ImGuiSliderFlags_Logarithmic);
       ImGui::TextDisabled("Max catalogue stars drawn per frame; chunks off screen cost nothing.");
@@ -8196,6 +8191,51 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       ImGui::SameLine();
       ImGui::ColorButton("##ci_bb", ImVec4(cr, cg, cb_, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
 
+      // ── How this cloud is drawn ──
+      // Plain settings of the cloud, like its temperature. There is no project
+      // -wide copy of these any more; each cloud has its own. (A cloud that
+      // has never been touched still reads the values its project was saved
+      // with, which is what keeps older projects looking as they did.)
+      {
+        CloudLook& lk = cloud->renderedObject.look;
+        struct LookRow { const char* head; const char* label; int key; float lo, hi; int fmt; const char* tip; };   // fmt 0 = 0..1 dial, 1 = stops
+        static const LookRow rowsL[] = {
+          { "Dust",  "Amount",        CloudLook::DustStrength,   0.0f,   2.0f,  0, "How much dust dims and reddens the light behind it." },
+          { nullptr, "Patchiness",    CloudLook::DustCoverage,   0.0f,   1.0f,  0, "How broken-up the dust is (lower = more gaps)." },
+          { nullptr, "Concentration", CloudLook::DustContrast,   1.0f,   4.0f,  0, "Higher packs dust into tighter, darker lanes." },
+          { nullptr, "Patch Size",    CloudLook::DustClumpScale, 0.04f,  1.5f,  0, "Lane fineness. Smaller hugs the star shape more tightly." },
+          { nullptr, "Reddening",     CloudLook::DustReddening,  0.0f,   4.0f,  0, "1.0 = the real Milky Way curve; 0 = dust dims without colouring." },
+          { nullptr, "Darkest",       CloudLook::DustDarkest,    0.001f, 0.3f,  0, "What the thickest dust still lets through. Low = a true silhouette." },
+          { nullptr, "Settle",        CloudLook::DustSettle,     0.0f,   1.0f,  0, "Dust sinks toward the cloud's own plane, as gas does. No effect on a sphere." },
+          { "Stars", "Dynamic Range", CloudLook::StarLumSpread,  0.0f,   9.2f,  0, "How far star brightness spreads: bunched together, or a few\nblazing over many faint." },
+          { nullptr, "Star Size",     CloudLook::StarSize,       0.05f,  2.0f,  0, "Size of the sharp star points. Lower = pinpoint stars." },
+          { nullptr, "Resolved",      CloudLook::ResolvedCut,    0.0f,   1.0f,  0, "How many stars draw as sharp points. Higher = fewer sharp\nstars, more smooth glow." },
+          { nullptr, "Populations",   CloudLook::PopColour,      0.0f,   1.0f,  0, "An old red-yellow centre and young blue outskirts, instead\nof one colour mix everywhere." },
+          { "Haze and gas", "Haze Brightness", CloudLook::HazeStrength, 0.0f, 10.0f, 0, "Smooth glow from stars too dense to see as points." },
+          { nullptr, "Haze Spread",   CloudLook::HazeSize,       1.0f, 100.0f,  0, "How far that glow spreads." },
+          { nullptr, "Gas Amount",    CloudLook::GasStrength,    0.0f,   2.0f,  0, "Glowing gas near hot young stars." },
+          { "Brightness", "Brightness", CloudLook::StarFieldOffset, -6.0f, 6.0f, 1, "This cloud's brightness against the rest of the scene, in stops." },
+          { nullptr, "Distance",      CloudLook::FarFalloff,     0.05f,  1.0f,  0, "How fast it dims once it is too far away to shrink on screen.\nHigher falls off toward black; lower keeps it lit." },
+          { nullptr, "Near Star Limit", CloudLook::NearStarStops, 0.0f, 12.0f,  1, "How much brighter one of its stars may get when you are\nright next to it." },
+        };
+        for (const LookRow& r : rowsL) {
+          if (r.head) { ImGui::Spacing(); ImGui::SeparatorText(r.head); }
+          ImGui::PushID(r.key);
+          PropLabel(r.label);
+          float val = LookValue(cloud->renderedObject, r.key);
+          bool changed = false;
+          if (r.fmt == 0) {
+            float n = std::clamp((val - r.lo) / (r.hi - r.lo), 0.0f, 1.0f);
+            if (ImGui::SliderFloat("##v", &n, 0.0f, 1.0f, "%.2f")) { val = r.lo + n * (r.hi - r.lo); changed = true; }
+          } else {
+            changed = ImGui::SliderFloat("##v", &val, r.lo, r.hi, r.key == CloudLook::StarFieldOffset ? "%+.1f stops" : "%.1f stops");
+          }
+          if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", r.tip);
+          if (changed) { lk.set(r.key, std::clamp(val, r.lo, r.hi)); rtDirty = true; }
+          ImGui::PopID();
+        }
+      }
+
       ImGui::Spacing();
       ImGui::Separator();
       ImGui::Spacing();
@@ -10241,8 +10281,26 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     glViewport(0, 0, bw, bh);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
-    for (RenderedObject* rc : rimClouds)
+    // This pass has always drawn every cloud with whatever the dust loop left
+    // on the shared program (the last cloud's values), and that is part of the
+    // tuned look, so with no per-cloud looks in play it is left exactly so.
+    // Once any cloud has a look of its own, that cloud writes its density with
+    // its own dust, and the others are put back to what they had: the
+    // project's values at the dust scale the loop ended on.
+    bool anyLook = false;
+    for (RenderedObject* rc : rimClouds) if (rc->look.any()) { anyLook = true; break; }
+    for (RenderedObject* rc : rimClouds) {
+      if (anyLook) {
+        if (rc->look.any()) { PrepCloudLook(*rc); UploadCloudLook(*rc); }
+        else {
+          gSpriteRefHeight = spriteRefHeight;
+          rc->uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, starLumSpread,
+                               starLumPivot(true), starLumPivot(false), dustCoverage, dustClumpScale,
+                               dustLoopInfluence, dustContrast);
+        }
+      }
       rc->renderCloudDustDensity(cameraTranslate, camMatrix, zoom, bw, bh);
+    }
 
     if (std::getenv("RIM_DEBUG")) {
       std::vector<float> px((size_t)bw * bh * 2);

@@ -8,6 +8,24 @@
 using json = nlohmann::json;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// A cloud's own look: only the settings it has been given are written, so a
+// cloud that follows the project writes nothing and old files read back as
+// "follows the project".
+static nlohmann::json cloudLookToJson(const CloudLook& l) {
+  nlohmann::json j = nlohmann::json::object();
+  for (int k = 0; k < CloudLook::Count; ++k) if (l.has(k)) j[CloudLookName(k)] = l.v[k];
+  return j;
+}
+static CloudLook jsonToCloudLook(const nlohmann::json& parent) {
+  CloudLook l;
+  if (!parent.contains("look") || !parent["look"].is_object()) return l;
+  const auto& j = parent["look"];
+  for (int k = 0; k < CloudLook::Count; ++k)
+    if (j.contains(CloudLookName(k)) && j[CloudLookName(k)].is_number()) l.set(k, j[CloudLookName(k)].get<float>());
+  return l;
+}
+
 static json vec3ToJson(const vec3& v) {
   return json::array({v.x, v.y, v.z});
 }
@@ -262,6 +280,7 @@ bool ProjectSerializer::Save(const std::string& path,
       {"universeMember",    cloud.universeMember},
       {"dataFile",          cloud.dataFile}
     });
+    if (cloud.look.any()) cloudsArr.back()["look"] = cloudLookToJson(cloud.look);
   }
   root["clouds"] = cloudsArr;
 
@@ -300,6 +319,7 @@ bool ProjectSerializer::Save(const std::string& path,
           {"scale",           ov.scale}
         };
         if (!ov.keyframes.empty()) o["keyframes"] = keyframesToJson(ov.keyframes);
+        if (ov.look.any())         o["look"]      = cloudLookToJson(ov.look);
         ovArr.push_back(o);
       }
       uniArr.push_back({
@@ -628,6 +648,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
     cd.renderMode         = c.value("renderMode",         0);
     cd.nebulaScatterScale = c.value("nebulaScatterScale", 0.4f);
     cd.particleSizeSpread = c.value("particleSizeSpread", 0.0f);
+    cd.look               = jsonToCloudLook(c);
     cd.scale              = c.value("scale",              1.0f);
     cd.haloSet            = c.contains("haloVFlat");
     cd.haloVFlat          = c.value("haloVFlat",          0.0f);
@@ -702,6 +723,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
           ov.renderMode         = o.value("renderMode",         0);
           ov.nebulaScatterScale = o.value("nebulaScatterScale", 0.4f);
           ov.particleSizeSpread = o.value("particleSizeSpread", 0.0f);
+          ov.look               = jsonToCloudLook(o);
           ov.computeMethod      = o.value("computeMethod",      1);
           ov.theta              = o.value("theta",              UniverseOverride{}.theta);
           ov.fullStars          = o.value("fullStars",          0);

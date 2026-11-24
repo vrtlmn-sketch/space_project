@@ -1861,6 +1861,49 @@ relocation.
   grow them, so the loader's fallbacks and the struct defaults are deliberately
   DIFFERENT numbers — same split as keyframe smoothing. Do not unify them.
 
+## Dust, haze and star settings belong to each CLOUD, not to the project
+
+`CloudLook` (cloudLook.h, on `RenderedObject::look`): per-cloud values for the
+cloud SHADER's dials — dust (amount, patchiness, concentration, patch size,
+reddening, darkest, settle), stars (dynamic range, size, resolved, populations),
+haze, gas, distance falloff, near-star limit, and a brightness OFFSET in stops
+on Star Field vs Planets. They are plain settings in the cloud inspector, beside
+temperature. **Their sliders were removed from Rendering Settings on purpose**
+(the first version had both, with a tick box per row to choose, and that was
+confusing): there is no project-wide dial for these any more.
+
+The project's old values are still loaded and saved, with no UI, as what a cloud
+that has never been touched draws with. That is what keeps existing projects,
+and every untouched universe galaxy, looking as they did; it is a fallback, not
+a setting. Only what a cloud has been given is stored: `"look": {...}` on a
+cloud, or on a universe galaxy's override (having one is what makes it an
+override). How generated galaxies should get varied looks is not decided yet.
+
+- **`Renderer::LookValue(ro, key)` is the ONE place a value is resolved**, and
+  `PrepCloudLook` + `UploadCloudLook` are the only uploaders. The cloud program
+  is shared, so both run before EVERY draw of a cloud (light, dust, density);
+  anything new that draws a cloud must call them or it inherits the last
+  cloud's look.
+- **It costs nothing per frame**: these were already uploaded once per cloud.
+  Exposure, bloom, spikes, glare and the sky act on the finished picture and
+  cannot be per cloud.
+- **A far galaxy with a look leaves the batch** (`TryFarGalaxy`: the batch has
+  one set of look uniforms, the project's) and draws alone with its own. Fine
+  for a handful; giving hundreds of far galaxies their own look would want the
+  look in the batch record instead.
+- **The dust-density pass keeps its old quirk when no cloud has a look**: every
+  cloud is drawn with what the dust loop left on the program (the LAST cloud's
+  dust scale). That is part of the tuned look, so it is only replaced once some
+  cloud has a look, and then the others are put back to project values at that
+  same last scale (`dustLoopInfluence`).
+- `starLumPivot` caches a few spreads per kind now, not one.
+- Sprite density reaches the shader through the global `gSpriteRefHeight`, set
+  by `PrepCloudLook`: it is per cloud only because that runs before each draw.
+- Not per cloud: Edge Light (applied once in the tonemap) and Sprite Density
+  (a Quality setting that far dots use too; the key exists in `CloudLook` but
+  has no UI). The raytraced view ignores looks entirely and draws with the
+  project's saved values, which can no longer be changed from the UI.
+
 ## Variety: what a generated system contains beyond a star and bare planets
 
 `UniverseParams::variety` (0..1; universe creation menu, saved per universe).

@@ -8,6 +8,7 @@
 #include "physicsObjectStructure.h"
 #include "cloudParticle.h"
 #include "universeGen.h"
+#include "cloudLook.h"
 
 
 enum class MeshType{
@@ -328,6 +329,7 @@ public:
   float cineBlazeMax{16.0f};     // cap on a near star's brightness gain (see cloudVert, vDistGain)
   float cineFarFalloff{0.08f};   // far-field light compression (see FarFieldDim)
   float cineStarFieldGain{0.008661f}; // star field brightness vs planets (2^-6.851; see cloudFrag)
+  CloudLook look;                     // this cloud's own values, where it has been set apart from the project
   // Procedural cloud layer params (shared packing, both views):
   // P0 = (coverage, scale, bandedness, turbulence); P1 = (softness, altitude,
   // whiteness, driftPhase). coverage 0 = clouds off.

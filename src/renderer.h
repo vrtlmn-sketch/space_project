@@ -890,7 +890,8 @@ public:
   // Pivot that holds MEAN star flux constant however wide the spread is, so
   // widening the range does not also change how bright every galaxy is.
   // Solved numerically over vMag = h^3, the distribution cloudVert draws.
-  float starLumPivot(bool coreWeighted) const;
+  float starLumPivot(bool coreWeighted) const { return starLumPivot(coreWeighted, starLumSpread); }
+  float starLumPivot(bool coreWeighted, float spread) const;
   float dustContrast{1.0f};     // 1 = linear; >1 concentrates dust in dense regions
   float dustCoverage{0.30f};     // fraction of clumped regions that bear dust
   float dustClumpScale{0.13f};    // dust clump cell size (x influence radius)
@@ -1334,6 +1335,18 @@ public:
   void Draw(RenderedObject& ro);
   void DrawCloudDust(RenderedObject& ro);   // phase 2 of the cloud draw: call once per cloud after ALL clouds' Draw
   bool TryFarGalaxy(RenderedObject& ro);   // far galaxy skipped or batched: nothing left to draw
+  // One look setting as THIS cloud draws it: its own value if it has been set
+  // apart, the project's otherwise (see cloudLook.h). ProjectLookValue is the
+  // project's alone.
+  float ProjectLookValue(int key) const;
+  float LookValue(const RenderedObject& ro, int key) const {
+    return ro.look.has(key) ? ro.look.v[key] : ProjectLookValue(key);
+  }
+  // The dust and star uniforms for one cloud, from its own look. The cloud
+  // program is shared, so this runs before EVERY draw of a cloud (light, dust,
+  // density) and whoever drew last cannot leak its look into the next.
+  void UploadCloudLook(RenderedObject& ro);
+  float dustLoopInfluence{1.0f};      // the dust scale the dust loop last left on the cloud program
   // Draw a physics object with mass+temperature+objectType (+optional velocity for Doppler)
   void DrawPhysicsObject(RenderedObject& ro, float mass, float temperature, float objectType,
                          vec3 velocity = {0,0,0}, vec3 color = {0.55f,0.25f,0.15f});

@@ -62,6 +62,7 @@ static std::unique_ptr<CloudObject> buildCloudFromData(const CloudData& cd,
   cloud->renderMode         = cd.renderMode;
   cloud->nebulaScatterScale = cd.nebulaScatterScale;
   cloud->particleSizeSpread = cd.particleSizeSpread;
+  cloud->renderedObject.look = cd.look;
   cloud->scale              = cd.scale;
   if (cd.haloSet) {
     cloud->renderedObject.haloVFlat = cd.haloVFlat;
@@ -1293,6 +1294,7 @@ int main(int argc, char** argv) {
         cloud->renderMode         = ov->renderMode;
         cloud->nebulaScatterScale = ov->nebulaScatterScale;
         cloud->particleSizeSpread = ov->particleSizeSpread;
+        cloud->renderedObject.look = ov->look;
         cloud->computeMethod      = static_cast<CloudComputeMethod>(ov->computeMethod);
         cloud->barnesHutTheta     = ov->theta;
         if (ov->fullStars > 0) cloud->renderedObject.galaxyFullStars = ov->fullStars;
@@ -1312,6 +1314,7 @@ int main(int argc, char** argv) {
           fd.renderMode      = ov->renderMode;
           fd.nebulaScatterScale = ov->nebulaScatterScale;
           fd.particleSizeSpread = ov->particleSizeSpread;
+          fd.look               = ov->look;
           fd.computeMethod   = ov->computeMethod;
           fd.theta           = ov->theta;
           fd.simulatePhysics = ov->simulatePhysics;
@@ -1394,6 +1397,7 @@ int main(int argc, char** argv) {
     // scene's dust scale (see ownDustInfluence).
     const int uRec = clouds[cloudIdx]->uniRecord;
     const int uIdx = clouds[cloudIdx]->uniIndex;
+    cd.look = clouds[cloudIdx]->renderedObject.look;   // a respawn changes the particles, not how they are drawn
     clouds[cloudIdx] = buildCloudFromData(cd);
     clouds[cloudIdx]->uniRecord = uRec;
     clouds[cloudIdx]->uniIndex  = uIdx;
@@ -1572,6 +1576,7 @@ int main(int argc, char** argv) {
       cd.renderMode = c->renderMode;
       cd.nebulaScatterScale = c->nebulaScatterScale;
       cd.particleSizeSpread = c->particleSizeSpread;
+      cd.look = c->renderedObject.look;
       cd.scale = c->scale;
       cd.haloVFlat = c->renderedObject.haloVFlat;
       cd.haloRCore = c->renderedObject.haloRCore;
@@ -1631,6 +1636,7 @@ int main(int argc, char** argv) {
           c->name != defName || !c->universeMember ||
           c->temperature != 4500.f || c->renderMode != 0 ||
           c->nebulaScatterScale != 0.4f || c->particleSizeSpread != 0.0f ||
+          c->renderedObject.look.any() ||
           c->computeMethod != CloudComputeMethod::BarnesHutGPU ||
           c->barnesHutTheta != 0.5f ||
           c->renderedObject.galaxyFullStars != rec.starsPerGalaxy ||
@@ -1647,6 +1653,7 @@ int main(int argc, char** argv) {
         ov.renderMode         = c->renderMode;
         ov.nebulaScatterScale = c->nebulaScatterScale;
         ov.particleSizeSpread = c->particleSizeSpread;
+        ov.look               = c->renderedObject.look;
         ov.computeMethod      = static_cast<int>(c->computeMethod);
         ov.theta              = c->barnesHutTheta;
         ov.fullStars          = c->renderedObject.galaxyFullStars;
@@ -2456,10 +2463,7 @@ int main(int argc, char** argv) {
     auto uploadCloudRO = [&](CloudObject* c){
       c->renderedObject.uploadTemperature(c->temperature);
       c->renderedObject.uploadRenderMode(c->renderMode);
-      c->renderedObject.uploadDustParams(renderer.dustStrength, renderer.dustReddening, renderer.dustDarkest, renderer.dustSettle, renderer.popColour, renderer.starLumSpread, renderer.starLumPivot(true), renderer.starLumPivot(false),
-                                         renderer.dustCoverage, renderer.dustClumpScale,
-                                         c->renderedObject.ownDustInfluence(renderer.dustInfluence),
-                                         renderer.dustContrast);
+      renderer.UploadCloudLook(c->renderedObject);
     };
 
     // ── Recording: capture the SECONDARY-view camera (freecam or a spawned
