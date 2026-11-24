@@ -29,7 +29,7 @@
       "sizeX": 3.0,
       "sizeY": 3.0,
       "sizeZ": 3.0,
-      "temperature": 2606.0,
+      "temperature": 1000.0,
       "theta": 0.5,
       "universeMember": false,
       "useDarkMatterHalo": true
@@ -129,6 +129,135 @@
         -0.0014253120127789465
       ],
       "visualRadius": 13.654899597167969
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": true,
+      "atmosphereFalloff": 5.199999809265137,
+      "atmosphereHeight": 0.05000000074505806,
+      "atmosphereIntensity": 0.05000000074505806,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [],
+      "localOffset": [
+        210.54381657025078,
+        -101.66951381955042,
+        -300.3296912720718
+      ],
+      "mass": 0.0001,
+      "meshPath": "",
+      "name": "Object",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "",
+      "normalMapStrength": 1.0,
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 5.922600734495354e-14,
+      "shaderType": 0,
+      "simulatePhysics": false,
+      "starContrast": 1.0,
+      "starEvolve": 0.05000000074505806,
+      "starScale": 55.0,
+      "starSpots": 0.3499999940395355,
+      "starWarp": 1.0,
+      "surface": {
+        "axes": [
+          1.0,
+          0.8199999928474426,
+          0.7400000095367432
+        ],
+        "bandCount": 9.0,
+        "bands": 0.0,
+        "colHemi": [
+          0.10000000149011612,
+          0.07999999821186066,
+          0.07000000029802322
+        ],
+        "colHigh": [
+          0.8818565607070923,
+          0.8818565607070923,
+          0.8818565607070923
+        ],
+        "colIce": [
+          0.9200000166893005,
+          0.9399999976158142,
+          0.9700000286102295
+        ],
+        "colLiquid": [
+          0.0,
+          0.34883761405944824,
+          1.0
+        ],
+        "colLow": [
+          0.9957805871963501,
+          0.6256890296936035,
+          0.3613381087779999
+        ],
+        "colMid": [
+          0.041019100695848465,
+          0.405063271522522,
+          0.0
+        ],
+        "colTint": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "continentScale": 1.8200000524520874,
+        "continents": 0.4399999976158142,
+        "craterDepth": 0.5400000214576721,
+        "craterSize": 0.2199999988079071,
+        "craters": 0.0,
+        "hemi": 0.0,
+        "ice": 0.0,
+        "liquid": true,
+        "liquidDepth": 0.9700000286102295,
+        "lumpScale": 1.399999976158142,
+        "lumps": 0.3499999940395355,
+        "mountainScale": 10.380000114440918,
+        "mountains": 0.6200000047683716,
+        "relief": 1.0,
+        "ridge": 0.0,
+        "roughness": 0.0,
+        "seaLevel": 0.6800000071525574,
+        "seed": 1,
+        "storms": 0.30000001192092896,
+        "tint": 0.8899999856948853,
+        "tintScale": 2.5
+      },
+      "temperature": 5778.0,
+      "texturePath": "",
+      "velocity": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "visualRadius": 2.0
     }
   ],
   "projectName": "blackhole",
@@ -141,19 +270,19 @@
     "aeSpeedStops": 8.0,
     "autoExposure": true,
     "backgroundColor": [
-      0.004999999888241291,
-      0.004999999888241291,
-      0.029999999329447746
+      0.0014242742909118533,
+      0.0014242792967706919,
+      0.02109706401824951
     ],
     "backgroundLevel": 1.2000000476837158,
     "bloomStrength": 1.5,
     "bloomThreshold": 0.0,
-    "camPitch": 0.1129780113697052,
-    "camRoll": -3.1387200355529785,
-    "camRotation": -2.20251202583313,
-    "camX": 310.09926194116406,
-    "camY": -0.2664751846159561,
-    "camZ": 218.42978469318223,
+    "camPitch": 0.04542502015829086,
+    "camRoll": -3.1165611743927,
+    "camRotation": -3.3100266456604004,
+    "camX": -70.91815851649119,
+    "camY": 5.702128575091379,
+    "camZ": 393.09977843871445,
     "camZoom": 45.0,
     "cameraKeyframes": [
       {
