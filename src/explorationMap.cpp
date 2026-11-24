@@ -997,6 +997,9 @@ void Renderer::DrawExplorationLabels(std::vector<PhysicsObject>& physicsObjects,
                  double radius, float rpx = 0.0f) {
     float sx = 0.0f, sy = 0.0f;
     if (!RelToScreen(rel, sx, sy)) return;
+    // A body whose position is no longer a number (a simulation that blew up)
+    // passes every comparison below and would hand the font a NaN size.
+    if (!std::isfinite(dist) || !std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(t)) return;
     if (sx < ox - 20.0f || sx > ox + W + 20.0f || sy < oy - 20.0f || sy > oy + H + 20.0f) return;
     float vis = 1.0f;
     for (const Occ& o : occ) {
