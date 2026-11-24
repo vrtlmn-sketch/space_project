@@ -1403,13 +1403,42 @@ int main(int argc, char** argv) {
     clouds[cloudIdx]->uniIndex  = uIdx;
   };
 
-  procGen.onGenerate = [&](std::vector<CloudParticle> pts, int cm, float temp) {
-    auto cloud = std::make_unique<CloudObject>(vec3{0, 0, 0}, std::move(pts));
-    cloud->computeMethod = static_cast<CloudComputeMethod>(cm);
-    cloud->temperature   = temp;
+  // The cloud creator (Galaxy / Sculpt / File) hands over one finished recipe.
+  procGen.onSpawn = [&](ProceduralGenWindow::Spawn&& sp) {
+    std::unique_ptr<CloudObject> cloud;
+    if (!sp.formationFile.empty()) {
+      CloudFormState cf;
+      cf.enabled = true;
+      cf.formationFile     = sp.formationFile;
+      cf.scale             = sp.scale;
+      cf.computeMethod     = sp.computeMethod;
+      cf.useDarkMatterHalo = sp.darkMatterHalo;
+      cf.temperature       = sp.temperature;
+      cf.renderMode        = sp.renderMode;
+      cloud = buildCloudFromData(cloudDataFromForm(cf));
+    } else {
+      cloud = std::make_unique<CloudObject>(vec3{0, 0, 0}, std::move(sp.particles));
+      cloud->computeMethod     = static_cast<CloudComputeMethod>(sp.computeMethod);
+      cloud->temperature       = sp.temperature;
+      cloud->renderMode        = sp.renderMode;
+      cloud->useDarkMatterHalo = sp.darkMatterHalo;
+    }
+    cloud->renderedObject.look = sp.look;
     placeAheadOfCamera(*cloud);
     clouds.push_back(std::move(cloud));
   };
+  procGen.projectLookValue = [&](int key) { return renderer.ProjectLookValue(key); };
+  procGen.listFormations   = []() { return Renderer::ListFormationFiles(); };
+  procGen.loadFormation    = [](const std::string& file, std::vector<CloudParticle>& out) {
+    const bool sf = file.size() > 10 && file.compare(file.size() - 10, 10, ".starfield") == 0;
+    CloudObject tmp(vec3{0, 0, 0}, (sf ? "templates/starfields/" : "templates/formations/") + file);
+    out = tmp.renderedObject.particles();
+    return !out.empty();
+  };
+  // The creator's cinematic preview draws THIS cloud, which is never in the
+  // scene: rebuilt when the creator's particles change, drawn alone.
+  std::unique_ptr<CloudObject> previewCloud;
+  unsigned previewCloudGen = ~0u;
 
   cb.clearSimulation = [&]() {
     for (auto& obj : physicsObjects)
@@ -2967,6 +2996,50 @@ cp.planetsPerSystem = 4;
       renderer.EndExplorePreviewPass();
     }
     // ── End secondary pass ──────────────────────────────────────────────────
+
+    // ── Cloud creator: cinematic preview ─────────────────────────────────────
+    // Only while that view is showing and something changed (the window asks).
+    // PROCGEN_TEST=<0 sculpt|1 galaxy|2 file>: open the creator on that mode in
+    // its cinematic view and dump the preview to /tmp/procgen_preview_WxH.rgba, so
+    // the off-screen pass can be checked without the UI.
+    static const char* procTest = std::getenv("PROCGEN_TEST");
+    if (procTest) procGen.debugShowCinematic(std::atoi(procTest));
+    if (!renderer.exploring() && procGen.wantsCinematic()) {
+      if (!previewCloud || previewCloudGen != procGen.previewGeneration()) {
+        previewCloud = std::make_unique<CloudObject>(vec3{0, 0, 0}, procGen.previewParticles());
+        previewCloudGen = procGen.previewGeneration();
+      }
+      double camPos[3]; float fov = 45.0f;
+      procGen.cinematicCamera(camPos, fov);
+      if (renderer.BeginCloudPreviewPass(camPos, fov)) {
+        gLfCount = 0;                               // no black hole bends a cloud that is not in the scene
+        RenderedObject& ro = previewCloud->renderedObject;
+        const float temp = procGen.appearanceTemperature();
+        const int   rmode = procGen.appearanceRenderMode();
+        ro.coordinates = dvec3{0.0, 0.0, 0.0};
+        ro.rotationDeg = vec3{0.0f, 0.0f, 0.0f};
+        ro.look        = procGen.appearanceLook();
+        ro.cacheAppearance(temp, rmode);
+        ro.uploadNebulaScatterScale(previewCloud->nebulaScatterScale);
+        ro.uploadParticleSizeSpread(previewCloud->particleSizeSpread);
+        ro.uploadTemperature(temp);
+        ro.uploadRenderMode(rmode);
+        renderer.UploadCloudLook(ro);
+        renderer.Draw(ro);
+        renderer.DrawCloudDust(ro);
+        renderer.EndCloudPreviewPass();
+        procGen.cinematicDrawn(renderer.cloudPreviewTex, renderer.cloudPreviewW, renderer.cloudPreviewH);
+        if (procTest) {
+          std::vector<unsigned char> px((size_t)renderer.cloudPreviewW * renderer.cloudPreviewH * 4);
+          glBindTexture(GL_TEXTURE_2D, renderer.cloudPreviewTex);
+          glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+          // Raw RGBA, bottom row first, with the size in the name; the test reads it back.
+          char nm[96];
+          std::snprintf(nm, sizeof(nm), "/tmp/procgen_preview_%dx%d.rgba", renderer.cloudPreviewW, renderer.cloudPreviewH);
+          if (FILE* f = std::fopen(nm, "wb")) { std::fwrite(px.data(), 1, px.size(), f); std::fclose(f); }
+        }
+      }
+    }
 
     // Draw all UI panels
     renderer.DrawUI(physicsObjects, clouds, cb);

@@ -843,6 +843,90 @@ bool Renderer::BeginExplorePreviewPass(std::vector<PhysicsObject>& physicsObject
   return true;
 }
 
+// ── The cloud creator's cinematic preview ──
+// Same shape as the pass above, for a cloud that is not in the scene: the
+// camera goes to the creator's orbit position, the raster cinematic pipeline
+// is forced on for the duration (the editor may be in the plain view or the
+// raytracer), and the result is tonemapped with its own exposure.
+bool Renderer::BeginCloudPreviewPass(const double camPos[3], float fovDeg) {
+  const double dist = std::sqrt(camPos[0] * camPos[0] + camPos[1] * camPos[1] + camPos[2] * camPos[2]);
+  if (!(dist > 0.0)) return false;
+  // The live cinematic pass's size when there is one, so its buffers are
+  // reused instead of reallocated every time the preview redraws.
+  int w = lastMainCineW, h = lastMainCineH;
+  if (w <= 0 || h <= 0) { w = 960; h = 720; }
+  if (!cloudPreviewFBO || cloudPreviewW != w || cloudPreviewH != h) {
+    if (cloudPreviewFBO)   glDeleteFramebuffers(1, &cloudPreviewFBO);
+    if (cloudPreviewTex)   glDeleteTextures(1, &cloudPreviewTex);
+    if (cloudPreviewDepth) glDeleteRenderbuffers(1, &cloudPreviewDepth);
+    glGenFramebuffers(1, &cloudPreviewFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, cloudPreviewFBO);
+    glGenTextures(1, &cloudPreviewTex);
+    glBindTexture(GL_TEXTURE_2D, cloudPreviewTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cloudPreviewTex, 0);
+    glGenRenderbuffers(1, &cloudPreviewDepth);
+    glBindRenderbuffer(GL_RENDERBUFFER, cloudPreviewDepth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, w, h);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, cloudPreviewDepth);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    cloudPreviewW = w; cloudPreviewH = h;
+  }
+
+  for (int i = 0; i < 3; ++i) { epSavedAnchor[i] = gCamAnchor[i]; epSavedTranslate[i] = cameraTranslate[i]; }
+  for (int i = 0; i < 9; ++i) { epSavedCamMatrix[i] = camMatrix[i]; epSavedViewRot[i] = gViewRotD[i]; }
+  epSavedRotation = rotation; epSavedPitch = pitch; epSavedRoll = roll; epSavedZoom = zoom;
+  epSavedNear = RenderedObject::sZNear; epSavedFar = RenderedObject::sZFar;
+  cpSavedFbW = fbWidth; cpSavedFbH = fbHeight;
+  cpSavedRt = rayTracerView; cpSavedRaster = realisticRasterView;
+
+  // The cloud sits at the origin; position = anchor - translate.
+  for (int i = 0; i < 3; ++i) { gCamAnchor[i] = 0.0; cameraTranslate[i] = -camPos[i]; }
+  // Facing the origin (see "Pointing the camera from a script" in CLAUDE.md).
+  const double fx = -camPos[0] / dist, fy = -camPos[1] / dist, fz = -camPos[2] / dist;
+  rotation = (float)std::asin(std::clamp(fx, -1.0, 1.0));
+  pitch    = (float)std::atan2(-fy, -fz);
+  roll     = 0.0f;
+  syncMatrixFromEuler();
+  zoom = fovDeg;
+  RenderedObject::sZNear = (float)(dist * 1e-4);
+  RenderedObject::sZFar  = (float)(dist * 1e4);
+  fbWidth = w; fbHeight = h;
+  rayTracerView = false; realisticRasterView = true;
+
+  rimClouds.clear();
+  rimOccluders.clear();
+  explorePreviewPass = true;                 // Snap exposure: a still, not part of the live transition
+  CineBeginIfActive(cloudPreviewFBO, w, h);
+  if (!cineActive) {
+    glBindFramebuffer(GL_FRAMEBUFFER, cloudPreviewFBO);
+    glViewport(0, 0, w, h);
+    ClearSceneTarget();
+  }
+  return true;
+}
+
+void Renderer::EndCloudPreviewPass() {
+  CineResolveIfActive();
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  int w = 0, h = 0;
+  glfwGetFramebufferSize(window, &w, &h);
+  glViewport(0, 0, w, h);
+
+  for (int i = 0; i < 3; ++i) { gCamAnchor[i] = epSavedAnchor[i]; cameraTranslate[i] = epSavedTranslate[i]; }
+  for (int i = 0; i < 9; ++i) { camMatrix[i] = epSavedCamMatrix[i]; gViewRotD[i] = epSavedViewRot[i]; }
+  rotation = epSavedRotation; pitch = epSavedPitch; roll = epSavedRoll; zoom = epSavedZoom;
+  RenderedObject::sZNear = epSavedNear; RenderedObject::sZFar = epSavedFar;
+  fbWidth = cpSavedFbW; fbHeight = cpSavedFbH;
+  rayTracerView = cpSavedRt; realisticRasterView = cpSavedRaster;
+
+  rimClouds.clear();
+  rimOccluders.clear();
+  explorePreviewPass = false;
+}
+
 void Renderer::EndExplorePreviewPass() {
   CineResolveIfActive();                     // tonemaps into explorePreviewFBO (Snap exposure)
   glBindFramebuffer(GL_FRAMEBUFFER, 0);

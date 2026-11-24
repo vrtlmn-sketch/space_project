@@ -141,7 +141,7 @@ void ProceduralGenWindow::buildViewRot(float V[9]) const {
 
 void ProceduralGenWindow::buildProj(float P[16]) const {
   float fovY   = 45.0f * kPi / 180.0f;
-  float aspect = (float)TEX_W / (float)TEX_H;
+  float aspect = (float)texW / (float)std::max(texH, 1);
   float f      = 1.0f / std::tan(fovY * 0.5f);
   float zN = 0.1f, zF = 200.0f;
   std::memset(P, 0, 64);
@@ -178,9 +178,20 @@ static void mat3mul(const float M[9], float x, float y, float z,
 // ─── Core particle generator ──────────────────────────────────────────────────
 
 float ProceduralGenWindow::previewScale() const {
-  if (mode != 1) return 1.0f;
+  if (mode == 0) return 1.0f;
+  if (mode == 2) return (fileExtent > 1e-12f) ? previewRadius() / fileExtent : 1.0f;
   float rAU = galRadiusLy * 63241.0f;
   return (rAU > 1e-6f) ? previewRadius() / rAU : 1.0f;
+}
+
+// The cinematic view looks from the same place as the dots-and-grid one, in
+// the cloud's own units: the preview camera, un-scaled.
+void ProceduralGenWindow::cinematicCamera(double pos[3], float& fovDeg) const {
+  float c[3];
+  getCameraPos(c);
+  const double s = (double)std::max(previewScale(), 1e-30f);
+  pos[0] = c[0] / s; pos[1] = c[1] / s; pos[2] = c[2] / s;
+  fovDeg = 45.0f;
 }
 
 void ProceduralGenWindow::generateGalaxy(int targetCount,
@@ -205,6 +216,25 @@ void ProceduralGenWindow::generateParticles(int targetCount,
                                              std::vector<CloudParticle>& out)
 {
   if (mode == 1) { generateGalaxy(targetCount, out); return; }
+  if (mode == 2) {
+    // A file is what it is: the preview takes an even sample when it is larger.
+    out.clear();
+    if (fileLoaded != fileName) {
+      fileParticles.clear(); fileExtent = 1.0f;
+      if (!fileName.empty() && loadFormation) loadFormation(fileName, fileParticles);
+      float m2 = 0.0f;
+      for (const auto& p : fileParticles)
+        m2 = std::max(m2, p.position.x * p.position.x + p.position.y * p.position.y + p.position.z * p.position.z);
+      if (m2 > 0.0f) fileExtent = std::sqrt(m2);
+      fileLoaded = fileName;
+    }
+    const size_t n = fileParticles.size();
+    if (n == 0 || targetCount <= 0) return;
+    const size_t want = std::min(n, (size_t)targetCount);
+    out.reserve(want);
+    for (size_t i = 0; i < want; ++i) out.push_back(fileParticles[(i * n) / want]);
+    return;
+  }
   out.clear();
   if (targetCount <= 0) return;
   out.reserve((size_t)targetCount);
@@ -454,9 +484,11 @@ void ProceduralGenWindow::generateParticles(int targetCount,
 }
 
 void ProceduralGenWindow::regenerate() {
-  int previewCount = std::min(count, PREVIEW_CAP);
+  int previewCount = (mode == 2) ? PREVIEW_CAP : std::min(count, PREVIEW_CAP);
   generateParticles(previewCount, particles);
   dirty = false;
+  ++previewGen;
+  cineFrames = 8;
 }
 
 // ─── GL lifecycle ─────────────────────────────────────────────────────────────
@@ -494,23 +526,26 @@ void ProceduralGenWindow::ensureGPU() {
 }
 
 void ProceduralGenWindow::ensureFBO() {
-  if (fboReady) return;
-  glGenTextures(1, &colorTex);
+  if (fboReady && allocW == texW && allocH == texH) return;
+  if (!fboReady) {
+    glGenTextures(1, &colorTex);
+    glGenRenderbuffers(1, &depthRBO);
+    glGenFramebuffers(1, &fbo);
+  }
   glBindTexture(GL_TEXTURE_2D, colorTex);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, TEX_W, TEX_H,
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, texW, texH,
                0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glGenRenderbuffers(1, &depthRBO);
   glBindRenderbuffer(GL_RENDERBUFFER, depthRBO);
-  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, TEX_W, TEX_H);
-  glGenFramebuffers(1, &fbo);
+  glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT32F, texW, texH);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                          GL_TEXTURE_2D, colorTex, 0);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                             GL_RENDERBUFFER, depthRBO);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  allocW = texW; allocH = texH;
   fboReady = true;
 }
 
@@ -532,7 +567,7 @@ void ProceduralGenWindow::uploadPreviewGeom() {
   constexpr int DIV = 20;
   float half  = std::max(previewRadius() * 2.5f, 3.0f);
   float step  = 2.0f * half / DIV;
-  float gridY = (mode == 1) ? -previewRadius() * 0.25f : -radius * scaleXYZ[1];
+  float gridY = (mode != 0) ? -previewRadius() * 0.25f : -radius * scaleXYZ[1];
 
   std::vector<float> grid;
   grid.reserve((size_t)(DIV+1) * 12);
@@ -559,7 +594,7 @@ void ProceduralGenWindow::renderToFBO() {
   glGetIntegerv(GL_VIEWPORT, prevVP);
 
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-  glViewport(0, 0, TEX_W, TEX_H);
+  glViewport(0, 0, texW, texH);
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST);
@@ -606,7 +641,7 @@ void ProceduralGenWindow::draw() {
   renderToFBO();
 
   ImGui::SetNextWindowSize(ImVec2(Em(1060.0f), Em(620.0f)), ImGuiCond_Once);
-  if (!ImGui::Begin("Procedural Cloud Generator", &open,
+  if (!ImGui::Begin("Create Cloud###ProceduralCloudGenerator", &open,
                     ImGuiWindowFlags_NoCollapse)) {
     ImGui::End();
     return;
@@ -620,17 +655,48 @@ void ProceduralGenWindow::draw() {
   bool changed = false;
 
   // ── MODE ─────────────────────────────────────────────────────────────────────
-  // Galaxy runs the exact sampler universe galaxies use; Sculpt is the
-  // free-form density toolkit. Defaults in Galaxy mode ARE the milky_way
-  // sample formation — hit Generate and you get that shape.
+  // Three ways to make a cloud, one window. Galaxy runs the exact sampler
+  // universe galaxies use (its defaults ARE the milky_way sample formation);
+  // Sculpt is the free-form density toolkit; File takes a saved formation.
   {
-    const char* modes[] = {"Sculpt", "Galaxy"};
-    changed |= ImGui::Combo("Mode", &mode, modes, 2);
+    const struct { const char* name; int m; } tabs[] = { {"Galaxy", 1}, {"Sculpt", 0}, {"File", 2} };
+    const float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+    for (int t = 0; t < 3; ++t) {
+      if (t) ImGui::SameLine();
+      const bool on = (mode == tabs[t].m);
+      if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+      if (ImGui::Button(tabs[t].name, ImVec2(bw, 0)) && !on) { mode = tabs[t].m; changed = true; }
+      if (on) ImGui::PopStyleColor();
+    }
     ImGui::Spacing();
   }
 
+  // ── FILE ─────────────────────────────────────────────────────────────────────
+  if (mode == 2) {
+    if (!formationsScanned) {
+      if (listFormations) formations = listFormations();
+      formationsScanned = true;
+      if (fileName.empty() && !formations.empty()) { fileName = formations.front(); changed = true; }
+    }
+    if (ImGui::CollapsingHeader("File", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (ImGui::BeginCombo("Formation", fileName.empty() ? "(none)" : fileName.c_str())) {
+        for (const auto& f : formations)
+          if (ImGui::Selectable(f.c_str(), f == fileName) && f != fileName) { fileName = f; changed = true; }
+        ImGui::EndCombo();
+      }
+      if (ImGui::Button("Rescan")) { if (listFormations) formations = listFormations(); }
+      ImGui::SameLine();
+      ImGui::TextDisabled("%zu formations", formations.size());
+      ImGui::DragFloat("Scale", &fileScale, 0.05f, 0.1f, 20.0f, "%.2fx");
+      ImGui::SetItemTooltip("Size of the spawned cloud against the file's own.\nVelocities are adjusted so orbits stay correct.");
+      const char* methods[] = {"CPU", "Barnes-Hut GPU"};
+      ImGui::Combo("Compute Method##file", &computeMethod, methods, 2);
+      ImGui::Spacing();
+    }
+  }
+
   // ── GENERATION ──────────────────────────────────────────────────────────────
-  if (ImGui::CollapsingHeader("Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
+  if (mode != 2 && ImGui::CollapsingHeader("Generation", ImGuiTreeNodeFlags_DefaultOpen)) {
     changed |= ImGui::DragInt("Particle Count", &count, 100.0f, 1, 1000000);
     count = std::clamp(count, 1, 1000000);
     changed |= ImGui::DragInt("Seed", &seed, 1.0f);
@@ -677,7 +743,6 @@ void ProceduralGenWindow::draw() {
       changed |= ImGui::DragFloat("Rotation Speed", &galShape.vFlat, 0.5f, 0.0f, 500.0f, "%.1f AU/yr");
       changed |= ImGui::DragFloat("Velocity Scatter", &galShape.velScatter, 0.02f, 0.0f, 20.0f, "%.2f");
       changed |= ImGui::DragFloat("Particle Mass##gal", &galMass, 0.01f, 0.0001f, 10.0f, "%.4f");
-      changed |= ImGui::DragFloat("Temperature##gal", &galTemperature, 50.0f, 100.0f, 50000.0f, "%.0f K");
       const char* methods[] = {"CPU", "Barnes-Hut GPU"};
       ImGui::Combo("Compute Method##gal", &computeMethod, methods, 2);
       ImGui::Spacing();
@@ -809,11 +874,43 @@ void ProceduralGenWindow::draw() {
   // ── PHYSICS ──────────────────────────────────────────────────────────────────
   if (mode == 0 && ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
     changed |= ImGui::DragFloat("Particle Mass", &particleMass, 0.001f, 0.0001f, 1.0f, "%.4f");
-    changed |= ImGui::DragFloat("Temperature",   &temperature,  50.0f,  100.0f, 50000.0f, "%.0f K");
     const char* methods[] = {"CPU", "Barnes-Hut GPU"};
     ImGui::Combo("Compute Method", &computeMethod, methods, 2);
     ImGui::Spacing();
   }
+
+  // ── APPEARANCE ───────────────────────────────────────────────────────────────
+  // How the cloud is drawn, for every mode: what the inspector shows for a
+  // cloud that already exists. None of it changes the particles, so it only
+  // asks the cinematic view to redraw.
+  bool lookChanged = false;
+  if (ImGui::CollapsingHeader("Appearance", ImGuiTreeNodeFlags_DefaultOpen)) {
+    lookChanged |= ImGui::SliderFloat("Temperature", &curTemperature(), 1000.0f, 30000.0f, "%.0f K");
+    const char* rm[] = {"Points", "Nebula"};
+    lookChanged |= ImGui::Combo("Render as", &renderMode, rm, 2);
+    ImGui::Checkbox("Dark matter halo", &darkMatterHalo);
+    ImGui::SetItemTooltip("A halo that holds the cloud together when it is simulated,\nso it keeps its shape and two galaxies can merge.");
+    int nRows = 0;
+    const CloudLookRow* rows = CloudLookRows(nRows);
+    for (int ri = 0; ri < nRows; ++ri) {
+      const CloudLookRow& r = rows[ri];
+      if (r.head) { ImGui::Spacing(); ImGui::SeparatorText(r.head); }
+      ImGui::PushID(1000 + r.key);
+      float val = look.has(r.key) ? look.v[r.key] : (projectLookValue ? projectLookValue(r.key) : r.lo);
+      bool ch = false;
+      if (r.fmt == 0) {
+        float n01 = std::clamp((val - r.lo) / (r.hi - r.lo), 0.0f, 1.0f);
+        if (ImGui::SliderFloat(r.label, &n01, 0.0f, 1.0f, "%.2f")) { val = r.lo + n01 * (r.hi - r.lo); ch = true; }
+      } else {
+        ch = ImGui::SliderFloat(r.label, &val, r.lo, r.hi, r.key == CloudLook::StarFieldOffset ? "%+.1f stops" : "%.1f stops");
+      }
+      ImGui::SetItemTooltip("%s", r.tip);
+      if (ch) { look.set(r.key, std::clamp(val, r.lo, r.hi)); lookChanged = true; }
+      ImGui::PopID();
+    }
+    ImGui::Spacing();
+  }
+  if (lookChanged) cineFrames = 8;
 
   if (changed) dirty = true;
 
@@ -821,29 +918,46 @@ void ProceduralGenWindow::draw() {
   ImGui::Spacing();
 
   // Info line
-  int previewCount = std::min(count, PREVIEW_CAP);
-  if (count > PREVIEW_CAP)
-    ImGui::TextDisabled("Preview: %d / %d  (capped)", previewCount, count);
-  else
-    ImGui::TextDisabled("%d particles", count);
+  if (mode == 2) {
+    if (fileParticles.empty()) ImGui::TextDisabled(fileName.empty() ? "No file chosen" : "No preview for this file");
+    else if ((int)fileParticles.size() > PREVIEW_CAP)
+      ImGui::TextDisabled("Preview: %d / %zu  (capped)", PREVIEW_CAP, fileParticles.size());
+    else ImGui::TextDisabled("%zu particles", fileParticles.size());
+  } else {
+    int previewCount = std::min(count, PREVIEW_CAP);
+    if (count > PREVIEW_CAP)
+      ImGui::TextDisabled("Preview: %d / %d  (capped)", previewCount, count);
+    else
+      ImGui::TextDisabled("%d particles", count);
+  }
 
   ImGui::Spacing();
 
-  if (ImGui::Button("Generate", ImVec2(-1.0f, 0))) {
-    // For Generate, build the full count
-    generateParticles(count, fullParticles);
-    // Keep preview synced too (re-use already-generated if within cap)
-    if (count <= PREVIEW_CAP) {
-      particles = fullParticles;
+  ImGui::BeginDisabled(mode == 2 && fileName.empty());
+  if (ImGui::Button("Spawn Cloud", ImVec2(-1.0f, 0))) {
+    Spawn sp;
+    sp.computeMethod  = computeMethod;
+    sp.temperature    = curTemperature();
+    sp.renderMode     = renderMode;
+    sp.darkMatterHalo = darkMatterHalo;
+    sp.look           = look;
+    if (mode == 2) {
+      sp.formationFile = fileName;
+      sp.scale         = fileScale;
     } else {
-      generateParticles(PREVIEW_CAP, particles);
+      // The full count, not the preview's.
+      generateParticles(count, fullParticles);
+      if (count <= PREVIEW_CAP) particles = fullParticles;
+      else                      generateParticles(PREVIEW_CAP, particles);
+      uploadPreviewGeom();
+      dirty = false;
+      ++previewGen; cineFrames = 8;
+      sp.particles = fullParticles;
     }
-    uploadPreviewGeom();
-    dirty = false;
-    if (onGenerate) onGenerate(fullParticles, computeMethod,
-                               mode == 1 ? galTemperature : temperature);
+    if (onSpawn) onSpawn(std::move(sp));
   }
-  ImGui::SetItemTooltip("Spawn this cloud into the simulation (full particle count)");
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip("Put this cloud into the scene, in front of the camera.");
 
   ImGui::PopItemWidth();
   ImGui::EndChild();
@@ -853,21 +967,59 @@ void ProceduralGenWindow::draw() {
   // ── Right: preview ───────────────────────────────────────────────────────────
   ImGui::BeginGroup();
 
-  ImVec2 imgSize((float)TEX_W, (float)TEX_H);
+  // Viewport = dots over a grid: instant, shows the shape. Cinematic = the
+  // cloud through the real renderer with the appearance above, so dust, haze
+  // and colour can be judged before it is spawned.
+  {
+    const char* views[] = {"Viewport", "Cinematic"};
+    for (int vI = 0; vI < 2; ++vI) {
+      if (vI) ImGui::SameLine();
+      const bool on = (previewMode == vI);
+      if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+      if (ImGui::Button(views[vI], ImVec2(Em(110.0f), 0)) && !on) { previewMode = vI; cineFrames = 8; }
+      if (on) ImGui::PopStyleColor();
+    }
+  }
+
+  // Fill what the window leaves: everything to the right of the settings, down
+  // to the one line of help under the picture. The render target follows on
+  // the next frame.
+  {
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    const float captionH = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+    texW = std::max(200, (int)std::floor(avail.x));
+    texH = std::max(160, (int)std::floor(avail.y - captionH));
+  }
+  ImVec2 imgSize((float)texW, (float)texH);
   ImVec2 imgOrigin = ImGui::GetCursorScreenPos();
+  const ImVec2 imgEnd(imgOrigin.x + (float)texW, imgOrigin.y + (float)texH);
 
   ImGui::InvisibleButton("##preview_drag", imgSize);
-  ImGui::GetWindowDrawList()->AddImage(
-    (ImTextureID)(intptr_t)colorTex,
-    imgOrigin,
-    ImVec2(imgOrigin.x + (float)TEX_W, imgOrigin.y + (float)TEX_H),
-    ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+  if (previewMode == 1 && cineTex && cineW > 0 && cineH > 0) {
+    // The renderer's picture is the main view's shape; show the middle of it,
+    // cut to this frame's shape (never stretched). Its origin is bottom-left.
+    const float ar = (float)cineW / (float)cineH, slot = (float)texW / (float)std::max(texH, 1);
+    float u0 = 0.0f, u1 = 1.0f, v0 = 0.0f, v1 = 1.0f;
+    if (ar > slot) { const float k = slot / ar; u0 = (1.0f - k) * 0.5f; u1 = 1.0f - u0; }
+    else           { const float k = ar / slot; v0 = (1.0f - k) * 0.5f; v1 = 1.0f - v0; }
+    ImGui::GetWindowDrawList()->AddRectFilled(imgOrigin, imgEnd, IM_COL32(0, 0, 0, 255));
+    ImGui::GetWindowDrawList()->AddImage((ImTextureID)(intptr_t)cineTex, imgOrigin, imgEnd,
+                                         ImVec2(u0, v1), ImVec2(u1, v0));
+  } else {
+    ImGui::GetWindowDrawList()->AddImage(
+      (ImTextureID)(intptr_t)colorTex, imgOrigin, imgEnd,
+      ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+    if (previewMode == 1)
+      ImGui::GetWindowDrawList()->AddText(ImVec2(imgOrigin.x + Em(10.0f), imgOrigin.y + Em(8.0f)),
+                                          IM_COL32(220, 228, 240, 200), "Rendering...");
+  }
 
   if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
     ImVec2 delta = ImGui::GetIO().MouseDelta;
     previewYaw   += delta.x * 0.012f;
     previewPitch += delta.y * 0.012f;
     previewPitch  = std::clamp(previewPitch, -1.4f, 1.4f);
+    if (delta.x != 0.0f || delta.y != 0.0f) cineFrames = 8;
   }
 
   if (ImGui::IsItemHovered()) {
@@ -875,6 +1027,7 @@ void ProceduralGenWindow::draw() {
     if (wheel != 0.0f) {
       previewZoom *= std::pow(0.9f, wheel);
       previewZoom  = std::clamp(previewZoom, 0.05f, 20.0f);
+      cineFrames = 8;
     }
   }
 

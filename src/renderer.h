@@ -1177,6 +1177,19 @@ public:
   bool   BeginExplorePreviewPass(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds);
   void   EndExplorePreviewPass();
+  // ── Cloud creator's cinematic preview ──
+  // One cloud, alone, through the real cloud pipeline into a texture: camera at
+  // camPos (in the cloud's own units, cloud at the origin) looking at it.
+  // main.cpp draws the cloud between the two calls. Shares the saved-camera
+  // slots with the explore preview; the two never nest.
+  bool   BeginCloudPreviewPass(const double camPos[3], float fovDeg);
+  void   EndCloudPreviewPass();
+  GLuint cloudPreviewFBO{0}, cloudPreviewTex{0}, cloudPreviewDepth{0};
+  int    cloudPreviewW{0}, cloudPreviewH{0};
+  int    cpSavedFbW{0}, cpSavedFbH{0};
+  bool   cpSavedRt{false}, cpSavedRaster{false};
+  int    lastMainCineW{0}, lastMainCineH{0};   // the live cinematic pass's size, so a preview can reuse its buffers
+  static std::vector<std::string> ListFormationFiles();
   GLuint explorePreviewFBO{0}, explorePreviewTex{0}, explorePreviewDepth{0};
   int    explorePreviewW{0}, explorePreviewH{0};
   int    explorePreviewFrames{0};

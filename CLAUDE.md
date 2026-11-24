@@ -1904,6 +1904,36 @@ override). How generated galaxies should get varied looks is not decided yet.
   has no UI). The raytraced view ignores looks entirely and draws with the
   project's saved values, which can no longer be changed from the UI.
 
+## Clouds are created in ONE window, with a real-renderer preview
+
+`ProceduralGenWindow` ("Create Cloud", proceduralGen.cpp) has three modes —
+Galaxy, Sculpt, File — one shared Appearance section (temperature, render mode,
+dark-matter halo and the per-cloud settings from `CloudLookRows`, the same table
+the inspector draws), and one Spawn button. The Spawn menu's Cloud tab is only a
+button to it: it used to carry its own file picker, temperature and render mode,
+which made three ways to spawn across two places. The plain random "Procedural"
+blob (count + size) can no longer be created; Sculpt covers it.
+
+The preview has two views. **Viewport** is the window's own dots-and-grid
+shader. **Cinematic** is the real cloud pipeline: `Renderer::Begin/
+EndCloudPreviewPass` (exploreSearch.cpp, beside the search preview it is
+modelled on) moves the camera to the creator's orbit position, forces the raster
+cinematic path on for the pass, and main.cpp draws ONE hidden cloud that is
+never in the scene (`previewCloud`, rebuilt when the creator's particle
+generation counter changes).
+
+- It redraws only when the window asks (`wantsCinematic`): eight frames after
+  any change or orbit, so the picture settles, then nothing.
+- It renders at the live cinematic pass's size (`lastMainCineW/H`) and the
+  window crops the middle to its own shape. A size of its own would reallocate
+  the HDR and post buffers twice a frame while it redraws.
+- `gLfCount = 0` for the pass: a scene's black hole must not bend a cloud that
+  is not in the scene. The main pass recomputes the lens every frame.
+- The preview is capped at 50 000 particles, and dust and haze depend on how
+  many sprites overlap, so a larger cloud reads thinner here than once spawned.
+- `PROCGEN_TEST=<0 sculpt|1 galaxy|2 file>` opens it in the cinematic view
+  headlessly and dumps `/tmp/procgen_preview_WxH.rgba` (raw, bottom row first).
+
 ## Variety: what a generated system contains beyond a star and bare planets
 
 `UniverseParams::variety` (0..1; universe creation menu, saved per universe).

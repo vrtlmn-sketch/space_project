@@ -3286,6 +3286,8 @@ static std::vector<std::string> ScanFormationFiles() {
   return files;
 }
 
+std::vector<std::string> Renderer::ListFormationFiles() { return ScanFormationFiles(); }
+
 static std::vector<std::string> ScanModelFiles() {
   std::vector<std::string> files;
   const std::string dir = "models";
@@ -6716,95 +6718,16 @@ void Renderer::DrawSpawnPanel(const SceneCallbacks& cb) {
     }
 
     // ── Cloud tab ──
+    // Clouds are made in one place now: the creator window (Galaxy, Sculpt or
+    // File), which previews the cloud and holds its appearance settings. This
+    // tab used to have its own file picker, temperature and render mode beside
+    // a button to that window, which made three ways to spawn across two places.
     if (ImGui::BeginTabItem("Cloud")) {
-      // Formation file selector
-      static std::vector<std::string> formationFiles;
-      static bool scanned = false;
-      if (!scanned) { formationFiles = ScanFormationFiles(); scanned = true; }
-      // Re-scan button
-      if (ImGui::Button("Rescan##cf")) formationFiles = ScanFormationFiles();
-      ImGui::SameLine();
-      ImGui::TextDisabled("(%zu formations)", formationFiles.size());
-
-      // Dropdown for formation selection
-      int formIdx = -1; // -1 = procedural
-      for (int i = 0; i < (int)formationFiles.size(); i++) {
-        if (formationFiles[i] == cloudForm.formationFile) { formIdx = i; break; }
-      }
-      // Build combo items: "Procedural" + all formation files
-      const char* previewStr = (formIdx >= 0) ? formationFiles[formIdx].c_str() : "Procedural";
-      PropLabel("File");
-      if (ImGui::BeginCombo("##cform", previewStr)) {
-        if (ImGui::Selectable("Procedural", formIdx < 0)) {
-          cloudForm.formationFile.clear();
-          formIdx = -1;
-        }
-        for (int i = 0; i < (int)formationFiles.size(); i++) {
-          bool sel = (formIdx == i);
-          if (ImGui::Selectable(formationFiles[i].c_str(), sel)) {
-            cloudForm.formationFile = formationFiles[i];
-            formIdx = i;
-          }
-        }
-        ImGui::EndCombo();
-      }
-
+      ImGui::TextWrapped("Make a galaxy, sculpt a shape, or load a formation file, "
+                         "with a preview and the cloud's look settings.");
       ImGui::Spacing();
-
-      // Show procedural controls only if no formation file
-      if (cloudForm.formationFile.empty()) {
-        PropLabel("Count");
-        ImGui::SliderInt("##Count##sp", &cloudForm.count, 100, 5000);
-        PropLabel("Size");
-        float cs[3] = { cloudForm.sizeX, cloudForm.sizeY, cloudForm.sizeZ };
-        if (ImGui::DragFloat3("##csz", cs, 0.1f, 0.5f, 10.f, "%.1f")) {
-          cloudForm.sizeX = cs[0]; cloudForm.sizeY = cs[1]; cloudForm.sizeZ = cs[2];
-        }
-      } else {
-        PropLabel("Scale");
-        ImGui::DragFloat("##cf_scale", &cloudForm.scale, 0.05f, 0.1f, 20.f, "%.2fx");
-        ImGui::TextDisabled("Velocities adjusted for correct orbits");
-      }
-
-      PropCheckbox("Dark matter halo", &cloudForm.useDarkMatterHalo);
-      if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Invisible heavy particles that reproduce the rotation curve, so the\n"
-                          "cloud stays bound and two galaxies collide/merge realistically.\n"
-                          "Drawn as gray dots in the debug view only; hidden in the pretty view.\n"
-                          "On by default; turn off for a plain cloud that needs no halo. (GPU physics)");
-
-      if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Give this cloud's dust a real 3D density volume for the black-hole\n"
-                          "lens: dust in front of the hole occludes and reddens the lensed ring\n"
-                          "along the BENT light path. The normal screen look is unchanged.");
-
-      ImGui::Spacing();
-
-      // ── Appearance ──
-      ImGui::SeparatorText("Appearance");
-
-      // Render mode
-      const char* spawnRmItems[] = { "Points", "Nebula" };
-      PropLabel("Render as");
-      ImGui::Combo("##sp_rendermode", &cloudForm.renderMode, spawnRmItems, 2);
-
-      // Temperature slider with colour preview
-      PropLabel("Temperature");
-      ImGui::SetNextItemWidth(-(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x));
-      ImGui::SliderFloat("##sp_temp", &cloudForm.temperature, 1000.f, 30000.f, "%.0f K");
-      float sr, sg, sb;
-      BlackbodyColor(cloudForm.temperature, sr, sg, sb);
-      ImGui::SameLine();
-      ImGui::ColorButton("##sp_bb", ImVec4(sr, sg, sb, 1.f), ImGuiColorEditFlags_NoTooltip, ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()));
-
-      ImGui::Spacing();
-      if (ImGui::Button("Procedural Generator...", ImVec2(-1, 0)))
+      if (ImGui::Button("Create Cloud...", ImVec2(-1, 0)))
         showProceduralGen = true;
-      ImGui::Spacing();
-      if (ImGui::Button("Spawn Cloud", ImVec2(-1, 0))) {
-        cloudForm.enabled = true;
-        if (cb.applyCloud) cb.applyCloud(cloudForm);
-      }
       ImGui::EndTabItem();
     }
 
@@ -8198,27 +8121,10 @@ void Renderer::DrawInspector(std::vector<PhysicsObject>& physicsObjects, std::ve
       // with, which is what keeps older projects looking as they did.)
       {
         CloudLook& lk = cloud->renderedObject.look;
-        struct LookRow { const char* head; const char* label; int key; float lo, hi; int fmt; const char* tip; };   // fmt 0 = 0..1 dial, 1 = stops
-        static const LookRow rowsL[] = {
-          { "Dust",  "Amount",        CloudLook::DustStrength,   0.0f,   2.0f,  0, "How much dust dims and reddens the light behind it." },
-          { nullptr, "Patchiness",    CloudLook::DustCoverage,   0.0f,   1.0f,  0, "How broken-up the dust is (lower = more gaps)." },
-          { nullptr, "Concentration", CloudLook::DustContrast,   1.0f,   4.0f,  0, "Higher packs dust into tighter, darker lanes." },
-          { nullptr, "Patch Size",    CloudLook::DustClumpScale, 0.04f,  1.5f,  0, "Lane fineness. Smaller hugs the star shape more tightly." },
-          { nullptr, "Reddening",     CloudLook::DustReddening,  0.0f,   4.0f,  0, "1.0 = the real Milky Way curve; 0 = dust dims without colouring." },
-          { nullptr, "Darkest",       CloudLook::DustDarkest,    0.001f, 0.3f,  0, "What the thickest dust still lets through. Low = a true silhouette." },
-          { nullptr, "Settle",        CloudLook::DustSettle,     0.0f,   1.0f,  0, "Dust sinks toward the cloud's own plane, as gas does. No effect on a sphere." },
-          { "Stars", "Dynamic Range", CloudLook::StarLumSpread,  0.0f,   9.2f,  0, "How far star brightness spreads: bunched together, or a few\nblazing over many faint." },
-          { nullptr, "Star Size",     CloudLook::StarSize,       0.05f,  2.0f,  0, "Size of the sharp star points. Lower = pinpoint stars." },
-          { nullptr, "Resolved",      CloudLook::ResolvedCut,    0.0f,   1.0f,  0, "How many stars draw as sharp points. Higher = fewer sharp\nstars, more smooth glow." },
-          { nullptr, "Populations",   CloudLook::PopColour,      0.0f,   1.0f,  0, "An old red-yellow centre and young blue outskirts, instead\nof one colour mix everywhere." },
-          { "Haze and gas", "Haze Brightness", CloudLook::HazeStrength, 0.0f, 10.0f, 0, "Smooth glow from stars too dense to see as points." },
-          { nullptr, "Haze Spread",   CloudLook::HazeSize,       1.0f, 100.0f,  0, "How far that glow spreads." },
-          { nullptr, "Gas Amount",    CloudLook::GasStrength,    0.0f,   2.0f,  0, "Glowing gas near hot young stars." },
-          { "Brightness", "Brightness", CloudLook::StarFieldOffset, -6.0f, 6.0f, 1, "This cloud's brightness against the rest of the scene, in stops." },
-          { nullptr, "Distance",      CloudLook::FarFalloff,     0.05f,  1.0f,  0, "How fast it dims once it is too far away to shrink on screen.\nHigher falls off toward black; lower keeps it lit." },
-          { nullptr, "Near Star Limit", CloudLook::NearStarStops, 0.0f, 12.0f,  1, "How much brighter one of its stars may get when you are\nright next to it." },
-        };
-        for (const LookRow& r : rowsL) {
+        int nRows = 0;
+        const CloudLookRow* rowsL = CloudLookRows(nRows);
+        for (int ri = 0; ri < nRows; ++ri) {
+          const CloudLookRow& r = rowsL[ri];
           if (r.head) { ImGui::Spacing(); ImGui::SeparatorText(r.head); }
           ImGui::PushID(r.key);
           PropLabel(r.label);
@@ -8948,6 +8854,7 @@ void Renderer::CineBeginIfActive(GLuint realTargetFBO, int w, int h) {
   cineResolveH       = h;
   cinePostW          = rw;
   cinePostH          = rh;
+  if (!explorePreviewPass) { lastMainCineW = w; lastMainCineH = h; }
   currentPixelScale  = (float)ssH / (float)h;  // keep point sprites the same apparent size
   glBindFramebuffer(GL_FRAMEBUFFER, cineFBO);
   glViewport(0, 0, ssW, ssH);
