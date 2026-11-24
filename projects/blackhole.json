@@ -44,7 +44,7 @@
     "showZ": true,
     "visible": true
   },
-  "imagePath": "blackhole.bmp",
+  "imagePath": "blacholeCoolPNGPNG.bmp",
   "physicsObjects": [
     {
       "atmosphereColor": [
@@ -129,143 +129,14 @@
         -0.0014253120127789465
       ],
       "visualRadius": 13.654899597167969
-    },
-    {
-      "atmosphereColor": [
-        0.17499999701976776,
-        0.4099999964237213,
-        1.0
-      ],
-      "atmosphereEnabled": true,
-      "atmosphereFalloff": 5.199999809265137,
-      "atmosphereHeight": 0.05000000074505806,
-      "atmosphereIntensity": 0.05000000074505806,
-      "cloudAltitude": 0.019999999552965164,
-      "cloudBanded": 0.0,
-      "cloudCoverage": 0.44999998807907104,
-      "cloudDrift": 0.0,
-      "cloudScale": 6.0,
-      "cloudSoftness": 0.18000000715255737,
-      "cloudTurbulence": 0.5,
-      "cloudWhiteness": 1.0,
-      "cloudsEnabled": false,
-      "color": [
-        0.550000011920929,
-        0.25,
-        0.15000000596046448
-      ],
-      "keyframes": [],
-      "localOffset": [
-        210.54381657025078,
-        -101.66951381955042,
-        -300.3296912720718
-      ],
-      "mass": 0.0001,
-      "meshPath": "",
-      "name": "Object",
-      "nightMapPath": "",
-      "nightMapStrength": 1.600000023841858,
-      "normalMapPath": "",
-      "normalMapStrength": 1.0,
-      "position": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "rotation": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "schwarzschildRadius": 5.922600734495354e-14,
-      "shaderType": 0,
-      "simulatePhysics": false,
-      "starContrast": 1.0,
-      "starEvolve": 0.05000000074505806,
-      "starScale": 55.0,
-      "starSpots": 0.3499999940395355,
-      "starWarp": 1.0,
-      "surface": {
-        "axes": [
-          1.0,
-          0.8199999928474426,
-          0.7400000095367432
-        ],
-        "bandCount": 9.0,
-        "bands": 0.0,
-        "colHemi": [
-          0.10000000149011612,
-          0.07999999821186066,
-          0.07000000029802322
-        ],
-        "colHigh": [
-          0.8818565607070923,
-          0.8818565607070923,
-          0.8818565607070923
-        ],
-        "colIce": [
-          0.9200000166893005,
-          0.9399999976158142,
-          0.9700000286102295
-        ],
-        "colLiquid": [
-          0.0,
-          0.34883761405944824,
-          1.0
-        ],
-        "colLow": [
-          0.9957805871963501,
-          0.6256890296936035,
-          0.3613381087779999
-        ],
-        "colMid": [
-          0.041019100695848465,
-          0.405063271522522,
-          0.0
-        ],
-        "colTint": [
-          1.0,
-          1.0,
-          1.0
-        ],
-        "continentScale": 1.8200000524520874,
-        "continents": 0.4399999976158142,
-        "craterDepth": 0.5400000214576721,
-        "craterSize": 0.2199999988079071,
-        "craters": 0.0,
-        "hemi": 0.0,
-        "ice": 0.0,
-        "liquid": true,
-        "liquidDepth": 0.9700000286102295,
-        "lumpScale": 1.399999976158142,
-        "lumps": 0.3499999940395355,
-        "mountainScale": 10.380000114440918,
-        "mountains": 0.6200000047683716,
-        "relief": 1.0,
-        "ridge": 0.0,
-        "roughness": 0.0,
-        "seaLevel": 0.6800000071525574,
-        "seed": 1,
-        "storms": 0.30000001192092896,
-        "tint": 0.8899999856948853,
-        "tintScale": 2.5
-      },
-      "temperature": 5778.0,
-      "texturePath": "",
-      "velocity": [
-        0.0,
-        0.0,
-        0.0
-      ],
-      "visualRadius": 2.0
     }
   ],
   "projectName": "blackhole",
   "settings": {
-    "aeHiLimit": 0.07000000029802322,
-    "aeHiPower": 3.5999999046325684,
+    "aeHiLimit": 0.12999999523162842,
+    "aeHiPower": 6.0,
     "aeHiSize": 0.03200000151991844,
-    "aeLimit": 0.13099999725818634,
+    "aeLimit": 2.0,
     "aeMaxDarkenStops": -16.0,
     "aeSpeedStops": 8.0,
     "autoExposure": true,
@@ -277,12 +148,12 @@
     "backgroundLevel": 1.2000000476837158,
     "bloomStrength": 1.5,
     "bloomThreshold": 0.0,
-    "camPitch": 0.04542502015829086,
-    "camRoll": -3.1165611743927,
-    "camRotation": -3.3100266456604004,
-    "camX": -70.91815851649119,
-    "camY": 5.702128575091379,
-    "camZ": 393.09977843871445,
+    "camPitch": -0.01551930233836174,
+    "camRoll": -3.1311140060424805,
+    "camRotation": -2.757533311843872,
+    "camX": 171.21133301678157,
+    "camY": 18.00098031365609,
+    "camZ": 381.07438211618694,
     "camZoom": 45.0,
     "cameraKeyframes": [
       {
@@ -406,7 +277,7 @@
         "zoom": 45.0
       }
     ],
-    "cineSSAA": 1.5,
+    "cineSSAA": 1.0,
     "cinematicFullscreen": true,
     "cinematicRaster": true,
     "cinematicViewEnabled": true,
@@ -416,19 +287,19 @@
     "dopplerVelScale": 1.5809999240445904e-05,
     "dustClumpScale": 1.5,
     "dustContrast": 1.0,
-    "dustCoverage": 0.4099999964237213,
-    "dustDarkest": 0.15050001442432404,
+    "dustCoverage": 0.5400000214576721,
+    "dustDarkest": 0.0010000000474974513,
     "dustDetail": 14000,
     "dustGlow": 1.399999976158142,
     "dustPhaseG": 0.05000000074505806,
-    "dustReddening": 3.4000000953674316,
+    "dustReddening": 4.0,
     "dustSettle": 1.0,
     "dustSkinContrast": 6.5,
     "dustSkinDepth": 8.0,
     "dustStrength": 2.0,
     "edgeLightStrength": 0.0,
     "exaggeratedSizes": false,
-    "farFalloff": 0.07999999821186066,
+    "farFalloff": 0.05000000074505806,
     "gasStrength": 0.5,
     "glareLimit": 6.0,
     "haloMergeStrength": 1.0,
@@ -436,13 +307,13 @@
     "keypoints": [],
     "lensHazeArc": 1.0,
     "lensMaxSprite": 0.5,
-    "lensMaxStretch": 3.799999952316284,
+    "lensMaxStretch": 7.099999904632568,
     "lensingEnabled": true,
     "nearStarStops": 4.0,
     "nebulaDetail": 0.0,
     "playbackSpeed": 0.20000000298023224,
-    "pointObjectStops": 1.7000000476837158,
-    "popColour": 0.0,
+    "pointObjectStops": 4.037151336669922,
+    "popColour": 0.5899999737739563,
     "ramBudgetGB": 1.0,
     "rasterLiveHeight": 0,
     "rasterLiveResPreset": 0,
@@ -457,7 +328,7 @@
     "recordWidth": 2558,
     "resolvedCut": 0.0,
     "rtCloudPointCap": 2000,
-    "rtExposure": 2.1600000858306885,
+    "rtExposure": 3.640000104904175,
     "rtLiveHeight": 0,
     "rtLiveResPreset": 0,
     "rtLiveWidth": 0,
@@ -469,21 +340,21 @@
     "spheremapEnabled": false,
     "spheremapExposure": 5.0,
     "spheremapPath": "assets/default_spheremap.hdr",
-    "spikeAngle": 0.0,
-    "spikeChroma": 0.3400000035762787,
+    "spikeAngle": 0.2094394862651825,
+    "spikeChroma": 1.0,
     "spikeCount": 6,
     "spikeDecay": 0.30000001192092896,
-    "spikeLength": 1.0,
+    "spikeLength": 0.8575000166893005,
     "spikeSecondary": 0.7099999785423279,
-    "spikeStrength": 1.3799999952316284,
-    "spikeThreshold": 1.5299999713897705,
+    "spikeStrength": 2.0,
+    "spikeThreshold": 3.0,
     "spriteRefHeight": 1080.0,
-    "starBudget": 80000,
-    "starFieldStops": -6.85099983215332,
-    "starLumSpread": 1.1959999799728394,
+    "starBudget": 400000,
+    "starFieldStops": -0.9287929534912109,
+    "starLumSpread": 1.1039999723434448,
     "starSize": 1.0,
     "unresolvedSize": 100.0,
-    "unresolvedStrength": 8.899999618530273
+    "unresolvedStrength": 10.0
   },
   "unitsVersion": 2
 }
