@@ -2863,6 +2863,26 @@ void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
     }
     y += rowH;
   }
+  // The highlighted world's own picture, on the side opposite the list. Not
+  // for the world already running behind the menu: that one you can see.
+  if (selectable(launchSel) && rows[launchSel].kind == 0 && projectList[rows[launchSel].proj].file != current) {
+    const ProjectInfo& pi = projectList[rows[launchSel].proj];
+    ProjectThumb th = pi.image.empty() ? ProjectThumb{} : GetProjectThumb(pi.image);
+    if (th.id && th.w > 0 && th.h > 0) {
+      const float margin = std::max(Em(60.0f), vp->WorkSize.x * 0.09f);
+      float w = std::min(vp->WorkSize.x * 0.40f, Em(760.0f));
+      float h = w * (float)th.h / (float)th.w;
+      const float maxH = vp->WorkSize.y * 0.56f;
+      if (h > maxH) { w *= maxH / h; h = maxH; }
+      const ImVec2 p0(std::floor(vp->WorkPos.x + vp->WorkSize.x - margin - w),
+                      std::floor(vp->WorkPos.y + (vp->WorkSize.y - h) * 0.42f));
+      const ImVec2 p1(p0.x + w, p0.y + h);
+      dl->AddRectFilled(ImVec2(p0.x + 3.0f, p0.y + 4.0f), ImVec2(p1.x + 3.0f, p1.y + 4.0f), IM_COL32(0, 0, 0, 110), Em(6.0f));
+      dl->AddImageRounded((ImTextureID)(uintptr_t)th.id, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 235), Em(6.0f));
+      text(headSz, p0.x, p1.y + Em(8.0f), IM_COL32(205, 214, 230, 170), pi.name.c_str(), false);
+    }
+  }
+
   if (keysFree && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)))
     chosen = launchSel;
   if (chosen < 0 || !selectable(chosen)) return;
