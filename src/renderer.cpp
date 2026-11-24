@@ -2681,6 +2681,7 @@ void Renderer::StartLaunchAnim(double seconds) {
   const double t0 = std::tan((double)launchZoomFrom * M_PI / 360.0);
   const double d1 = (focusDistance > 0.0f) ? (double)focusDistance : 1.0;
   launchPull   = (t0 > 1e-9) ? d1 * (1.0 - t1 / t0) : 0.0;
+  for (int i = 0; i < 9; ++i) launchRot[i] = camMatrix[i];           // the saved facing, restored exactly at the end
   launchAnimT  = 0.0;
   launchAnimDur = std::max(seconds, 0.05);
   launchAnim   = true;
@@ -2699,6 +2700,11 @@ void Renderer::StepLaunchAnim() {
   for (int i = 0; i < 3; ++i)                                         // position = anchor - translate
     cameraTranslate[i] = launchTrans[i] + (gCamAnchor[i] - launchAnchor[i]) - fwd[i] * pull;
   zoom = launchZoomFrom + (launchZoom - launchZoomFrom) * (float)e;
+  // And it turns about its own line of sight as it settles: it starts rolled
+  // over and levels out onto the saved horizon. Rebuilt from the saved facing
+  // every frame, so nothing accumulates and the end is exact.
+  SetCameraMatrix(launchRot);
+  if (u < 1.0) rotateCamera(0.0f, 0.0f, kLaunchRoll * (float)(1.0 - e));
   if (u >= 1.0) { launchAnim = false; zoom = launchZoom; }
 }
 
@@ -2716,7 +2722,7 @@ void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
     const std::string file = launchPendingFile;
     const int kind = launchPendingKind;
     launchPendingFile.clear(); launchPendingKind = 0; launchPendingShown = false;
-    if (launchAnim) { launchAnim = false; zoom = launchZoom; }
+    if (launchAnim) { launchAnim = false; zoom = launchZoom; SetCameraMatrix(launchRot); }
     launchAnimPending = false;
     launchMenu = false;
     CloseExploreMenu();

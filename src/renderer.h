@@ -1005,6 +1005,8 @@ public:
   double      launchAnchor[3]{0, 0, 0}, launchTrans[3]{0, 0, 0};
   float       launchZoom{45.0f}, launchZoomFrom{45.0f};
   double      launchPull{0.0};
+  float       launchRot[9]{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  static constexpr float kLaunchRoll = 0.60f;   // radians the view starts rolled by (about 34 degrees)
   bool        LaunchBusy() const { return launchMenu || launchAnim; }
   void        StartLaunchAnim(double seconds);
   void        StepLaunchAnim();
