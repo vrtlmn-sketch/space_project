@@ -6076,7 +6076,8 @@
       "seed": 82947291,
       "starsPerGalaxy": 15000,
       "overrides": [],
-      "bodyEdits": []
+      "bodyEdits": [],
+      "variety": 0.3
     }
   ]
 }

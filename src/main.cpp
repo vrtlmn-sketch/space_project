@@ -259,6 +259,107 @@ static UniBodyEdit* FindUniEdit(int rec, int gal, int key) {
 // triggers a volume rebake, so a stable assignment is worth more than a tidy
 // one. Everything a previous tenant might have left set is cleared here — a
 // slot is reused across kinds.
+// What a generated planet, moon or small body gets beyond a bare surface, once
+// its universe's Variety is above 0: air, cloud, rings, an irregular shape, and
+// at the far end colours nobody would call natural. All from the body's own
+// seed, so nothing is stored. The surface recipe is already set.
+static void DressGeneratedBody(PhysicsObject& o, const GalaxyContent& gc)
+{
+  uint32_t st = gc.seed * 2654435761u + 0x7F4A7C15u;
+  auto rnd = [&]() { st ^= st << 13; st ^= st >> 17; st ^= st << 5; return (float)(st & 0xFFFFFF) / 16777216.0f; };
+  auto rr  = [&](float a, float b) { return a + (b - a) * rnd(); };
+  const float v = std::min(gc.variety, 1.0f);
+  SurfaceRecipe& s = o.surface;
+  const bool gas   = s.bands > 0.5f;
+  const bool ocean = s.liquid && s.colLiquid.z > s.colLiquid.x;       // water, not lava
+
+  // Past the half-way mark, colours stop being natural: channels are shuffled
+  // and pushed apart, the same for every colour of the body so it still reads
+  // as one world.
+  const float wild = std::max(0.0f, v - 0.5f) * 2.0f;
+  if (rnd() < wild * 0.7f) {
+    const int perm = 1 + (int)(rnd() * 4.99f);
+    auto mix = [&](vec3& c) {
+      vec3 p = c;
+      switch (perm) { case 1: p = {c.y, c.z, c.x}; break; case 2: p = {c.z, c.x, c.y}; break;
+                      case 3: p = {c.x, c.z, c.y}; break; case 4: p = {c.z, c.y, c.x}; break;
+                      default: p = {c.y, c.x, c.z}; break; }
+      const float m = (p.x + p.y + p.z) / 3.0f, k = 1.0f + 0.9f * wild;
+      c = { std::clamp(m + (p.x - m) * k, 0.0f, 1.0f), std::clamp(m + (p.y - m) * k, 0.0f, 1.0f),
+            std::clamp(m + (p.z - m) * k, 0.0f, 1.0f) };
+    };
+    mix(s.colLow); mix(s.colMid); mix(s.colHigh); mix(s.colLiquid); mix(s.colTint);
+  }
+
+  if (gc.irregular) {
+    // A lump: the small-body presets' shape and cratering over whatever colours
+    // the recipe had.
+    s.craters = rr(0.4f, 1.0f); s.craterSize = rr(0.5f, 0.9f); s.craterDepth = rr(0.4f, 0.9f);
+    s.liquid = false; s.bands = 0.0f; s.ice = 0.0f;
+    s.axes  = { 1.0f, rr(0.45f, 0.95f), rr(0.55f, 0.98f) };
+    s.lumps = rr(0.15f, 0.55f); s.lumpScale = rr(1.1f, 1.6f);
+    s.ridge = (rnd() < 0.15f) ? rr(0.4f, 1.0f) : 0.0f;
+    return;                                                           // no air, cloud or rings on a rock
+  }
+  const bool moonish = gc.moonOf >= 0 || gc.slot >= 0;
+  const bool tiny    = gc.radius < 1.6e-5f;                           // under ~Mercury: holds no air
+
+  // Air.
+  float pAir = gas ? 1.0f : ocean ? 0.95f : tiny ? 0.04f : 0.45f;
+  if (moonish) pAir *= 0.35f;
+  if (rnd() < pAir) {
+    o.atmosphereEnabled   = true;
+    o.atmosphereHeight    = gas ? rr(0.03f, 0.06f) : rr(0.03f, 0.09f);
+    o.atmosphereFalloff   = rr(3.0f, 5.0f);
+    o.atmosphereIntensity = gas ? rr(0.5f, 1.0f) : rr(0.8f, 1.6f);
+    vec3 sc = ocean ? vec3{0.175f, 0.41f, 1.0f}
+            : gas   ? vec3{ 0.3f + 0.7f * s.colMid.x, 0.3f + 0.7f * s.colMid.y, 0.3f + 0.7f * s.colMid.z }
+                    : vec3{ rr(0.5f, 1.0f), rr(0.35f, 0.7f), rr(0.2f, 0.6f) };   // dusty
+    if (rnd() < wild) sc = { rr(0.1f, 1.0f), rr(0.1f, 1.0f), rr(0.1f, 1.0f) };
+    o.atmosphereScatter = sc;
+  }
+  // Cloud. Water worlds get weather; a share of the others a full shroud.
+  if (!gas && o.atmosphereEnabled) {
+    const float roll = rnd();
+    if (ocean || roll < 0.25f) {
+      o.cloudsEnabled   = true;
+      const bool shroud = !ocean && roll < 0.10f;                     // Venus
+      o.cloudCoverage   = shroud ? rr(0.85f, 1.0f) : rr(0.30f, 0.60f);
+      o.cloudScale      = rr(3.0f, 7.0f);
+      o.cloudBanded     = shroud ? rr(0.1f, 0.4f) : rr(0.0f, 0.06f);
+      o.cloudTurbulence = rr(0.6f, 1.6f);
+      o.cloudSoftness   = rr(0.16f, 0.26f);
+      o.cloudAltitude   = 0.035f;
+      o.cloudWhiteness  = shroud ? rr(0.3f, 0.8f) : 1.0f;
+      o.cloudDrift      = 0.01f;
+    }
+  }
+  // Rings. Giants often; rocks only once things get silly.
+  const float pRing = gas ? 0.18f + 0.40f * v : std::max(0.0f, v - 0.45f) * 0.5f;
+  if (!moonish && rnd() < pRing) {
+    const int n = 1 + ((rnd() < wild * 0.6f) ? 1 + (int)(rnd() * 1.99f) : 0);
+    float inner = rr(1.15f, 1.6f);
+    const vec3 plane{ rnd() < wild * 0.5f ? rr(-90.0f, 90.0f) : rr(-35.0f, 35.0f), 0.0f, rr(-25.0f, 25.0f) };
+    for (int i = 0; i < n; ++i) {
+      PlanetRing rg;
+      rg.innerRadius = inner;
+      rg.outerRadius = inner + rr(0.25f, 1.1f) + wild * rr(0.0f, 2.5f);
+      rg.orientation = (i == 0 || rnd() > wild) ? plane : vec3{ rr(-90.0f, 90.0f), 0.0f, rr(-90.0f, 90.0f) };
+      rg.opacity     = rr(0.25f, 1.2f);
+      rg.gapCount    = std::floor(rr(1.0f, 7.0f));
+      rg.gapWidth    = rr(0.02f, 0.08f);
+      rg.zoneContrast = rr(0.5f, 0.95f);
+      rg.seed        = std::floor(rr(1.0f, 60.0f));
+      const float g0 = rr(0.45f, 0.85f);
+      rg.color       = { g0 * rr(0.9f, 1.1f), g0 * rr(0.85f, 1.0f), g0 * rr(0.7f, 1.0f) };
+      if (rnd() < wild * 0.7f) rg.color = { rr(0.2f, 1.0f), rr(0.2f, 1.0f), rr(0.2f, 1.0f) };
+      rg.colorOuter  = { std::min(rg.color.x * 1.1f, 1.0f), std::min(rg.color.y * 1.1f, 1.0f), std::min(rg.color.z * 1.12f, 1.0f) };
+      o.rings.push_back(rg);
+      inner = rg.outerRadius + rr(0.1f, 0.6f);
+    }
+  }
+}
+
 static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
                                   const GalaxyContent& gc, float sizeExag, int nebRes)
 {
@@ -293,7 +394,8 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
 
   char nm[128];
   if (gc.kind == GalaxyContent::Kind::BlackHole) {
-    snprintf(nm, sizeof(nm), "Black Hole");
+    if (gc.starIndex >= 0) snprintf(nm, sizeof(nm), "Black Hole %d%s", gc.starIndex, gc.companion ? "B" : "");
+    else                   snprintf(nm, sizeof(nm), "Black Hole");
     o.name        = nm;
     o.shaderType  = ObjectType::BlackHole;
     o.data.mass   = gc.mass;
@@ -302,7 +404,7 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
     o.visualRadius        = gc.radius;
     o.renderedObject.isNebulaVolume = false;
   } else if (gc.kind == GalaxyContent::Kind::Star) {
-    snprintf(nm, sizeof(nm), "Star %d", gc.starIndex);
+    snprintf(nm, sizeof(nm), "Star %d%s", gc.starIndex, gc.companion ? "B" : "");
     o.name        = nm;
     o.shaderType  = ObjectType::Star;
     o.data.mass   = gc.mass;
@@ -312,10 +414,14 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
   } else if (gc.kind == GalaxyContent::Kind::Planet) {
     // It has to READ as a planet: filtering to planets and getting rows that
     // all begin "Star" is simply wrong to look at.
-    snprintf(nm, sizeof(nm), "Planet %d%c", gc.starIndex,
-             (char)('b' + std::min(gc.orbitIndex, 23)));
+    if (gc.moonOf >= 0)
+      snprintf(nm, sizeof(nm), "Moon %d%c-%d", gc.starIndex, (char)('b' + std::min(gc.moonOf, 23)), gc.orbitIndex + 1);
+    else if (gc.slot >= 0)
+      snprintf(nm, sizeof(nm), "%s %d-%d", gc.irregular ? "Asteroid" : "Dwarf Planet", gc.starIndex, gc.orbitIndex + 1);
+    else
+      snprintf(nm, sizeof(nm), "Planet %d%c", gc.starIndex, (char)('b' + std::min(gc.orbitIndex, 23)));
     o.name        = nm;
-    o.shaderType  = ObjectType::Planet;
+    o.shaderType  = gc.irregular ? ObjectType::SmallBody : ObjectType::Planet;
     o.data.mass   = gc.mass;
     o.temperature = 0.0f;
     o.visualRadius = gc.radius;
@@ -324,6 +430,7 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
     // plain colour stands in, so take that from the recipe too.
     o.surface = SurfaceFromSeed(gc.seed, gc.radius,
                                 (float)std::sqrt(gc.offset.x * gc.offset.x + gc.offset.y * gc.offset.y + gc.offset.z * gc.offset.z));
+    if (gc.variety > 0.0f) DressGeneratedBody(o, gc);
     o.data.color = o.surface.colMid;
     o.renderedObject.isNebulaVolume = false;
   } else {
@@ -451,6 +558,7 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
     up.centralBlackHoles = rec.centralBlackHoles;
     up.nebulaePerGalaxy  = rec.nebulaePerGalaxy;
     up.planetsPerSystem  = rec.planetsPerSystem;
+    up.variety           = rec.variety;
     GenerateGalaxyContents(cd.c->renderedObject.galaxyDesc, up, cbuf);
 
     double rot[9]; const bool hasRot = (cd.c->rotationDeg.x != 0.0f ||
@@ -494,7 +602,7 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
       cbuf.clear();
       GenerateStarSystem(gro.galaxyDesc, starIdx,
                          dvec3{(double)sp.x, (double)sp.y, (double)sp.z},
-                         rec.planetsPerSystem, cbuf);
+                         rec.planetsPerSystem, cbuf, rec.variety);
       for (auto& gc : cbuf) { gc.origin = toWorld(gc.origin); want.push_back({cd.rec, cd.gal, gc, cd.c}); }
     };
     for (int i : chosenStars) emitSystem(i, headStars[i]);
@@ -543,7 +651,7 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
   // Biggest ON SCREEN first. Distance alone spends the budget on things far too
   // small to see; apparent size is the rule the rest of the renderer uses.
   auto angularSize = [&](const Want& t) {
-    const double r = (t.content.kind == GalaxyContent::Kind::BlackHole)
+    const double r = (t.content.kind == GalaxyContent::Kind::BlackHole && t.content.starIndex < 0)
                    ? (double)t.c->renderedObject.galaxyDesc.radius * 1e-3
                    : (double)t.content.radius;
     return r / std::max(std::sqrt(dist2(t)), 1.0);
@@ -557,7 +665,8 @@ static void UpdateUniverseContents(std::vector<PhysicsObject>& objects,
   sysIdx.clear(); restIdx.clear();
   for (size_t i = 0; i < want.size(); ++i) {
     const auto k = want[i].content.kind;
-    if (k == GalaxyContent::Kind::Star || k == GalaxyContent::Kind::Planet) sysIdx.push_back(i);
+    if (k == GalaxyContent::Kind::Star || k == GalaxyContent::Kind::Planet ||
+        want[i].content.starIndex >= 0)                                      sysIdx.push_back(i);   // a system's hole too
     else                                                                    restIdx.push_back(i);
   }
   struct Grp { int gal, star; double d2; std::vector<size_t> members; };
@@ -1127,6 +1236,7 @@ int main(int argc, char** argv) {
     up.nebulaePerGalaxy  = rec.nebulaePerGalaxy;
     up.nebulaVolumeRes   = rec.nebulaVolumeRes;
     up.planetsPerSystem  = rec.planetsPerSystem;
+    up.variety           = rec.variety;
     up.liveObjectBudget  = rec.liveObjectBudget;
 
     std::vector<GalaxyDesc> galaxies;
@@ -1258,6 +1368,7 @@ int main(int argc, char** argv) {
     rec.nebulaePerGalaxy  = uf.nebulaePerGalaxy;
     rec.nebulaVolumeRes   = uf.nebulaVolumeRes;
     rec.planetsPerSystem  = uf.planetsPerSystem;
+    rec.variety           = uf.variety;
     rec.liveObjectBudget  = uf.liveObjectBudget;
     universeRecords.push_back(rec);
     spawnUniverseRecord(rec, (int)universeRecords.size() - 1, {});
@@ -1499,6 +1610,7 @@ int main(int argc, char** argv) {
       up.nebulaePerGalaxy  = rec.nebulaePerGalaxy;
       up.nebulaVolumeRes   = rec.nebulaVolumeRes;
       up.planetsPerSystem  = rec.planetsPerSystem;
+      up.variety           = rec.variety;
       up.liveObjectBudget  = rec.liveObjectBudget;
       std::vector<GalaxyDesc> baseline;
       GenerateUniverseGalaxies(up, baseline);
@@ -2617,6 +2729,9 @@ int main(int argc, char** argv) {
           renderer.universeStarsPerGalaxy = std::atoi(sp);
         if (const char* rr = std::getenv("UNIVERSE_RADIUS"))
           renderer.universeForm.radiusGly = (float)std::atof(rr);
+        renderer.universeForm.variety = 0.0f;       // the harness universe stays plain unless asked
+        if (const char* vv = std::getenv("UNIVERSE_VARIETY"))
+          renderer.universeForm.variety = (float)std::atof(vv);
         if (renderer.universeCreate) renderer.universeCreate(renderer.universeForm);
         // Park the camera beside the first generated galaxy so the near end of
         // the LOD can be exercised without hunting for one by hand.
@@ -2656,17 +2771,31 @@ int main(int argc, char** argv) {
               char kind[16] = {0}; double dist = 1.0;
               std::sscanf(bd, "%15[^:]:%lf", kind, &dist);
               const bool wantPlanet = (kind[0] == 'p');
+              // n<k>:<radii> = the k-th body of the system, from that many of
+              // its own radii; UNIVERSE_STAR picks which notable star (0-3).
+              const int  nth = (kind[0] == 'n') ? std::atoi(kind + 1) : -1;
+              int si = 0;
+              if (const char* se = std::getenv("UNIVERSE_STAR")) si = std::clamp(std::atoi(se), 0, 3);
               std::vector<vec3> hs;
-              GenerateGalaxyStars(gal.renderedObject.galaxyDesc, 1, hs, nullptr);
+              GenerateGalaxyStars(gal.renderedObject.galaxyDesc, si + 1, hs, nullptr);
               std::vector<GalaxyContent> cc;
-              if (!hs.empty()) {
-                GenerateStarSystem(gal.renderedObject.galaxyDesc, 0,
-                                   dvec3{(double)hs[0].x, (double)hs[0].y, (double)hs[0].z},
-                                   4, cc);
+              if ((int)hs.size() > si) {
+                GenerateStarSystem(gal.renderedObject.galaxyDesc, si,
+                                   dvec3{(double)hs[si].x, (double)hs[si].y, (double)hs[si].z},
+                                   4, cc, renderer.universeForm.variety);
               }
+              if (nth >= 0)
+                for (size_t q = 0; q < cc.size(); ++q)
+                  std::cout << "[system] " << q << " kind " << (int)cc[q].kind << " r " << cc[q].radius
+                            << " off " << cc[q].offset.x << "," << cc[q].offset.y << "," << cc[q].offset.z
+                            << (cc[q].companion ? " companion" : "") << (cc[q].irregular ? " irregular" : "")
+                            << (cc[q].moonOf >= 0 ? " moon" : "") << "\n";
+              int qi = -1;
               for (const auto& g : cc) {
+                ++qi;
                 const bool isP = (g.kind == GalaxyContent::Kind::Planet);
-                if (isP != wantPlanet) continue;
+                if (nth >= 0 ? (qi != nth) : (isP != wantPlanet)) continue;
+                if (nth >= 0) dist *= (double)g.radius;
                 // Anchor on the frame ORIGIN and keep the offset in the local
                 // part — never collapse them. Summing origin + offset at 2e15
                 // AU rounds to the nearest half AU, which is what made this

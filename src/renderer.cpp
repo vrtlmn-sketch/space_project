@@ -6142,6 +6142,15 @@ void Renderer::DrawUniversePanel() {
       ImGui::SetNextItemWidth(-1);
       ImGui::SliderInt("##unneb", &U.nebulaePerGalaxy, 0, 8, "Nebulae per galaxy %d");
       ImGui::SetNextItemWidth(-1);
+      ImGui::SliderFloat("##uvar", &U.variety, 0.0f, 1.0f, "Variety %.2f");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How far generation strays from a star and some bare planets.\n"
+                          "0    plain systems, as universes used to be\n"
+                          "0.3  plausible: air, clouds, rings, moons, asteroids, double\n"
+                          "     suns, the odd black hole\n"
+                          "1    anything goes: monster holes, ringed rocks, potato\n"
+                          "     planets, wild colours");
+      ImGui::SetNextItemWidth(-1);
       ImGui::SliderInt("##unpl",  &U.planetsPerSystem, 0, 12, "Planets per system %d");
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Every star in a galaxy can have planets - the systems sit on\n"

@@ -1861,6 +1861,36 @@ relocation.
   grow them, so the loader's fallbacks and the struct defaults are deliberately
   DIFFERENT numbers — same split as keyframe smoothing. Do not unify them.
 
+## Variety: what a generated system contains beyond a star and bare planets
+
+`UniverseParams::variety` (0..1; universe creation menu, saved per universe).
+**0 is bit-for-bit the old generator, and an absent key loads as 0** (the struct
+default for a NEW universe is 0.3 — same deliberate split as the other content
+keys). milky_way 0.3, universe 0.6, universe2 1.0.
+
+- `GenerateStarSystem` builds the plain system first, exactly as before, then
+  the variety pass draws from ITS OWN rng stream and only edits or appends. So
+  raising the dial never reshuffles the planets that were already there.
+- It adds: other star types, a companion (star or hole), a hole as the primary
+  (nearly always with a companion, since a hole lights nothing), moons, small
+  bodies past the last planet, tilted orbits, and at the far end irregular or
+  oversized planets. Measured over 4000 systems: holes 3% / 12% / 35% and
+  binaries 21% / 33% / 52% at 0.3 / 0.6 / 1.0; 7.2 to 9.7 bodies a system.
+- Extra bodies take key slots after the planets (`GalaxyContent::slot`); the
+  companion has a fixed slot. A system's hole is `Kind::BlackHole` with
+  `starIndex >= 0` — anything that means "the galaxy's central hole" must test
+  `starIndex < 0`, not just the kind.
+- A system hole is DRAWN far larger than its mass says (capped by variety), and
+  some galaxies' central holes likewise (`GenerateGalaxyContents`): only the
+  radius grows, the mass stays physical so a simulated galaxy is not torn up.
+- The LOOK (air, cloud, rings, irregular shape, shuffled colours) is derived in
+  `DressGeneratedBody` (main.cpp) from the body's seed when its slot is
+  configured. Nothing is stored.
+- Harness: `UNIVERSE_VARIETY=<v>`, `UNIVERSE_STAR=<0-3>`,
+  `UNIVERSE_BODY=n<k>:<radii>` (k-th body of that star's system, and it prints
+  the system). The camera looks down -Z, so use a project whose saved camera
+  angles are zero, and pick a body with offset.z < 0 to see its lit side.
+
 ## Cost traps
 
 - **The RT path costs clouds × sample points, and a universe has THOUSANDS of

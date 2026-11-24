@@ -152,6 +152,7 @@ struct UniverseRecord {
   bool  centralBlackHoles{true};
   int   nebulaePerGalaxy{2};
   int   planetsPerSystem{4};
+  float variety{0.3f};            // see UniverseParams::variety; a file without the key loads as 0
   int   nebulaVolumeRes{48};
   int   liveObjectBudget{256};
   std::vector<UniverseOverride> overrides;

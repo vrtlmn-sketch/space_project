@@ -124,6 +124,12 @@ struct GalaxyContent {
   int      key{0};
   int      starIndex{-1};     // index into the galaxy's own star field, -1 if not a system body
   int      orbitIndex{-1};    // 0-based orbit; named b, c, d... as exoplanets are
+  // ── Variety (UniverseParams::variety > 0 only) ──
+  float    variety{0.0f};     // the universe's setting, carried so the LOOK can be derived from `seed`
+  bool     irregular{false};  // a lumpy small body, not a sphere
+  bool     companion{false};  // the system's second sun (or hole)
+  int      moonOf{-1};        // orbitIndex of the planet this is a moon of, -1 = none
+  int      slot{-1};          // position in the star's key block for bodies that are not plain planets
 };
 
 // Key layout. A galaxy has at most a few thousand recipe contents and up to
@@ -145,6 +151,11 @@ struct UniverseParams {
   bool     centralBlackHoles{true};   // a supermassive hole at each galaxy's centre
   int      nebulaePerGalaxy{2};       // 0 = none
   int      planetsPerSystem{4};       // 0 = stars have no planets
+  // How far generation strays from "a star and some bare planets". 0 = exactly
+  // that (and exactly what a universe saved before this existed loads as).
+  // ~0.3 = plausible: air, clouds, rings, moons, asteroids, binaries, the odd
+  // stellar black hole. 1 = anything goes.
+  float    variety{0.0f};
   // Baked volume resolution for a GENERATED nebula. The default 96 is meant
   // for a nebula you fly into; out here they are tens of pixels across, and
   // 96^3 RGBA16F is 7.1 MB of VRAM EACH — 42 of them is ~300 MB. 48 is 0.9 MB.
@@ -171,7 +182,8 @@ void GenerateGalaxyContents(const GalaxyDesc& g, const UniverseParams& p,
 // star generator's prefix property guarantees star i is the same star at any
 // level of detail, so a system does not change identity as the LOD climbs.
 void GenerateStarSystem(const GalaxyDesc& g, int starIndex, const dvec3& starLocal,
-                        int planetsPerSystem, std::vector<GalaxyContent>& out);
+                        int planetsPerSystem, std::vector<GalaxyContent>& out,
+                        float variety = 0.0f);
 
 // Star positions for ONE galaxy, in galaxy-local AU. Deterministic in desc.seed,
 // and a proper PREFIX: the first N stars are identical at any count, which is

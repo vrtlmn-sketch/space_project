@@ -314,6 +314,7 @@ bool ProjectSerializer::Save(const std::string& path,
         {"centralBlackHoles", u.centralBlackHoles},
         {"nebulaePerGalaxy",  u.nebulaePerGalaxy},
         {"planetsPerSystem",  u.planetsPerSystem},
+        {"variety",           u.variety},
         {"nebulaVolumeRes",   u.nebulaVolumeRes},
         {"liveObjectBudget",  u.liveObjectBudget},
         {"overrides",      ovArr},
@@ -675,6 +676,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       // which is NOT the struct default (that answers "what should a NEW
       // universe be"). Do not unify the two.
       rec.planetsPerSystem  = u.value("planetsPerSystem",  -1);
+      rec.variety           = u.value("variety",           0.0f);   // absent = the plain systems it was saved with
       rec.nebulaVolumeRes   = u.value("nebulaVolumeRes",   UniverseRecord{}.nebulaVolumeRes);
       rec.liveObjectBudget  = u.value("liveObjectBudget",  UniverseRecord{}.liveObjectBudget);
       if (u.contains("bodyEdits") && u["bodyEdits"].is_array()) {

@@ -360,6 +360,18 @@ void GenerateGalaxyContents(const GalaxyDesc& g, const UniverseParams& p,
     c.origin   = dvec3{0.0, 0.0, 0.0};                           // it IS the centre
     c.mass     = m;
     c.radius   = (float)(units::kRsAUPerMsun * m);
+    // Variety: some galaxies get a hole drawn far larger than its mass says,
+    // big enough to bend the galaxy around it (projects/blackhole.json is the
+    // look). Only the RADIUS grows — the mass stays physical, so a galaxy that
+    // is later simulated is not torn apart by it. Its own stream, so the
+    // nebulae below are where they always were.
+    if (p.variety > 0.0f) {
+      Rng hr((uint64_t)g.seed * 0x8CB92BA72F3D8DD7ull + 0x1234567ull);
+      const float v = std::min(p.variety, 1.0f);
+      if (hr.uni() < 0.04f + 0.36f * v * v)
+        c.radius = (float)((double)g.radius * (double)hr.uni(2.0e-5f, 2.0e-5f + 1.2e-3f * v));
+    }
+    c.variety  = p.variety;
     c.seed     = g.seed;
     c.key      = 0;
     out.push_back(c);
@@ -409,8 +421,10 @@ void GenerateGalaxyContents(const GalaxyDesc& g, const UniverseParams& p,
 // (GenerateGalaxyStars consumes the same RNG state for star i at any count), so
 // a system keeps its identity as the galaxy's detail climbs and falls.
 void GenerateStarSystem(const GalaxyDesc& g, int starIndex, const dvec3& starLocal,
-                        int planetsPerSystem, std::vector<GalaxyContent>& out)
+                        int planetsPerSystem, std::vector<GalaxyContent>& out,
+                        float variety)
 {
+  const size_t first = out.size();
   Rng rng(((uint64_t)g.seed << 20) ^ ((uint64_t)(uint32_t)starIndex * 0x9E3779B97F4A7C15ull));
 
   GalaxyContent st;
@@ -448,5 +462,155 @@ void GenerateStarSystem(const GalaxyDesc& g, int starIndex, const dvec3& starLoc
     pl.key        = UniPlanetKey(starIndex, k);
     out.push_back(pl);
     a *= 1.5 + (double)rng.uni(0.0f, 0.9f);                       // roughly Titius-Bode
+  }
+
+  // ── Variety ──────────────────────────────────────────────────────────────
+  // Everything below draws from its OWN stream and only touches what the plain
+  // system above already produced, so at variety 0 a universe is bit-for-bit
+  // what it always was, and raising the dial never reshuffles the planets.
+  const float v = std::clamp(variety, 0.0f, 1.0f);
+  if (v <= 0.0f) return;
+  Rng vr((((uint64_t)g.seed << 20) ^ ((uint64_t)(uint32_t)starIndex * 0x9E3779B97F4A7C15ull)) + 0xA5A5F00Dull);
+  for (size_t i = first; i < out.size(); ++i) out[i].variety = v;
+  GalaxyContent& sun = out[first];
+  int nextSlot = nP;                                  // key slots after the planets
+  auto takeSlot = [&]() { return nextSlot < kUniOrbitsPerStar - 2 ? nextSlot++ : -1; };
+
+  // The primary. Mostly an ordinary star; sometimes something else.
+  double holeRs = 0.0;
+  const float kindRoll = vr.uni();
+  const float pHole    = 0.05f * v + 0.22f * v * v * v;          // 2% at 0.35, 27% at 1
+  auto makeHole = [&](GalaxyContent& c) {
+    // Stellar to intermediate mass at a plausible setting; at the far end the
+    // kind of monster that bends its whole system (compare projects/blackhole).
+    const double logM = 1.0 + (double)vr.uni() * (1.5 + 4.5 * (double)v * (double)v);
+    c.kind = GalaxyContent::Kind::BlackHole;
+    c.mass = std::pow(10.0, logM);
+    // Drawn larger than its mass says, or it would be a few kilometres across
+    // and nothing to look at; bounded so it stays inside its own system.
+    c.radius = (float)std::min(units::kRsAUPerMsun * c.mass * (1.0 + 3.0e3 * (double)v * (double)v),
+                               0.004 + 0.5 * (double)v * (double)v * (double)v);
+    c.temperature = 0.0f;
+    return (double)c.radius;
+  };
+  if (kindRoll < pHole) {
+    holeRs = makeHole(sun);
+  } else if (kindRoll < pHole + 0.30f * v) {
+    const float t = vr.uni();
+    if (t < 0.40f) {                                             // red dwarf
+      sun.mass *= 0.3; sun.temperature = vr.uni(2600.0f, 3600.0f); sun.radius *= 0.45f;
+    } else if (t < 0.70f) {                                      // blue giant
+      sun.mass *= 6.0; sun.temperature = vr.uni(12000.0f, 28000.0f); sun.radius *= vr.uni(3.0f, 8.0f);
+    } else if (t < 0.88f) {                                      // red giant
+      sun.temperature = vr.uni(3200.0f, 4500.0f); sun.radius *= vr.uni(12.0f, 40.0f);
+    } else {                                                     // white dwarf
+      sun.mass = 0.6; sun.temperature = vr.uni(9000.0f, 30000.0f); sun.radius = 4.5e-5f;
+    }
+  }
+
+  // A second sun. A hole on its own lights nothing, so it nearly always has one.
+  const bool binary = vr.uni() < (holeRs > 0.0 ? 0.85f : 0.10f + 0.30f * v);
+  double inner = (double)sun.radius * 3.0;                       // nothing orbits inside this
+  if (binary) {
+    GalaxyContent c2 = sun;
+    c2.companion = true;
+    c2.kind = GalaxyContent::Kind::Star;
+    c2.seed = vr.next();
+    const double m2 = std::exp((double)vr.uni(-1.2f, 0.9f));
+    c2.mass = m2;
+    c2.temperature = (float)(5778.0 * std::pow(m2, 0.55));
+    c2.radius = (float)(0.00465 * std::pow(m2, 0.8));
+    if (holeRs <= 0.0 && vr.uni() < 0.22f * v) makeHole(c2);     // star + hole
+    const double sep = std::max((double)sun.radius, (double)c2.radius) * (double)vr.uni(6.0f, 22.0f)
+                     + (double)sun.radius + (double)c2.radius;
+    const double ang = vr.uni(0.0f, 6.28318531f);
+    c2.offset = dvec3{ sep * std::cos(ang), sep * 0.05 * (double)vr.gauss(), sep * std::sin(ang) };
+    c2.orbitIndex = -1;
+    c2.slot = kUniOrbitsPerStar - 2;                             // a fixed key, whatever else exists
+    c2.key  = UniStarKey(starIndex) + 1 + c2.slot;
+    inner = std::max(inner, sep * 2.5);
+    out.push_back(c2);
+  }
+
+  // Planets: push them clear of a giant star, a monster hole or the pair, tilt
+  // their orbits more as the dial rises, and let a few stop being spheres.
+  const size_t pEnd = first + 1 + (size_t)nP;
+  double firstA = 0.0, lastA = 0.0;
+  for (size_t i = first + 1; i < pEnd && i < out.size(); ++i) {
+    GalaxyContent& pl = out[i];
+    if (pl.kind != GalaxyContent::Kind::Planet) continue;
+    double r = std::sqrt(pl.offset.x * pl.offset.x + pl.offset.z * pl.offset.z);
+    if (firstA <= 0.0) firstA = r;
+    const double scale = (firstA < inner) ? inner / firstA : 1.0;
+    const double inc   = (double)vr.gauss() * 0.03 * (1.0 + 14.0 * (double)v * (double)v);
+    pl.offset = dvec3{ pl.offset.x * scale, r * scale * std::sin(inc), pl.offset.z * scale };
+    lastA = r * scale;
+    if (vr.uni() < std::max(0.0f, v - 0.45f) * 0.5f) pl.irregular = true;
+    if (vr.uni() < std::max(0.0f, v - 0.6f) * 0.5f) pl.radius *= vr.uni(1.5f, 4.0f);   // absurdly large
+  }
+
+  // Moons. Giants keep a few, rocky worlds the odd one; they share the key
+  // block with everything else in the system, so the total is bounded.
+  int moonsLeft = (int)std::lround(4.0f + 8.0f * v);
+  for (size_t i = first + 1; i < pEnd && i < out.size() && moonsLeft > 0; ++i) {
+    const GalaxyContent pl = out[i];
+    if (pl.kind != GalaxyContent::Kind::Planet || pl.irregular) continue;
+    const bool giant = pl.radius > 1.5e-4f;
+    int n = giant ? (int)(vr.uni() * (1.5f + 3.5f * v)) : (vr.uni() < 0.12f + 0.30f * v ? 1 : 0);
+    double dist = (double)pl.radius * (double)vr.uni(3.6f, 7.0f);              // clear of any rings
+    for (int m = 0; m < n && moonsLeft > 0; ++m) {
+      const int slot = takeSlot();
+      if (slot < 0) break;
+      GalaxyContent mo;
+      mo.kind = GalaxyContent::Kind::Planet;
+      mo.origin = pl.origin;
+      mo.variety = v;
+      mo.moonOf = pl.orbitIndex;
+      mo.starIndex = starIndex;
+      mo.orbitIndex = m;
+      mo.slot = slot;
+      mo.key  = UniStarKey(starIndex) + 1 + slot;
+      mo.seed = vr.next();
+      float rel = giant ? vr.uni(0.02f, 0.12f) : vr.uni(0.10f, 0.30f);
+      if (vr.uni() < std::max(0.0f, v - 0.7f)) rel = vr.uni(0.6f, 1.6f);       // a moon to rival its planet
+      mo.radius = pl.radius * rel;
+      mo.mass   = pl.mass * (double)(rel * rel * rel);
+      mo.irregular = mo.radius < 2.0e-6f || vr.uni() < 0.15f + 0.25f * v;
+      mo.color  = vec3{ vr.uni(0.35f, 0.75f), vr.uni(0.33f, 0.70f), vr.uni(0.30f, 0.66f) };
+      const double ang = vr.uni(0.0f, 6.28318531f);
+      const double inc = (double)vr.gauss() * (0.05 + 0.5 * (double)v * (double)v);
+      mo.offset = dvec3{ pl.offset.x + dist * std::cos(ang) * std::cos(inc),
+                         pl.offset.y + dist * std::sin(inc),
+                         pl.offset.z + dist * std::sin(ang) * std::cos(inc) };
+      out.push_back(mo);
+      dist *= (double)vr.uni(1.5f, 2.4f);
+      --moonsLeft;
+    }
+  }
+
+  // Small bodies past the last planet: asteroids and the occasional dwarf.
+  const int nSmall = (int)(vr.uni() * (1.0f + 3.0f * v));
+  double sa = std::max(lastA, std::max(inner, 0.3)) * (double)vr.uni(1.3f, 1.8f);
+  for (int k = 0; k < nSmall; ++k) {
+    const int slot = takeSlot();
+    if (slot < 0) break;
+    GalaxyContent sb;
+    sb.kind = GalaxyContent::Kind::Planet;
+    sb.origin = starLocal;
+    sb.variety = v;
+    sb.starIndex = starIndex;
+    sb.orbitIndex = k;
+    sb.slot = slot;
+    sb.key  = UniStarKey(starIndex) + 1 + slot;
+    sb.seed = vr.next();
+    sb.irregular = vr.uni() < 0.7f;
+    sb.radius = sb.irregular ? (float)(1.5e-6 * (double)vr.uni(0.3f, 2.5f)) : (float)(6.0e-6 * (double)vr.uni(0.5f, 1.6f));
+    sb.mass   = 1.0e-10 * (double)vr.uni(0.1f, 5.0f);
+    sb.color  = vec3{ vr.uni(0.25f, 0.6f), vr.uni(0.23f, 0.55f), vr.uni(0.2f, 0.5f) };
+    const double ang = vr.uni(0.0f, 6.28318531f);
+    const double inc = (double)vr.gauss() * (0.12 + 0.5 * (double)v);
+    sb.offset = dvec3{ sa * std::cos(ang), sa * std::sin(inc), sa * std::sin(ang) };
+    out.push_back(sb);
+    sa *= (double)vr.uni(1.15f, 1.6f);
   }
 }

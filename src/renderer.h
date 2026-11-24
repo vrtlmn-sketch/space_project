@@ -119,6 +119,7 @@ struct UniverseFormState {
   bool  centralBlackHoles = true;   // a supermassive hole at each galaxy's centre
   int   nebulaePerGalaxy  = 2;
   int   planetsPerSystem  = 4;
+  float variety           = 0.3f;   // 0 = plain stars and bare planets, 1 = anything goes
   int   nebulaVolumeRes   = 48;    // baked volume per generated nebula (VRAM)
   int   liveObjectBudget  = 256;    // generated bodies that may be real objects at once
   int   physicalModel = 0;      // realistic / relaxed / custom laws
