@@ -1896,7 +1896,12 @@ override). How generated galaxies should get varied looks is not decided yet.
   dust scale). That is part of the tuned look, so it is only replaced once some
   cloud has a look, and then the others are put back to project values at that
   same last scale (`dustLoopInfluence`).
-- `starLumPivot` caches a few spreads per kind now, not one.
+- `starLumPivot` answers the PROJECT's spread exactly from a one-value cache
+  (so nothing drawn with it moves) and every other value from a 512-entry
+  table. A small cache of exact answers was tried first and thrashed as soon
+  as universe galaxies had seeded looks: thousands of distinct spreads a frame,
+  2048 exp() each, universe.json 7 s -> 20 s to frame 90. Any per-cloud value
+  that feeds an expensive solve needs a table, not a cache.
 - Sprite density reaches the shader through the global `gSpriteRefHeight`, set
   by `PrepCloudLook`: it is per cloud only because that runs before each draw.
 - Not per cloud: Edge Light (applied once in the tonemap) and Sprite Density
@@ -1963,6 +1968,49 @@ keys). milky_way 0.3, universe 0.6, universe2 1.0.
   `UNIVERSE_BODY=n<k>:<radii>` (k-th body of that star's system, and it prints
   the system). The camera looks down -Z, so use a project whose saved camera
   angles are zero, and pick a body with offset.z < 0 to see its lit side.
+
+## Universe galaxies have seeded looks, and contain CLUSTERS
+
+**Looks.** `GalaxyLookFromSeed` (universeGen.cpp) rolls a look and a
+temperature from a galaxy's own seed, in the same ranges as the cloud creator's
+Random button. It is kept beside the user's look (`RenderedObject::seedLook`,
+`seedLookAmount` = Variety x the galaxy's own 0.35..1), and
+`Renderer::LookValue` blends project -> seeded by that amount unless the cloud's
+own `look` has the setting. So Variety 0 changes nothing, nothing is saved for
+it, and a user edit still wins and is still the only thing that makes an
+override. `CloudObject::drawTemperature()` does the same for colour (only while
+the stored temperature is still the default 4500).
+
+- **Tiny far galaxies still batch, with the PROJECT look** (`lookProjectOnly`
+  during `FlushFarGalaxies`; `farBatched` on the object). A few pixels of smudge
+  cannot show its own dust, and thousands of single draws would undo the
+  batching. A galaxy takes its own look once it is big enough to draw alone, so
+  there is a change of look at that handover.
+- The density pass restores project values ONCE after a cloud with its own
+  look, not per cloud: `rimClouds` can hold thousands of batched galaxies.
+
+**Clusters.** `GalaxyCluster` / `GenerateGalaxyClusters`: small clouds a galaxy
+contains, each with a full look of its own, which is what lets one cloud type
+be a knot of stars, a glowing nebula, a dark dust patch, or the RING round an
+oversized central hole (the blackhole project, occurring naturally: only
+galaxies whose hole Variety drew oversized get one). `clustersPerGalaxy` on the
+universe (absent = 0); the volumetric Nebula objects are separate and remain.
+
+- `UpdateUniverseClusters` (main.cpp) makes them real for the ONE galaxy the
+  camera is within 1.6 radii of, one per frame, as ordinary `CloudObject`s with
+  `uniRecord` set and `uniIndex` -1 (so: not saved, not taken for a galaxy) and
+  `uniClusterGal/Key`. Slots are appended or rebuilt in place, never erased;
+  past 24 the furthest one belonging to another galaxy is reused.
+- **Brightness is sprite overlap, so a cluster needs stops taken OFF.**
+  Thousands of sprites in a small patch outshone the whole galaxy and pulled
+  the exposure down until the galaxy vanished; each kind carries a negative
+  Brightness offset (the last `SetLook` argument). Tune that, not the haze.
+- They are drawn far larger than real ones (1 to 6 percent of the galaxy's
+  radius) or there would be nothing to find.
+- `CloudObject::Update` skips a cluster under a pixel across.
+- Edits to a cluster are NOT remembered: it is rebuilt from the seed.
+- Harness: `UNIVERSE_CLUSTERS=<n>`, `CLUSTER_DEBUG=1`; park inside the galaxy's
+  reach (`UNIVERSE_CAM_DIST=1.4e9`) or none are made.
 
 ## Cost traps
 

@@ -335,6 +335,7 @@ bool ProjectSerializer::Save(const std::string& path,
         {"nebulaePerGalaxy",  u.nebulaePerGalaxy},
         {"planetsPerSystem",  u.planetsPerSystem},
         {"variety",           u.variety},
+        {"clustersPerGalaxy", u.clustersPerGalaxy},
         {"nebulaVolumeRes",   u.nebulaVolumeRes},
         {"liveObjectBudget",  u.liveObjectBudget},
         {"overrides",      ovArr},
@@ -698,6 +699,7 @@ ProjectData ProjectSerializer::Load(const std::string& path)
       // universe be"). Do not unify the two.
       rec.planetsPerSystem  = u.value("planetsPerSystem",  -1);
       rec.variety           = u.value("variety",           0.0f);   // absent = the plain systems it was saved with
+      rec.clustersPerGalaxy = u.value("clustersPerGalaxy", 0);      // absent = none
       rec.nebulaVolumeRes   = u.value("nebulaVolumeRes",   UniverseRecord{}.nebulaVolumeRes);
       rec.liveObjectBudget  = u.value("liveObjectBudget",  UniverseRecord{}.liveObjectBudget);
       if (u.contains("bodyEdits") && u["bodyEdits"].is_array()) {

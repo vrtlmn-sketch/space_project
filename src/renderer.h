@@ -121,6 +121,7 @@ struct UniverseFormState {
   int   nebulaePerGalaxy  = 2;
   int   planetsPerSystem  = 4;
   float variety           = 0.3f;   // 0 = plain stars and bare planets, 1 = anything goes
+  int   clustersPerGalaxy = 3;      // small clouds inside each galaxy: star clusters, glowing and dark nebulae
   int   nebulaVolumeRes   = 48;    // baked volume per generated nebula (VRAM)
   int   liveObjectBudget  = 256;    // generated bodies that may be real objects at once
   int   physicalModel = 0;      // realistic / relaxed / custom laws
@@ -1353,8 +1354,14 @@ public:
   // project's alone.
   float ProjectLookValue(int key) const;
   float LookValue(const RenderedObject& ro, int key) const {
-    return ro.look.has(key) ? ro.look.v[key] : ProjectLookValue(key);
+    if (lookProjectOnly) return ProjectLookValue(key);
+    if (ro.look.has(key)) return ro.look.v[key];
+    const float base = ProjectLookValue(key);
+    if (ro.seedLookAmount > 0.0f && ro.seedLook.has(key))
+      return base + (ro.seedLook.v[key] - base) * ro.seedLookAmount;
+    return base;
   }
+  bool  lookProjectOnly{false};       // while the far-galaxy batch draws: one look for all of it
   // The dust and star uniforms for one cloud, from its own look. The cloud
   // program is shared, so this runs before EVERY draw of a cloud (light, dust,
   // density) and whoever drew last cannot leak its look into the next.

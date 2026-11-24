@@ -420,6 +420,193 @@ void GenerateGalaxyContents(const GalaxyDesc& g, const UniverseParams& p,
 // galaxy seed and the star's INDEX, which is stable across levels of detail
 // (GenerateGalaxyStars consumes the same RNG state for star i at any count), so
 // a system keeps its identity as the galaxy's detail climbs and falls.
+// ── Clusters ─────────────────────────────────────────────────────────────────
+namespace {
+// Galaxy-local disc coordinates (disc in XY, height Z) turned by the galaxy's
+// own inclination and roll: the frame its stars and nebulae are in.
+dvec3 ToGalaxyFrame(const GalaxyDesc& g, double nx, double ny, double nz) {
+  const double ci = std::cos((double)g.inclination), si = std::sin((double)g.inclination);
+  const double cr = std::cos((double)g.roll),        sr = std::sin((double)g.roll);
+  const double y1 = ny * ci - nz * si;
+  const double z1 = ny * si + nz * ci;
+  return dvec3{ nx * cr - y1 * sr, nx * sr + y1 * cr, z1 };
+}
+void SetLook(CloudLook& l, float dust, float cover, float contrast, float clump, float red, float darkest,
+             float settle, float spread, float size, float resolved, float pop, float haze, float hazeSize,
+             float gas, float stops) {
+  l.set(CloudLook::DustStrength, dust);     l.set(CloudLook::DustCoverage, cover);
+  l.set(CloudLook::DustContrast, contrast); l.set(CloudLook::DustClumpScale, clump);
+  l.set(CloudLook::DustReddening, red);     l.set(CloudLook::DustDarkest, darkest);
+  l.set(CloudLook::DustSettle, settle);     l.set(CloudLook::StarLumSpread, spread);
+  l.set(CloudLook::StarSize, size);         l.set(CloudLook::ResolvedCut, resolved);
+  l.set(CloudLook::PopColour, pop);         l.set(CloudLook::HazeStrength, haze);
+  l.set(CloudLook::HazeSize, hazeSize);     l.set(CloudLook::GasStrength, gas);
+  l.set(CloudLook::StarFieldOffset, stops);
+}
+} // namespace
+
+void GenerateGalaxyClusters(const GalaxyDesc& g, const UniverseParams& p,
+                            std::vector<GalaxyCluster>& out)
+{
+  out.clear();
+  Rng rng((uint64_t)g.seed * 0xA24BAED4963EE407ull + 0x51ED270B1ull);
+
+  // The ring: only round a hole that is drawn oversized (Variety decides which
+  // galaxies have one). A hot, heavily dusty disc from a few hole radii out,
+  // there for the lens to bend. This is what projects/blackhole.json is.
+  if (p.centralBlackHoles && p.variety > 0.0f) {
+    std::vector<GalaxyContent> cc;
+    UniverseParams hp = p; hp.nebulaePerGalaxy = 0;
+    GenerateGalaxyContents(g, hp, cc);
+    for (const auto& c : cc) {
+      if (c.kind != GalaxyContent::Kind::BlackHole) continue;
+      if ((double)c.radius > units::kRsAUPerMsun * c.mass * 1.5) {
+        GalaxyCluster r;
+        r.kind = GalaxyCluster::Kind::Ring;
+        r.key  = 0;
+        r.origin = dvec3{0.0, 0.0, 0.0};
+        r.holeRadius = c.radius;
+        r.radius = c.radius * 30.0f;
+        r.seed = rng.next();
+        r.particles = 8000;
+        r.temperature = rng.uni(1000.0f, 2600.0f);
+        SetLook(r.look, 2.0f, rng.uni(0.40f, 0.60f), 1.0f, rng.uni(0.9f, 1.5f), rng.uni(3.0f, 4.0f), 0.001f,
+                1.0f, rng.uni(0.8f, 1.6f), 1.0f, 0.0f, 0.6f, 10.0f, 100.0f, 0.5f, 0.0f);
+        out.push_back(r);
+      }
+      break;
+    }
+  }
+
+  const int n = std::max(0, p.clustersPerGalaxy);
+  const double R = (double)g.radius;
+  for (int i = 0; i < n; ++i) {
+    GalaxyCluster c;
+    c.key  = 1 + i;
+    c.seed = rng.next() ^ (uint32_t)(i * 2246822519u);
+    const float t = rng.uni();
+    c.kind = (t < 0.40f) ? GalaxyCluster::Kind::Stars
+           : (t < 0.72f) ? GalaxyCluster::Kind::BrightNebula : GalaxyCluster::Kind::DarkNebula;
+    // Where: nebulae in the disc, where the gas is; star clusters there too,
+    // or out in the halo.
+    const bool halo = (c.kind == GalaxyCluster::Kind::Stars) && rng.uni() < 0.4f;
+    if (halo) {
+      const double rr = R * (double)rng.uni(0.15f, 0.9f);
+      const double u = rng.uni(-1.0f, 1.0f), th = rng.uni(0.0f, 6.28318531f), sq = std::sqrt(1.0 - u * u);
+      c.origin = dvec3{ rr * sq * std::cos(th), rr * sq * std::sin(th), rr * u };
+    } else {
+      const double rr = R * (double)rng.uni(0.12f, 0.85f);
+      const double th = rng.uni(0.0f, 6.28318531f);
+      const double z  = (double)rng.gauss() * (double)g.shape.thickness * R * 0.6;
+      c.origin = ToGalaxyFrame(g, rr * std::cos(th), rr * std::sin(th), z);
+    }
+    // A cluster packs thousands of sprites into a small patch of sky, and
+    // brightness here IS sprite overlap, so left on the galaxy's own scale one
+    // of these outshines the whole galaxy and drags the exposure down with it.
+    // Each kind is therefore drawn several stops under (the last SetLook value).
+    // Drawn far larger than the real things (a real cluster is a few light-
+    // years in a galaxy 100 000 across: nothing to find, nothing to see).
+    const double size = R * (double)std::exp(rng.uni(std::log(0.012f), std::log(0.06f)));
+    c.radius = (float)size;
+    if (c.kind == GalaxyCluster::Kind::Stars) {
+      c.particles   = 2500;
+      c.temperature = std::exp(rng.uni(std::log(3500.0f), std::log(16000.0f)));
+      SetLook(c.look, 0.0f, 0.3f, 1.0f, 0.2f, 0.7f, 0.05f, 0.0f, rng.uni(2.5f, 5.0f), rng.uni(0.7f, 1.2f),
+              0.0f, 0.0f, rng.uni(0.2f, 0.9f), 40.0f, 0.0f, rng.uni(-2.5f, -1.5f));
+    } else if (c.kind == GalaxyCluster::Kind::BrightNebula) {
+      c.particles   = 3000;
+      c.temperature = std::exp(rng.uni(std::log(5000.0f), std::log(22000.0f)));
+      SetLook(c.look, rng.uni(0.3f, 1.0f), rng.uni(0.3f, 0.6f), rng.uni(1.0f, 2.0f), rng.uni(0.15f, 0.6f),
+              rng.uni(0.5f, 2.0f), 0.04f, 0.0f, rng.uni(0.5f, 3.0f), 0.6f, rng.uni(0.6f, 0.9f), 0.0f,
+              rng.uni(1.5f, 3.5f), rng.uni(60.0f, 100.0f), rng.uni(0.5f, 1.1f), rng.uni(-4.5f, -3.5f));
+    } else {
+      c.particles   = 2500;
+      c.temperature = 3000.0f;
+      SetLook(c.look, 2.0f, rng.uni(0.7f, 1.0f), rng.uni(1.5f, 3.0f), rng.uni(0.2f, 0.8f), rng.uni(1.5f, 3.5f),
+              0.002f, 0.0f, 0.0f, 0.5f, 1.0f, 0.0f, 0.0f, 40.0f, 0.0f, -3.0f);
+    }
+    out.push_back(c);
+  }
+}
+
+void GenerateClusterParticles(const GalaxyDesc& g, const GalaxyCluster& c,
+                              std::vector<CloudParticle>& out)
+{
+  out.clear();
+  const int n = std::max(1, c.particles);
+  out.reserve((size_t)n);
+  Rng rng((uint64_t)c.seed * 0x9E3779B97F4A7C15ull + 0x7F4A7C15ull);
+  auto put = [&](const dvec3& p) {
+    CloudParticle cp;
+    cp.position = vec3{(float)p.x, (float)p.y, (float)p.z};
+    cp.velocity = vec3{0.0f, 0.0f, 0.0f};
+    cp.acceleration = vec3{0.0f, 0.0f, 0.0f};
+    out.push_back(cp);
+  };
+  if (c.kind == GalaxyCluster::Kind::Ring) {
+    // Thin disc in the galaxy's own plane, 3 to 30 hole radii, denser inward,
+    // a few percent thick, with a little lumpiness so it does not read as CG.
+    const double rs = (double)c.holeRadius;
+    for (int i = 0; i < n; ++i) {
+      const double r  = rs * (3.0 + 27.0 * std::pow((double)rng.uni(), 1.6));
+      const double th = rng.uni(0.0f, 6.28318531f);
+      const double z  = (double)rng.gauss() * 0.035 * r;
+      const double wob = 1.0 + 0.06 * std::sin(3.0 * th + r / rs * 0.7);
+      put(ToGalaxyFrame(g, r * wob * std::cos(th), r * wob * std::sin(th), z));
+    }
+  } else if (c.kind == GalaxyCluster::Kind::Stars) {
+    // Plummer sphere: dense core, long thin halo (cut where it stops reading).
+    const double a = (double)c.radius * 0.22;
+    for (int i = 0; i < n; ++i) {
+      const double m = std::max((double)rng.uni(), 1e-6);
+      const double r = std::min(a / std::sqrt(std::pow(m, -2.0 / 3.0) - 1.0 + 1e-9), (double)c.radius * 1.5);
+      const double u = rng.uni(-1.0f, 1.0f), th = rng.uni(0.0f, 6.28318531f), sq = std::sqrt(1.0 - u * u);
+      put(dvec3{ r * sq * std::cos(th), r * sq * std::sin(th), r * u });
+    }
+  } else {
+    // A nebula: a handful of overlapping lumps of different size and squash,
+    // so the outline is ragged and no two are alike.
+    const int lumps = 4 + (int)(rng.uni() * 5.99f);
+    struct Lump { dvec3 c; double sx, sy, sz; };
+    std::vector<Lump> L((size_t)lumps);
+    for (auto& l : L) {
+      const double R = (double)c.radius;
+      l.c  = dvec3{ (double)rng.gauss() * R * 0.35, (double)rng.gauss() * R * 0.35, (double)rng.gauss() * R * 0.22 };
+      const double s = R * (double)rng.uni(0.12f, 0.38f);
+      l.sx = s * (double)rng.uni(0.6f, 1.5f); l.sy = s * (double)rng.uni(0.6f, 1.5f); l.sz = s * (double)rng.uni(0.4f, 1.0f);
+    }
+    for (int i = 0; i < n; ++i) {
+      const Lump& l = L[(size_t)(rng.next() % (uint32_t)lumps)];
+      put(dvec3{ l.c.x + (double)rng.gauss() * l.sx, l.c.y + (double)rng.gauss() * l.sy, l.c.z + (double)rng.gauss() * l.sz });
+    }
+  }
+}
+
+CloudLook GalaxyLookFromSeed(uint32_t seed, float& amount, float& temperature)
+{
+  Rng rng((uint64_t)seed * 0xC2B2AE3D27D4EB4Full + 0x165667B19E3779F9ull);
+  auto chance = [&](float pr) { return rng.uni() < pr; };
+  amount      = rng.uni(0.35f, 1.0f);
+  temperature = std::exp(rng.uni(std::log(2500.0f), std::log(22000.0f)));
+  CloudLook l;
+  // The same ranges as the cloud creator's Random button (proceduralGen.cpp).
+  l.set(CloudLook::DustStrength,   chance(0.2f) ? 0.0f : rng.uni(0.2f, 1.6f));
+  l.set(CloudLook::DustCoverage,   rng.uni(0.10f, 0.70f));
+  l.set(CloudLook::DustContrast,   rng.uni(1.0f, 3.0f));
+  l.set(CloudLook::DustClumpScale, std::exp(rng.uni(std::log(0.05f), std::log(0.9f))));
+  l.set(CloudLook::DustReddening,  rng.uni(0.0f, 2.5f));
+  l.set(CloudLook::DustDarkest,    std::exp(rng.uni(std::log(0.004f), std::log(0.15f))));
+  l.set(CloudLook::DustSettle,     rng.uni(0.0f, 1.0f));
+  l.set(CloudLook::StarLumSpread,  rng.uni(0.0f, 6.0f));
+  l.set(CloudLook::StarSize,       rng.uni(0.25f, 1.2f));
+  l.set(CloudLook::ResolvedCut,    chance(0.5f) ? 0.0f : rng.uni(0.1f, 0.85f));
+  l.set(CloudLook::PopColour,      chance(0.5f) ? 0.0f : rng.uni(0.3f, 1.0f));
+  l.set(CloudLook::HazeStrength,   chance(0.2f) ? 0.0f : rng.uni(0.5f, 7.0f));
+  l.set(CloudLook::HazeSize,       rng.uni(20.0f, 90.0f));
+  l.set(CloudLook::GasStrength,    chance(0.4f) ? 0.0f : rng.uni(0.2f, 1.2f));
+  return l;
+}
+
 void GenerateStarSystem(const GalaxyDesc& g, int starIndex, const dvec3& starLocal,
                         int planetsPerSystem, std::vector<GalaxyContent>& out,
                         float variety)

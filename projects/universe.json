@@ -730,7 +730,8 @@
       "radiusGly": 46.0,
       "seed": 82947291,
       "starsPerGalaxy": 50000,
-      "variety": 0.6
+      "variety": 0.6,
+      "clustersPerGalaxy": 3
     }
   ]
 }

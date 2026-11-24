@@ -677,6 +677,10 @@ bool Renderer::TryFarGalaxy(RenderedObject& ro) {
                                    LookValue(ro, CloudLook::FarFalloff),
                                    dustInfluence, reach, allowSkip,
                                    allowBatch && realisticRasterView && !ro.look.any(), farGalaxyRecs, farGalaxyVerts);
+  // A galaxy's SEEDED look does not keep it out of the batch: a few pixels of
+  // smudge cannot show its own dust, and thousands of single draws would undo
+  // the batching. It takes its own look once it is big enough to draw alone.
+  ro.farBatched = (r == RenderedObject::FarGalaxyResult::Batched);
   if (r == RenderedObject::FarGalaxyResult::Normal) return false;
   ro.cloudFarHandled = true;
   if (r == RenderedObject::FarGalaxyResult::Batched) {
@@ -690,8 +694,10 @@ bool Renderer::TryFarGalaxy(RenderedObject& ro) {
 void Renderer::FlushFarGalaxies() {
   if (farGalaxyRep && !farGalaxyRecs.empty()) {
     RenderedObject& rep = *farGalaxyRep;
-    PrepCloudLook(rep);              // the representative has no look of its own: these are the project's
+    lookProjectOnly = true;          // whatever look the representative has, the batch draws with the project's
+    PrepCloudLook(rep);
     UploadCloudLook(rep);
+    lookProjectOnly = false;
     rep.renderFarGalaxyBatch(farGalaxyRecs, farGalaxyVerts, cameraTranslate, camMatrix, zoom, fbWidth, fbHeight);
   }
   farGalaxyRecs.clear();
@@ -1236,20 +1242,9 @@ void Renderer::UpdateRtPlanetTextures(std::vector<PhysicsObject>& physicsObjects
 // rise with v), so the naive E[exp(R*(v-p))] = 1 does not preserve the mean —
 // it came out 2.9x too bright, which would have made the spread untunable
 // because every galaxy would change brightness as you widened it.
-float Renderer::starLumPivot(bool coreWeighted, float spread) const
+// The pivot for one spread, solved exactly (2048 exp()).
+static float SolveStarLumPivot(bool coreWeighted, float R)
 {
-  const float R = spread;
-  if (!(R > 0.0f)) return 0.0f;
-  // Called several times per cloud per frame, and the answer only changes when
-  // a slider does. Solving it afresh each time was 2048 exp() per call — with
-  // a few thousand galaxies, most of the frame. Clouds can each have their own
-  // range now, so the cache holds a handful of values per kind, not one.
-  constexpr int kSlots = 8;
-  static float cachedR[2][kSlots], cachedPivot[2][kSlots];
-  static int   cachedN[2] = {0, 0}, cachedNext[2] = {0, 0};
-  const int kind = coreWeighted ? 1 : 0;
-  for (int i = 0; i < cachedN[kind]; ++i)
-    if (cachedR[kind][i] == R) return cachedPivot[kind][i];
   const int N = 2048;
   double num = 0.0, den = 0.0;
   for (int i = 0; i < N; ++i) {
@@ -1260,12 +1255,44 @@ float Renderer::starLumPivot(bool coreWeighted, float spread) const
     num += base * std::exp((double)R * v);
     den += base;
   }
-  const int slot = cachedNext[kind];
-  cachedNext[kind] = (slot + 1) % kSlots;
-  cachedN[kind]    = std::min(cachedN[kind] + 1, kSlots);
-  cachedR[kind][slot]     = R;
-  cachedPivot[kind][slot] = (float)(std::log(num / std::max(den, 1e-12)) / (double)R);
-  return cachedPivot[kind][slot];
+  return (float)(std::log(num / std::max(den, 1e-12)) / (double)R);
+}
+
+float Renderer::starLumPivot(bool coreWeighted, float spread) const
+{
+  const float R = spread;
+  if (!(R > 0.0f)) return 0.0f;
+  const int kind = coreWeighted ? 1 : 0;
+  // Called several times per cloud per frame. Solving it afresh each time was
+  // 2048 exp() per call - with a few thousand galaxies, most of the frame.
+  //
+  // The PROJECT's spread is answered exactly, from a one-value cache, as it
+  // always was, so nothing drawn with the project's value moves. Every other
+  // value comes from a table: universe galaxies each have their own spread now
+  // (seeded looks), so there are thousands of distinct values a frame and any
+  // small cache of exact answers thrashes (a universe project went from 7 s to
+  // 20 s to frame 90 before this). The pivot is smooth in R, so 512 samples
+  // and a straight line between them are far inside what the eye can see.
+  static float cachedR[2] = {-1.0f, -1.0f}, cachedPivot[2] = {0.0f, 0.0f};
+  if (R == starLumSpread) {
+    if (cachedR[kind] != R) { cachedR[kind] = R; cachedPivot[kind] = SolveStarLumPivot(coreWeighted, R); }
+    return cachedPivot[kind];
+  }
+  constexpr int   kN = 512;
+  constexpr float kMaxR = 9.2f;
+  static float table[2][kN + 1];
+  static bool  built[2] = {false, false};
+  if (!built[kind]) {
+    for (int i = 0; i <= kN; ++i) {
+      const float r = std::max(kMaxR * (float)i / (float)kN, 1e-3f);
+      table[kind][i] = SolveStarLumPivot(coreWeighted, r);
+    }
+    built[kind] = true;
+  }
+  const float x  = std::clamp(R / kMaxR, 0.0f, 1.0f) * (float)kN;
+  const int   i0 = std::min((int)x, kN - 1);
+  const float f  = x - (float)i0;
+  return table[kind][i0] + (table[kind][i0 + 1] - table[kind][i0]) * f;
 }
 
 void Renderer::DrawCloudDust(RenderedObject& ro) {
@@ -6483,6 +6510,14 @@ void Renderer::DrawUniversePanel() {
                           "1    anything goes: monster holes, ringed rocks, potato\n"
                           "     planets, wild colours");
       ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("##uncl",  &U.clustersPerGalaxy, 0, 12, "Clusters per galaxy %d");
+      if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Small clouds inside each galaxy, each with its own look: knots of\n"
+                          "stars, glowing nebulae, and dark dust that blots out what is behind\n"
+                          "it. They appear when you are in or beside the galaxy. (A galaxy\n"
+                          "whose black hole is drawn oversized also gets a ring of cloud round\n"
+                          "it; Variety decides how many do.)");
+      ImGui::SetNextItemWidth(-1);
       ImGui::SliderInt("##unpl",  &U.planetsPerSystem, 0, 12, "Planets per system %d");
       if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Every star in a galaxy can have planets - the systems sit on\n"
@@ -10195,15 +10230,17 @@ void Renderer::RunPostProcess(GLuint srcHDR, int srcW, int srcH) {
     // its own dust, and the others are put back to what they had: the
     // project's values at the dust scale the loop ended on.
     bool anyLook = false;
-    for (RenderedObject* rc : rimClouds) if (rc->look.any()) { anyLook = true; break; }
+    for (RenderedObject* rc : rimClouds) if (!rc->farBatched && rc->hasOwnLook()) { anyLook = true; break; }
+    bool needProject = anyLook;       // the dust loop may have ended on a cloud with its own look
     for (RenderedObject* rc : rimClouds) {
       if (anyLook) {
-        if (rc->look.any()) { PrepCloudLook(*rc); UploadCloudLook(*rc); }
-        else {
+        if (!rc->farBatched && rc->hasOwnLook()) { PrepCloudLook(*rc); UploadCloudLook(*rc); needProject = true; }
+        else if (needProject) {       // once, not per cloud: there can be thousands of batched galaxies here
           gSpriteRefHeight = spriteRefHeight;
           rc->uploadDustParams(dustStrength, dustReddening, dustDarkest, dustSettle, popColour, starLumSpread,
                                starLumPivot(true), starLumPivot(false), dustCoverage, dustClumpScale,
                                dustLoopInfluence, dustContrast);
+          needProject = false;
         }
       }
       rc->renderCloudDustDensity(cameraTranslate, camMatrix, zoom, bw, bh);

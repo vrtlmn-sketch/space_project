@@ -781,11 +781,24 @@ void CloudObject::Update(Renderer& renderer, const std::vector<PhysicsObjectStru
     renderedObject.coordinates = position;
     renderedObject.rotationDeg = rotationDeg;
     // A far galaxy is skipped or batched before any of the uploads below.
-    renderedObject.cacheAppearance(temperature, renderMode);
+    // A cluster far too small to see is not drawn at all: there can be a few
+    // dozen, and each is three passes over a few thousand points.
+    if (uniClusterKey >= 0) {
+      const double rx = (renderedObject.coordinates.x - gCamAnchor[0]) + renderer.cameraTranslate[0];
+      const double ry = (renderedObject.coordinates.y - gCamAnchor[1]) + renderer.cameraTranslate[1];
+      const double rz = (renderedObject.coordinates.z - gCamAnchor[2]) + renderer.cameraTranslate[2];
+      const double d  = std::sqrt(rx * rx + ry * ry + rz * rz);
+      const double tanV = std::tan((double)renderer.zoom * 3.14159265358979 / 360.0);
+      const double px = (d > 0.0 && tanV > 1e-9)
+                          ? 3.0 * (double)renderedObject.cloudRmsRadius / (tanV * d) * 0.5 * (double)renderer.GetFbHeight()
+                          : 1e9;
+      if (renderedObject.cloudRmsRadius > 0.0f && px < 1.0) return;
+    }
+    renderedObject.cacheAppearance(drawTemperature(), renderMode);
     renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
     renderedObject.uploadParticleSizeSpread(particleSizeSpread);
     if (renderer.TryFarGalaxy(renderedObject)) return;
-    renderedObject.uploadTemperature(temperature);
+    renderedObject.uploadTemperature(drawTemperature());
     renderedObject.uploadRenderMode(renderMode);
     renderedObject.uploadNebulaScatterScale(nebulaScatterScale);
     renderedObject.uploadParticleSizeSpread(particleSizeSpread);

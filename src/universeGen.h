@@ -2,6 +2,8 @@
 #include <vector>
 #include <cstdint>
 #include "mathStructs.h"
+#include "cloudLook.h"
+#include "cloudParticle.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Procedural universe generation (see docs/universe.md)
@@ -140,6 +142,26 @@ inline constexpr int kUniOrbitsPerStar = 32;       // star + up to 31 planets
 inline int UniStarKey(int starIndex)             { return kUniRecipeKeys + starIndex * kUniOrbitsPerStar; }
 inline int UniPlanetKey(int starIndex, int orbit) { return UniStarKey(starIndex) + 1 + orbit; }
 
+// A CLUSTER: a small cloud a galaxy contains, beyond its own stars. The same
+// kind of object a galaxy is, with its own shape and its own look, which is
+// what lets one cloud type stand for very different things: a knot of stars, a
+// glowing nebula, a patch of dust that blots out what is behind it, or the
+// ring of matter round an oversized black hole. Like every other content it
+// is a descriptor derived from the galaxy's seed, never stored.
+// (The volumetric Nebula objects are separate and still generated.)
+struct GalaxyCluster {
+  enum class Kind { Ring, Stars, BrightNebula, DarkNebula };
+  Kind     kind{Kind::Stars};
+  int      key{0};            // stable within its galaxy: 0 = the ring, 1.. = the rest
+  dvec3    origin{};          // galaxy-local AU
+  float    radius{1.0f};      // AU
+  float    holeRadius{0.0f};  // the hole a ring circles (drawn radius, AU)
+  uint32_t seed{0};
+  int      particles{2000};
+  float    temperature{4500.0f};
+  CloudLook look;             // every setting given: a cluster does not follow the project
+};
+
 struct UniverseParams {
   uint32_t seed{82947291u};
   float    radiusGly{46.0f};     // extent of the generated volume
@@ -156,6 +178,9 @@ struct UniverseParams {
   // ~0.3 = plausible: air, clouds, rings, moons, asteroids, binaries, the odd
   // stellar black hole. 1 = anything goes.
   float    variety{0.0f};
+  // Clusters a galaxy contains (see GalaxyCluster), besides the ring an
+  // oversized hole gets. 0 = none, which is also what an old file loads as.
+  int      clustersPerGalaxy{0};
   // Baked volume resolution for a GENERATED nebula. The default 96 is meant
   // for a nebula you fly into; out here they are tens of pixels across, and
   // 96^3 RGBA16F is 7.1 MB of VRAM EACH — 42 of them is ~300 MB. 48 is 0.9 MB.
@@ -184,6 +209,20 @@ void GenerateGalaxyContents(const GalaxyDesc& g, const UniverseParams& p,
 void GenerateStarSystem(const GalaxyDesc& g, int starIndex, const dvec3& starLocal,
                         int planetsPerSystem, std::vector<GalaxyContent>& out,
                         float variety = 0.0f);
+
+// The clusters ONE galaxy contains, and the particles of one of them (in the
+// cluster's own frame, already turned to the galaxy's plane). Both pure and
+// cheap; nothing is kept.
+void GenerateGalaxyClusters(const GalaxyDesc& g, const UniverseParams& p,
+                            std::vector<GalaxyCluster>& out);
+void GenerateClusterParticles(const GalaxyDesc& g, const GalaxyCluster& c,
+                              std::vector<CloudParticle>& out);
+
+// A look for a whole galaxy, from its seed: every dial the cloud creator's
+// Random button rolls, in the same ranges. `amount` (0..1) is how far THIS
+// galaxy strays; the caller scales it by the universe's Variety and blends the
+// look toward it from the project's own, so at Variety 0 nothing changes.
+CloudLook GalaxyLookFromSeed(uint32_t seed, float& amount, float& temperature);
 
 // Star positions for ONE galaxy, in galaxy-local AU. Deterministic in desc.seed,
 // and a proper PREFIX: the first N stars are identical at any count, which is

@@ -458,6 +458,113 @@ static void ConfigureUniverseSlot(PhysicsObject& o, int rec, int gal,
   o.uniPlacedOffset = o.localOffset;
 }
 
+// ── Clusters: the small clouds a galaxy contains ─────────────────────────────
+// Made real for the ONE galaxy the camera is in or beside, a cloud each, built
+// from the galaxy's seed (GenerateGalaxyClusters). They are ordinary clouds
+// with their own look, so everything that draws, lenses, labels or selects a
+// cloud already works on them.
+//
+// Slots are only ever APPENDED or re-used in place, never erased: other code
+// holds cloud indices. Once the cap is reached the cluster furthest from the
+// camera that belongs to another galaxy is rebuilt as the one that is needed.
+// Nothing about them is saved (uniRecord set, uniIndex -1): they come back
+// from the seed. One is built per frame, so arriving at a galaxy never stalls.
+static void UpdateUniverseClusters(std::vector<std::unique_ptr<CloudObject>>& clouds,
+                                   const std::vector<UniverseRecord>& records,
+                                   const double camT[3])
+{
+  constexpr int kMaxClusters = 24;
+  const CloudObject* host = nullptr;
+  double bestRel = 1e300;
+  for (const auto& c : clouds) {
+    if (!c || c->uniRecord < 0 || c->uniIndex < 0 || c->uniRecord >= (int)records.size()) continue;
+    const UniverseRecord& rec = records[(size_t)c->uniRecord];
+    if (rec.clustersPerGalaxy <= 0 && !(rec.centralBlackHoles && rec.variety > 0.0f)) continue;
+    const double R = (double)c->renderedObject.galaxyDesc.radius;
+    if (!(R > 0.0)) continue;
+    const double dx = (c->position.x - gCamAnchor[0]) + camT[0];
+    const double dy = (c->position.y - gCamAnchor[1]) + camT[1];
+    const double dz = (c->position.z - gCamAnchor[2]) + camT[2];
+    const double rel = (dx * dx + dy * dy + dz * dz) / (R * R);
+    if (rel < 1.6 * 1.6 && rel < bestRel) { bestRel = rel; host = c.get(); }
+  }
+  if (!host) return;
+
+  static int cachedRec = -1, cachedGal = -1;
+  static uint32_t cachedSeed = 0;
+  static std::vector<GalaxyCluster> descs;
+  const UniverseRecord& rec = records[(size_t)host->uniRecord];
+  const GalaxyDesc& gd = host->renderedObject.galaxyDesc;
+  if (cachedRec != host->uniRecord || cachedGal != host->uniIndex || cachedSeed != gd.seed) {
+    UniverseParams up;
+    up.centralBlackHoles = rec.centralBlackHoles;
+    up.variety           = rec.variety;
+    up.clustersPerGalaxy = rec.clustersPerGalaxy;
+    GenerateGalaxyClusters(gd, up, descs);
+    cachedRec = host->uniRecord; cachedGal = host->uniIndex; cachedSeed = gd.seed;
+  }
+  if (descs.empty()) return;
+
+  double rot[9];
+  const bool hasRot = host->rotationDeg.x != 0.0f || host->rotationDeg.y != 0.0f || host->rotationDeg.z != 0.0f;
+  if (hasRot) EulerDegToMat3d(host->rotationDeg, rot);
+
+  for (const GalaxyCluster& d : descs) {
+    bool have = false;
+    int  count = 0, recycle = -1;
+    double farD2 = -1.0;
+    for (int i = 0; i < (int)clouds.size(); ++i) {
+      const CloudObject* c = clouds[(size_t)i].get();
+      if (!c || c->uniClusterKey < 0) continue;
+      ++count;
+      if (c->uniRecord == host->uniRecord && c->uniClusterGal == host->uniIndex) {
+        if (c->uniClusterKey == d.key) { have = true; break; }
+        continue;                                   // this galaxy's own: never recycled for a sibling
+      }
+      const double dx = (c->position.x - gCamAnchor[0]) + camT[0];
+      const double dy = (c->position.y - gCamAnchor[1]) + camT[1];
+      const double dz = (c->position.z - gCamAnchor[2]) + camT[2];
+      const double d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > farD2) { farD2 = d2; recycle = i; }
+    }
+    if (have) continue;
+    if (count >= kMaxClusters && recycle < 0) return;   // all 24 belong to this galaxy already
+
+    std::vector<CloudParticle> pts;
+    GenerateClusterParticles(gd, d, pts);
+    auto cl = std::make_unique<CloudObject>(vec3{0, 0, 0}, std::move(pts));
+    dvec3 l = d.origin;
+    if (hasRot)
+      l = dvec3{ rot[0]*l.x + rot[1]*l.y + rot[2]*l.z,
+                 rot[3]*l.x + rot[4]*l.y + rot[5]*l.z,
+                 rot[6]*l.x + rot[7]*l.y + rot[8]*l.z };
+    cl->position = dvec3{ host->position.x + l.x, host->position.y + l.y, host->position.z + l.z };
+    cl->renderedObject.coordinates = cl->position;
+    cl->rotationDeg      = host->rotationDeg;
+    cl->temperature      = d.temperature;
+    cl->renderedObject.look = d.look;
+    cl->simulatePhysics  = false;
+    cl->universeMember   = false;
+    cl->uniRecord        = host->uniRecord;
+    cl->uniIndex         = -1;
+    cl->uniClusterGal    = host->uniIndex;
+    cl->uniClusterKey    = d.key;
+    switch (d.kind) {
+      case GalaxyCluster::Kind::Ring:         cl->name = "Accretion Ring"; break;
+      case GalaxyCluster::Kind::Stars:        cl->name = "Star Cluster " + std::to_string(d.key); break;
+      case GalaxyCluster::Kind::BrightNebula: cl->name = "Glowing Cluster " + std::to_string(d.key); break;
+      default:                                cl->name = "Dust Cluster " + std::to_string(d.key); break;
+    }
+    static const bool dbg = std::getenv("CLUSTER_DEBUG") != nullptr;
+    if (dbg) std::cout << "[cluster] " << cl->name << "  radius " << d.radius << " AU  T " << d.temperature
+                       << "  galaxy " << host->name << " (look amount " << host->renderedObject.seedLookAmount
+                       << ", T " << host->drawTemperature() << ")\n";
+    if (count < kMaxClusters) clouds.push_back(std::move(cl));
+    else                      clouds[(size_t)recycle] = std::move(cl);
+    return;                                         // one a frame
+  }
+}
+
 // A galaxy's own star positions, kept for the few galaxies near enough that
 // their stars can become systems. 15000 stars is 180 KB, and only a galaxy you
 // are inside needs one, so a two-entry cache covers flying between them.
@@ -1284,6 +1391,14 @@ int main(int argc, char** argv) {
       cloud->universeMember = true;
       cloud->uniRecord = recIdx;
       cloud->uniIndex  = gi;
+      // Its own look, from its own seed, as far as the universe's Variety
+      // lets it stray from the project's. Nothing is stored for it.
+      if (rec.variety > 0.0f) {
+        float amount = 0.0f, seedT = 4500.0f;
+        cloud->renderedObject.seedLook        = GalaxyLookFromSeed(g.seed, amount, seedT);
+        cloud->renderedObject.seedLookAmount  = std::min(rec.variety, 1.0f) * amount;
+        cloud->renderedObject.seedTemperature = seedT;
+      }
       if (ov) {
         cloud->position = ov->position;
         cloud->renderedObject.coordinates = ov->position;
@@ -1372,6 +1487,7 @@ int main(int argc, char** argv) {
     rec.nebulaVolumeRes   = uf.nebulaVolumeRes;
     rec.planetsPerSystem  = uf.planetsPerSystem;
     rec.variety           = uf.variety;
+    rec.clustersPerGalaxy = uf.clustersPerGalaxy;
     rec.liveObjectBudget  = uf.liveObjectBudget;
     universeRecords.push_back(rec);
     spawnUniverseRecord(rec, (int)universeRecords.size() - 1, {});
@@ -2300,6 +2416,7 @@ int main(int argc, char** argv) {
     // drawn the same frame instead of a frame late.
     UpdateUniverseContents(physicsObjects, lineObjects, clouds, universeRecords,
                            renderer.cameraTranslate, renderer.activeSizeExag());
+    UpdateUniverseClusters(clouds, universeRecords, renderer.cameraTranslate);
 
     // Multi-scale regimes (dynamics.h): who orbits whom, what the current step
     // can resolve, and the parents-first update order the analytic bodies need.
@@ -2494,7 +2611,7 @@ int main(int argc, char** argv) {
     // view. Reuses this frame's lens framing (correct for the current-camera Snap;
     // for a differing record camera the hole's screen position may be approximate).
     auto uploadCloudRO = [&](CloudObject* c){
-      c->renderedObject.uploadTemperature(c->temperature);
+      c->renderedObject.uploadTemperature(c->drawTemperature());
       c->renderedObject.uploadRenderMode(c->renderMode);
       renderer.UploadCloudLook(c->renderedObject);
     };
@@ -2557,7 +2674,7 @@ int main(int argc, char** argv) {
                                      physicsObjects[i].data.color);
         }
         for (auto& c : clouds) {
-          c->renderedObject.uploadTemperature(c->temperature);
+          c->renderedObject.uploadTemperature(c->drawTemperature());
           c->renderedObject.uploadRenderMode(c->renderMode);
           renderer.Draw(c->renderedObject);
         }
@@ -2715,7 +2832,7 @@ int main(int argc, char** argv) {
           renderer.DrawPhysicsObject(o.renderedObject, o.data.mass, o.temperature,
                                      RtObjectType(o.shaderType), o.data.velocity, o.data.color);
         for (auto& c : clouds) {
-          c->renderedObject.uploadTemperature(c->temperature);
+          c->renderedObject.uploadTemperature(c->drawTemperature());
           c->renderedObject.uploadRenderMode(c->renderMode);
           renderer.Draw(c->renderedObject);
         }
@@ -2791,6 +2908,9 @@ int main(int argc, char** argv) {
         if (const char* rr = std::getenv("UNIVERSE_RADIUS"))
           renderer.universeForm.radiusGly = (float)std::atof(rr);
         renderer.universeForm.variety = 0.0f;       // the harness universe stays plain unless asked
+        renderer.universeForm.clustersPerGalaxy = 0;
+        if (const char* cc = std::getenv("UNIVERSE_CLUSTERS"))
+          renderer.universeForm.clustersPerGalaxy = std::atoi(cc);
         if (const char* vv = std::getenv("UNIVERSE_VARIETY"))
           renderer.universeForm.variety = (float)std::atof(vv);
         if (renderer.universeCreate) renderer.universeCreate(renderer.universeForm);

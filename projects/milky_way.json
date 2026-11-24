@@ -1446,7 +1446,7 @@
         0.3799999952316284,
         0.8199999928474426
       ],
-      "description": "The outermost planet. Its position was predicted from disturbances in Uranus’s orbit before astronomers found it.",
+      "description": "The outermost planet. Its position was predicted from disturbances in Uranus\u2019s orbit before astronomers found it.",
       "keyframes": [],
       "mass": 5.150341720015892e-05,
       "meshPath": "",
@@ -2364,7 +2364,7 @@
         0.27000001072883606,
         0.23999999463558197
       ],
-      "description": "The larger, closer Martian moon. It’s irregular and slowly spiraling inward.",
+      "description": "The larger, closer Martian moon. It\u2019s irregular and slowly spiraling inward.",
       "keyframes": [],
       "mass": 5.360402721690546e-15,
       "meshPath": "",
@@ -2614,7 +2614,7 @@
         0.7799999713897705,
         0.30000001192092896
       ],
-      "description": "Jupiter’s moon Io is the most volcanically active world in the Solar System, heated by tidal flexing.",
+      "description": "Jupiter\u2019s moon Io is the most volcanically active world in the Solar System, heated by tidal flexing.",
       "keyframes": [],
       "mass": 4.4918454892455e-08,
       "meshPath": "",
@@ -2864,7 +2864,7 @@
         0.44999998807907104,
         0.4000000059604645
       ],
-      "description": "Jupiter’s largest moon and the largest in the Solar System. It generates its own magnetic field.",
+      "description": "Jupiter\u2019s largest moon and the largest in the Solar System. It generates its own magnetic field.",
       "keyframes": [],
       "mass": 7.452463451799625e-08,
       "meshPath": "",
@@ -2989,7 +2989,7 @@
         0.25,
         0.20999999344348907
       ],
-      "description": "An ancient, heavily cratered world and the outermost of Jupiter’s four large Galilean moons.",
+      "description": "An ancient, heavily cratered world and the outermost of Jupiter\u2019s four large Galilean moons.",
       "keyframes": [],
       "mass": 5.4106926430873986e-08,
       "meshPath": "",
@@ -3739,7 +3739,7 @@
         0.7099999785423279,
         0.7200000286102295
       ],
-      "description": "Saturn’s second-largest moon, an icy world with a heavily cratered surface.",
+      "description": "Saturn\u2019s second-largest moon, an icy world with a heavily cratered surface.",
       "keyframes": [],
       "mass": 1.159937037018411e-09,
       "meshPath": "",
@@ -3989,7 +3989,7 @@
         0.7200000286102295,
         0.6899999976158142
       ],
-      "description": "The ravioli-shaped moon orbiting inside a gap in Saturn’s rings.",
+      "description": "The ravioli-shaped moon orbiting inside a gap in Saturn\u2019s rings.",
       "keyframes": [],
       "mass": 2.4893511091442164e-15,
       "meshPath": "",
@@ -4239,7 +4239,7 @@
         0.6800000071525574,
         0.6499999761581421
       ],
-      "description": "A moon of Saturn that pulls strands of material out of Saturn’s narrow F ring.",
+      "description": "A moon of Saturn that pulls strands of material out of Saturn\u2019s narrow F ring.",
       "keyframes": [],
       "mass": 8.021242462798031e-14,
       "meshPath": "",
@@ -4864,7 +4864,7 @@
         0.23000000417232513,
         0.25
       ],
-      "description": "The darkest of Uranus’s five major moons, with a conspicuous bright ring inside a crater.",
+      "description": "The darkest of Uranus\u2019s five major moons, with a conspicuous bright ring inside a crater.",
       "keyframes": [],
       "mass": 6.411964978098739e-10,
       "meshPath": "",
@@ -4989,7 +4989,7 @@
         0.49000000953674316,
         0.46000000834465027
       ],
-      "description": "Uranus’s largest moon, with extensive fractures and canyons.",
+      "description": "Uranus\u2019s largest moon, with extensive fractures and canyons.",
       "keyframes": [],
       "mass": 1.7098573274929972e-09,
       "meshPath": "",
@@ -5114,7 +5114,7 @@
         0.3700000047683716,
         0.3400000035762787
       ],
-      "description": "The outermost of Uranus’s five major moons, with an old, heavily cratered surface.",
+      "description": "The outermost of Uranus\u2019s five major moons, with an old, heavily cratered surface.",
       "keyframes": [],
       "mass": 1.546917982167194e-09,
       "meshPath": "",
@@ -5239,7 +5239,7 @@
         0.1899999976158142,
         0.1899999976158142
       ],
-      "description": "Neptune’s second-largest moon and visibly irregular despite being about 400 kilometers across.",
+      "description": "Neptune\u2019s second-largest moon and visibly irregular despite being about 400 kilometers across.",
       "keyframes": [],
       "mass": 2.2127565414615256e-11,
       "meshPath": "",
@@ -5739,7 +5739,7 @@
         0.7400000095367432,
         0.7400000095367432
       ],
-      "description": "One of Pluto’s small, irregular moons imaged by New Horizons.",
+      "description": "One of Pluto\u2019s small, irregular moons imaged by New Horizons.",
       "keyframes": [],
       "mass": 2.2630464628583787e-14,
       "meshPath": "",
@@ -5864,7 +5864,7 @@
         0.8500000238418579,
         0.8700000047683716
       ],
-      "description": "The outermost of Pluto’s five moons, with a bright, water-ice-rich surface.",
+      "description": "The outermost of Pluto\u2019s five moons, with a bright, water-ice-rich surface.",
       "keyframes": [],
       "mass": 2.413916227048937e-14,
       "meshPath": "",
@@ -6088,7 +6088,8 @@
       "radiusGly": 46.0,
       "seed": 82947291,
       "starsPerGalaxy": 15000,
-      "variety": 0.30000001192092896
+      "variety": 0.30000001192092896,
+      "clustersPerGalaxy": 2
     }
   ]
 }

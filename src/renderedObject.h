@@ -331,6 +331,14 @@ public:
   float cineFarFalloff{0.08f};   // far-field light compression (see FarFieldDim)
   float cineStarFieldGain{0.008661f}; // star field brightness vs planets (2^-6.851; see cloudFrag)
   CloudLook look;                     // this cloud's own values, where it has been set apart from the project
+  // A universe galaxy's look from its seed (GalaxyLookFromSeed): drawn blended
+  // toward it from the project's by seedLookAmount, unless `look` has the
+  // setting. Never saved: it comes back from the seed.
+  CloudLook seedLook;
+  float     seedLookAmount{0.0f};
+  float     seedTemperature{4500.0f};
+  bool      farBatched{false};        // drawn in the far-galaxy batch this frame: the batch has one look, the project's
+  bool      hasOwnLook() const { return look.any() || seedLookAmount > 0.0f; }
   // Procedural cloud layer params (shared packing, both views):
   // P0 = (coverage, scale, bandedness, turbulence); P1 = (softness, altitude,
   // whiteness, driftPhase). coverage 0 = clouds off.

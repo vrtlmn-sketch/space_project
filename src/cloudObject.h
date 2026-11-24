@@ -111,6 +111,20 @@ public:
   // this galaxy, and its index in that generation. -1 = not universe-made.
   int uniRecord{-1};
   int uniIndex{-1};
+  // A CLUSTER a universe galaxy contains (GalaxyCluster): which galaxy and
+  // which of its clusters. Such a cloud has uniRecord set and uniIndex -1, so
+  // it is neither saved as a plain cloud nor taken for a galaxy; it is rebuilt
+  // from the seed whenever its galaxy is near.
+  int uniClusterGal{-1};
+  int uniClusterKey{-1};
+  // The temperature it is drawn with: a universe galaxy that has not been
+  // given one takes its seeded colour, by the same amount as its seeded look.
+  float drawTemperature() const {
+    const RenderedObject& ro = renderedObject;
+    if (ro.seedLookAmount > 0.0f && temperature == 4500.f)
+      return 4500.f + (ro.seedTemperature - 4500.f) * ro.seedLookAmount;
+    return temperature;
+  }
   // Set when a galaxy is promoted to particles: turning physics back off
   // rebuilds the cheap chunked render cache FROM THE PARTICLES (which stay —
   // after a simulation they, not the generator recipe, are the truth).
