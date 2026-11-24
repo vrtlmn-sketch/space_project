@@ -2784,20 +2784,15 @@ void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
   const float x = std::floor(vp->WorkPos.x + std::max(Em(60.0f), vp->WorkSize.x * 0.09f));
   float listH = 0.0f;
   for (const Row& r : rows) listH += (r.kind == -1) ? headRowH : (r.kind == -2) ? gapH : rowH;
-  // The logo stands in for a title; the text is only the fallback if the image is missing.
-  ProjectThumb logo = GetProjectThumb("assets/logo.png");
-  const bool  hasLogo = logo.id && logo.w > 0 && logo.h > 0;
-  const float logoW = std::clamp(vp->WorkSize.x * 0.26f, Em(240.0f), Em(460.0f));
-  const float logoH = hasLogo ? logoW * (float)logo.h / (float)logo.w : 0.0f;
-  const float headH = hasLogo ? logoH : titleSz;
+  // A plain title in the menu's own type; no logo image.
+  const float headH = titleSz;
   float y = std::floor(vp->WorkPos.y + std::max(Em(24.0f), (vp->WorkSize.y - (headH + Em(22.0f) + listH)) * 0.42f));
   auto text = [&](float sz, float tx, float ty, ImU32 col, const char* t, bool bold) {
     dl->AddText(font, sz, ImVec2(tx + 1.0f, ty + 1.0f), IM_COL32(0, 0, 0, 170), t);
     dl->AddText(font, sz, ImVec2(tx, ty), col, t);
     if (bold) dl->AddText(font, sz, ImVec2(tx + 0.8f, ty), col, t);      // the font has one weight: overstrike
   };
-  if (hasLogo) dl->AddImage((ImTextureID)(uintptr_t)logo.id, ImVec2(x, y), ImVec2(x + logoW, y + logoH));
-  else         text(titleSz, x, y, IM_COL32(236, 240, 248, 240), "Saul's Sim", true);
+  text(titleSz, x, y, IM_COL32(236, 240, 248, 240), "Saul's Sim", false);
   y += headH + Em(22.0f);
 
   // The settings window, the quit dialog and the name field each own the keys
@@ -2865,21 +2860,39 @@ void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
   }
   // The highlighted world's own picture, on the side opposite the list. Not
   // for the world already running behind the menu: that one you can see.
-  if (selectable(launchSel) && rows[launchSel].kind == 0 && projectList[rows[launchSel].proj].file != current) {
-    const ProjectInfo& pi = projectList[rows[launchSel].proj];
-    ProjectThumb th = pi.image.empty() ? ProjectThumb{} : GetProjectThumb(pi.image);
-    if (th.id && th.w > 0 && th.h > 0) {
-      const float margin = std::max(Em(60.0f), vp->WorkSize.x * 0.09f);
-      float w = std::min(vp->WorkSize.x * 0.40f, Em(760.0f));
-      float h = w * (float)th.h / (float)th.w;
-      const float maxH = vp->WorkSize.y * 0.56f;
-      if (h > maxH) { w *= maxH / h; h = maxH; }
-      const ImVec2 p0(std::floor(vp->WorkPos.x + vp->WorkSize.x - margin - w),
-                      std::floor(vp->WorkPos.y + (vp->WorkSize.y - h) * 0.42f));
-      const ImVec2 p1(p0.x + w, p0.y + h);
-      dl->AddRectFilled(ImVec2(p0.x + 3.0f, p0.y + 4.0f), ImVec2(p1.x + 3.0f, p1.y + 4.0f), IM_COL32(0, 0, 0, 110), Em(6.0f));
-      dl->AddImageRounded((ImTextureID)(uintptr_t)th.id, p0, p1, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(255, 255, 255, 235), Em(6.0f));
-      text(headSz, p0.x, p1.y + Em(8.0f), IM_COL32(205, 214, 230, 170), pi.name.c_str(), false);
+  // Kept modest: a fixed 16:9 frame (cropped to fit, never stretched), a
+  // hairline border in place of a drop shadow, a quiet caption, and a short
+  // fade when the selection moves so pictures do not snap.
+  {
+    static std::string shown; static double shownAt = 0.0;
+    std::string want;
+    if (selectable(launchSel) && rows[launchSel].kind == 0 && projectList[rows[launchSel].proj].file != current)
+      want = projectList[rows[launchSel].proj].file;
+    if (want != shown) { shown = want; shownAt = now; }
+    if (!shown.empty()) {
+      const ProjectInfo& pi = projectList[rows[launchSel].proj];
+      ProjectThumb th = pi.image.empty() ? ProjectThumb{} : GetProjectThumb(pi.image);
+      if (th.id && th.w > 0 && th.h > 0) {
+        const float a = (float)std::clamp((now - shownAt) / 0.22, 0.0, 1.0);
+        const float margin = std::max(Em(60.0f), vp->WorkSize.x * 0.09f);
+        float w = std::floor(std::clamp(vp->WorkSize.x * 0.30f, Em(280.0f), Em(540.0f)));
+        float h = std::floor(w * 9.0f / 16.0f);
+        const float ar = (float)th.w / (float)th.h, slot = 16.0f / 9.0f;
+        ImVec2 uv0(0, 0), uv1(1, 1);
+        if (ar > slot) { const float k = slot / ar; uv0.x = (1.0f - k) * 0.5f; uv1.x = 1.0f - uv0.x; }
+        else           { const float k = ar / slot; uv0.y = (1.0f - k) * 0.5f; uv1.y = 1.0f - uv0.y; }
+        const ImVec2 p0(std::floor(vp->WorkPos.x + vp->WorkSize.x - margin - w),
+                        std::floor(vp->WorkPos.y + (vp->WorkSize.y - h) * 0.42f));
+        const ImVec2 p1(p0.x + w, p0.y + h);
+        const float r = Em(3.0f);
+        dl->AddImageRounded((ImTextureID)(uintptr_t)th.id, p0, p1, uv0, uv1, IM_COL32(255, 255, 255, (int)(235 * a)), r);
+        dl->AddRect(ImVec2(p0.x - 0.5f, p0.y - 0.5f), ImVec2(p1.x + 0.5f, p1.y + 0.5f), IM_COL32(255, 255, 255, (int)(46 * a)), r, 0, 1.0f);
+        const float cy = p1.y + Em(10.0f);
+        dl->AddText(font, headSz, ImVec2(p0.x + 1.0f, cy + 1.0f), IM_COL32(0, 0, 0, (int)(170 * a)), pi.name.c_str());
+        dl->AddText(font, headSz, ImVec2(p0.x, cy), IM_COL32(225, 231, 242, (int)(215 * a)), pi.name.c_str());
+        const ImVec2 fs = font->CalcTextSizeA(headSz * 0.9f, FLT_MAX, 0.0f, pi.file.c_str());
+        dl->AddText(font, headSz * 0.9f, ImVec2(p1.x - fs.x, cy + headSz * 0.1f), IM_COL32(200, 210, 226, (int)(110 * a)), pi.file.c_str());
+      }
     }
   }
 
