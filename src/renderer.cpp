@@ -2769,6 +2769,7 @@ void Renderer::StartLaunchAnim(double seconds) {
 void Renderer::StepLaunchAnim() {
   // The pull is sized from the distance to the nearest surface, which the
   // first frames work out; wait for it.
+  if (launchAnimPending && launchAnimHold > 0) { --launchAnimHold; return; }
   if (launchAnimPending && focusDistance > 0.0f) { launchAnimPending = false; StartLaunchAnim(5.0); }
   if (!launchAnim) return;
   launchAnimT += (double)std::min(ImGui::GetIO().DeltaTime, 0.1f) / launchAnimDur;
@@ -2801,6 +2802,7 @@ void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
     const std::string file = launchPendingFile;
     const int kind = launchPendingKind;
     launchPendingFile.clear(); launchPendingKind = 0; launchPendingShown = false;
+    launchPrevPhase = 0; launchPrevFade = 0.0f; launchPrevRest.clear();
     if (launchAnim) { launchAnim = false; zoom = launchZoom; SetCameraMatrix(launchRot); }
     launchAnimPending = false;
     launchMenu = false;
@@ -2864,6 +2866,11 @@ void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
   ImGuiViewport* vp = ImGui::GetMainViewport();
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
   ImFont* font = exploreFont ? exploreFont : ImGui::GetFont();
+  // The black a previewed world fades through, under the menu's text.
+  if (pause) { launchPrevPhase = 0; launchPrevFade = 0.0f; launchPrevRest.clear(); }
+  if (launchPrevFade > 0.0f)
+    dl->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y),
+                      IM_COL32(0, 0, 0, (int)(255.0f * std::clamp(launchPrevFade, 0.0f, 1.0f))));
   const float titleSz = Em(40.0f), headSz = Em(15.0f), rowSz = Em(19.0f), rowH = Em(30.0f);
   const float headRowH = headSz + Em(9.0f), gapH = Em(14.0f);
   const float x = std::floor(vp->WorkPos.x + std::max(Em(60.0f), vp->WorkSize.x * 0.09f));
@@ -2978,6 +2985,43 @@ void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
         const ImVec2 fs = font->CalcTextSizeA(headSz * 0.9f, FLT_MAX, 0.0f, pi.file.c_str());
         dl->AddText(font, headSz * 0.9f, ImVec2(p1.x - fs.x, cy + headSz * 0.1f), IM_COL32(200, 210, 226, (int)(110 * a)), pi.file.c_str());
       }
+    }
+  }
+
+  // Opening screen only: rest on another world for two seconds and it takes
+  // the place of the one behind the menu. Not when paused, where it would
+  // replace a world with unsaved changes; and it is not recorded as opened
+  // until it is actually entered.
+  if (!pause) {
+    const float dt = std::min(io.DeltaTime, 0.05f);
+    std::string want;
+    if (keysFree && selectable(launchSel) && rows[launchSel].kind == 0 &&
+        projectList[rows[launchSel].proj].file != current)
+      want = projectList[rows[launchSel].proj].file;
+    if (want != launchPrevRest) {
+      launchPrevRest = want; launchPrevRestAt = now;
+      if (launchPrevPhase == 1 || launchPrevPhase == 2) launchPrevPhase = 3;   // moved on: come back
+    }
+    if ((launchPrevPhase == 0 || launchPrevPhase == 3) && !want.empty() && now - launchPrevRestAt > 2.0)
+      launchPrevPhase = 1;
+    if (launchPrevPhase == 1) {
+      launchPrevFade += dt / 0.5f;
+      if (launchPrevFade >= 1.0f) { launchPrevFade = 1.0f; launchPrevPhase = 2; launchPrevBlackShown = false; }
+    } else if (launchPrevPhase == 2) {
+      if (!launchPrevBlackShown) launchPrevBlackShown = true;                  // one fully black frame first
+      else if (cb.loadProject) {
+        if (launchAnim) { launchAnim = false; zoom = launchZoom; SetCameraMatrix(launchRot); }
+        cb.loadProject(want);
+        EnterExploration();
+        launchLoadedFile  = want;
+        launchAnimPending = true; launchAnimHold = 3;
+        launchPrevRest.clear();
+        launchPrevPhase = 3;
+        return;
+      }
+    } else if (launchPrevPhase == 3) {
+      if (!launchAnimPending) launchPrevFade -= dt / 0.9f;                     // wait for the camera move to start
+      if (launchPrevFade <= 0.0f) { launchPrevFade = 0.0f; launchPrevPhase = 0; }
     }
   }
 

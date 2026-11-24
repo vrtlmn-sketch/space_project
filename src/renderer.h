@@ -1001,6 +1001,14 @@ public:
   bool        launchPendingShown{false};
   bool        launchAnim{false};
   bool        launchAnimPending{false};
+  int         launchAnimHold{0};                // frames to wait for a newly loaded scene's scale
+  // Resting on another world in the opening list shows it: fade to black,
+  // load, fade back in. 0 idle, 1 fading out, 2 black (loads next frame), 3 fading in.
+  int         launchPrevPhase{0};
+  bool        launchPrevBlackShown{false};
+  float       launchPrevFade{0.0f};
+  std::string launchPrevRest;                   // the world the selection is resting on
+  double      launchPrevRestAt{0.0};
   bool        menuSaveAs{false}, menuSaveAsFocus{false};   // the Save as row is a name field
   double      menuSavedAt{-10.0};
   double      launchAnimT{0.0}, launchAnimDur{5.0};
