@@ -497,8 +497,8 @@ void main() {
     // editor, ps = the project's supersampling), and it is why exploration,
     // which renders at a fixed height and scales up (ps ~ 1), drew the same
     // hole with fatter, tangled arcs. lfTune restates every size as if ps were
-    // the tuned ratio, so the lens looks the same at any resolution. It is
-    // exactly 1 in the editor, which is therefore unchanged.
+    // the tuned ratio (1, see main.cpp), so the lens looks the same at any
+    // resolution and any supersampling.
     float lfTune  = (uLfTuneScale > 0.0) ? uLfTuneScale / max(ps, 1e-3) : 1.0;
     float halfS   = gl_PointSize / max(uViewportH, 1.0) * lfTune;   // UNLENSED half-size, screen space
     float srcAng  = halfS / max(uProj[1][1], 1e-6);         // ... as an angle

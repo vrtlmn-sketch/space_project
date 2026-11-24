@@ -2157,10 +2157,12 @@ height and scales up, so on a 1076 px window at 720p with SSAA 1 it ran at
 **ps = 0.67**: every lensed image magnified 1.5x, arcs fat and tangled, while
 the editor showed clean nested arcs from the same camera.
 
-`lfTune = uLfTuneScale / ps` restates all three sizes as if `ps` were the
-project's supersampling (`gLfTuneScale`, set in main.cpp), so the lens looks the
-same at any render size and the editor at Viewport resolution is unchanged
-(lfTune = 1). `LF_TUNE=<k>` overrides it; at the harness's ps = 1,
+`lfTune = uLfTuneScale / ps` restates all three sizes as if `ps` were 1
+(`gLfTuneScale`, set in main.cpp), so the lens looks the same at any render size
+AND any supersampling. It was first pinned to the project's supersampling, which
+kept the editor unchanged but left a 1.5 project (milky_way, universe) with
+tangled, doubled arcs at Stretch 7.1 where blackhole (1.0) drew clean nested
+ones; `LF_TUNE=1.5` on a 1.0 project reproduces that exactly. `LF_TUNE=<k>` overrides it; at the harness's ps = 1,
 `LF_TUNE=0.669 CMP_W=1916 CMP_H=1076` reproduces the old exploration picture
 exactly, which is how this was confirmed. Two wrong guesses came first: plain
 resolution (the harness is clean at 633, 720 and 1076) and ps ABOVE 1 (barely

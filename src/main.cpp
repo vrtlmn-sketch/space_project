@@ -2257,9 +2257,9 @@ int main(int argc, char** argv) {
         gLfMaxMu    = renderer.lensMaxStretch;
         if (const char* e = std::getenv("LF_MAXMU")) gLfMaxMu = (float)std::atof(e);
         gLfMaxSprite = renderer.lensMaxSprite;
-        // The lens look is held to the editor's: the project's supersampling
-        // at Viewport resolution (see lfTune in cloudVert.glsl).
-        gLfTuneScale = std::clamp(renderer.cineSSAA, 1.0f, 2.0f);
+        // The lens look is held to supersampling 1 at any render size (see
+        // lfTune in cloudVert.glsl): at 1.5 with a high stretch the arcs tangle.
+        gLfTuneScale = 1.0f;
         if (const char* e = std::getenv("LF_TUNE")) gLfTuneScale = (float)std::atof(e);
         if (const char* e = std::getenv("LF_MAXSPRITE")) gLfMaxSprite = (float)std::atof(e);
         gLfHazeArc = renderer.lensHazeArc;
