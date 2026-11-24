@@ -1858,11 +1858,26 @@ int main(int argc, char** argv) {
   };
 
   // ── Startup modal loop ────────────────────────────────────────────────────
-  while (renderer.showStartupModal) {
-    if (!renderer.BeginFrame()) continue;
-    renderer.DrawStartupModal();
-    renderer.EndFrame();
-    if (!renderer.UpdateInputs()) return 0;
+  // No blocking chooser any more: the last world opened loads straight away and
+  // runs behind the launch menu (Renderer::DrawLaunchMenu). Two black frames
+  // that say "Loading" first, since the load blocks.
+  bool launchWanted = false;
+  if (renderer.showStartupModal) {
+    renderer.showStartupModal = false;
+    for (int i = 0; i < 2; ++i) {
+      if (!renderer.BeginFrame()) continue;
+      renderer.DrawLoadingScreen();
+      renderer.EndFrame();
+    }
+    const std::string last = renderer.MostRecentProject();
+    if (!last.empty()) {
+      std::strncpy(renderer.startupLoadPath, last.c_str(), sizeof(renderer.startupLoadPath) - 1);
+      renderer.startupLoadPath[sizeof(renderer.startupLoadPath) - 1] = '\0';
+      renderer.startupChoice = Renderer::StartupChoice::Load;
+      launchWanted = true;
+    } else {
+      renderer.startupChoice = Renderer::StartupChoice::Empty;
+    }
   }
 
   // Act on startup choice
@@ -1898,6 +1913,15 @@ int main(int argc, char** argv) {
       // key or the Esc menu away. (A new empty project stays in Creative: there
       // is nothing in it to explore yet.)
       renderer.EnterExploration();
+      if (launchWanted) {
+        renderer.launchLoadedFile = loadPath;
+        renderer.SortProjectsByRecent();
+        renderer.launchSel  = 0;
+        for (int i = 0; i < (int)renderer.projectList.size(); ++i)
+          if (renderer.projectList[i].file == loadPath) renderer.launchSel = i;
+        renderer.launchMenu = true;
+        renderer.launchAnimPending = true;      // started once the scene scale is known
+      }
     } else {
       // SC::Empty → create grid with defaults
       grid.emplace(currentGrid.cellSize, currentGrid.radius,

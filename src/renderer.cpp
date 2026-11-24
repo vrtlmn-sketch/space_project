@@ -130,6 +130,10 @@ void Renderer::LoadAppSettings() {
     appTheme[sizeof(appTheme) - 1] = '\0';
     vimMode = root.value("vimMode", false);
     exploreResolutionH = std::max(0, root.value("exploreResolution", 720));
+    recentOpened.clear();
+    if (root.contains("recent") && root["recent"].is_object())
+      for (auto it = root["recent"].begin(); it != root["recent"].end(); ++it)
+        if (it.value().is_number()) recentOpened[it.key()] = it.value().get<long long>();
   } catch (...) {
     std::cerr << "[Settings] Failed to parse settings.json\n";
   }
@@ -140,6 +144,11 @@ void Renderer::SaveAppSettings() {
   root["theme"]   = std::string(appTheme);
   root["vimMode"] = vimMode;
   root["exploreResolution"] = exploreResolutionH;
+  {
+    nlohmann::json rec = nlohmann::json::object();
+    for (const auto& kv : recentOpened) rec[kv.first] = kv.second;
+    root["recent"] = rec;
+  }
   std::ofstream f("settings.json");
   if (!f.is_open()) {
     std::cerr << "[Settings] Cannot write settings.json\n";
@@ -1808,6 +1817,10 @@ bool Renderer::UpdateInputs() {
   } else {
     if (escKeyPressed) {
       if (escStartedInSearch)       CloseExploreSearch();
+      else if (launchMenu) {
+        if (showSettingsPanel && !showQuitDialog) showSettingsPanel = false;   // Esc closes Settings first
+        else                                      showQuitDialog = !showQuitDialog;
+      }
       else if (exploring()) {
         if (showQuitDialog)       showQuitDialog = false;
         else if (exploreMenuOpen) CloseExploreMenu();
@@ -1827,7 +1840,7 @@ bool Renderer::UpdateInputs() {
 
   SyncFlightCapture();
 
-  if (!io.WantTextInput && !textEditorCaptured) {
+  if (!io.WantTextInput && !textEditorCaptured && !LaunchBusy()) {
     // ── Distance-adaptive move speed ──
     // step = factor · d^exponent (normalised so that factor 1.0 at d = 3
     // matches the old fixed speed). d = selected-object distance, or the
@@ -2604,6 +2617,191 @@ static int DrawProjectCards(const std::vector<Renderer::ProjectInfo>& list,
     dl->AddText(ImVec2(t1.x + 16, midY + 6),  ImGui::GetColorU32(ImGuiCol_TextDisabled), p.file.c_str());
   }
   return clicked;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Launch menu
+// ─────────────────────────────────────────────────────────────────────────────
+void Renderer::NoteProjectOpened(const std::string& file) {
+  if (file.empty()) return;
+  recentOpened[file] = (long long)std::time(nullptr);
+  SaveAppSettings();
+}
+
+// Most recently opened first, then the never-opened ones by name.
+void Renderer::SortProjectsByRecent() {
+  if (!projectsScanned) RescanProjects();
+  auto when = [&](const ProjectInfo& p) {
+    auto it = recentOpened.find(p.file);
+    return it == recentOpened.end() ? 0LL : it->second;
+  };
+  std::stable_sort(projectList.begin(), projectList.end(), [&](const ProjectInfo& a, const ProjectInfo& b) {
+    const long long wa = when(a), wb = when(b);
+    if (wa != wb) return wa > wb;
+    return a.name < b.name;
+  });
+}
+
+std::string Renderer::MostRecentProject() {
+  SortProjectsByRecent();
+  for (const auto& p : projectList)
+    if (recentOpened.count(p.file)) return p.file;
+  for (const auto& p : projectList)
+    if (p.file.find("milky_way.json") != std::string::npos) return p.file;
+  return projectList.empty() ? std::string{} : projectList.front().file;
+}
+
+// One black frame that says so, shown before a load blocks the program.
+void Renderer::DrawLoadingScreen() {
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  dl->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 255));
+  ImFont* font = exploreFont ? exploreFont : ImGui::GetFont();
+  const float sz = Em(20.0f);
+  const char* txt = "Loading";
+  const ImVec2 ts = font->CalcTextSizeA(sz, FLT_MAX, 0.0f, txt);
+  dl->AddText(font, sz, ImVec2(std::floor(vp->Pos.x + (vp->Size.x - ts.x) * 0.5f),
+                               std::floor(vp->Pos.y + (vp->Size.y - ts.y) * 0.5f)),
+              IM_COL32(220, 228, 240, 220), txt);
+}
+
+// The camera starts ahead of where the project was saved, on a wider lens, and
+// backs out while the lens closes in, so that what you were looking at holds
+// its size and the space around it settles into place. It ends on exactly the
+// saved view. The pull is a share of the distance to the nearest surface, so
+// it can never pass through anything.
+void Renderer::StartLaunchAnim(double seconds) {
+  for (int i = 0; i < 3; ++i) { launchAnchor[i] = gCamAnchor[i]; launchTrans[i] = cameraTranslate[i]; }
+  launchZoom     = zoom;
+  launchZoomFrom = std::min(zoom * 1.9f, 100.0f);
+  const double t1 = std::tan((double)launchZoom     * M_PI / 360.0);
+  const double t0 = std::tan((double)launchZoomFrom * M_PI / 360.0);
+  const double d1 = (focusDistance > 0.0f) ? (double)focusDistance : 1.0;
+  launchPull   = (t0 > 1e-9) ? d1 * (1.0 - t1 / t0) : 0.0;
+  launchAnimT  = 0.0;
+  launchAnimDur = std::max(seconds, 0.05);
+  launchAnim   = true;
+}
+
+void Renderer::StepLaunchAnim() {
+  // The pull is sized from the distance to the nearest surface, which the
+  // first frames work out; wait for it.
+  if (launchAnimPending && focusDistance > 0.0f) { launchAnimPending = false; StartLaunchAnim(5.0); }
+  if (!launchAnim) return;
+  launchAnimT += (double)std::min(ImGui::GetIO().DeltaTime, 0.1f) / launchAnimDur;
+  double u = std::clamp(launchAnimT, 0.0, 1.0);
+  const double e = 1.0 - (1.0 - u) * (1.0 - u) * (1.0 - u);          // ease out
+  const double fwd[3] = { -(double)camMatrix[6], -(double)camMatrix[7], -(double)camMatrix[8] };
+  const double pull = launchPull * (1.0 - e);
+  for (int i = 0; i < 3; ++i)                                         // position = anchor - translate
+    cameraTranslate[i] = launchTrans[i] + (gCamAnchor[i] - launchAnchor[i]) - fwd[i] * pull;
+  zoom = launchZoomFrom + (launchZoom - launchZoomFrom) * (float)e;
+  if (u >= 1.0) { launchAnim = false; zoom = launchZoom; }
+}
+
+void Renderer::DrawLaunchMenu(const SceneCallbacks& cb) {
+  // A world was chosen last frame and the screen now says Loading: load it.
+  if (!launchPendingFile.empty() || launchPendingKind == 1) {
+    DrawLoadingScreen();
+    if (!launchPendingShown) { launchPendingShown = true; return; }
+    const std::string file = launchPendingFile;
+    const int kind = launchPendingKind;
+    launchPendingFile.clear(); launchPendingKind = 0; launchPendingShown = false;
+    launchAnim = false; zoom = launchZoom;
+    launchMenu = false;
+    if (kind == 1) {
+      if (cb.newProject) cb.newProject();
+      LeaveExploration();                       // an empty world has nothing to explore: the editor
+    } else if (cb.loadProject) {
+      cb.loadProject(file);
+      launchLoadedFile = file;
+      NoteProjectOpened(file);
+      atlasShownAt = ImGui::GetTime();
+    }
+    return;
+  }
+
+  struct Row { std::string label; int kind; int proj; };   // kind 0 world, 1 new, 2 from file, 3 settings
+  static std::vector<Row> rows;
+  rows.clear();
+  for (int i = 0; i < (int)projectList.size(); ++i) {
+    const bool cur = projectList[i].file == launchLoadedFile;
+    rows.push_back({ projectList[i].name + (cur ? "  (continue)" : ""), 0, i });
+  }
+  rows.push_back({ "New empty world", 1, -1 });
+  rows.push_back({ "Load from file...", 2, -1 });
+  rows.push_back({ "Settings", 3, -1 });
+  launchSel = std::clamp(launchSel, 0, (int)rows.size() - 1);
+
+  ImGuiIO& io = ImGui::GetIO();
+  ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImDrawList* dl = ImGui::GetBackgroundDrawList();
+  ImFont* font = exploreFont ? exploreFont : ImGui::GetFont();
+  const float titleSz = Em(40.0f), headSz = Em(15.0f), rowSz = Em(19.0f), rowH = Em(30.0f);
+  const float x = std::floor(vp->WorkPos.x + std::max(Em(60.0f), vp->WorkSize.x * 0.09f));
+  const float listH = rowH * (float)rows.size();
+  // The logo stands in for a title; the text is only the fallback if the image is missing.
+  ProjectThumb logo = GetProjectThumb("assets/logo.png");
+  const bool  hasLogo = logo.id && logo.w > 0 && logo.h > 0;
+  const float logoW = std::clamp(vp->WorkSize.x * 0.26f, Em(240.0f), Em(460.0f));
+  const float logoH = hasLogo ? logoW * (float)logo.h / (float)logo.w : 0.0f;
+  const float headH = hasLogo ? logoH : titleSz;
+  float y = std::floor(vp->WorkPos.y + std::max(Em(40.0f), (vp->WorkSize.y - (headH + Em(46.0f) + listH)) * 0.42f));
+  auto text = [&](float sz, float tx, float ty, ImU32 col, const char* t, bool bold) {
+    dl->AddText(font, sz, ImVec2(tx + 1.0f, ty + 1.0f), IM_COL32(0, 0, 0, 170), t);
+    dl->AddText(font, sz, ImVec2(tx, ty), col, t);
+    if (bold) dl->AddText(font, sz, ImVec2(tx + 0.8f, ty), col, t);      // the font has one weight: overstrike
+  };
+  if (hasLogo) dl->AddImage((ImTextureID)(uintptr_t)logo.id, ImVec2(x, y), ImVec2(x + logoW, y + logoH));
+  else         text(titleSz, x, y, IM_COL32(236, 240, 248, 240), "Saul's Sim", true);
+  y += headH + Em(22.0f);
+  text(headSz, x, y, IM_COL32(200, 210, 226, 150), "Worlds:", false);
+  y += headSz + Em(9.0f);
+
+  const bool keysFree = !showQuitDialog && !showSettingsPanel;   // the settings window owns the keys while open
+  if (keysFree) {
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, true)) launchSel = std::min(launchSel + 1, (int)rows.size() - 1);
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true))   launchSel = std::max(launchSel - 1, 0);
+  }
+  int chosen = -1;
+  const bool mouseMoved = io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f;
+  for (int i = 0; i < (int)rows.size(); ++i) {
+    if (rows[i].kind == 1 && i > 0) y += Em(12.0f);                     // a gap before the two actions
+    const ImVec2 ts = font->CalcTextSizeA(rowSz, FLT_MAX, 0.0f, rows[i].label.c_str());
+    const bool over = !showQuitDialog && !io.WantCaptureMouse && io.MousePos.x >= x - Em(8.0f) && io.MousePos.x <= x + ts.x + Em(24.0f) &&
+                      io.MousePos.y >= y && io.MousePos.y < y + rowH;
+    if (over && mouseMoved) launchSel = i;                              // the mouse selects only when it moves
+    if (over && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { launchSel = i; chosen = i; }
+    const bool sel = (i == launchSel);
+    text(rowSz, x, y + (rowH - rowSz) * 0.5f,
+         sel ? IM_COL32(255, 255, 255, 255) : IM_COL32(205, 214, 230, 150), rows[i].label.c_str(), sel);
+    y += rowH;
+  }
+  if (keysFree && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)))
+    chosen = launchSel;
+  if (chosen < 0) return;
+
+  const Row& r = rows[chosen];
+  if (r.kind == 3) { showSettingsPanel = !showSettingsPanel; return; }
+  if (r.kind == 0 && projectList[r.proj].file == launchLoadedFile) {
+    // Continue: this world is already running behind the menu. Hand over, and
+    // let whatever is left of the camera move finish quickly.
+    launchMenu = false;
+    launchAnimPending = false;
+    if (launchAnim) { const double left = 1.0 - launchAnimT; launchAnimDur = std::min(launchAnimDur, 0.6 / std::max(left, 1e-3)); }
+    NoteProjectOpened(launchLoadedFile);
+    atlasShownAt = ImGui::GetTime();
+  } else if (r.kind == 0) {
+    launchPendingFile = projectList[r.proj].file; launchPendingKind = 0; launchPendingShown = false;
+  } else if (r.kind == 1) {
+    launchPendingFile.clear(); launchPendingKind = 1; launchPendingShown = false;
+  } else {
+    char buf[512] = {0};
+    if (ZenityPickFile(buf, sizeof(buf), "Load Project")) {
+      StripProjectsPrefix(buf);
+      launchPendingFile = ResolveProjectPath(buf); launchPendingKind = 0; launchPendingShown = false;
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4024,6 +4222,14 @@ void Renderer::DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
                                  std::vector<std::unique_ptr<CloudObject>>& clouds,
                                  const SceneCallbacks& cb) {
   if (exploreFont) ImGui::PushFont(exploreFont, 15.0f);
+  StepLaunchAnim();
+  if (launchMenu) {                 // nothing but the menu: no atlas, labels, hints or date
+    DrawLaunchMenu(cb);
+    DrawSettingsPanel();
+    DrawQuitDialog(cb);
+    if (exploreFont) ImGui::PopFont();
+    return;
+  }
   // No bar: the view runs edge to edge. What the bar's buttons did is on three
   // keys, named in one quiet line at the top (Project and Settings live in the
   // Esc menu; the atlas is on M). The line steps aside whenever a menu is up.

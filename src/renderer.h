@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
@@ -983,8 +984,34 @@ public:
   bool   flightCaptured{false};
   double flightLastX{0.0}, flightLastY{0.0};
   bool   exploreFlying() const {
-    return exploring() && !exploreMenuOpen && !exploreSearchOpen && !showQuitDialog;
+    return exploring() && !exploreMenuOpen && !exploreSearchOpen && !showQuitDialog && !LaunchBusy();
   }
+  // ── Launch menu ──
+  // The program opens straight into the last world, running live, with the
+  // list of worlds drawn over it as plain text. Nothing else is on screen
+  // while it is up, and the camera eases back to the saved view behind it.
+  bool        launchMenu{false};
+  int         launchSel{0};
+  std::string launchLoadedFile;                 // the world behind the menu
+  std::string launchPendingFile;                // a world chosen; loads after one "Loading" frame
+  int         launchPendingKind{0};             // 0 load file, 1 new empty world
+  bool        launchPendingShown{false};
+  bool        launchAnim{false};
+  bool        launchAnimPending{false};
+  double      launchAnimT{0.0}, launchAnimDur{5.0};
+  double      launchAnchor[3]{0, 0, 0}, launchTrans[3]{0, 0, 0};
+  float       launchZoom{45.0f}, launchZoomFrom{45.0f};
+  double      launchPull{0.0};
+  bool        LaunchBusy() const { return launchMenu || launchAnim; }
+  void        StartLaunchAnim(double seconds);
+  void        StepLaunchAnim();
+  void        DrawLaunchMenu(const SceneCallbacks& cb);
+  void        DrawLoadingScreen();
+  // When each world was last opened (seconds since 1970), kept in settings.json.
+  std::map<std::string, long long> recentOpened;
+  void        NoteProjectOpened(const std::string& file);
+  std::string MostRecentProject();
+  void        SortProjectsByRecent();
   void   CloseExploreMenu();
   void   SyncFlightCapture();
   void   DrawExploreMenu();
