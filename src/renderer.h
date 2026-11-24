@@ -978,7 +978,8 @@ public:
   void EnterExploration();
   void LeaveExploration();
   // Flying: the cursor is captured and the mouse looks around. Esc opens the
-  // menu (cursor back, UI usable); Esc or Continue there returns to flying.
+  // menu (cursor back; the same text menu as the opening screen, see
+  // DrawLaunchMenu); Esc or Continue there returns to flying.
   // Search and the quit dialog also free the cursor while they are open.
   bool   exploreMenuOpen{false};
   bool   flightCaptured{false};
@@ -998,6 +999,8 @@ public:
   bool        launchPendingShown{false};
   bool        launchAnim{false};
   bool        launchAnimPending{false};
+  bool        menuSaveAs{false}, menuSaveAsFocus{false};   // the Save as row is a name field
+  double      menuSavedAt{-10.0};
   double      launchAnimT{0.0}, launchAnimDur{5.0};
   double      launchAnchor[3]{0, 0, 0}, launchTrans[3]{0, 0, 0};
   float       launchZoom{45.0f}, launchZoomFrom{45.0f};
@@ -1014,7 +1017,6 @@ public:
   void        SortProjectsByRecent();
   void   CloseExploreMenu();
   void   SyncFlightCapture();
-  void   DrawExploreMenu();
   void DrawExplorationUI(std::vector<PhysicsObject>& physicsObjects,
                          std::vector<std::unique_ptr<CloudObject>>& clouds,
                          const SceneCallbacks& cb);
