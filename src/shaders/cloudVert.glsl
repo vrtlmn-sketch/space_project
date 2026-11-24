@@ -490,7 +490,17 @@ void main() {
   // Anything that scaled brightness by magnification here would be the
   // already-rejected uSampleWeight mistake in a new coat.
   if (gLfActive && gl_PointSize > 0.0) {
-    float halfS   = gl_PointSize / max(uViewportH, 1.0);   // UNLENSED half-size, screen space
+    // The sizes below mix two pixel units: gl_PointSize is in BUFFER pixels
+    // (it carries the supersampling scale ps), uViewportH is the VIEW's height.
+    // So the lensed look depends on ps: the source reads ps times larger and
+    // the drawn footprint 1/ps as wide. That is how the look was tuned (in the
+    // editor, ps = the project's supersampling), and it is why exploration,
+    // which renders at a fixed height and scales up (ps ~ 1), drew the same
+    // hole with fatter, tangled arcs. lfTune restates every size as if ps were
+    // the tuned ratio, so the lens looks the same at any resolution. It is
+    // exactly 1 in the editor, which is therefore unchanged.
+    float lfTune  = (uLfTuneScale > 0.0) ? uLfTuneScale / max(ps, 1e-3) : 1.0;
+    float halfS   = gl_PointSize / max(uViewportH, 1.0) * lfTune;   // UNLENSED half-size, screen space
     float srcAng  = halfS / max(uProj[1][1], 1e-6);         // ... as an angle
     // FINITE-SOURCE LIMIT. The tangential magnification theta/beta diverges as a
     // source approaches the axis, but a source of angular radius R can never be
@@ -611,13 +621,13 @@ void main() {
             halfA = grown;
         }
     }
-    gl_PointSize   = halfA * uProj[1][1] * max(uViewportH, 1.0);
+    gl_PointSize   = halfA * uProj[1][1] * max(uViewportH, 1.0) / lfTune;
     halfS          = srcUse * uProj[1][1];                   // what the frag clips against
 
   vLfSrcRad  = halfS;
     vLfSrcS    = gLfSrcS;
     vLfCenterS = gLfCenterS;
-    vLfHalfS   = gl_PointSize / max(uViewportH, 1.0);
+    vLfHalfS   = gl_PointSize / max(uViewportH, 1.0) * lfTune;
     vLfHoleN   = gLfHoleN;
     vLfGeom    = gLfGeom;
     vLfBetaS   = gLfBetaS;

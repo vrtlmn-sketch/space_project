@@ -220,6 +220,7 @@ uniform float uLfDelta0[4];      // PER OBJECT: (object centre - hole) . holeDir
 uniform float uLfMaxMu;          // cap on how far a sprite may be stretched (fill-rate guard)
 uniform float uLfHazeArc;        // separate arc budget for the HAZE pass (x uLfMaxSprite)
 uniform float uLfMaxSprite;      // largest lensed sprite, as a fraction of viewport height.
+uniform float uLfTuneScale;      // buffer/view pixel ratio the lens look is held to (0 = the live one)
                                  // The single strongest speed dial: cost is dominated by a few
                                  // very large magnified sprites and their area is quadratic,
                                  // so halving this nearly halves the lens's frame time.

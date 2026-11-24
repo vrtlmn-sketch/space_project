@@ -75,6 +75,7 @@ extern float  gLfFy;             // uProj[1][1]: screen space is tan-space times
 extern float  gLfPxPerRad;       // pixels per radian: the "too small to matter" gate
 extern float  gLfMaxMu;          // stretch cap (fill-rate guard)
 extern float  gLfMaxSprite;      // largest lensed sprite, fraction of viewport height
+extern float  gLfTuneScale;      // the buffer-to-view pixel ratio the lens look was tuned at (see cloudVert)
 // Render height the sprite sizes are calibrated at (0 = absolute pixels, the
 // old behaviour). Global for the same reason gLf* are: every cloud draw needs
 // it and it is a property of the FRAME, not of an object.

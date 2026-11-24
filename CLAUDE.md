@@ -2067,6 +2067,27 @@ the geodesic ring agree by construction.
   shader just searches a wider interval — but do not "sync" them without
   re-checking the image, and do not assume a CPU number transfers exactly.
 
+### The lensed sprite sizes mix two pixel units, so the look depended on ps
+
+In cloudVert's lens block `gl_PointSize` is in BUFFER pixels (it carries the
+supersampling scale `ps` = buffer height / view height) while `uViewportH` is
+the VIEW height. So the source read `ps` times its size and the drawn footprint
+came out `1/ps` as wide, while the fragment still mapped it as full width: the
+image inside each sprite is scaled by `1/ps` about its centre. Harmless while
+`ps` was always the project's supersampling. Exploration renders at a fixed
+height and scales up, so on a 1076 px window at 720p with SSAA 1 it ran at
+**ps = 0.67**: every lensed image magnified 1.5x, arcs fat and tangled, while
+the editor showed clean nested arcs from the same camera.
+
+`lfTune = uLfTuneScale / ps` restates all three sizes as if `ps` were the
+project's supersampling (`gLfTuneScale`, set in main.cpp), so the lens looks the
+same at any render size and the editor at Viewport resolution is unchanged
+(lfTune = 1). `LF_TUNE=<k>` overrides it; at the harness's ps = 1,
+`LF_TUNE=0.669 CMP_W=1916 CMP_H=1076` reproduces the old exploration picture
+exactly, which is how this was confirmed. Two wrong guesses came first: plain
+resolution (the harness is clean at 633, 720 and 1076) and ps ABOVE 1 (barely
+visible). It is ps BELOW 1 that wrecks it.
+
 ### The map is NOT off centre — measure before believing it is
 
 On a uniform-sphere scene the ring fits a circle to **0.59 px rms**, centred within

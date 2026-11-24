@@ -49,6 +49,7 @@ float    gLfFy              = 1.0f;
 float    gLfPxPerRad        = 1.0f;
 float    gLfMaxMu           = 24.0f;
 float    gLfMaxSprite       = 0.35f;
+float    gLfTuneScale       = 0.0f;      // 0 = off: size lensed sprites from the live ratio, as before
 float    gLfHazeArc         = 1.0f;
 float    gSpriteRefHeight   = 1080.0f;
 unsigned gLfLutTex          = 0;
@@ -66,6 +67,7 @@ void uploadLensForwardUniforms(unsigned program, double cx, double cy, double cz
   if ((l = ulocCached((GLuint)program, "uLfPxPerRad")) >= 0) glUniform1f(l, gLfPxPerRad);
   if ((l = ulocCached((GLuint)program, "uLfMaxMu"))    >= 0) glUniform1f(l, gLfMaxMu);
   if ((l = ulocCached((GLuint)program, "uLfMaxSprite")) >= 0) glUniform1f(l, gLfMaxSprite);
+  if ((l = ulocCached((GLuint)program, "uLfTuneScale")) >= 0) glUniform1f(l, gLfTuneScale);
   if ((l = ulocCached((GLuint)program, "uLfHazeArc")) >= 0) glUniform1f(l, gLfHazeArc);
   if ((l = ulocCached((GLuint)program, "uLfFy"))       >= 0) glUniform1f(l, gLfFy);
   // delta0: how far THIS object's centre sits behind each hole, along that
