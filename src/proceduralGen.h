@@ -196,6 +196,7 @@ private:
   // in sculpt-sized units, so galaxy previews are drawn scaled down to this.
   float previewRadius() const { return mode == 0 ? radius : 2.0f; }
   float previewScale() const;
+  void randomize();            // a random cloud of the current mode, shape and look
   void regenerate();           // regenerate preview
   void uploadPreviewGeom();
   void renderToFBO();

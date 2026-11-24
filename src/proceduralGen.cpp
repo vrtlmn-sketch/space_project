@@ -483,6 +483,82 @@ void ProceduralGenWindow::generateParticles(int targetCount,
   }
 }
 
+// A random cloud of the current mode: its shape and how it is drawn, both
+// rolled inside ranges that still read as something (the sliders reach
+// further). Brightness, distance falloff and the near-star limit are left
+// alone: those place a cloud in a scene, they are not part of its character.
+void ProceduralGenWindow::randomize() {
+  static std::mt19937 rng{std::random_device{}()};
+  auto rf = [&](float a, float b) { return std::uniform_real_distribution<float>(a, b)(rng); };
+  auto ri = [&](int a, int b)     { return std::uniform_int_distribution<int>(a, b)(rng); };
+  auto chance = [&](float p)      { return rf(0.0f, 1.0f) < p; };
+
+  seed = ri(1, 999999);
+  if (mode == 1) {
+    const float t = rf(0.0f, 1.0f);
+    galType     = (t < 0.6f) ? 0 : (t < 0.85f ? 1 : 2);          // mostly spirals
+    galRadiusLy = std::exp(rf(std::log(15000.0f), std::log(120000.0f)));
+    galArms     = ri(2, 5);
+    galShape    = GalaxyShape{};
+    galShape.armStrength   = rf(0.35f, 1.0f);
+    galShape.armSpread     = rf(0.15f, 0.8f);
+    galShape.armWinding    = rf(0.8f, 4.5f);
+    galShape.discScale     = rf(0.06f, 0.26f);
+    galShape.extendedFrac  = rf(0.0f, 0.3f);
+    galShape.thickness     = rf(0.01f, 0.07f);
+    galShape.flare         = rf(0.0f, 1.2f);
+    galShape.clusterFrac   = rf(0.0f, 0.35f);
+    galShape.clusterCount  = ri(10, 180);
+    galShape.clusterSpread = rf(0.05f, 0.5f);
+  } else if (mode == 0) {
+    scaleXYZ[0] = rf(0.6f, 1.6f); scaleXYZ[1] = rf(0.08f, 1.0f); scaleXYZ[2] = rf(0.6f, 1.6f);
+    rotationXYZ[0] = rotationXYZ[1] = rotationXYZ[2] = 0.0f;
+    samplingBias  = rf(0.2f, 0.85f);
+    twistAmount   = chance(0.5f) ? rf(-2.5f, 2.5f) : 0.0f;
+    bendAmount    = chance(0.25f) ? rf(-0.6f, 0.6f) : 0.0f;
+    taperAmount   = chance(0.25f) ? rf(-0.6f, 0.6f) : 0.0f;
+    noiseStrength = chance(0.6f) ? rf(0.1f, 0.8f) : 0.0f;
+    noiseScale    = rf(0.5f, 3.0f);
+    warpStrength  = chance(0.4f) ? rf(0.1f, 0.7f) : 0.0f;
+    warpScale     = rf(0.5f, 2.5f);
+    densityFalloff = rf(1.0f, 4.0f);
+    innerRadius   = chance(0.25f) ? rf(0.1f, 0.5f) : 0.0f;
+    clumpStrength = chance(0.5f) ? rf(0.2f, 1.0f) : 0.0f;
+    clumpScale    = rf(0.2f, 1.2f);
+    armStrength   = chance(0.5f) ? rf(0.4f, 1.0f) : 0.0f;
+    armCount      = ri(1, 5);
+    armTwist      = rf(0.5f, 3.5f);
+    armWidth      = rf(0.15f, 0.6f);
+    ringStrength  = chance(0.3f) ? rf(0.3f, 1.0f) : 0.0f;
+    ringFrequency = rf(1.0f, 5.0f);
+    ringWidth     = rf(0.1f, 0.4f);
+    diskThickness = rf(0.1f, 0.8f);
+    spinStrength  = rf(0.1f, 0.6f);
+  } else if (!formations.empty()) {
+    fileName = formations[(size_t)ri(0, (int)formations.size() - 1)];
+  }
+
+  // How it is drawn.
+  curTemperature() = std::exp(rf(std::log(2500.0f), std::log(22000.0f)));
+  look.set(CloudLook::DustStrength,   chance(0.2f) ? 0.0f : rf(0.2f, 1.6f));
+  look.set(CloudLook::DustCoverage,   rf(0.10f, 0.70f));
+  look.set(CloudLook::DustContrast,   rf(1.0f, 3.0f));
+  look.set(CloudLook::DustClumpScale, std::exp(rf(std::log(0.05f), std::log(0.9f))));
+  look.set(CloudLook::DustReddening,  rf(0.0f, 2.5f));
+  look.set(CloudLook::DustDarkest,    std::exp(rf(std::log(0.004f), std::log(0.15f))));
+  look.set(CloudLook::DustSettle,     rf(0.0f, 1.0f));
+  look.set(CloudLook::StarLumSpread,  rf(0.0f, 6.0f));
+  look.set(CloudLook::StarSize,       rf(0.25f, 1.2f));
+  look.set(CloudLook::ResolvedCut,    chance(0.5f) ? 0.0f : rf(0.1f, 0.85f));
+  look.set(CloudLook::PopColour,      chance(0.5f) ? 0.0f : rf(0.3f, 1.0f));
+  look.set(CloudLook::HazeStrength,   chance(0.2f) ? 0.0f : rf(0.5f, 7.0f));
+  look.set(CloudLook::HazeSize,       rf(20.0f, 90.0f));
+  look.set(CloudLook::GasStrength,    chance(0.4f) ? 0.0f : rf(0.2f, 1.2f));
+
+  dirty = true;
+  cineFrames = 8;
+}
+
 void ProceduralGenWindow::regenerate() {
   int previewCount = (mode == 2) ? PREVIEW_CAP : std::min(count, PREVIEW_CAP);
   generateParticles(previewCount, particles);
@@ -668,6 +744,16 @@ void ProceduralGenWindow::draw() {
       if (ImGui::Button(tabs[t].name, ImVec2(bw, 0)) && !on) { mode = tabs[t].m; changed = true; }
       if (on) ImGui::PopStyleColor();
     }
+    if (ImGui::Button("Random", ImVec2(-1.0f, 0))) {
+      if (mode == 2 && !formationsScanned) {
+        if (listFormations) formations = listFormations();
+        formationsScanned = true;
+      }
+      randomize();
+      changed = true;
+    }
+    ImGui::SetItemTooltip(mode == 2 ? "Pick a random formation file and a random look for it."
+                                    : "Roll a random shape and a random look. Press again for another.");
     ImGui::Spacing();
   }
 
