@@ -33,6 +33,59 @@
       "theta": 0.5,
       "universeMember": false,
       "useDarkMatterHalo": true
+    },
+    {
+      "computeMethod": 1,
+      "count": 10000,
+      "dataFile": "milky_way.data/cloud_1.pcl",
+      "description": "The cloud of the black hole project, placed above the Milky Way around Test A*.",
+      "enabled": true,
+      "formationFile": "",
+      "haloRCore": 172819259.6435547,
+      "haloVFlat": 67.07815551757812,
+      "keyframes": [],
+      "name": "Test A* disc",
+      "nebulaScatterScale": 0.4000000059604645,
+      "particleSizeSpread": 0.0,
+      "position": [
+        0.0,
+        19000000512.0,
+        0.0
+      ],
+      "renderMode": 0,
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": 1.0,
+      "simulatePhysics": false,
+      "sizeX": 3.0,
+      "sizeY": 3.0,
+      "sizeZ": 3.0,
+      "temperature": 1000.0,
+      "theta": 0.5,
+      "universeMember": false,
+      "useDarkMatterHalo": true,
+      "look": {
+        "dustStrength": 2.0,
+        "dustCoverage": 0.5400000214576721,
+        "dustContrast": 1.0,
+        "dustClumpScale": 1.5,
+        "dustReddening": 4.0,
+        "dustDarkest": 0.0010000000474974513,
+        "dustSettle": 1.0,
+        "starLumSpread": 1.1039999723434448,
+        "starSize": 1.0,
+        "resolvedCut": 0.0,
+        "popColour": 0.5899999737739563,
+        "hazeStrength": 10.0,
+        "hazeSize": 100.0,
+        "gasStrength": 0.5,
+        "farFalloff": 0.05000000074505806,
+        "nearStarStops": 4.0,
+        "starFieldOffset": 5.922206878662109
+      }
     }
   ],
   "grid": {
@@ -5964,6 +6017,91 @@
         0.3047316967321585
       ],
       "visualRadius": 1.7045697120465775e-07
+    },
+    {
+      "atmosphereColor": [
+        0.17499999701976776,
+        0.4099999964237213,
+        1.0
+      ],
+      "atmosphereEnabled": false,
+      "atmosphereFalloff": 4.0,
+      "atmosphereHeight": 0.05999999865889549,
+      "atmosphereIntensity": 1.0,
+      "cloudAltitude": 0.019999999552965164,
+      "cloudBanded": 0.0,
+      "cloudCoverage": 0.44999998807907104,
+      "cloudDrift": 0.0,
+      "cloudScale": 6.0,
+      "cloudSoftness": 0.18000000715255737,
+      "cloudTurbulence": 0.5,
+      "cloudWhiteness": 1.0,
+      "cloudsEnabled": false,
+      "color": [
+        0.550000011920929,
+        0.25,
+        0.15000000596046448
+      ],
+      "keyframes": [
+        {
+          "frame": 1229,
+          "m": [
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "pitch": 0.0,
+          "pos": [
+            -2.1390706986034172e-05,
+            -5.460751398672411e-06,
+            -0.0003280560198561843
+          ],
+          "roll": 0.0,
+          "rotation": 0.0,
+          "smooth": 1.0,
+          "zoom": 0.0
+        }
+      ],
+      "mass": 4150000.0,
+      "meshPath": "",
+      "name": "Test A*",
+      "nightMapPath": "",
+      "nightMapStrength": 1.600000023841858,
+      "normalMapPath": "",
+      "normalMapStrength": 1.0,
+      "position": [
+        -21.39070698603417,
+        19000000506.53925,
+        -328.0560198561843
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "schwarzschildRadius": 13654899.597167969,
+      "shaderType": 2,
+      "simulatePhysics": false,
+      "starContrast": 1.0,
+      "starEvolve": 0.05000000074505806,
+      "starScale": 55.0,
+      "starSpots": 0.3499999940395355,
+      "starWarp": 1.0,
+      "temperature": 5778.0,
+      "texturePath": "",
+      "velocity": [
+        -0.0001269191078030909,
+        -2.2823551438823384e-05,
+        -0.0014253120127789465
+      ],
+      "visualRadius": 13654899.597167969,
+      "description": "A test black hole with Sagittarius A*'s mass, drawn with a far larger lens and a cloud of matter around it."
     }
   ],
   "projectName": "milky_way",
@@ -6020,8 +6158,8 @@
     "impostorStrength": 1.0,
     "keypoints": [],
     "lensHazeArc": 1.0,
-    "lensMaxSprite": 0.25,
-    "lensMaxStretch": 1.0,
+    "lensMaxSprite": 0.5,
+    "lensMaxStretch": 7.099999904632568,
     "lensingEnabled": true,
     "nearStarStops": 4.0,
     "nebulaDetail": 0.0,
